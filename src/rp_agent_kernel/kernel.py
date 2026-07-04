@@ -409,7 +409,7 @@ class Kernel:
                 )
             )
         if include_pending:
-            deliveries = self.storage.list_event_deliveries(statuses=("pending", "failed"))
+            deliveries = self.storage.reissue_event_deliveries()
         return [self._event_delivery_payload(delivery) for delivery in deliveries]
 
     def pending_events(self) -> list[dict[str, Any]]:

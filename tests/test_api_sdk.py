@@ -332,8 +332,19 @@ def test_event_delivery_ack_and_failed_retry_are_agent_friendly(tmp_path):
         params={"now": NOW.isoformat(), "includePending": True},
     ).json()
     assert retry["count"] == 1
-    assert retry["events"][0]["delivery"]["status"] == "failed"
+    assert retry["events"][0]["delivery"]["status"] == "pending"
+    assert retry["events"][0]["delivery"]["attempts"] == 2
     assert retry["events"][0]["delivery"]["lastError"] == "shell closed"
+    retry_ack = client.post(
+        f"/api/events/{failed_id}/delivery", json={"status": "acked"}
+    ).json()
+    assert retry_ack["status"] == "acked"
+    assert retry_ack["attempts"] == 2
+    assert retry_ack["lastError"] is None
+    assert client.post(
+        f"/api/events/{failed_id}/delivery",
+        json={"status": "failed", "error": "too late"},
+    ).status_code == 409
 
 
 def test_due_time_comparison_uses_absolute_time_across_offsets(tmp_path):

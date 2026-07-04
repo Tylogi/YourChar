@@ -1169,23 +1169,56 @@ class Storage:
             rows = self.conn.execute(sql, params).fetchall()
         return [self._row_to_event_delivery(row) for row in rows]
 
+    def reissue_event_deliveries(self) -> list[EventDelivery]:
+        now = utc_now()
+        with self._lock, self.conn:
+            rows = self.conn.execute(
+                """
+                SELECT * FROM event_deliveries
+                WHERE status IN ('pending', 'failed')
+                ORDER BY created_at ASC
+                """
+            ).fetchall()
+            failed_ids = [row["id"] for row in rows if row["status"] == "failed"]
+            for delivery_id in failed_ids:
+                self.conn.execute(
+                    """
+                    UPDATE event_deliveries
+                    SET status = 'pending', attempts = attempts + 1, updated_at = ?
+                    WHERE id = ?
+                    """,
+                    (_iso(now), delivery_id),
+                )
+        return self.list_event_deliveries(statuses=("pending",))
+
     def patch_event_delivery(
         self, delivery_id: str, patch: EventDeliveryPatch
     ) -> EventDelivery:
+        current = self.get_event_delivery(delivery_id)
+        if current.status == "acked":
+            if patch.status == "acked":
+                return current
+            raise ValueError("acked event delivery cannot be changed")
+
         now = utc_now()
         acknowledged_at = now if patch.status == "acked" else None
+        attempts_sql = "attempts + 1" if current.status == "failed" and patch.status == "pending" else "attempts"
+        last_error = patch.error if patch.status == "failed" else current.last_error
+        if patch.status == "acked":
+            last_error = None
         with self._lock, self.conn:
             cursor = self.conn.execute(
-                """
+                f"""
                 UPDATE event_deliveries
-                SET status = ?, updated_at = ?, acknowledged_at = ?, last_error = ?
+                SET status = ?, attempts = {attempts_sql}, updated_at = ?,
+                    acknowledged_at = ?, last_error = ?
                 WHERE id = ?
                 """,
                 (
                     patch.status,
                     _iso(now),
                     _iso(acknowledged_at),
-                    patch.error if patch.status == "failed" else None,
+                    last_error,
                     delivery_id,
                 ),
             )

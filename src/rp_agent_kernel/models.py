@@ -291,7 +291,7 @@ class EventDelivery(KernelModel):
 
 
 class EventDeliveryPatch(KernelModel):
-    status: Literal["acked", "failed"]
+    status: Literal["pending", "acked", "failed"]
     error: str | None = None
 
 

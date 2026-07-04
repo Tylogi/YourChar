@@ -253,6 +253,8 @@ def create_app(db_path: str | None = None) -> FastAPI:
             return kernel.update_event_delivery(delivery_id, patch)
         except KeyError as exc:
             raise HTTPException(status_code=404, detail="event delivery not found") from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
 
     @app.get("/api/calendar/events")
     def list_calendar_events(
