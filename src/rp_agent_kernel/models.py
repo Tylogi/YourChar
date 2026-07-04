@@ -295,6 +295,7 @@ class EventDelivery(KernelModel):
 class EventDeliveryPatch(KernelModel):
     status: Literal["pending", "acked", "failed"]
     error: str | None = None
+    client_id: str | None = Field(default=None, alias="clientId")
 
 
 class ConfirmationRecord(KernelModel):

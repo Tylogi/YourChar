@@ -56,6 +56,10 @@ def _iso(value: datetime | None) -> str | None:
     return value.isoformat() if value else None
 
 
+def _claim_owner_required(delivery: EventDelivery) -> bool:
+    return delivery.status == "claimed" and bool(delivery.claimed_by)
+
+
 class Storage:
     def __init__(self, path: str | Path = "rp_agent_kernel.sqlite3") -> None:
         self.path = str(path)
@@ -1231,19 +1235,31 @@ class Storage:
         self, delivery_id: str, patch: EventDeliveryPatch
     ) -> EventDelivery:
         current = self.get_event_delivery(delivery_id)
+        now = utc_now()
         if current.status == "acked":
             if patch.status == "acked":
                 return current
             raise ValueError("acked event delivery cannot be changed")
+        if _claim_owner_required(current) and patch.client_id != current.claimed_by:
+            raise PermissionError("event delivery is claimed by another client")
 
-        now = utc_now()
         acknowledged_at = now if patch.status == "acked" else None
-        attempts_sql = "attempts + 1" if current.status == "failed" and patch.status == "pending" else "attempts"
+        attempts_sql = (
+            "attempts + 1"
+            if current.status == "failed" and patch.status == "pending"
+            else "attempts"
+        )
         last_error = patch.error if patch.status == "failed" else current.last_error
         if patch.status == "acked":
             last_error = None
-        claimed_by = None if patch.status in ("pending", "acked", "failed") else current.claimed_by
-        claim_expires_at = None if patch.status in ("pending", "acked", "failed") else current.claim_expires_at
+        claimed_by = (
+            None if patch.status in ("pending", "acked", "failed") else current.claimed_by
+        )
+        claim_expires_at = (
+            None
+            if patch.status in ("pending", "acked", "failed")
+            else current.claim_expires_at
+        )
         with self._lock, self.conn:
             cursor = self.conn.execute(
                 f"""

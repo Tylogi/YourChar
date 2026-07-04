@@ -300,8 +300,16 @@ def test_event_delivery_ack_and_failed_retry_are_agent_friendly(tmp_path):
     assert pending["events"][0]["delivery"]["id"] == delivery_id
     assert pending["events"][0]["delivery"]["status"] == "claimed"
 
-    acked = client.post(
+    assert client.post(
         f"/api/events/{delivery_id}/delivery", json={"status": "acked"}
+    ).status_code == 409
+    assert client.post(
+        f"/api/events/{delivery_id}/delivery",
+        json={"status": "acked", "clientId": "other-shell"},
+    ).status_code == 409
+    acked = client.post(
+        f"/api/events/{delivery_id}/delivery",
+        json={"status": "acked", "clientId": "poll"},
     ).json()
     assert acked["status"] == "acked"
     assert acked["acknowledgedAt"]
@@ -321,7 +329,7 @@ def test_event_delivery_ack_and_failed_retry_are_agent_friendly(tmp_path):
     failed_id = failed_event["delivery"]["id"]
     failed = client.post(
         f"/api/events/{failed_id}/delivery",
-        json={"status": "failed", "error": "shell closed"},
+        json={"status": "failed", "error": "shell closed", "clientId": "poll"},
     ).json()
     assert failed["status"] == "failed"
     assert failed["lastError"] == "shell closed"
@@ -339,7 +347,7 @@ def test_event_delivery_ack_and_failed_retry_are_agent_friendly(tmp_path):
     assert retry["events"][0]["delivery"]["attempts"] == 2
     assert retry["events"][0]["delivery"]["lastError"] == "shell closed"
     retry_ack = client.post(
-        f"/api/events/{failed_id}/delivery", json={"status": "acked"}
+        f"/api/events/{failed_id}/delivery", json={"status": "acked", "clientId": "poll"}
     ).json()
     assert retry_ack["status"] == "acked"
     assert retry_ack["attempts"] == 2
