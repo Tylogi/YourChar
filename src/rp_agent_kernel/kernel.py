@@ -4,6 +4,7 @@ import statistics
 import time
 from collections.abc import Iterator
 from dataclasses import dataclass
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
@@ -382,6 +383,142 @@ class Kernel:
             metrics=metrics,
         )
 
+    def due_events(self, now: datetime | None = None) -> list[dict[str, Any]]:
+        due_at = now or datetime.now().astimezone()
+        events: list[dict[str, Any]] = []
+        for reminder in self.storage.due_reminders(due_at):
+            events.append(self._reminder_due_event(reminder))
+        for task in self.storage.due_tasks(due_at):
+            events.append(self._task_overdue_event(task))
+        return events
+
+    def _reminder_due_event(self, reminder) -> dict[str, Any]:
+        origin = _origin_from_metadata(reminder.metadata)
+        message = self._render_proactive_message(
+            kind="reminder",
+            title=reminder.title,
+            due_at=reminder.remind_at,
+            origin=origin,
+        )
+        action = self.storage.add_action(
+            action_type="reminder_due",
+            status="completed",
+            feature=FeatureName.reminders,
+            payload={
+                "reminderId": reminder.id,
+                "title": reminder.title,
+                "remindAt": reminder.remind_at.isoformat(),
+                "sessionId": origin["sessionId"],
+                "mode": origin["mode"],
+                "characterId": origin["characterId"],
+                "message": message,
+            },
+        )
+        memory = self._write_proactive_memory(
+            origin,
+            f"主动提醒已触发：{reminder.title} @ {reminder.remind_at.isoformat()}",
+            ["proactive", "reminder"],
+        )
+        return {
+            "type": "ReminderDue",
+            "mode": origin["mode"],
+            "sessionId": origin["sessionId"],
+            "characterId": origin["characterId"],
+            "message": message,
+            "reminder": reminder.model_dump(mode="json", by_alias=True),
+            "action": action.model_dump(mode="json", by_alias=True),
+            "memory": memory.model_dump(mode="json", by_alias=True) if memory else None,
+        }
+
+    def _task_overdue_event(self, task) -> dict[str, Any]:
+        origin = _origin_from_metadata(task.metadata)
+        message = self._render_proactive_message(
+            kind="task",
+            title=task.title,
+            due_at=task.due_at,
+            origin=origin,
+        )
+        action = self.storage.add_action(
+            action_type="task_overdue",
+            status="completed",
+            feature=FeatureName.tasks,
+            payload={
+                "taskId": task.id,
+                "title": task.title,
+                "dueAt": task.due_at.isoformat() if task.due_at else None,
+                "sessionId": origin["sessionId"],
+                "mode": origin["mode"],
+                "characterId": origin["characterId"],
+                "message": message,
+            },
+        )
+        memory = self._write_proactive_memory(
+            origin,
+            f"主动任务事件已触发：{task.title} @ {task.due_at.isoformat() if task.due_at else 'no due time'}",
+            ["proactive", "task"],
+        )
+        return {
+            "type": "TaskOverdue",
+            "mode": origin["mode"],
+            "sessionId": origin["sessionId"],
+            "characterId": origin["characterId"],
+            "message": message,
+            "task": task.model_dump(mode="json", by_alias=True),
+            "action": action.model_dump(mode="json", by_alias=True),
+            "memory": memory.model_dump(mode="json", by_alias=True) if memory else None,
+        }
+
+    def _render_proactive_message(
+        self,
+        *,
+        kind: str,
+        title: str,
+        due_at: datetime | None,
+        origin: dict[str, str | None],
+    ) -> str:
+        due_text = due_at.strftime("%Y-%m-%d %H:%M") if due_at else "现在"
+        label = "提醒" if kind == "reminder" else "任务"
+        if origin["mode"] != "rp":
+            return f"{label}到点：{title}。时间 {due_text}。"
+
+        character_name = ""
+        if origin["characterId"]:
+            try:
+                character_name = self.storage.get_character(origin["characterId"]).name
+            except KeyError:
+                character_name = ""
+        speaker = character_name or "角色"
+        return (
+            f"{speaker}没有打断场景，只把一张便签推到你手边："
+            f"现实{label}到了，{title}。时间 {due_text}。"
+            "处理完，我们再回到刚才的叙事。"
+        )
+
+    def _write_proactive_memory(
+        self, origin: dict[str, str | None], content: str, tags: list[str]
+    ):
+        if origin["mode"] == "rp":
+            if not self.storage.is_enabled(FeatureName.rp_memory):
+                return None
+            return self.storage.add_memory(
+                mode="rp",
+                session_id=origin["sessionId"] or "events",
+                character_id=origin["characterId"],
+                content=content,
+                tags=tags,
+                source="proactive_event",
+            )
+        if not self.storage.is_enabled(FeatureName.secretary_memory):
+            return None
+        return self.storage.add_memory(
+            mode="sms",
+            session_id=origin["sessionId"] or "events",
+            character_id=None,
+            content=content,
+            tags=tags,
+            source="proactive_event",
+        )
+
     def capabilities(self) -> CapabilityReport:
         return CapabilityReport(
             modes=["sms", "rp"],
@@ -393,6 +530,7 @@ class Kernel:
                 "GET/DELETE /api/sessions/{id}/messages",
                 "POST /api/sessions/{id}/clone",
                 "GET /api/events/stream",
+                "GET /api/events/poll",
                 "GET/POST/PATCH/DELETE /api/calendar/events",
                 "GET/POST/PATCH/DELETE /api/tasks",
                 "GET/POST/PATCH/DELETE /api/reminders",
@@ -539,6 +677,16 @@ def _seed_kernel(kernel: Kernel, request: EvalRunRequest) -> None:
         kernel.storage.create_task(task)
     for reminder in request.seed.reminders:
         kernel.storage.create_reminder(reminder)
+
+
+def _origin_from_metadata(metadata: dict[str, Any]) -> dict[str, str | None]:
+    mode = metadata.get("mode") if isinstance(metadata, dict) else None
+    character_id = metadata.get("characterId") or metadata.get("character_id")
+    return {
+        "mode": "rp" if mode == "rp" else "sms",
+        "sessionId": str(metadata.get("sessionId") or metadata.get("session_id") or "events"),
+        "characterId": str(character_id) if character_id else None,
+    }
 
 
 def _run_assertions(response: MessageResponse, assertions: dict[str, Any], latency_ms: float) -> dict[str, bool]:

@@ -875,7 +875,25 @@ class Storage:
                     "UPDATE reminders SET status = 'due', updated_at = ? WHERE id = ?",
                     (_iso(utc_now()), reminder_id),
                 )
-        return [self._row_to_reminder(row) for row in rows]
+        return [self.get_reminder(reminder_id) for reminder_id in reminder_ids]
+
+    def due_tasks(self, now: datetime) -> list[Task]:
+        with self._lock, self.conn:
+            rows = self.conn.execute(
+                """
+                SELECT * FROM tasks
+                WHERE status = 'open' AND due_at IS NOT NULL AND due_at <= ?
+                ORDER BY due_at ASC
+                """,
+                (_iso(now),),
+            ).fetchall()
+            task_ids = [row["id"] for row in rows]
+            for task_id in task_ids:
+                self.conn.execute(
+                    "UPDATE tasks SET status = 'overdue', updated_at = ? WHERE id = ?",
+                    (_iso(utc_now()), task_id),
+                )
+        return [self.get_task(task_id) for task_id in task_ids]
 
     def create_character(self, data: CharacterCreate) -> Character:
         now = utc_now()

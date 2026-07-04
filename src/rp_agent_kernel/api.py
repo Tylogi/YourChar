@@ -213,14 +213,7 @@ def create_app(db_path: str | None = None) -> FastAPI:
     ):
         kernel = _kernel(app)
         _require(kernel, FeatureName.event_stream)
-        due = kernel.storage.due_reminders(now or datetime.now().astimezone())
-        payloads = [
-            {
-                "type": "ReminderDue",
-                "reminder": reminder.model_dump(mode="json", by_alias=True),
-            }
-            for reminder in due
-        ]
+        payloads = kernel.due_events(now or datetime.now().astimezone())
 
         def _events():
             for payload in payloads:
@@ -229,6 +222,15 @@ def create_app(db_path: str | None = None) -> FastAPI:
                 yield "data: " + json.dumps({"type": "Noop"}, ensure_ascii=False) + "\n\n"
 
         return StreamingResponse(_events(), media_type="text/event-stream")
+
+    @app.get("/api/events/poll")
+    def poll_events(
+        now: Annotated[datetime | None, Query()] = None,
+    ):
+        kernel = _kernel(app)
+        _require(kernel, FeatureName.event_stream)
+        events = kernel.due_events(now or datetime.now().astimezone())
+        return {"events": events, "count": len(events)}
 
     @app.get("/api/calendar/events")
     def list_calendar_events(

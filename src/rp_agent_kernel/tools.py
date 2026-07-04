@@ -119,7 +119,8 @@ class ToolExecutor:
                 )
             )
         elif operation.op_type == "create_task":
-            task = self.storage.create_task(TaskCreate.model_validate(operation.payload))
+            payload = _with_origin_metadata(operation.payload, session_id, request)
+            task = self.storage.create_task(TaskCreate.model_validate(payload))
             result.artifacts.setdefault("tasks", []).append(task)
             result.actions.append(
                 self.storage.add_action(
@@ -141,7 +142,8 @@ class ToolExecutor:
                 )
             )
         elif operation.op_type == "create_reminder":
-            reminder = self.storage.create_reminder(ReminderCreate.model_validate(operation.payload))
+            payload = _with_origin_metadata(operation.payload, session_id, request)
+            reminder = self.storage.create_reminder(ReminderCreate.model_validate(payload))
             result.artifacts.setdefault("reminders", []).append(reminder)
             result.actions.append(
                 self.storage.add_action(
@@ -214,3 +216,16 @@ class ToolExecutor:
                     payload={"confirmationId": confirmation_id, **operation.payload},
                 )
             )
+
+
+def _with_origin_metadata(
+    payload: dict[str, Any], session_id: str, request: MessageRequest
+) -> dict[str, Any]:
+    metadata = {
+        **(payload.get("metadata") or {}),
+        "sessionId": session_id,
+        "mode": request.mode,
+        "characterId": request.character_id,
+        "source": "planner",
+    }
+    return {**payload, "metadata": metadata}

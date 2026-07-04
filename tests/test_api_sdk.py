@@ -222,6 +222,93 @@ def test_stream_message_endpoint_returns_sse_events(tmp_path):
     assert events[-1]["response"]["metrics"]["contextUsageRatio"] > 0
 
 
+def test_due_event_poll_and_stream_are_shell_friendly_and_idempotent(tmp_path):
+    app = create_app(str(tmp_path / "events.sqlite3"))
+    client = TestClient(app)
+    reminder = client.post(
+        "/api/reminders",
+        json={
+            "title": "喝水",
+            "remindAt": "2026-07-02T11:50:00+08:00",
+            "metadata": {"sessionId": "sms-events", "mode": "sms"},
+        },
+    ).json()
+    task = client.post(
+        "/api/tasks",
+        json={
+            "title": "提交周报",
+            "dueAt": "2026-07-02T11:55:00+08:00",
+            "metadata": {"sessionId": "sms-events", "mode": "sms"},
+        },
+    ).json()
+
+    first = client.get("/api/events/poll", params={"now": NOW.isoformat()})
+    assert first.status_code == 200
+    body = first.json()
+    assert body["count"] == 2
+    types = {event["type"] for event in body["events"]}
+    assert types == {"ReminderDue", "TaskOverdue"}
+    reminder_event = next(event for event in body["events"] if event["type"] == "ReminderDue")
+    task_event = next(event for event in body["events"] if event["type"] == "TaskOverdue")
+    assert reminder_event["message"] == "提醒到点：喝水。时间 2026-07-02 11:50。"
+    assert reminder_event["sessionId"] == "sms-events"
+    assert reminder_event["action"]["actionType"] == "reminder_due"
+    assert reminder_event["memory"]["source"] == "proactive_event"
+    assert task_event["message"].startswith("任务到点：提交周报。")
+    assert task_event["action"]["actionType"] == "task_overdue"
+
+    reminder_status = next(
+        item for item in client.get("/api/reminders").json() if item["id"] == reminder["id"]
+    )["status"]
+    task_status = next(item for item in client.get("/api/tasks").json() if item["id"] == task["id"])[
+        "status"
+    ]
+    assert reminder_status == "due"
+    assert task_status == "overdue"
+    second = client.get("/api/events/poll", params={"now": NOW.isoformat()})
+    assert second.json() == {"events": [], "count": 0}
+
+    streamed = client.get("/api/events/stream", params={"now": NOW.isoformat()})
+    assert streamed.status_code == 200
+    assert _sse_events(streamed.text) == [{"type": "Noop"}]
+
+
+def test_rp_due_reminder_uses_character_voice_and_memory(tmp_path):
+    app = create_app(str(tmp_path / "rp-events.sqlite3"))
+    client = TestClient(app)
+    character = client.post(
+        "/api/characters",
+        json={
+            "id": "archivist",
+            "name": "林岚",
+            "persona": "冷静的档案管理员。",
+            "scenario": "雨夜档案室。",
+        },
+    ).json()
+    client.post(
+        "/api/reminders",
+        json={
+            "title": "喝水",
+            "remindAt": "2026-07-02T11:50:00+08:00",
+            "metadata": {
+                "sessionId": "rp-events",
+                "mode": "rp",
+                "characterId": character["id"],
+            },
+        },
+    )
+
+    event = client.get("/api/events/poll", params={"now": NOW.isoformat()}).json()["events"][0]
+    assert event["type"] == "ReminderDue"
+    assert event["mode"] == "rp"
+    assert event["characterId"] == "archivist"
+    assert "林岚" in event["message"]
+    assert "现实提醒" in event["message"]
+    assert event["memory"]["mode"] == "rp"
+    assert event["memory"]["characterId"] == "archivist"
+    assert event["memory"]["source"] == "proactive_event"
+
+
 def test_openai_compatible_model_list_endpoint(tmp_path):
     server, handler, thread = _start_model_list_server()
     app = create_app(str(tmp_path / "model-list.sqlite3"))
