@@ -1,0 +1,25 @@
+[project]
+name = "rp-agent-kernel"
+version = "0.1.0"
+authors = [
+    { name = "renjie_xie", email = "renjie_xie@njupt.edu.cn" }
+]
+requires-python = ">=3.13"
+dependencies = [
+    "fastapi>=0.139.0",
+    "pydantic>=2.13.4",
+    "uvicorn>=0.49.0",
+]
+
+[project.scripts]
+rp-agent-kernel = "rp_agent_kernel.__main__:main"
+
+[build-system]
+requires = ["uv_build>=0.11.23,<0.12.0"]
+build-backend = "uv_build"
+
+[dependency-groups]
+dev = [
+    "httpx>=0.28.1",
+    "pytest>=9.1.1",
+]

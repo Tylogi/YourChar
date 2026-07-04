@@ -1,0 +1,463 @@
+from datetime import datetime
+import base64
+import binascii
+from http.server import BaseHTTPRequestHandler, HTTPServer
+import json
+import struct
+import threading
+from zoneinfo import ZoneInfo
+
+from fastapi.testclient import TestClient
+
+from rp_agent_kernel.api import create_app
+from rp_agent_kernel.kernel import Kernel
+from rp_agent_kernel.sdk import InProcessKernelClient
+
+
+NOW = datetime(2026, 7, 2, 12, 0, tzinfo=ZoneInfo("Asia/Shanghai"))
+
+
+def test_http_and_python_sdk_share_message_contract(tmp_path):
+    app = create_app(str(tmp_path / "api.sqlite3"))
+    http = TestClient(app)
+    payload = {"mode": "sms", "text": "今晚八点安排项目会", "now": NOW.isoformat()}
+
+    http_response = http.post("/api/sessions/s1/messages", json=payload)
+    assert http_response.status_code == 200
+    http_json = http_response.json()
+
+    sdk = InProcessKernelClient(Kernel(":memory:"))
+    sdk_json = sdk.sendMessage("s1", "sms", "今晚八点安排项目会", now=NOW)
+
+    assert set(http_json) == set(sdk_json)
+    assert http_json["reply"].startswith("已安排")
+    assert sdk_json["reply"].startswith("已安排")
+    assert http_json["actions"][0]["actionType"] == sdk_json["actions"][0]["actionType"]
+    assert http_json["contextTraceId"]
+    assert http_json["metrics"]["featureFlags"]["calendar"] is True
+
+
+def test_temporary_ui_is_served(tmp_path):
+    app = create_app(str(tmp_path / "ui.sqlite3"))
+    client = TestClient(app)
+
+    page = client.get("/ui")
+    assert page.status_code == 200
+    assert "RP Agent Kernel" in page.text
+    assert "Inspector" in page.text
+    assert "OpenAI Compatible API" in page.text
+    assert "上传解析角色卡" in page.text
+    assert "已有模型" in page.text
+    assert "Model Logs" in page.text
+    assert "20260704-round5" in page.text
+    assert "chatContext" in page.text
+    assert "newSessionBtn" in page.text
+    assert "newSmsSessionBtn" in page.text
+    assert "newRpSessionBtn" in page.text
+    assert "copySessionBtn" in page.text
+    assert "syncServerSessionsBtn" in page.text
+    assert "cloneSessionBtn" in page.text
+    assert "clearSessionBtn" in page.text
+    assert "exportSessionEvalBtn" in page.text
+    assert "sessionSearch" in page.text
+    assert "sessionModeFilter" in page.text
+    assert "sessionList" in page.text
+
+    script = client.get("/ui/assets/app.js")
+    assert script.status_code == 200
+    assert "sendMessage" in script.text
+    assert "streamApi" in script.text
+    assert "loadHistory" in script.text
+    assert "createNewSession" in script.text
+    assert "copyCurrentSessionId" in script.text
+    assert "syncServerSessions" in script.text
+    assert "cloneCurrentSession" in script.text
+    assert "clearCurrentSessionHistory" in script.text
+    assert "exportCurrentSessionEvalCase" in script.text
+    assert "attachRunSummary" in script.text
+    assert "captureRunSnapshot" in script.text
+    assert "copyRunSummary" in script.text
+    assert "exportRunEvalCase" in script.text
+    assert "persistLatestRunArtifact" in script.text
+    assert "getRunArtifact" in script.text
+    assert "RUN_ARTIFACTS_KEY" in script.text
+    assert "switchSession" in script.text
+    assert "renderSessionList" in script.text
+    assert "saveModelConfig" in script.text
+    assert "importCharacterCard" in script.text
+    assert "loadModelList" in script.text
+    assert "saveCurrent" in script.text
+    assert "selectModel" in script.text
+    assert "modelSelect" in script.text
+    assert "modelContextWindow" in script.text
+    assert "loadModelLogs" in script.text
+    assert "modelRoleBlock" in script.text
+    assert "reasoning" in script.text
+    assert "displayText" in script.text
+    assert "sanitizeAssistantHistoryText" in script.text
+    assert "hasDebugOpening" in script.text
+    assert "debugHeadingCount" in script.text
+    assert "formatActionSummary" in script.text
+    assert "focusModelLog" in script.text
+    assert "renderChatContext" in script.text
+
+
+def test_openai_compatible_config_masks_api_key(tmp_path):
+    app = create_app(str(tmp_path / "model.sqlite3"))
+    client = TestClient(app)
+
+    default_config = client.get("/api/model-config/openai-compatible")
+    assert default_config.status_code == 200
+    assert default_config.json()["apiKeySet"] is False
+
+    patched = client.patch(
+        "/api/model-config/openai-compatible",
+        json={
+            "enabled": True,
+            "baseUrl": "https://example.test/v1",
+            "model": "compatible-model",
+            "apiKey": "sk-test-secret-1234",
+            "headers": {"X-Test": "1"},
+            "temperature": 0.7,
+            "maxTokens": 1024,
+            "contextWindowTokens": 64000,
+        },
+    )
+    assert patched.status_code == 200
+    body = patched.json()
+    assert body["enabled"] is True
+    assert body["apiKeySet"] is True
+    assert body["apiKeyMasked"] == "sk-t...1234"
+    assert "sk-test-secret-1234" not in json.dumps(body)
+
+    fetched = client.get("/api/model-config/openai-compatible").json()
+    assert fetched["baseUrl"] == "https://example.test/v1"
+    assert fetched["model"] == "compatible-model"
+    assert fetched["contextWindowTokens"] == 64000
+    assert "sk-test-secret-1234" not in json.dumps(fetched)
+
+    cleared = client.patch(
+        "/api/model-config/openai-compatible",
+        json={"clearApiKey": True},
+    ).json()
+    assert cleared["apiKeySet"] is False
+
+
+def test_ui_prefixed_api_routes_match_real_api(tmp_path):
+    app = create_app(str(tmp_path / "ui-prefix.sqlite3"))
+    client = TestClient(app)
+
+    assert client.get("/ui/health").json() == {"status": "ok"}
+
+    patched = client.patch(
+        "/ui/api/model-config/openai-compatible",
+        json={
+            "enabled": True,
+            "baseUrl": "http://example.test/v1",
+            "apiKey": "client",
+        },
+    )
+    assert patched.status_code == 200
+
+    fetched = client.get("/ui/api/model-config/openai-compatible")
+    assert fetched.status_code == 200
+    assert fetched.json()["baseUrl"] == "http://example.test/v1"
+    assert fetched.json()["apiKeySet"] is True
+
+
+def test_model_call_logs_endpoint_lists_and_clears_logs(tmp_path):
+    app = create_app(str(tmp_path / "model-logs.sqlite3"))
+    client = TestClient(app)
+    kernel = app.state.kernel
+
+    log = kernel.storage.create_model_call_log(
+        provider="openai_compatible",
+        session_id="s1",
+        mode="sms",
+        character_id=None,
+        model="debug-model",
+        endpoint="http://example.test/v1/chat/completions",
+        request={"model": "debug-model", "messages": [{"role": "system", "content": "rules"}]},
+        prompt_token_estimate=3,
+    )
+    kernel.storage.complete_model_call_log(
+        log.id,
+        status="completed",
+        response={"usage": {"total_tokens": 8}},
+        completion_text="ok",
+    )
+
+    listed = client.get("/ui/api/model-call-logs")
+    assert listed.status_code == 200
+    assert listed.json()[0]["id"] == log.id
+    assert listed.json()[0]["request"]["messages"][0]["role"] == "system"
+    assert "authorization" not in json.dumps(listed.json()).lower()
+
+    fetched = client.get(f"/api/model-call-logs/{log.id}")
+    assert fetched.status_code == 200
+    assert fetched.json()["completionText"] == "ok"
+
+    cleared = client.delete("/api/model-call-logs")
+    assert cleared.status_code == 200
+    assert cleared.json()["deleted"] == 1
+    assert client.get("/api/model-call-logs").json() == []
+
+
+def test_stream_message_endpoint_returns_sse_events(tmp_path):
+    app = create_app(str(tmp_path / "stream.sqlite3"))
+    client = TestClient(app)
+
+    response = client.post(
+        "/ui/api/sessions/stream-s1/messages/stream",
+        json={"mode": "sms", "text": "你好", "now": NOW.isoformat()},
+    )
+    assert response.status_code == 200
+    events = _sse_events(response.text)
+
+    assert events[0]["type"] == "start"
+    assert events[0]["metrics"]["tokenEstimate"] > 0
+    assert any(event["type"] == "delta" for event in events)
+    assert events[-1]["type"] == "done"
+    assert events[-1]["response"]["reply"] == "收到。"
+    assert events[-1]["response"]["metrics"]["contextUsageRatio"] > 0
+
+
+def test_openai_compatible_model_list_endpoint(tmp_path):
+    server, handler, thread = _start_model_list_server()
+    app = create_app(str(tmp_path / "model-list.sqlite3"))
+    client = TestClient(app)
+    try:
+        client.patch(
+            "/api/model-config/openai-compatible",
+            json={
+                "baseUrl": f"http://127.0.0.1:{server.server_port}/v1",
+                "apiKey": "sk-test",
+                "model": "alpha-model",
+            },
+        )
+
+        response = client.get("/api/model-config/openai-compatible/models")
+        assert response.status_code == 200
+        assert response.json() == {"models": ["alpha-model", "beta-model"], "count": 2}
+        assert handler.calls == 1
+        assert handler.last_path == "/v1/models"
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=2)
+
+
+def test_character_card_json_import_endpoint(tmp_path):
+    app = create_app(str(tmp_path / "character-json.sqlite3"))
+    client = TestClient(app)
+
+    card = {
+        "spec": "chara_card_v2",
+        "spec_version": "2.0",
+        "data": {
+            "name": "璃月",
+            "description": "冷静的档案管理员。",
+            "personality": "说话克制，重视证据。",
+            "scenario": "深夜资料室。",
+            "tags": ["archive", "rp"],
+            "first_mes": "你终于来了。",
+        },
+    }
+    response = client.post(
+        "/api/characters/import-card",
+        json={"fileName": "liyue.json", "content": json.dumps(card, ensure_ascii=False)},
+    )
+    assert response.status_code == 200
+    data = response.json()
+    assert data["parsedFormat"] == "chara_card_v2"
+    assert data["character"]["name"] == "璃月"
+    assert "冷静的档案管理员" in data["character"]["persona"]
+    assert data["character"]["scenario"] == "深夜资料室。"
+    assert data["character"]["metadata"]["first_mes"] == "你终于来了。"
+
+
+def test_character_card_png_import_endpoint(tmp_path):
+    app = create_app(str(tmp_path / "character-png.sqlite3"))
+    client = TestClient(app)
+
+    card = {"data": {"name": "PNG角色", "description": "来自 PNG metadata。"}}
+    png = _png_with_text("chara", base64.b64encode(json.dumps(card).encode()).decode())
+    response = client.post(
+        "/api/characters/import-card",
+        json={"fileName": "card.png", "contentBase64": base64.b64encode(png).decode()},
+    )
+    assert response.status_code == 200
+    data = response.json()
+    assert data["parsedFormat"] == "tavern_png"
+    assert data["character"]["name"] == "PNG角色"
+    assert "PNG metadata" in data["character"]["persona"]
+
+
+def test_session_history_endpoint_returns_recent_messages(tmp_path):
+    app = create_app(str(tmp_path / "history.sqlite3"))
+    client = TestClient(app)
+
+    sent = client.post(
+        "/api/sessions/history-s1/messages",
+        json={"mode": "sms", "text": "今晚八点安排项目会", "now": NOW.isoformat()},
+    )
+    assert sent.status_code == 200
+
+    history = client.get("/api/sessions/history-s1/messages?limit=10")
+    assert history.status_code == 200
+    messages = history.json()
+    assert [message["role"] for message in messages] == ["user", "assistant"]
+    assert messages[0]["content"] == "今晚八点安排项目会"
+    assert messages[0]["mode"] == "sms"
+    assert "id" in messages[0]
+
+
+def test_session_workbench_endpoints_list_clone_and_clear(tmp_path):
+    app = create_app(str(tmp_path / "sessions.sqlite3"))
+    client = TestClient(app)
+
+    client.post(
+        "/api/sessions/workbench-sms/messages",
+        json={"mode": "sms", "text": "今晚八点安排项目会", "now": NOW.isoformat()},
+    )
+    client.post(
+        "/api/sessions/workbench-rp/messages",
+        json={"mode": "rp", "text": "月光下，角色推开门。", "now": NOW.isoformat()},
+    )
+
+    listed = client.get("/api/sessions?search=workbench&limit=10")
+    assert listed.status_code == 200
+    session_ids = {item["sessionId"] for item in listed.json()}
+    assert {"workbench-sms", "workbench-rp"} <= session_ids
+    sms_only = client.get("/api/sessions?mode=sms&search=workbench").json()
+    assert [item["sessionId"] for item in sms_only] == ["workbench-sms"]
+    assert sms_only[0]["messageCount"] == 2
+    assert sms_only[0]["lastPreview"]
+
+    cloned = client.post(
+        "/api/sessions/workbench-sms/clone",
+        json={"targetSessionId": "workbench-sms-copy"},
+    )
+    assert cloned.status_code == 200
+    assert cloned.json()["cloned"] == 2
+    clone_history = client.get("/api/sessions/workbench-sms-copy/messages").json()
+    assert [message["role"] for message in clone_history] == ["user", "assistant"]
+
+    cleared = client.delete("/api/sessions/workbench-sms-copy/messages")
+    assert cleared.status_code == 200
+    assert cleared.json()["deleted"] == 2
+    assert client.get("/api/sessions/workbench-sms-copy/messages").json() == []
+
+
+def _png_with_text(keyword: str, value: str) -> bytes:
+    signature = b"\x89PNG\r\n\x1a\n"
+    ihdr_data = struct.pack(">IIBBBBB", 1, 1, 8, 2, 0, 0, 0)
+    text_data = keyword.encode("latin-1") + b"\x00" + value.encode("latin-1")
+    return (
+        signature
+        + _png_chunk(b"IHDR", ihdr_data)
+        + _png_chunk(b"tEXt", text_data)
+        + _png_chunk(b"IEND", b"")
+    )
+
+
+def _png_chunk(chunk_type: bytes, data: bytes) -> bytes:
+    crc = binascii.crc32(chunk_type + data) & 0xFFFFFFFF
+    return struct.pack(">I", len(data)) + chunk_type + data + struct.pack(">I", crc)
+
+
+class _ModelListHandler(BaseHTTPRequestHandler):
+    calls = 0
+    last_path = ""
+
+    def do_GET(self):
+        type(self).calls += 1
+        type(self).last_path = self.path
+        body = json.dumps(
+            {"data": [{"id": "beta-model"}, {"id": "alpha-model"}, {"id": "alpha-model"}]}
+        ).encode("utf-8")
+        self.send_response(200)
+        self.send_header("content-type", "application/json")
+        self.send_header("content-length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+    def log_message(self, format, *args):
+        return
+
+
+def _start_model_list_server():
+    handler = type("ConfiguredModelListHandler", (_ModelListHandler,), {"calls": 0, "last_path": ""})
+    server = HTTPServer(("127.0.0.1", 0), handler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    return server, handler, thread
+
+
+def _sse_events(text: str) -> list[dict]:
+    events: list[dict] = []
+    for frame in text.strip().split("\n\n"):
+        data = "\n".join(
+            line.removeprefix("data: ").strip()
+            for line in frame.splitlines()
+            if line.startswith("data:")
+        )
+        if data:
+            events.append(json.loads(data))
+    return events
+
+
+def test_feature_endpoint_is_agent_test_friendly(tmp_path):
+    app = create_app(str(tmp_path / "features.sqlite3"))
+    client = TestClient(app)
+
+    features = client.get("/api/features")
+    assert features.status_code == 200
+    assert any(item["name"] == "calendar" for item in features.json())
+
+    patched = client.patch("/api/features", json={"flags": {"calendar": False}})
+    assert patched.status_code == 200
+    assert next(item for item in patched.json() if item["name"] == "calendar")["enabled"] is False
+
+    blocked = client.get("/api/calendar/events")
+    assert blocked.status_code == 403
+
+    message = client.post(
+        "/api/sessions/s1/messages",
+        json={"mode": "sms", "text": "今晚八点安排项目会", "now": NOW.isoformat()},
+    )
+    assert message.status_code == 200
+    assert message.json()["actions"][0]["status"] == "feature_disabled"
+
+
+def test_eval_capabilities_and_run_endpoint(tmp_path):
+    app = create_app(str(tmp_path / "eval.sqlite3"))
+    client = TestClient(app)
+
+    capabilities = client.get("/api/eval/capabilities")
+    assert capabilities.status_code == 200
+    assert "POST /api/eval/run" in capabilities.json()["endpoints"]
+    assert "setFeature(name, enabled)" in capabilities.json()["sdkMethods"]
+
+    response = client.post(
+        "/api/eval/run",
+        json={
+            "cases": [
+                {
+                    "id": "sms-reminder",
+                    "sessionId": "eval-s1",
+                    "request": {
+                        "mode": "sms",
+                        "text": "三小时后提醒我喝水",
+                        "now": NOW.isoformat(),
+                    },
+                    "assertions": {"actionType": "create_reminder", "replyContains": "已设置提醒"},
+                }
+            ]
+        },
+    )
+    assert response.status_code == 200
+    data = response.json()
+    assert data["deterministic"] is True
+    assert data["summary"]["passed"] == 1
+    assert data["results"][0]["response"]["metrics"]["latencyMs"] >= 0

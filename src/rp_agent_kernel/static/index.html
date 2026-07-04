@@ -1,0 +1,309 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <base href="/" />
+    <title>RP Agent Kernel</title>
+    <link rel="stylesheet" href="/ui/assets/app.css?v=20260704-round5" />
+  </head>
+  <body>
+    <div class="app-shell">
+      <header class="topbar">
+        <div class="brand">
+          <span class="brand-mark">RK</span>
+          <div class="brand-copy">
+            <h1>RP Agent Kernel</h1>
+            <span id="statusText" class="muted">连接中</span>
+          </div>
+        </div>
+        <div class="top-actions">
+          <button id="toggleInspectorBtn" class="toolbar-button" type="button">Inspector</button>
+          <a class="toolbar-button" href="/docs" target="_blank" rel="noreferrer">API Docs</a>
+          <button id="refreshAllBtn" class="icon-button" type="button" title="刷新全部">↻</button>
+        </div>
+      </header>
+
+      <main class="workspace">
+        <aside class="sidebar" aria-label="Session controls">
+          <section class="control-group">
+            <div class="section-heading">
+              <h2>Session</h2>
+              <button id="loadHistoryBtn" class="icon-button small" type="button" title="加载历史">↻</button>
+            </div>
+            <label>
+              <span>Session ID</span>
+              <input id="sessionId" type="text" value="demo" autocomplete="off" />
+            </label>
+            <div class="session-actions">
+              <button id="newSessionBtn" class="toolbar-button" type="button">新建当前模式</button>
+              <button id="newSmsSessionBtn" class="toolbar-button" type="button">新建 SMS</button>
+              <button id="newRpSessionBtn" class="toolbar-button" type="button">新建 RP</button>
+              <button id="copySessionBtn" class="toolbar-button" type="button">复制 ID</button>
+            </div>
+            <div class="session-filter-row">
+              <input id="sessionSearch" type="search" placeholder="搜索 session / 角色" autocomplete="off" />
+              <select id="sessionModeFilter" aria-label="按模式过滤会话">
+                <option value="all">全部</option>
+                <option value="sms">SMS</option>
+                <option value="rp">RP</option>
+              </select>
+            </div>
+            <div class="session-server-actions">
+              <button id="syncServerSessionsBtn" class="toolbar-button" type="button">同步服务端</button>
+              <button id="cloneSessionBtn" class="toolbar-button" type="button">克隆当前</button>
+              <button id="clearSessionBtn" class="toolbar-button" type="button">清空历史</button>
+              <button id="exportSessionEvalBtn" class="toolbar-button" type="button">导出 Eval</button>
+            </div>
+            <div id="sessionList" class="session-list" aria-label="最近会话"></div>
+            <div class="segmented" role="group" aria-label="Mode">
+              <button id="modeSms" class="active" type="button" data-mode="sms">SMS</button>
+              <button id="modeRp" type="button" data-mode="rp">RP</button>
+            </div>
+            <label>
+              <span>Character ID</span>
+              <input id="characterId" type="text" placeholder="rp 可选" autocomplete="off" />
+            </label>
+            <select id="characterSelect" aria-label="选择角色">
+              <option value="">选择已有角色</option>
+            </select>
+            <label>
+              <span>Timezone</span>
+              <input id="timezone" type="text" value="Asia/Shanghai" autocomplete="off" />
+            </label>
+            <label>
+              <span>Fixed now</span>
+              <input id="fixedNow" type="datetime-local" />
+            </label>
+          </section>
+
+          <section class="control-group">
+            <h2>Commands</h2>
+            <div class="command-list">
+              <button class="command" type="button" data-command="/sms">/sms</button>
+              <button class="command" type="button" data-command="/rp">/rp</button>
+              <button class="command" type="button" data-command="/calendar">/calendar</button>
+            <button class="command" type="button" data-command="/features">/features</button>
+            <button class="command" type="button" data-command="/model">/model</button>
+            <button class="command" type="button" data-command="/logs">/logs</button>
+            <button class="command" type="button" data-command="/characters">/characters</button>
+            <button class="command" type="button" data-command="/trace">/trace</button>
+            <button class="command" type="button" data-command="/eval">/eval</button>
+            </div>
+          </section>
+
+          <section class="control-group">
+            <h2>Quick Tests</h2>
+            <div class="preset-list">
+              <button class="preset" type="button" data-mode="sms" data-text="今晚八点安排项目会">今晚八点安排项目会</button>
+              <button class="preset" type="button" data-mode="sms" data-text="三小时后提醒我喝水">三小时后提醒我喝水</button>
+              <button class="preset" type="button" data-mode="sms" data-text="删除所有日程">删除所有日程</button>
+              <button class="preset" type="button" data-mode="rp" data-text="月光下，角色推开门。">RP 场景</button>
+            </div>
+          </section>
+        </aside>
+
+        <section class="chat-workspace" aria-label="Chat">
+          <div class="chat-header">
+            <div>
+              <h2 id="chatTitle">SMS Secretary</h2>
+              <p id="chatSubtitle">短消息式日常秘书测试</p>
+              <div id="chatContext" class="chat-context" aria-label="当前会话上下文"></div>
+            </div>
+            <div id="lastMetrics" class="metrics-strip"></div>
+          </div>
+
+          <div id="messageList" class="message-list"></div>
+
+          <form id="messageForm" class="composer">
+            <div class="composer-tools">
+              <span id="composerMode" class="mode-badge">SMS</span>
+              <span class="muted">Enter 发送 · Shift+Enter 换行 · / 命令</span>
+              <button id="retryBtn" class="toolbar-button hidden" type="button">重试</button>
+            </div>
+            <div class="composer-row">
+              <textarea id="messageText" rows="3" placeholder="输入消息，或输入 / 查看命令"></textarea>
+              <button id="sendButton" class="send-button" type="submit" title="发送">发送</button>
+            </div>
+          </form>
+        </section>
+
+        <aside id="inspector" class="inspector open" aria-label="Inspector">
+          <div class="tabs" role="tablist">
+            <button class="tab active" type="button" data-panel="schedulePanel">日程</button>
+            <button class="tab" type="button" data-panel="featuresPanel">开关</button>
+            <button class="tab" type="button" data-panel="modelPanel">模型</button>
+            <button class="tab" type="button" data-panel="modelLogsPanel">日志</button>
+            <button class="tab" type="button" data-panel="charactersPanel">角色</button>
+            <button class="tab" type="button" data-panel="evalPanel">评估</button>
+            <button class="tab" type="button" data-panel="tracePanel">Trace</button>
+          </div>
+
+          <section id="schedulePanel" class="panel-view active">
+            <div class="panel-heading">
+              <h2>Schedule</h2>
+              <button id="refreshScheduleBtn" class="icon-button small" type="button" title="刷新日程">↻</button>
+            </div>
+            <form id="eventForm" class="stacked-form">
+              <input id="eventTitle" type="text" placeholder="日程标题" />
+              <input id="eventStart" type="datetime-local" />
+              <button type="submit">新增日程</button>
+            </form>
+            <div id="calendarList" class="list"></div>
+
+            <div class="panel-heading split">
+              <h2>Reminders</h2>
+              <button id="refreshReminderBtn" class="icon-button small" type="button" title="刷新提醒">↻</button>
+            </div>
+            <form id="reminderForm" class="stacked-form">
+              <input id="reminderTitle" type="text" placeholder="提醒标题" />
+              <input id="reminderAt" type="datetime-local" />
+              <button type="submit">新增提醒</button>
+            </form>
+            <div id="reminderList" class="list"></div>
+          </section>
+
+          <section id="featuresPanel" class="panel-view">
+            <div class="panel-heading">
+              <h2>Feature Flags</h2>
+              <button id="refreshFeaturesBtn" class="icon-button small" type="button" title="刷新开关">↻</button>
+            </div>
+            <div id="featureList" class="feature-list"></div>
+          </section>
+
+          <section id="modelPanel" class="panel-view">
+            <div class="panel-heading">
+              <h2>OpenAI Compatible API</h2>
+              <button id="loadModelConfigBtn" class="icon-button small" type="button" title="加载模型配置">↻</button>
+            </div>
+            <div class="item">
+              启用后，聊天回复会优先调用外部 OpenAI-compatible
+              <code>/chat/completions</code>；工具执行、确认和日程写入仍由本地内核决定。调用失败会自动回退到本地确定性回复。
+            </div>
+            <form id="modelConfigForm" class="stacked-form">
+              <label class="inline-check">
+                <input id="modelEnabled" type="checkbox" />
+                <span>启用外部模型配置</span>
+              </label>
+              <label>
+                <span>Base URL</span>
+                <input id="modelBaseUrl" type="url" placeholder="https://api.openai.com/v1" />
+              </label>
+              <label>
+                <span>API Key</span>
+                <input id="modelApiKey" type="password" placeholder="留空则不修改已保存密钥" autocomplete="off" />
+              </label>
+              <label>
+                <span>Model</span>
+                <input id="modelName" type="text" placeholder="gpt-4.1-mini / compatible-model-name" autocomplete="off" />
+              </label>
+              <div class="model-picker-block">
+                <div class="field-label">已有模型</div>
+                <div class="model-picker-row">
+                  <select id="modelSelect" aria-label="选择已有模型">
+                    <option value="">先保存配置，再拉取模型列表</option>
+                  </select>
+                  <button id="loadModelsBtn" type="button">拉取模型</button>
+                </div>
+                <div class="helper-text">点击拉取模型会先保存当前 Base URL 和 API Key；选择后会自动填入上面的 Model。</div>
+              </div>
+              <div class="two-col">
+                <label>
+                  <span>Temperature</span>
+                  <input id="modelTemperature" type="number" min="0" max="2" step="0.1" placeholder="可选" />
+                </label>
+                <label>
+                  <span>Max Tokens</span>
+                  <input id="modelMaxTokens" type="number" min="1" step="1" placeholder="可选" />
+                </label>
+                <label>
+                  <span>Context Window</span>
+                  <input id="modelContextWindow" type="number" min="1" step="1" placeholder="128000" />
+                </label>
+              </div>
+              <label>
+                <span>Extra Headers JSON</span>
+                <textarea id="modelHeaders" class="code-input compact-code" rows="4" placeholder="{ }"></textarea>
+              </label>
+              <div class="button-row">
+                <button type="submit">保存模型配置</button>
+                <button id="clearApiKeyBtn" type="button">清除 Key</button>
+              </div>
+            </form>
+            <div id="modelConfigStatus" class="item"></div>
+          </section>
+
+          <section id="modelLogsPanel" class="panel-view">
+            <div class="panel-heading">
+              <h2>Model Logs</h2>
+              <div class="button-row compact-buttons">
+                <button id="refreshModelLogsBtn" class="icon-button small" type="button" title="刷新模型日志">↻</button>
+                <button id="clearModelLogsBtn" class="icon-button small" type="button" title="清空模型日志">×</button>
+              </div>
+            </div>
+            <div id="modelLogList" class="model-log-list"></div>
+          </section>
+
+          <section id="charactersPanel" class="panel-view">
+            <div class="panel-heading">
+              <h2>RP Characters</h2>
+              <button id="refreshCharactersBtn" class="icon-button small" type="button" title="刷新角色">↻</button>
+            </div>
+            <form id="characterForm" class="stacked-form">
+              <label>
+                <span>Character ID</span>
+                <input id="characterFormId" type="text" placeholder="新建时可留空" autocomplete="off" />
+              </label>
+              <label>
+                <span>Name</span>
+                <input id="characterName" type="text" placeholder="角色名" autocomplete="off" />
+              </label>
+              <label>
+                <span>Tags</span>
+                <input id="characterTags" type="text" placeholder="tag1, tag2" autocomplete="off" />
+              </label>
+              <label>
+                <span>Persona</span>
+                <textarea id="characterPersona" rows="5" placeholder="角色设定、性格、说话方式"></textarea>
+              </label>
+              <label>
+                <span>Scenario</span>
+                <textarea id="characterScenario" rows="4" placeholder="场景、开局、世界设定"></textarea>
+              </label>
+              <div class="button-row">
+                <button type="submit">保存角色</button>
+                <button id="useCharacterBtn" type="button">用于当前 RP</button>
+              </div>
+            </form>
+            <div class="import-box">
+              <input id="characterCardFile" type="file" accept=".json,.card,.png,application/json,image/png" />
+              <button id="importCharacterBtn" type="button">上传解析角色卡</button>
+            </div>
+            <div id="characterImportStatus" class="item"></div>
+            <div id="characterList" class="list"></div>
+          </section>
+
+          <section id="evalPanel" class="panel-view">
+            <div class="panel-heading">
+              <h2>Eval</h2>
+              <button id="runEvalBtn" class="icon-button small" type="button" title="运行评估">▶</button>
+            </div>
+            <textarea id="evalJson" class="code-input" rows="12"></textarea>
+            <pre id="evalResult" class="json-output"></pre>
+          </section>
+
+          <section id="tracePanel" class="panel-view">
+            <div class="panel-heading">
+              <h2>Context Trace</h2>
+              <button id="loadTraceBtn" class="icon-button small" type="button" title="加载 trace">↻</button>
+            </div>
+            <input id="traceId" type="text" placeholder="contextTraceId" />
+            <pre id="traceOutput" class="json-output"></pre>
+          </section>
+        </aside>
+      </main>
+    </div>
+
+    <script src="/ui/assets/app.js?v=20260704-round5" defer></script>
+  </body>
+</html>
