@@ -97,6 +97,7 @@ class ContextBuilder:
             memories = self.storage.recent_memories(
                 mode="rp", session_id=session_id, character_id=request.character_id, limit=6
             )
+            memories = _filter_memories_for_context(memories, request)
             blocks.append(
                 self._block(
                     block_id="semi:rp-memory:v1",
@@ -158,6 +159,7 @@ class ContextBuilder:
                     character_id=request.character_id if request.mode == "rp" else None,
                     limit=5,
                 )
+                memories = _filter_memories_for_context(memories, request)
                 blocks.append(
                     self._block(
                         block_id=f"dynamic:memory-search:{search_mode}",
@@ -228,3 +230,13 @@ def _include_real_state(request: MessageRequest) -> bool:
     return text.startswith("/real") or any(
         phrase in text for phrase in ("现实日程", "真实日程", "现实提醒", "真实提醒")
     )
+
+
+def _filter_memories_for_context(memories, request: MessageRequest):
+    if request.mode != "rp" or _include_real_state(request):
+        return memories
+    return [
+        memory
+        for memory in memories
+        if memory.source != "proactive_event" and "out_of_character" not in memory.tags
+    ]

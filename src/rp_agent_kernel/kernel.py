@@ -13,6 +13,8 @@ from .external_model import ExternalModelError, ExternalModelStreamState, OpenAI
 from .models import (
     CapabilityReport,
     ConfirmationDecision,
+    EventDelivery,
+    EventDeliveryPatch,
     EvalCaseResult,
     EvalRunRequest,
     EvalRunResponse,
@@ -383,14 +385,59 @@ class Kernel:
             metrics=metrics,
         )
 
-    def due_events(self, now: datetime | None = None) -> list[dict[str, Any]]:
+    def due_events(
+        self, now: datetime | None = None, *, include_pending: bool = False
+    ) -> list[dict[str, Any]]:
         due_at = now or datetime.now().astimezone()
-        events: list[dict[str, Any]] = []
+        deliveries: list[EventDelivery] = []
         for reminder in self.storage.due_reminders(due_at):
-            events.append(self._reminder_due_event(reminder))
+            event = self._reminder_due_event(reminder)
+            deliveries.append(
+                self.storage.add_event_delivery(
+                    event_type=event["type"],
+                    resource_id=reminder.id,
+                    payload=event,
+                )
+            )
         for task in self.storage.due_tasks(due_at):
-            events.append(self._task_overdue_event(task))
-        return events
+            event = self._task_overdue_event(task)
+            deliveries.append(
+                self.storage.add_event_delivery(
+                    event_type=event["type"],
+                    resource_id=task.id,
+                    payload=event,
+                )
+            )
+        if include_pending:
+            deliveries = self.storage.list_event_deliveries(statuses=("pending", "failed"))
+        return [self._event_delivery_payload(delivery) for delivery in deliveries]
+
+    def pending_events(self) -> list[dict[str, Any]]:
+        deliveries = self.storage.list_event_deliveries(statuses=("pending", "failed"))
+        return [self._event_delivery_payload(delivery) for delivery in deliveries]
+
+    def update_event_delivery(
+        self, delivery_id: str, patch: EventDeliveryPatch
+    ) -> EventDelivery:
+        return self.storage.patch_event_delivery(delivery_id, patch)
+
+    def _event_delivery_payload(self, delivery: EventDelivery) -> dict[str, Any]:
+        payload = dict(delivery.payload)
+        payload["delivery"] = {
+            "id": delivery.id,
+            "eventType": delivery.event_type,
+            "resourceId": delivery.resource_id,
+            "status": delivery.status,
+            "attempts": delivery.attempts,
+            "createdAt": delivery.created_at.isoformat(),
+            "updatedAt": delivery.updated_at.isoformat(),
+            "acknowledgedAt": (
+                delivery.acknowledged_at.isoformat() if delivery.acknowledged_at else None
+            ),
+            "lastError": delivery.last_error,
+        }
+        payload["eventDeliveryId"] = delivery.id
+        return payload
 
     def _reminder_due_event(self, reminder) -> dict[str, Any]:
         origin = _origin_from_metadata(reminder.metadata)
@@ -425,6 +472,7 @@ class Kernel:
             "sessionId": origin["sessionId"],
             "characterId": origin["characterId"],
             "message": message,
+            "memoryPolicy": _proactive_memory_policy(origin),
             "reminder": reminder.model_dump(mode="json", by_alias=True),
             "action": action.model_dump(mode="json", by_alias=True),
             "memory": memory.model_dump(mode="json", by_alias=True) if memory else None,
@@ -463,6 +511,7 @@ class Kernel:
             "sessionId": origin["sessionId"],
             "characterId": origin["characterId"],
             "message": message,
+            "memoryPolicy": _proactive_memory_policy(origin),
             "task": task.model_dump(mode="json", by_alias=True),
             "action": action.model_dump(mode="json", by_alias=True),
             "memory": memory.model_dump(mode="json", by_alias=True) if memory else None,
@@ -479,17 +528,24 @@ class Kernel:
         due_text = due_at.strftime("%Y-%m-%d %H:%M") if due_at else "现在"
         label = "提醒" if kind == "reminder" else "任务"
         if origin["mode"] != "rp":
-            return f"{label}到点：{title}。时间 {due_text}。"
+            status_text = "已逾期" if kind == "task" else "到点"
+            return f"{label}{status_text}：{title}。时间 {due_text}。"
 
         character_name = ""
+        persona = ""
+        scenario = ""
         if origin["characterId"]:
             try:
-                character_name = self.storage.get_character(origin["characterId"]).name
+                character = self.storage.get_character(origin["characterId"])
+                character_name = character.name
+                persona = character.persona
+                scenario = character.scenario
             except KeyError:
                 character_name = ""
         speaker = character_name or "角色"
+        voice = _rp_voice_phrase(persona, scenario)
         return (
-            f"{speaker}没有打断场景，只把一张便签推到你手边："
+            f"{speaker}{voice}没有打断场景，只把一张便签推到你手边："
             f"现实{label}到了，{title}。时间 {due_text}。"
             "处理完，我们再回到刚才的叙事。"
         )
@@ -504,8 +560,8 @@ class Kernel:
                 mode="rp",
                 session_id=origin["sessionId"] or "events",
                 character_id=origin["characterId"],
-                content=content,
-                tags=tags,
+                content=f"现实提醒触发（不作为剧情事实）：{content}",
+                tags=[*tags, "real_world", "out_of_character"],
                 source="proactive_event",
             )
         if not self.storage.is_enabled(FeatureName.secretary_memory):
@@ -531,6 +587,8 @@ class Kernel:
                 "POST /api/sessions/{id}/clone",
                 "GET /api/events/stream",
                 "GET /api/events/poll",
+                "GET /api/events/pending",
+                "POST /api/events/{deliveryId}/delivery",
                 "GET/POST/PATCH/DELETE /api/calendar/events",
                 "GET/POST/PATCH/DELETE /api/tasks",
                 "GET/POST/PATCH/DELETE /api/reminders",
@@ -687,6 +745,35 @@ def _origin_from_metadata(metadata: dict[str, Any]) -> dict[str, str | None]:
         "sessionId": str(metadata.get("sessionId") or metadata.get("session_id") or "events"),
         "characterId": str(character_id) if character_id else None,
     }
+
+
+def _proactive_memory_policy(origin: dict[str, str | None]) -> dict[str, Any]:
+    return {
+        "source": "proactive_event",
+        "realWorld": True,
+        "useAsPlotFact": False,
+        "rpMemoryIsOutOfCharacter": origin["mode"] == "rp",
+    }
+
+
+def _rp_voice_phrase(persona: str, scenario: str) -> str:
+    hint = _first_sentence(persona) or _first_sentence(scenario)
+    if not hint:
+        return ""
+    if len(hint) > 24:
+        hint = hint[:24]
+    return f"保持着{hint}的分寸，"
+
+
+def _first_sentence(text: str) -> str:
+    stripped = " ".join(text.replace("\n", " ").split()).strip()
+    if not stripped:
+        return ""
+    for separator in ("。", ".", "；", ";", "，", ","):
+        if separator in stripped:
+            stripped = stripped.split(separator, 1)[0]
+            break
+    return stripped.strip(" ：:，,。.;；")
 
 
 def _run_assertions(response: MessageResponse, assertions: dict[str, Any], latency_ms: float) -> dict[str, bool]:

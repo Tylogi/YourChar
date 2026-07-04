@@ -277,6 +277,24 @@ class ActionRecord(KernelModel):
     created_at: datetime
 
 
+class EventDelivery(KernelModel):
+    id: str
+    event_type: str = Field(alias="eventType")
+    resource_id: str = Field(alias="resourceId")
+    status: Literal["pending", "acked", "failed"] = "pending"
+    attempts: int = 1
+    payload: dict[str, Any] = Field(default_factory=dict)
+    created_at: datetime
+    updated_at: datetime
+    acknowledged_at: datetime | None = Field(default=None, alias="acknowledgedAt")
+    last_error: str | None = Field(default=None, alias="lastError")
+
+
+class EventDeliveryPatch(KernelModel):
+    status: Literal["acked", "failed"]
+    error: str | None = None
+
+
 class ConfirmationRecord(KernelModel):
     id: str
     action_type: str = Field(alias="actionType")

@@ -21,6 +21,8 @@ from .models import (
     ConfirmationRecord,
     ContextTrace,
     ContextTraceBlock,
+    EventDelivery,
+    EventDeliveryPatch,
     FeatureFlag,
     FeatureName,
     Memory,
@@ -167,6 +169,22 @@ class Storage:
                     payload TEXT NOT NULL,
                     created_at TEXT NOT NULL
                 );
+
+                CREATE TABLE IF NOT EXISTS event_deliveries (
+                    id TEXT PRIMARY KEY,
+                    event_type TEXT NOT NULL,
+                    resource_id TEXT NOT NULL,
+                    status TEXT NOT NULL,
+                    attempts INTEGER NOT NULL,
+                    payload TEXT NOT NULL,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL,
+                    acknowledged_at TEXT,
+                    last_error TEXT
+                );
+
+                CREATE UNIQUE INDEX IF NOT EXISTS event_deliveries_source_idx
+                ON event_deliveries (event_type, resource_id);
 
                 CREATE TABLE IF NOT EXISTS context_traces (
                     id TEXT PRIMARY KEY,
@@ -864,7 +882,7 @@ class Storage:
             rows = self.conn.execute(
                 """
                 SELECT * FROM reminders
-                WHERE status = 'scheduled' AND remind_at <= ?
+                WHERE status = 'scheduled' AND strftime('%s', remind_at) <= strftime('%s', ?)
                 ORDER BY remind_at ASC
                 """,
                 (_iso(now),),
@@ -882,7 +900,9 @@ class Storage:
             rows = self.conn.execute(
                 """
                 SELECT * FROM tasks
-                WHERE status = 'open' AND due_at IS NOT NULL AND due_at <= ?
+                WHERE status = 'open'
+                    AND due_at IS NOT NULL
+                    AND strftime('%s', due_at) <= strftime('%s', ?)
                 ORDER BY due_at ASC
                 """,
                 (_iso(now),),
@@ -1086,6 +1106,93 @@ class Storage:
             created_at=created_at,
         )
 
+    def add_event_delivery(
+        self,
+        *,
+        event_type: str,
+        resource_id: str,
+        payload: dict[str, Any],
+    ) -> EventDelivery:
+        delivery_id = str(uuid.uuid4())
+        now = utc_now()
+        with self._lock, self.conn:
+            try:
+                self.conn.execute(
+                    """
+                    INSERT INTO event_deliveries
+                    (id, event_type, resource_id, status, attempts, payload,
+                        created_at, updated_at, acknowledged_at, last_error)
+                    VALUES (?, ?, ?, 'pending', 1, ?, ?, ?, NULL, NULL)
+                    """,
+                    (
+                        delivery_id,
+                        event_type,
+                        resource_id,
+                        _json(payload),
+                        _iso(now),
+                        _iso(now),
+                    ),
+                )
+            except sqlite3.IntegrityError:
+                row = self.conn.execute(
+                    """
+                    SELECT * FROM event_deliveries
+                    WHERE event_type = ? AND resource_id = ?
+                    """,
+                    (event_type, resource_id),
+                ).fetchone()
+                if row is not None:
+                    return self._row_to_event_delivery(row)
+                raise
+        return self.get_event_delivery(delivery_id)
+
+    def get_event_delivery(self, delivery_id: str) -> EventDelivery:
+        with self._lock:
+            row = self.conn.execute(
+                "SELECT * FROM event_deliveries WHERE id = ?", (delivery_id,)
+            ).fetchone()
+        if row is None:
+            raise KeyError(delivery_id)
+        return self._row_to_event_delivery(row)
+
+    def list_event_deliveries(
+        self, statuses: list[str] | tuple[str, ...] | None = None
+    ) -> list[EventDelivery]:
+        sql = "SELECT * FROM event_deliveries"
+        params: list[Any] = []
+        if statuses:
+            placeholders = ",".join("?" for _ in statuses)
+            sql += f" WHERE status IN ({placeholders})"
+            params.extend(statuses)
+        sql += " ORDER BY created_at ASC"
+        with self._lock:
+            rows = self.conn.execute(sql, params).fetchall()
+        return [self._row_to_event_delivery(row) for row in rows]
+
+    def patch_event_delivery(
+        self, delivery_id: str, patch: EventDeliveryPatch
+    ) -> EventDelivery:
+        now = utc_now()
+        acknowledged_at = now if patch.status == "acked" else None
+        with self._lock, self.conn:
+            cursor = self.conn.execute(
+                """
+                UPDATE event_deliveries
+                SET status = ?, updated_at = ?, acknowledged_at = ?, last_error = ?
+                WHERE id = ?
+                """,
+                (
+                    patch.status,
+                    _iso(now),
+                    _iso(acknowledged_at),
+                    patch.error if patch.status == "failed" else None,
+                    delivery_id,
+                ),
+            )
+            if cursor.rowcount == 0:
+                raise KeyError(delivery_id)
+        return self.get_event_delivery(delivery_id)
+
     def add_confirmation(
         self, *, action_type: str, reason: str, payload: dict[str, Any]
     ) -> ConfirmationRecord:
@@ -1221,6 +1328,20 @@ class Storage:
             metadata=_loads(row["metadata"], {}),
             created_at=row["created_at"],
             updated_at=row["updated_at"],
+        )
+
+    def _row_to_event_delivery(self, row: sqlite3.Row) -> EventDelivery:
+        return EventDelivery(
+            id=row["id"],
+            eventType=row["event_type"],
+            resourceId=row["resource_id"],
+            status=row["status"],
+            attempts=row["attempts"],
+            payload=_loads(row["payload"], {}),
+            created_at=row["created_at"],
+            updated_at=row["updated_at"],
+            acknowledgedAt=row["acknowledged_at"],
+            lastError=row["last_error"],
         )
 
     def _row_to_character(self, row: sqlite3.Row) -> Character:

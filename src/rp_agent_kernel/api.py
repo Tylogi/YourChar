@@ -22,6 +22,7 @@ from .models import (
     CharacterCardImportRequest,
     CharacterPatch,
     ConfirmationDecision,
+    EventDeliveryPatch,
     EvalRunRequest,
     FeatureName,
     FeaturePatch,
@@ -81,6 +82,8 @@ def create_app(db_path: str | None = None) -> FastAPI:
             "modelList": "/api/model-config/openai-compatible/models",
             "modelLogs": "/api/model-call-logs",
             "characterImport": "POST /api/characters/import-card",
+            "eventPoll": "/api/events/poll",
+            "eventPending": "/api/events/pending",
         }
 
     @app.get("/ui", include_in_schema=False)
@@ -226,11 +229,30 @@ def create_app(db_path: str | None = None) -> FastAPI:
     @app.get("/api/events/poll")
     def poll_events(
         now: Annotated[datetime | None, Query()] = None,
+        include_pending: Annotated[bool, Query(alias="includePending")] = False,
     ):
         kernel = _kernel(app)
         _require(kernel, FeatureName.event_stream)
-        events = kernel.due_events(now or datetime.now().astimezone())
+        events = kernel.due_events(
+            now or datetime.now().astimezone(), include_pending=include_pending
+        )
         return {"events": events, "count": len(events)}
+
+    @app.get("/api/events/pending")
+    def pending_events():
+        kernel = _kernel(app)
+        _require(kernel, FeatureName.event_stream)
+        events = kernel.pending_events()
+        return {"events": events, "count": len(events)}
+
+    @app.post("/api/events/{delivery_id}/delivery")
+    def patch_event_delivery(delivery_id: str, patch: EventDeliveryPatch):
+        kernel = _kernel(app)
+        _require(kernel, FeatureName.event_stream)
+        try:
+            return kernel.update_event_delivery(delivery_id, patch)
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail="event delivery not found") from exc
 
     @app.get("/api/calendar/events")
     def list_calendar_events(

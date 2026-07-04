@@ -1,6 +1,7 @@
-from datetime import datetime
 import base64
 import binascii
+from datetime import datetime
+import hashlib
 from http.server import BaseHTTPRequestHandler, HTTPServer
 import json
 import struct
@@ -11,6 +12,7 @@ from fastapi.testclient import TestClient
 
 from rp_agent_kernel.api import create_app
 from rp_agent_kernel.kernel import Kernel
+from rp_agent_kernel.models import CharacterCreate, MessageRequest
 from rp_agent_kernel.sdk import InProcessKernelClient
 
 
@@ -252,9 +254,11 @@ def test_due_event_poll_and_stream_are_shell_friendly_and_idempotent(tmp_path):
     task_event = next(event for event in body["events"] if event["type"] == "TaskOverdue")
     assert reminder_event["message"] == "提醒到点：喝水。时间 2026-07-02 11:50。"
     assert reminder_event["sessionId"] == "sms-events"
+    assert reminder_event["delivery"]["status"] == "pending"
+    assert reminder_event["eventDeliveryId"] == reminder_event["delivery"]["id"]
     assert reminder_event["action"]["actionType"] == "reminder_due"
     assert reminder_event["memory"]["source"] == "proactive_event"
-    assert task_event["message"].startswith("任务到点：提交周报。")
+    assert task_event["message"].startswith("任务已逾期：提交周报。")
     assert task_event["action"]["actionType"] == "task_overdue"
 
     reminder_status = next(
@@ -271,6 +275,88 @@ def test_due_event_poll_and_stream_are_shell_friendly_and_idempotent(tmp_path):
     streamed = client.get("/api/events/stream", params={"now": NOW.isoformat()})
     assert streamed.status_code == 200
     assert _sse_events(streamed.text) == [{"type": "Noop"}]
+
+
+def test_event_delivery_ack_and_failed_retry_are_agent_friendly(tmp_path):
+    app = create_app(str(tmp_path / "event-delivery.sqlite3"))
+    client = TestClient(app)
+    client.post(
+        "/api/reminders",
+        json={
+            "title": "伸展",
+            "remindAt": "2026-07-02T11:59:00+08:00",
+            "metadata": {"sessionId": "sms-delivery", "mode": "sms"},
+        },
+    )
+
+    first_event = client.get("/api/events/poll", params={"now": NOW.isoformat()}).json()[
+        "events"
+    ][0]
+    delivery_id = first_event["delivery"]["id"]
+    pending = client.get("/api/events/pending").json()
+    assert pending["count"] == 1
+    assert pending["events"][0]["delivery"]["id"] == delivery_id
+
+    acked = client.post(
+        f"/api/events/{delivery_id}/delivery", json={"status": "acked"}
+    ).json()
+    assert acked["status"] == "acked"
+    assert acked["acknowledgedAt"]
+    assert client.get("/api/events/pending").json() == {"events": [], "count": 0}
+
+    client.post(
+        "/api/reminders",
+        json={
+            "title": "换水",
+            "remindAt": "2026-07-02T11:58:00+08:00",
+            "metadata": {"sessionId": "sms-delivery", "mode": "sms"},
+        },
+    )
+    failed_event = client.get("/api/events/poll", params={"now": NOW.isoformat()}).json()[
+        "events"
+    ][0]
+    failed_id = failed_event["delivery"]["id"]
+    failed = client.post(
+        f"/api/events/{failed_id}/delivery",
+        json={"status": "failed", "error": "shell closed"},
+    ).json()
+    assert failed["status"] == "failed"
+    assert failed["lastError"] == "shell closed"
+
+    assert client.get("/api/events/poll", params={"now": NOW.isoformat()}).json() == {
+        "events": [],
+        "count": 0,
+    }
+    retry = client.get(
+        "/api/events/poll",
+        params={"now": NOW.isoformat(), "includePending": True},
+    ).json()
+    assert retry["count"] == 1
+    assert retry["events"][0]["delivery"]["status"] == "failed"
+    assert retry["events"][0]["delivery"]["lastError"] == "shell closed"
+
+
+def test_due_time_comparison_uses_absolute_time_across_offsets(tmp_path):
+    app = create_app(str(tmp_path / "offsets.sqlite3"))
+    client = TestClient(app)
+    client.post(
+        "/api/reminders",
+        json={
+            "title": "不该提前触发",
+            "remindAt": "2026-07-02T00:30:00-04:00",
+            "metadata": {"sessionId": "sms-offset", "mode": "sms"},
+        },
+    )
+
+    too_early = client.get("/api/events/poll", params={"now": NOW.isoformat()}).json()
+    assert too_early == {"events": [], "count": 0}
+
+    due = client.get(
+        "/api/events/poll",
+        params={"now": "2026-07-02T12:31:00+08:00"},
+    ).json()
+    assert due["count"] == 1
+    assert due["events"][0]["type"] == "ReminderDue"
 
 
 def test_rp_due_reminder_uses_character_voice_and_memory(tmp_path):
@@ -303,10 +389,50 @@ def test_rp_due_reminder_uses_character_voice_and_memory(tmp_path):
     assert event["mode"] == "rp"
     assert event["characterId"] == "archivist"
     assert "林岚" in event["message"]
+    assert "冷静" in event["message"]
     assert "现实提醒" in event["message"]
+    assert event["memoryPolicy"]["useAsPlotFact"] is False
     assert event["memory"]["mode"] == "rp"
     assert event["memory"]["characterId"] == "archivist"
     assert event["memory"]["source"] == "proactive_event"
+    assert "out_of_character" in event["memory"]["tags"]
+
+
+def test_rp_proactive_memory_is_not_default_plot_context(tmp_path):
+    kernel = Kernel(str(tmp_path / "rp-context.sqlite3"))
+    try:
+        kernel.storage.create_character(
+            CharacterCreate(
+                id="archivist",
+                name="林岚",
+                persona="冷静的档案管理员。",
+                scenario="雨夜档案室。",
+            )
+        )
+        content = "现实提醒触发（不作为剧情事实）：主动提醒已触发：喝水"
+        kernel.storage.add_memory(
+            mode="rp",
+            session_id="rp-context",
+            character_id="archivist",
+            content=content,
+            tags=["proactive", "reminder", "real_world", "out_of_character"],
+            source="proactive_event",
+        )
+
+        normal = kernel.context_builder.build(
+            "rp-context",
+            MessageRequest(mode="rp", text="继续刚才的剧情", now=NOW, characterId="archivist"),
+        )
+        normal_rp_memory = next(block for block in normal.blocks if block.source == "memories.rp")
+        assert normal_rp_memory.hash == hashlib.sha256("No RP memory.".encode()).hexdigest()
+        explicit = kernel.context_builder.build(
+            "rp-context",
+            MessageRequest(mode="rp", text="现实提醒有哪些", now=NOW, characterId="archivist"),
+        )
+        rp_memory_block = next(block for block in explicit.blocks if block.source == "memories.rp")
+        assert rp_memory_block.hash == hashlib.sha256(content.encode()).hexdigest()
+    finally:
+        kernel.close()
 
 
 def test_openai_compatible_model_list_endpoint(tmp_path):
