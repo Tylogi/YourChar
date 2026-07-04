@@ -213,10 +213,16 @@ def create_app(db_path: str | None = None) -> FastAPI:
     @app.get("/api/events/stream")
     def event_stream(
         now: Annotated[datetime | None, Query()] = None,
+        client_id: Annotated[str, Query(alias="clientId")] = "sse",
+        lease_seconds: Annotated[int, Query(alias="leaseSeconds", ge=1, le=3600)] = 60,
     ):
         kernel = _kernel(app)
         _require(kernel, FeatureName.event_stream)
-        payloads = kernel.due_events(now or datetime.now().astimezone())
+        payloads = kernel.due_events(
+            now or datetime.now().astimezone(),
+            client_id=client_id,
+            lease_seconds=lease_seconds,
+        )
 
         def _events():
             for payload in payloads:
@@ -230,11 +236,16 @@ def create_app(db_path: str | None = None) -> FastAPI:
     def poll_events(
         now: Annotated[datetime | None, Query()] = None,
         include_pending: Annotated[bool, Query(alias="includePending")] = False,
+        client_id: Annotated[str, Query(alias="clientId")] = "poll",
+        lease_seconds: Annotated[int, Query(alias="leaseSeconds", ge=1, le=3600)] = 60,
     ):
         kernel = _kernel(app)
         _require(kernel, FeatureName.event_stream)
         events = kernel.due_events(
-            now or datetime.now().astimezone(), include_pending=include_pending
+            now or datetime.now().astimezone(),
+            include_pending=include_pending,
+            client_id=client_id,
+            lease_seconds=lease_seconds,
         )
         return {"events": events, "count": len(events)}
 

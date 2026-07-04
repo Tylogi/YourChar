@@ -4,7 +4,7 @@ import json
 import sqlite3
 import threading
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
@@ -180,7 +180,9 @@ class Storage:
                     created_at TEXT NOT NULL,
                     updated_at TEXT NOT NULL,
                     acknowledged_at TEXT,
-                    last_error TEXT
+                    last_error TEXT,
+                    claimed_by TEXT,
+                    claim_expires_at TEXT
                 );
 
                 CREATE UNIQUE INDEX IF NOT EXISTS event_deliveries_source_idx
@@ -233,6 +235,8 @@ class Storage:
                 "context_window_tokens",
                 "INTEGER NOT NULL DEFAULT 128000",
             )
+            self._ensure_column("event_deliveries", "claimed_by", "TEXT")
+            self._ensure_column("event_deliveries", "claim_expires_at", "TEXT")
             try:
                 self.conn.execute(
                     """
@@ -1169,27 +1173,59 @@ class Storage:
             rows = self.conn.execute(sql, params).fetchall()
         return [self._row_to_event_delivery(row) for row in rows]
 
-    def reissue_event_deliveries(self) -> list[EventDelivery]:
-        now = utc_now()
+    def claim_event_deliveries(
+        self,
+        *,
+        client_id: str,
+        lease_seconds: int,
+        now: datetime | None = None,
+        delivery_ids: list[str] | None = None,
+    ) -> list[EventDelivery]:
+        claimed_at = now or utc_now()
+        expires_at = claimed_at + timedelta(seconds=max(1, lease_seconds))
+        clauses = [
+            """
+            (
+                status IN ('pending', 'failed')
+                OR (
+                    status = 'claimed'
+                    AND claim_expires_at IS NOT NULL
+                    AND strftime('%s', claim_expires_at) <= strftime('%s', ?)
+                )
+            )
+            """
+        ]
+        params: list[Any] = [_iso(claimed_at)]
+        if delivery_ids:
+            placeholders = ",".join("?" for _ in delivery_ids)
+            clauses.append(f"id IN ({placeholders})")
+            params.extend(delivery_ids)
         with self._lock, self.conn:
             rows = self.conn.execute(
-                """
+                f"""
                 SELECT * FROM event_deliveries
-                WHERE status IN ('pending', 'failed')
+                WHERE {' AND '.join(clauses)}
                 ORDER BY created_at ASC
-                """
+                """,
+                params,
             ).fetchall()
-            failed_ids = [row["id"] for row in rows if row["status"] == "failed"]
-            for delivery_id in failed_ids:
+            delivery_ids = [row["id"] for row in rows]
+            for row in rows:
+                should_increment = row["status"] in ("failed", "claimed")
+                attempts_sql = "attempts + 1" if should_increment else "attempts"
                 self.conn.execute(
-                    """
+                    f"""
                     UPDATE event_deliveries
-                    SET status = 'pending', attempts = attempts + 1, updated_at = ?
+                    SET status = 'claimed',
+                        attempts = {attempts_sql},
+                        updated_at = ?,
+                        claimed_by = ?,
+                        claim_expires_at = ?
                     WHERE id = ?
                     """,
-                    (_iso(now), delivery_id),
+                    (_iso(claimed_at), client_id, _iso(expires_at), row["id"]),
                 )
-        return self.list_event_deliveries(statuses=("pending",))
+        return [self.get_event_delivery(delivery_id) for delivery_id in delivery_ids]
 
     def patch_event_delivery(
         self, delivery_id: str, patch: EventDeliveryPatch
@@ -1206,12 +1242,15 @@ class Storage:
         last_error = patch.error if patch.status == "failed" else current.last_error
         if patch.status == "acked":
             last_error = None
+        claimed_by = None if patch.status in ("pending", "acked", "failed") else current.claimed_by
+        claim_expires_at = None if patch.status in ("pending", "acked", "failed") else current.claim_expires_at
         with self._lock, self.conn:
             cursor = self.conn.execute(
                 f"""
                 UPDATE event_deliveries
                 SET status = ?, attempts = {attempts_sql}, updated_at = ?,
-                    acknowledged_at = ?, last_error = ?
+                    acknowledged_at = ?, last_error = ?, claimed_by = ?,
+                    claim_expires_at = ?
                 WHERE id = ?
                 """,
                 (
@@ -1219,6 +1258,8 @@ class Storage:
                     _iso(now),
                     _iso(acknowledged_at),
                     last_error,
+                    claimed_by,
+                    _iso(claim_expires_at),
                     delivery_id,
                 ),
             )
@@ -1375,6 +1416,8 @@ class Storage:
             updated_at=row["updated_at"],
             acknowledgedAt=row["acknowledged_at"],
             lastError=row["last_error"],
+            claimedBy=row["claimed_by"],
+            claimExpiresAt=row["claim_expires_at"],
         )
 
     def _row_to_character(self, row: sqlite3.Row) -> Character:

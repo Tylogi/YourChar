@@ -386,7 +386,12 @@ class Kernel:
         )
 
     def due_events(
-        self, now: datetime | None = None, *, include_pending: bool = False
+        self,
+        now: datetime | None = None,
+        *,
+        include_pending: bool = False,
+        client_id: str = "kernel",
+        lease_seconds: int = 60,
     ) -> list[dict[str, Any]]:
         due_at = now or datetime.now().astimezone()
         deliveries: list[EventDelivery] = []
@@ -409,11 +414,22 @@ class Kernel:
                 )
             )
         if include_pending:
-            deliveries = self.storage.reissue_event_deliveries()
+            deliveries = self.storage.claim_event_deliveries(
+                client_id=client_id, lease_seconds=lease_seconds, now=due_at
+            )
+        elif deliveries:
+            deliveries = self.storage.claim_event_deliveries(
+                client_id=client_id,
+                lease_seconds=lease_seconds,
+                now=due_at,
+                delivery_ids=[delivery.id for delivery in deliveries],
+            )
         return [self._event_delivery_payload(delivery) for delivery in deliveries]
 
     def pending_events(self) -> list[dict[str, Any]]:
-        deliveries = self.storage.list_event_deliveries(statuses=("pending", "failed"))
+        deliveries = self.storage.list_event_deliveries(
+            statuses=("pending", "claimed", "failed")
+        )
         return [self._event_delivery_payload(delivery) for delivery in deliveries]
 
     def update_event_delivery(
@@ -435,6 +451,10 @@ class Kernel:
                 delivery.acknowledged_at.isoformat() if delivery.acknowledged_at else None
             ),
             "lastError": delivery.last_error,
+            "claimedBy": delivery.claimed_by,
+            "claimExpiresAt": (
+                delivery.claim_expires_at.isoformat() if delivery.claim_expires_at else None
+            ),
         }
         payload["eventDeliveryId"] = delivery.id
         return payload

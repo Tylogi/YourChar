@@ -254,7 +254,9 @@ def test_due_event_poll_and_stream_are_shell_friendly_and_idempotent(tmp_path):
     task_event = next(event for event in body["events"] if event["type"] == "TaskOverdue")
     assert reminder_event["message"] == "提醒到点：喝水。时间 2026-07-02 11:50。"
     assert reminder_event["sessionId"] == "sms-events"
-    assert reminder_event["delivery"]["status"] == "pending"
+    assert reminder_event["delivery"]["status"] == "claimed"
+    assert reminder_event["delivery"]["claimedBy"] == "poll"
+    assert reminder_event["delivery"]["claimExpiresAt"]
     assert reminder_event["eventDeliveryId"] == reminder_event["delivery"]["id"]
     assert reminder_event["action"]["actionType"] == "reminder_due"
     assert reminder_event["memory"]["source"] == "proactive_event"
@@ -296,6 +298,7 @@ def test_event_delivery_ack_and_failed_retry_are_agent_friendly(tmp_path):
     pending = client.get("/api/events/pending").json()
     assert pending["count"] == 1
     assert pending["events"][0]["delivery"]["id"] == delivery_id
+    assert pending["events"][0]["delivery"]["status"] == "claimed"
 
     acked = client.post(
         f"/api/events/{delivery_id}/delivery", json={"status": "acked"}
@@ -332,7 +335,7 @@ def test_event_delivery_ack_and_failed_retry_are_agent_friendly(tmp_path):
         params={"now": NOW.isoformat(), "includePending": True},
     ).json()
     assert retry["count"] == 1
-    assert retry["events"][0]["delivery"]["status"] == "pending"
+    assert retry["events"][0]["delivery"]["status"] == "claimed"
     assert retry["events"][0]["delivery"]["attempts"] == 2
     assert retry["events"][0]["delivery"]["lastError"] == "shell closed"
     retry_ack = client.post(
@@ -345,6 +348,58 @@ def test_event_delivery_ack_and_failed_retry_are_agent_friendly(tmp_path):
         f"/api/events/{failed_id}/delivery",
         json={"status": "failed", "error": "too late"},
     ).status_code == 409
+
+
+def test_event_delivery_claim_lease_prevents_parallel_notifications(tmp_path):
+    app = create_app(str(tmp_path / "event-lease.sqlite3"))
+    client = TestClient(app)
+    client.post(
+        "/api/reminders",
+        json={
+            "title": "站会",
+            "remindAt": "2026-07-02T11:59:00+08:00",
+            "metadata": {"sessionId": "sms-lease", "mode": "sms"},
+        },
+    )
+
+    first = client.get(
+        "/api/events/poll",
+        params={
+            "now": NOW.isoformat(),
+            "clientId": "shell-a",
+            "leaseSeconds": 10,
+        },
+    ).json()
+    assert first["count"] == 1
+    delivery = first["events"][0]["delivery"]
+    assert delivery["status"] == "claimed"
+    assert delivery["claimedBy"] == "shell-a"
+    assert delivery["attempts"] == 1
+
+    parallel = client.get(
+        "/api/events/poll",
+        params={
+            "now": NOW.isoformat(),
+            "includePending": True,
+            "clientId": "shell-b",
+            "leaseSeconds": 10,
+        },
+    ).json()
+    assert parallel == {"events": [], "count": 0}
+
+    reclaimed = client.get(
+        "/api/events/poll",
+        params={
+            "now": "2026-07-02T12:00:11+08:00",
+            "includePending": True,
+            "clientId": "shell-b",
+            "leaseSeconds": 10,
+        },
+    ).json()
+    assert reclaimed["count"] == 1
+    reclaimed_delivery = reclaimed["events"][0]["delivery"]
+    assert reclaimed_delivery["claimedBy"] == "shell-b"
+    assert reclaimed_delivery["attempts"] == 2
 
 
 def test_due_time_comparison_uses_absolute_time_across_offsets(tmp_path):

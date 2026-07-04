@@ -281,13 +281,15 @@ class EventDelivery(KernelModel):
     id: str
     event_type: str = Field(alias="eventType")
     resource_id: str = Field(alias="resourceId")
-    status: Literal["pending", "acked", "failed"] = "pending"
+    status: Literal["pending", "claimed", "acked", "failed"] = "pending"
     attempts: int = 1
     payload: dict[str, Any] = Field(default_factory=dict)
     created_at: datetime
     updated_at: datetime
     acknowledged_at: datetime | None = Field(default=None, alias="acknowledgedAt")
     last_error: str | None = Field(default=None, alias="lastError")
+    claimed_by: str | None = Field(default=None, alias="claimedBy")
+    claim_expires_at: datetime | None = Field(default=None, alias="claimExpiresAt")
 
 
 class EventDeliveryPatch(KernelModel):
