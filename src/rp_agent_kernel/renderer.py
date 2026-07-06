@@ -29,8 +29,9 @@ class Renderer:
         practical_continuity = _shared_continuity_hint(
             storage, session_id, include_detail=False
         )
-        if execution.confirmations:
-            confirmation = execution.confirmations[0]
+        pending_confirmation = _pending_confirmation(execution)
+        if pending_confirmation:
+            confirmation = pending_confirmation
             return f"需要确认：{confirmation.reason} 确认 ID：{confirmation.id}"
 
         disabled = [action for action in execution.actions if action.status == "feature_disabled"]
@@ -57,6 +58,19 @@ class Renderer:
             lines = [f"{event.start.strftime('%m-%d %H:%M')} {event.title}" for event in events[:5]]
             return _with_continuity("日程：\n" + "\n".join(lines), practical_continuity)
 
+        deleted_event = _first_action(execution, "delete_calendar")
+        if deleted_event:
+            if deleted_event.status == "completed":
+                return f"已删除日程：{deleted_event.payload.get('title', '日程')}。"
+            return f"没删到日程：{deleted_event.payload.get('reason', '未找到匹配项')}。"
+
+        rescheduled_event = _first_action(execution, "reschedule_calendar")
+        if rescheduled_event and rescheduled_event.status == "completed":
+            return (
+                f"已改期：{rescheduled_event.payload.get('title', '日程')}，"
+                f"新时间 {_format_payload_time(rescheduled_event.payload.get('start'))}。"
+            )
+
         created_reminder = _first_action(execution, "create_reminder")
         if created_reminder and reminders:
             reminder = reminders[0]
@@ -64,6 +78,21 @@ class Renderer:
                 f"已设置提醒：{reminder.title}，时间 {reminder.remind_at.strftime('%Y-%m-%d %H:%M')}。",
                 practical_continuity,
             )
+
+        deleted_reminder = _first_action(execution, "delete_reminder")
+        if deleted_reminder:
+            if deleted_reminder.status == "completed":
+                return f"已取消提醒：{deleted_reminder.payload.get('title', '提醒')}。"
+            return f"没取消提醒：{deleted_reminder.payload.get('reason', '未找到匹配项')}。"
+
+        updated_reminder = _first_action(execution, "update_reminder")
+        if updated_reminder:
+            if updated_reminder.status == "completed":
+                return (
+                    f"已更新提醒：{updated_reminder.payload.get('title', '提醒')}，"
+                    f"新时间 {_format_payload_time(updated_reminder.payload.get('remindAt'))}。"
+                )
+            return f"没更新提醒：{updated_reminder.payload.get('reason', '未找到匹配项')}。"
 
         created_task = _first_action(execution, "create_task")
         if created_task and tasks:
@@ -78,6 +107,12 @@ class Renderer:
             lines = [f"{task.status} {task.title}" for task in tasks[:8]]
             return _with_continuity("任务：\n" + "\n".join(lines), practical_continuity)
 
+        deleted_task = _first_action(execution, "delete_task")
+        if deleted_task:
+            if deleted_task.status == "completed":
+                return f"已删除任务：{deleted_task.payload.get('title', '任务')}。"
+            return f"没删到任务：{deleted_task.payload.get('reason', '未找到匹配项')}。"
+
         memory_action = _first_action(execution, "write_secretary_memory")
         if memory_action:
             return "我记住了。"
@@ -89,8 +124,9 @@ class Renderer:
         return _with_continuity("收到。", continuity)
 
     def _render_rp(self, request: MessageRequest, execution: ExecutionResult) -> str:
-        if execution.confirmations:
-            confirmation = execution.confirmations[0]
+        pending_confirmation = _pending_confirmation(execution)
+        if pending_confirmation:
+            confirmation = pending_confirmation
             return (
                 f"她停下动作，把这件事从叙事里单独拎出来：{confirmation.reason}"
                 f"如果要继续，请确认 {confirmation.id}。在此之前，现实日程不会被改动。"
@@ -124,6 +160,19 @@ class Renderer:
             lines = [f"{event.start.strftime('%m-%d %H:%M')} {event.title}" for event in events[:5]]
             return "她把现实日程摊在桌边：\n" + "\n".join(lines)
 
+        deleted_event = _first_action(execution, "delete_calendar")
+        if deleted_event:
+            if deleted_event.status == "completed":
+                return f"她把这条现实日程划掉：{deleted_event.payload.get('title', '日程')}。"
+            return f"她查了一遍现实日程，摇了摇头：{deleted_event.payload.get('reason', '未找到匹配项')}。"
+
+        rescheduled_event = _first_action(execution, "reschedule_calendar")
+        if rescheduled_event and rescheduled_event.status == "completed":
+            return (
+                f"她把现实日程改到新的位置：{rescheduled_event.payload.get('title', '日程')}，"
+                f"{_format_payload_time(rescheduled_event.payload.get('start'))}。"
+            )
+
         created_reminder = _first_action(execution, "create_reminder")
         if created_reminder and reminders:
             reminder = reminders[0]
@@ -132,6 +181,21 @@ class Renderer:
                 f"{reminder.remind_at.strftime('%Y-%m-%d %H:%M')}。"
                 "到点时，她会把这件事重新递到你面前。"
             )
+
+        deleted_reminder = _first_action(execution, "delete_reminder")
+        if deleted_reminder:
+            if deleted_reminder.status == "completed":
+                return f"她把这条现实提醒撤掉：{deleted_reminder.payload.get('title', '提醒')}。"
+            return f"她翻过提醒清单，低声说：{deleted_reminder.payload.get('reason', '未找到匹配项')}。"
+
+        updated_reminder = _first_action(execution, "update_reminder")
+        if updated_reminder:
+            if updated_reminder.status == "completed":
+                return (
+                    f"她把提醒时间改好：{updated_reminder.payload.get('title', '提醒')}，"
+                    f"{_format_payload_time(updated_reminder.payload.get('remindAt'))}。"
+                )
+            return f"她没能更新提醒：{updated_reminder.payload.get('reason', '未找到匹配项')}。"
 
         created_task = _first_action(execution, "create_task")
         if created_task and tasks:
@@ -145,6 +209,12 @@ class Renderer:
                 return "她翻过任务清单，声音很轻：现在没有打开的任务。"
             lines = [f"{task.status} {task.title}" for task in tasks[:8]]
             return "她把任务清单推到你面前：\n" + "\n".join(lines)
+
+        deleted_task = _first_action(execution, "delete_task")
+        if deleted_task:
+            if deleted_task.status == "completed":
+                return f"她从现实任务清单里删掉：{deleted_task.payload.get('title', '任务')}。"
+            return f"她没有删掉任务：{deleted_task.payload.get('reason', '未找到匹配项')}。"
 
         memory_action = _first_action(execution, "write_rp_memory")
         if memory_action:
@@ -170,6 +240,24 @@ class Renderer:
 
 def _first_action(execution: ExecutionResult, action_type: str):
     return next((action for action in execution.actions if action.action_type == action_type), None)
+
+
+def _pending_confirmation(execution: ExecutionResult):
+    return next(
+        (confirmation for confirmation in execution.confirmations if confirmation.status == "pending"),
+        None,
+    )
+
+
+def _format_payload_time(value) -> str:
+    if not value:
+        return "未知时间"
+    try:
+        from datetime import datetime
+
+        return datetime.fromisoformat(str(value)).strftime("%Y-%m-%d %H:%M")
+    except ValueError:
+        return str(value)
 
 
 def _shared_continuity_hint(

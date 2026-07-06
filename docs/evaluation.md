@@ -144,6 +144,13 @@ Runtime push checks for other agents:
 - Verify stale claimed deliveries become claimable after lease expiry, and ack with the wrong client id fails while the lease is active.
 - Verify `ReminderDue`/`TaskOverdue` payloads include view-aware `message`, `sessionId`, `mode`, `characterId`, `memoryPolicy`, `eventDeliveryId`, and `delivery` metadata.
 
+Tool mutation checks for other agents:
+
+- Verify `/api/eval/capabilities.agentTools` includes calendar create/list/delete/reschedule, reminder create/delete/update, and task create/list/delete.
+- Verify natural-language delete/update intents mutate storage through actions, not through model text.
+- Verify ambiguous multi-match deletes require confirmation while single clear matches execute directly.
+- Verify failed matches return `action.status == "failed"` with a human-readable reason and do not mutate storage.
+
 ### UI Usability, 10 Points
 
 | Item | Points | Evidence |

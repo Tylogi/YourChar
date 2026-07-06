@@ -14,6 +14,7 @@ from rp_agent_kernel.models import (
     MessageRequest,
     OpenAICompatibleConfigPatch,
     ReminderCreate,
+    TaskCreate,
 )
 
 
@@ -310,6 +311,160 @@ def test_reminder_flow_for_relative_time():
         reminders = kernel.storage.list_reminders()
         assert reminders[0].title == "喝水"
         assert reminders[0].remind_at.isoformat() == "2026-07-02T15:00:00+08:00"
+    finally:
+        kernel.close()
+
+
+def test_agent_can_cancel_wrong_reminder_by_title():
+    kernel = Kernel(":memory:")
+    try:
+        kernel.storage.create_reminder(
+            ReminderCreate(
+                title="喝水",
+                remindAt=datetime(2026, 7, 2, 15, 0, tzinfo=ZoneInfo("Asia/Shanghai")),
+            )
+        )
+
+        response = kernel.handle_message(
+            "s1", MessageRequest(mode="sms", text="取消喝水提醒", now=NOW)
+        )
+
+        assert response.reply == "已取消提醒：喝水。"
+        action = next(action for action in response.actions if action.action_type == "delete_reminder")
+        assert action.status == "completed"
+        assert kernel.storage.list_reminders() == []
+    finally:
+        kernel.close()
+
+
+def test_agent_can_update_existing_reminder_time_by_title():
+    kernel = Kernel(":memory:")
+    try:
+        kernel.storage.create_reminder(
+            ReminderCreate(
+                title="喝水",
+                remindAt=datetime(2026, 7, 2, 15, 0, tzinfo=ZoneInfo("Asia/Shanghai")),
+            )
+        )
+
+        response = kernel.handle_message(
+            "s1", MessageRequest(mode="sms", text="把喝水提醒改到下午四点", now=NOW)
+        )
+
+        assert "已更新提醒：喝水" in response.reply
+        reminder = kernel.storage.list_reminders()[0]
+        assert reminder.title == "喝水"
+        assert reminder.remind_at.isoformat() == "2026-07-02T16:00:00+08:00"
+        action = next(action for action in response.actions if action.action_type == "update_reminder")
+        assert action.status == "completed"
+    finally:
+        kernel.close()
+
+
+def test_agent_can_delete_wrong_calendar_event_by_title():
+    kernel = Kernel(":memory:")
+    try:
+        kernel.storage.create_event(
+            CalendarEventCreate(
+                title="项目会",
+                start=datetime(2026, 7, 2, 20, 0, tzinfo=ZoneInfo("Asia/Shanghai")),
+            )
+        )
+
+        response = kernel.handle_message(
+            "s1", MessageRequest(mode="sms", text="取消项目会", now=NOW)
+        )
+
+        assert response.reply == "已删除日程：项目会。"
+        action = next(action for action in response.actions if action.action_type == "delete_calendar")
+        assert action.status == "completed"
+        assert kernel.storage.list_events() == []
+    finally:
+        kernel.close()
+
+
+def test_agent_reschedules_calendar_event_after_confirmation():
+    kernel = Kernel(":memory:")
+    try:
+        kernel.storage.create_event(
+            CalendarEventCreate(
+                title="项目会",
+                start=datetime(2026, 7, 2, 20, 0, tzinfo=ZoneInfo("Asia/Shanghai")),
+            )
+        )
+
+        response = kernel.handle_message(
+            "s1", MessageRequest(mode="sms", text="把项目会改到明晚九点", now=NOW)
+        )
+
+        assert response.confirmations
+        action = next(action for action in response.actions if action.action_type == "reschedule_calendar")
+        assert action.status == "confirmation_required"
+        assert kernel.storage.list_events()[0].start.isoformat() == "2026-07-02T20:00:00+08:00"
+
+        confirmed = kernel.confirm_action(
+            response.confirmations[0].id, ConfirmationDecision(decision="approved")
+        )
+
+        assert "已改期：项目会" in confirmed.reply
+        event = kernel.storage.list_events()[0]
+        assert event.title == "项目会"
+        assert event.start.isoformat() == "2026-07-03T21:00:00+08:00"
+        completed = next(
+            action for action in confirmed.actions if action.action_type == "reschedule_calendar"
+        )
+        assert completed.status == "completed"
+    finally:
+        kernel.close()
+
+
+def test_agent_requires_confirmation_for_ambiguous_reminder_delete():
+    kernel = Kernel(":memory:")
+    try:
+        kernel.storage.create_reminder(
+            ReminderCreate(
+                title="喝水",
+                remindAt=datetime(2026, 7, 2, 15, 0, tzinfo=ZoneInfo("Asia/Shanghai")),
+            )
+        )
+        kernel.storage.create_reminder(
+            ReminderCreate(
+                title="喝水",
+                remindAt=datetime(2026, 7, 2, 16, 0, tzinfo=ZoneInfo("Asia/Shanghai")),
+            )
+        )
+
+        response = kernel.handle_message(
+            "s1", MessageRequest(mode="sms", text="取消喝水提醒", now=NOW)
+        )
+
+        assert response.confirmations
+        action = next(action for action in response.actions if action.action_type == "delete_reminder")
+        assert action.status == "confirmation_required"
+        assert len(kernel.storage.list_reminders()) == 2
+
+        confirmed = kernel.confirm_action(
+            response.confirmations[0].id, ConfirmationDecision(decision="approved")
+        )
+        assert confirmed.reply == "已取消提醒：喝水。"
+        assert len(kernel.storage.list_reminders()) == 0
+    finally:
+        kernel.close()
+
+
+def test_agent_can_delete_task_by_title():
+    kernel = Kernel(":memory:")
+    try:
+        kernel.storage.create_task(TaskCreate(title="写周报"))
+
+        response = kernel.handle_message(
+            "s1", MessageRequest(mode="sms", text="删除写周报任务", now=NOW)
+        )
+
+        assert response.reply == "已删除任务：写周报。"
+        action = next(action for action in response.actions if action.action_type == "delete_task")
+        assert action.status == "completed"
+        assert kernel.storage.list_tasks() == []
     finally:
         kernel.close()
 

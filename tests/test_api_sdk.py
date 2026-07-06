@@ -118,6 +118,10 @@ def test_temporary_ui_is_served(tmp_path):
     assert "RP Tavern" not in script.text
     assert "生活叙事视角" in script.text
     assert "消息视角" in script.text
+    assert "delete_calendar" in script.text
+    assert "delete_reminder" in script.text
+    assert "update_reminder" in script.text
+    assert "delete_task" in script.text
 
 
 def test_openai_compatible_config_masks_api_key(tmp_path):
@@ -992,6 +996,12 @@ def test_eval_capabilities_and_run_endpoint(tmp_path):
     assert "system:stable-render-contract" in prompt_layout["messageOrder"]
     assert "user:dynamic-runtime-context-and-current-message" in prompt_layout["messageOrder"]
     assert "think_tags" in prompt_layout["reasoningFormats"]
+    agent_tools = capabilities.json()["agentTools"]
+    assert "delete_calendar" in agent_tools["calendar"]
+    assert "reschedule_calendar" in agent_tools["calendar"]
+    assert "delete_reminder" in agent_tools["reminders"]
+    assert "update_reminder" in agent_tools["reminders"]
+    assert "delete_task" in agent_tools["tasks"]
 
     response = client.post(
         "/api/eval/run",

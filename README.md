@@ -79,6 +79,19 @@ Reasoning content is never returned to the user. The adapter logs structured rea
 - `GET /api/eval/capabilities`
 - `POST /api/eval/run`
 
+## Agent Tools And Intents
+
+Schedule, reminder, and task changes are deterministic kernel tools, not free-form model text. The planner maps natural-language intent to tool operations, then the renderer explains the result.
+
+Current agent tool operations:
+
+- calendar: `create_calendar`, `list_calendar`, `delete_calendar`, `reschedule_calendar`, `bulk_delete_calendar`;
+- reminders: `create_reminder`, `delete_reminder`, `update_reminder`;
+- tasks: `create_task`, `list_tasks`, `delete_task`;
+- memory: `write_secretary_memory`, `write_rp_memory`.
+
+Single clear matches are executed directly. Ambiguous multi-match deletes require confirmation when `confirmation_safety` is enabled. Large destructive actions such as deleting all calendar events always require confirmation under the same safety flag. The tool contract is exposed through `GET /api/eval/capabilities` as `agentTools`.
+
 ## Companion Identity
 
 The companion has a configurable profile:

@@ -44,14 +44,63 @@ class Planner:
                     reason="大范围删除日程需要确认。",
                 )
             )
+        elif real_ops_allowed and _is_reminder_delete(text):
+            operations.append(
+                PlannedOperation(
+                    op_type="delete_reminder",
+                    feature="reminders",
+                    payload={
+                        "query": _extract_delete_query(text, parsed_time, "reminder"),
+                        "targetTime": parsed_time.when.isoformat() if parsed_time.when else None,
+                    },
+                )
+            )
+        elif real_ops_allowed and _is_calendar_delete(text):
+            operations.append(
+                PlannedOperation(
+                    op_type="delete_calendar",
+                    feature="calendar",
+                    payload={
+                        "query": _extract_delete_query(text, parsed_time, "calendar"),
+                        "targetTime": parsed_time.when.isoformat() if parsed_time.when else None,
+                    },
+                )
+            )
+        elif real_ops_allowed and _is_task_delete(text):
+            operations.append(
+                PlannedOperation(
+                    op_type="delete_task",
+                    feature="tasks",
+                    payload={
+                        "query": _extract_delete_query(text, parsed_time, "task"),
+                        "targetTime": parsed_time.when.isoformat() if parsed_time.when else None,
+                    },
+                )
+            )
         elif real_ops_allowed and _is_reschedule(text):
             operations.append(
                 PlannedOperation(
                     op_type="reschedule_calendar",
                     feature="calendar",
-                    payload={"text": text, "targetTime": parsed_time.when.isoformat() if parsed_time.when else None},
+                    payload={
+                        "query": _extract_update_query(text, parsed_time, "calendar"),
+                        "targetTime": parsed_time.when.isoformat() if parsed_time.when else None,
+                        "text": text,
+                    },
                     requires_confirmation=True,
                     reason="重要改期需要确认。",
+                )
+            )
+        elif real_ops_allowed and _is_reminder_update(text):
+            operations.append(
+                PlannedOperation(
+                    op_type="update_reminder",
+                    feature="reminders",
+                    payload={
+                        "query": _extract_update_query(text, parsed_time, "reminder"),
+                        "targetTime": parsed_time.when.isoformat() if parsed_time.when else None,
+                        "text": text,
+                    },
                 )
             )
         elif real_ops_allowed and _is_schedule_query(text):
@@ -143,8 +192,30 @@ def _is_bulk_delete(text: str) -> bool:
     return bool(re.search(r"(删除|清空).*(全部|所有).*(日程|安排|提醒|任务)?", text))
 
 
+def _is_delete_intent(text: str) -> bool:
+    return any(word in text for word in ("删除", "取消", "撤销", "去掉", "删掉", "不用提醒"))
+
+
+def _is_calendar_delete(text: str) -> bool:
+    return _is_delete_intent(text) and any(word in text for word in ("日程", "安排", "会议", "开会", "预约", "会"))
+
+
+def _is_reminder_delete(text: str) -> bool:
+    return _is_delete_intent(text) and "提醒" in text
+
+
+def _is_task_delete(text: str) -> bool:
+    return _is_delete_intent(text) and any(word in text for word in ("任务", "待办", "todo"))
+
+
 def _is_reschedule(text: str) -> bool:
-    return any(word in text for word in ("改期", "改到", "推迟", "延期"))
+    return any(word in text for word in ("改期", "改到", "推迟", "延期")) and any(
+        word in text for word in ("日程", "安排", "会议", "开会", "预约", "会")
+    )
+
+
+def _is_reminder_update(text: str) -> bool:
+    return "提醒" in text and any(word in text for word in ("改到", "推迟", "延期", "提前", "改成"))
 
 
 def _is_schedule_query(text: str) -> bool:
@@ -189,15 +260,28 @@ def _is_task_query(text: str) -> bool:
 
 
 def _is_reminder_create(text: str) -> bool:
-    return "提醒" in text and not _is_schedule_query(text)
+    return (
+        "提醒" in text
+        and not _is_schedule_query(text)
+        and not _is_reminder_delete(text)
+        and not _is_reminder_update(text)
+    )
 
 
 def _is_task_create(text: str) -> bool:
-    return any(word in text for word in ("任务", "待办", "todo")) and not _is_task_query(text)
+    return (
+        any(word in text for word in ("任务", "待办", "todo"))
+        and not _is_task_query(text)
+        and not _is_task_delete(text)
+    )
 
 
 def _is_calendar_create(text: str) -> bool:
-    return any(word in text for word in ("安排", "预约", "日程", "会议", "开会", "见"))
+    return (
+        any(word in text for word in ("安排", "预约", "日程", "会议", "开会", "见"))
+        and not _is_calendar_delete(text)
+        and not _is_reschedule(text)
+    )
 
 
 def _is_secretary_memory(text: str) -> bool:
@@ -235,3 +319,41 @@ def _extract_title(text: str, parsed_time: ParsedTime, fallback: str) -> str:
         cleaned = cleaned.replace(token, "")
     cleaned = cleaned.strip(" ，,。.")
     return cleaned or fallback
+
+
+def _extract_delete_query(text: str, parsed_time: ParsedTime, kind: str) -> str:
+    return _clean_operation_query(
+        text,
+        parsed_time,
+        kind,
+        extra_tokens=("删除", "取消", "撤销", "去掉", "删掉", "不用提醒", "不用", "错了", "错误"),
+    )
+
+
+def _extract_update_query(text: str, parsed_time: ParsedTime, kind: str) -> str:
+    head = re.split(r"(改到|改成|推迟到|延期到|提前到|推迟|延期|提前)", text, maxsplit=1)[0]
+    return _clean_operation_query(
+        head,
+        parsed_time,
+        kind,
+        extra_tokens=("把", "将", "这个", "那个", "这条", "那条"),
+    )
+
+
+def _clean_operation_query(
+    text: str,
+    parsed_time: ParsedTime,
+    kind: str,
+    *,
+    extra_tokens: tuple[str, ...] = (),
+) -> str:
+    cleaned = strip_time_expression(text, parsed_time).replace("/real", "")
+    base_tokens = {
+        "calendar": ("日程", "安排", "会议", "开会", "预约", "现实日程", "真实日程"),
+        "reminder": ("提醒", "提醒我", "现实提醒", "真实提醒"),
+        "task": ("任务", "待办", "todo", "现实任务", "真实任务"),
+    }
+    for token in ("请", "帮我", *base_tokens.get(kind, ()), *extra_tokens):
+        cleaned = cleaned.replace(token, "")
+    cleaned = cleaned.strip(" ，,。.!！?？")
+    return cleaned

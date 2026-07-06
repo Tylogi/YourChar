@@ -109,9 +109,9 @@ def parse_time_expression(text: str, now: datetime | None = None, timezone: str 
     if "后天" in text:
         date = (base + timedelta(days=2)).date()
         matched_parts.append("后天")
-    elif "明天" in text:
+    elif "明天" in text or "明晚" in text:
         date = (base + timedelta(days=1)).date()
-        matched_parts.append("明天")
+        matched_parts.append("明晚" if "明晚" in text else "明天")
     elif "今天" in text or "今晚" in text:
         date = base.date()
         matched_parts.append("今晚" if "今晚" in text else "今天")
@@ -130,7 +130,7 @@ def parse_time_expression(text: str, now: datetime | None = None, timezone: str 
             matched_parts.append(weekday_match.group(0))
 
     hour, minute, clock_match = _parse_clock(text)
-    if hour is None and any(period in text for period in ("早上", "上午", "中午", "下午", "晚上", "今晚")):
+    if hour is None and any(period in text for period in ("早上", "上午", "中午", "下午", "晚上", "今晚", "明晚")):
         hour, minute = _default_hour_for_period(text), 0
     if clock_match:
         matched_parts.append(clock_match)
@@ -143,14 +143,14 @@ def parse_time_expression(text: str, now: datetime | None = None, timezone: str 
     when = datetime.combine(date, datetime.min.time(), tzinfo=base.tzinfo).replace(
         hour=hour, minute=minute
     )
-    if when <= base and not any(token in text for token in ("今天", "今晚", "明天", "后天", "下周")):
+    if when <= base and not any(token in text for token in ("今天", "今晚", "明天", "明晚", "后天", "下周")):
         when += timedelta(days=1)
     return ParsedTime(when, matched_text=" ".join(matched_parts))
 
 
 def _parse_clock(text: str) -> tuple[int | None, int, str]:
     match = re.search(
-        r"(早上|上午|中午|下午|晚上|今晚)?\s*([一二两三四五六七八九十\d]{1,3})点(半|[一二两三四五六七八九十\d]{1,2}分?)?",
+        r"(早上|上午|中午|下午|晚上|今晚|明晚)?\s*([一二两三四五六七八九十\d]{1,3})点(半|[一二两三四五六七八九十\d]{1,2}分?)?",
         text,
     )
     if not match:
@@ -161,7 +161,7 @@ def _parse_clock(text: str) -> tuple[int | None, int, str]:
     minute = 30 if minute_text == "半" else 0
     if minute_text and minute_text != "半":
         minute = zh_to_int(minute_text.replace("分", ""))
-    if period in {"下午", "晚上", "今晚"} and hour < 12:
+    if period in {"下午", "晚上", "今晚", "明晚"} and hour < 12:
         hour += 12
     if period == "中午" and hour < 11:
         hour += 12
@@ -173,7 +173,7 @@ def _default_hour_for_period(text: str) -> int:
         return 12
     if "下午" in text:
         return 15
-    if "晚上" in text or "今晚" in text:
+    if "晚上" in text or "今晚" in text or "明晚" in text:
         return 20
     return 9
 
@@ -193,11 +193,12 @@ def strip_time_expression(text: str, parsed: ParsedTime) -> str:
     patterns = [
         r"[今明后]天",
         r"今晚",
+        r"明晚",
         r"下周[一二三四五六日天1-7]",
         r"(?:周|星期)[一二三四五六日天1-7]",
         r"每周[一二三四五六日天1-7]",
         r"([一二两三四五六七八九十\d]+)\s*(分钟|小时|天|周)后",
-        r"(早上|上午|中午|下午|晚上|今晚)?\s*([一二两三四五六七八九十\d]{1,3})点(半|[一二两三四五六七八九十\d]{1,2}分?)?",
+        r"(早上|上午|中午|下午|晚上|今晚|明晚)?\s*([一二两三四五六七八九十\d]{1,3})点(半|[一二两三四五六七八九十\d]{1,2}分?)?",
     ]
     for pattern in patterns:
         result = re.sub(pattern, "", result)

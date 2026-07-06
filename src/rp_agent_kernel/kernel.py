@@ -733,6 +733,29 @@ class Kernel:
                     "reasoning_tags",
                 ],
             },
+            agentTools={
+                "calendar": [
+                    "create_calendar",
+                    "list_calendar",
+                    "delete_calendar",
+                    "reschedule_calendar",
+                    "bulk_delete_calendar",
+                ],
+                "reminders": [
+                    "create_reminder",
+                    "delete_reminder",
+                    "update_reminder",
+                ],
+                "tasks": [
+                    "create_task",
+                    "list_tasks",
+                    "delete_task",
+                ],
+                "memory": [
+                    "write_secretary_memory",
+                    "write_rp_memory",
+                ],
+            },
             evalContractVersion="eval-contract-v1",
         )
 
