@@ -108,13 +108,13 @@ function loadPreferences() {
     nodes.sessionId.value = saved.sessionId || state.sessions[0]?.id || "demo";
     nodes.characterId.value = saved.characterId || "";
     nodes.timezone.value = saved.timezone || "Asia/Shanghai";
-    nodes.fixedNow.value = saved.fixedNow || "2026-07-02T12:00";
+    nodes.fixedNow.value = saved.fixedNow || "";
     nodes.messageText.value = saved.draft || "";
     nodes.sessionSearch.value = saved.sessionSearch || "";
     nodes.sessionModeFilter.value = saved.sessionModeFilter || "all";
     touchSession({ persist: false });
   } catch {
-    nodes.fixedNow.value = "2026-07-02T12:00";
+    nodes.fixedNow.value = "";
     state.sessions = normalizeSessions([]);
     touchSession({ persist: false });
   }

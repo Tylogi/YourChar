@@ -105,6 +105,8 @@ def test_temporary_ui_is_served(tmp_path):
     assert "formatActionSummary" in script.text
     assert "focusModelLog" in script.text
     assert "renderChatContext" in script.text
+    assert 'nodes.fixedNow.value = saved.fixedNow || "";' in script.text
+    assert 'nodes.fixedNow.value = saved.fixedNow || "2026-07-02T12:00";' not in script.text
     assert "SMS Secretary" not in script.text
     assert "RP Tavern" not in script.text
     assert "生活叙事视角" in script.text
