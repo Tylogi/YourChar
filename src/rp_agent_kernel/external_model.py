@@ -714,12 +714,12 @@ def _system_prompt(mode: str) -> str:
             "or modify actions. If confirmation is required, tell the user clearly."
         )
     return (
-        "You are the final response renderer for a headless roleplay agent. "
-        "Write immersive Chinese RP prose by default. RP story memory is isolated from "
-        "Return only the in-character visible reply. Do not expose analysis, chain-of-thought, "
-        "tool calls, JSON, markdown plans, or internal action payloads. "
-        "real-world calendar, task, and reminder state. Tool actions have already been "
-        "decided and executed; do not invent real-world actions."
+        "You are the final response renderer for one continuous companion in an immersive "
+        "posture. Write Chinese RP prose by default. Reality may softly shape pacing and "
+        "care, but real-world tools have already been decided and executed. Return only "
+        "the in-character visible reply. Do not expose analysis, chain-of-thought, tool "
+        "calls, JSON, markdown plans, or internal action payloads. Do not invent, cancel, "
+        "or modify real-world actions."
     )
 
 
@@ -764,6 +764,14 @@ def _context_prompt(
         lines.extend(f"- {memory.content}" for memory in memories)
 
     include_real_state = _include_real_state(request)
+    if (
+        request.mode == "rp"
+        and not include_real_state
+        and storage.is_enabled(FeatureName.reality_projection)
+    ):
+        lines.extend(["", "Shared present (read-only, for tone/pacing only):"])
+        lines.extend(_shared_present_lines(storage, now))
+
     if include_real_state and storage.is_enabled(FeatureName.calendar):
         start = now.replace(hour=0, minute=0, second=0, microsecond=0)
         events = storage.list_events(start, start + timedelta(days=7))[:8]
@@ -791,6 +799,35 @@ def _include_real_state(request: MessageRequest) -> bool:
     return text.startswith("/real") or any(
         phrase in text for phrase in ("现实日程", "真实日程", "现实提醒", "真实提醒")
     )
+
+
+def _shared_present_lines(storage: Storage, now) -> list[str]:
+    lines = [
+        "- read-only shared present; use for pacing/care, not as tool result or plot fact",
+        f"- local_time={now.isoformat()}",
+    ]
+    day_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
+    events = storage.list_events(now, day_start + timedelta(days=1))[:3]
+    if events:
+        lines.extend(f"- near_calendar={event.start.strftime('%H:%M')} {event.title}" for event in events)
+    else:
+        lines.append("- near_calendar=none")
+    reminders = [
+        reminder
+        for reminder in storage.list_reminders()
+        if reminder.status == "scheduled" and reminder.remind_at >= now
+    ][:3]
+    if reminders:
+        lines.extend(
+            f"- near_reminder={reminder.remind_at.strftime('%H:%M')} {reminder.title}"
+            for reminder in reminders
+        )
+    else:
+        lines.append("- near_reminders=none")
+    open_tasks = [task for task in storage.list_tasks() if task.status in {"open", "overdue"}]
+    pressure = "heavy" if len(open_tasks) >= 5 else "medium" if len(open_tasks) >= 2 else "light"
+    lines.append(f"- task_pressure={pressure}; open_task_count={len(open_tasks)}")
+    return lines
 
 
 def _recent_chat_messages(storage: Storage, session_id: str) -> list[dict[str, str]]:

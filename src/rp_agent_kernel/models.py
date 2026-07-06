@@ -27,6 +27,7 @@ class FeatureName(str, Enum):
     fts_search = "fts_search"
     shared_timeline = "shared_timeline"
     companion_persona = "companion_persona"
+    reality_projection = "reality_projection"
 
 
 FEATURE_DESCRIPTIONS: dict[FeatureName, str] = {
@@ -46,6 +47,7 @@ FEATURE_DESCRIPTIONS: dict[FeatureName, str] = {
     FeatureName.fts_search: "SQLite FTS-assisted memory search.",
     FeatureName.shared_timeline: "Shared lived timeline across practical and roleplay postures.",
     FeatureName.companion_persona: "Continuity layer for one companion persona across modes.",
+    FeatureName.reality_projection: "Read-only real-life projection for immersive continuity.",
 }
 
 
@@ -66,6 +68,7 @@ DEFAULT_FEATURE_FLAGS: dict[FeatureName, bool] = {
     FeatureName.fts_search: True,
     FeatureName.shared_timeline: True,
     FeatureName.companion_persona: True,
+    FeatureName.reality_projection: True,
 }
 
 

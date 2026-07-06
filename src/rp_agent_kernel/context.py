@@ -150,6 +150,20 @@ class ContextBuilder:
             )
         )
         include_real_state = _include_real_state(request)
+        if (
+            request.mode == "rp"
+            and not include_real_state
+            and self.storage.is_enabled(FeatureName.reality_projection)
+        ):
+            blocks.append(
+                self._block(
+                    block_id="dynamic:shared-reality",
+                    layer="dynamic",
+                    name="Shared present",
+                    source="shared_reality",
+                    text=_format_shared_reality(self.storage, now),
+                )
+            )
         if include_real_state and self.storage.is_enabled(FeatureName.calendar):
             start = now.replace(hour=0, minute=0, second=0, microsecond=0)
             end = start + timedelta(days=7)
@@ -288,4 +302,42 @@ def _format_shared_timeline(episodes) -> str:
             f"- {episode.occurred_at.isoformat()} [{episode.reality_scope}; {tool_scope}{character}] "
             f"{episode.summary} {episode.character_interpretation}".strip()
         )
+    return "\n".join(lines)
+
+
+def _format_shared_reality(storage: Storage, now) -> str:
+    lines = [
+        "Read-only shared present for immersive continuity.",
+        "Use this only for pacing, care, and time awareness; it is not a tool result or plot fact.",
+        f"local_time={now.isoformat()}",
+    ]
+    day_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
+    events = storage.list_events(now, day_start + timedelta(days=1))[:3]
+    if events:
+        lines.append(
+            "near_calendar="
+            + "; ".join(f"{event.start.strftime('%H:%M')} {event.title}" for event in events)
+        )
+    else:
+        lines.append("near_calendar=none")
+
+    reminders = [
+        reminder
+        for reminder in storage.list_reminders()
+        if reminder.status == "scheduled" and reminder.remind_at >= now
+    ][:3]
+    if reminders:
+        lines.append(
+            "near_reminders="
+            + "; ".join(
+                f"{reminder.remind_at.strftime('%H:%M')} {reminder.title}"
+                for reminder in reminders
+            )
+        )
+    else:
+        lines.append("near_reminders=none")
+
+    open_tasks = [task for task in storage.list_tasks() if task.status in {"open", "overdue"}]
+    pressure = "heavy" if len(open_tasks) >= 5 else "medium" if len(open_tasks) >= 2 else "light"
+    lines.append(f"task_pressure={pressure}; open_task_count={len(open_tasks)}")
     return "\n".join(lines)

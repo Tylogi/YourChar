@@ -164,6 +164,8 @@ def test_rp_context_excludes_real_state_until_explicit_real_request():
         rp_trace = kernel.storage.get_context_trace(rp.context_trace_id)
         assert all(block.source != "calendar_events" for block in rp_trace.blocks)
         assert all(block.source != "reminders" for block in rp_trace.blocks)
+        shared_reality = next(block for block in rp_trace.blocks if block.source == "shared_reality")
+        assert shared_reality.token_count > 1
 
         real = kernel.handle_message(
             "rp1",
@@ -172,6 +174,37 @@ def test_rp_context_excludes_real_state_until_explicit_real_request():
         real_trace = kernel.storage.get_context_trace(real.context_trace_id)
         assert any(block.source == "calendar_events" for block in real_trace.blocks)
         assert any(block.source == "reminders" for block in real_trace.blocks)
+    finally:
+        kernel.close()
+
+
+def test_reality_projection_feature_flag_controls_rp_shared_present():
+    kernel = Kernel(":memory:")
+    try:
+        kernel.storage.create_event(
+            CalendarEventCreate(
+                title="现实项目会",
+                start=datetime(2026, 7, 2, 20, 0, tzinfo=ZoneInfo("Asia/Shanghai")),
+            )
+        )
+        kernel.storage.create_character(
+            CharacterCreate(id="archive", name="Archive", persona="A careful archivist.")
+        )
+        enabled = kernel.handle_message(
+            "rp-reality",
+            MessageRequest(mode="rp", text="旧钥匙落在桌上。", now=NOW, characterId="archive"),
+        )
+        enabled_trace = kernel.storage.get_context_trace(enabled.context_trace_id)
+        assert any(block.source == "shared_reality" for block in enabled_trace.blocks)
+        assert all(block.source != "calendar_events" for block in enabled_trace.blocks)
+
+        kernel.storage.set_features({FeatureName.reality_projection: False})
+        disabled = kernel.handle_message(
+            "rp-reality",
+            MessageRequest(mode="rp", text="继续。", now=NOW, characterId="archive"),
+        )
+        disabled_trace = kernel.storage.get_context_trace(disabled.context_trace_id)
+        assert all(block.source != "shared_reality" for block in disabled_trace.blocks)
     finally:
         kernel.close()
 
@@ -345,7 +378,7 @@ def test_external_model_renders_reply_when_config_enabled():
         _stop_fake_openai_server(server, thread)
 
 
-def test_external_model_rp_prompt_excludes_real_state_by_default():
+def test_external_model_rp_prompt_uses_read_only_shared_present_by_default():
     server, handler, thread = _start_fake_openai_server(
         {"choices": [{"message": {"content": "角色回复"}}], "usage": {"total_tokens": 9}}
     )
@@ -387,8 +420,10 @@ def test_external_model_rp_prompt_excludes_real_state_by_default():
         )
         assert "Upcoming real-world calendar events" not in prompt
         assert "Reminders:" not in prompt
-        assert "现实项目会" not in prompt
-        assert "现实喝水" not in prompt
+        assert "Shared present (read-only, for tone/pacing only):" in prompt
+        assert "near_calendar=20:00 现实项目会" in prompt
+        assert "near_reminder=15:00 现实喝水" in prompt
+        assert "not as tool result or plot fact" in prompt
     finally:
         kernel.close()
         _stop_fake_openai_server(server, thread)
