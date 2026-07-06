@@ -772,6 +772,94 @@ def test_external_model_streaming_buffers_thinking_process_dump():
         _stop_fake_openai_server(server, thread)
 
 
+def test_external_model_strips_prefixed_chinese_thinking_process_dump():
+    leaked = (
+        "用户说我冷淡，需要调整语气，稍微带点温度，但保持“同行者”的简洁风格。"
+        "现在是下午三点多，可以稍微闲聊一句天气或者状态，拉近距离。\n\n"
+        "Thinking Process:\n"
+        "1.  **Analyze the User's Input**: The user says \"你咋这么冷淡\".\n"
+        "2.  **Drafting the Response**: 没冷淡，刚才怕打扰你。"
+    )
+    server, handler, thread = _start_fake_openai_server(
+        {"choices": [{"message": {"content": leaked}}], "usage": {"total_tokens": 120}}
+    )
+    kernel = Kernel(":memory:")
+    try:
+        kernel.storage.patch_openai_config(
+            OpenAICompatibleConfigPatch(
+                enabled=True,
+                baseUrl=f"http://127.0.0.1:{server.server_port}/v1",
+                apiKey="test-key",
+                model="prefixed-thinking-model",
+            )
+        )
+        response = kernel.handle_message(
+            "s1", MessageRequest(mode="sms", text="你咋这么冷淡", now=NOW)
+        )
+
+        assert response.reply == "收到。"
+        assert "Thinking Process" not in response.reply
+        assert "用户说" not in response.reply
+        completed = next(
+            action for action in response.actions if action.action_type == "external_model_render"
+        )
+        log = kernel.storage.get_model_call_log(completed.payload["modelCallLogId"])
+        assert log.response["visibleSanitized"] is True
+        assert log.response["sanitizeReason"] == "reasoning_dump"
+        assert "Thinking Process" in log.response["rawCompletionText"]
+        assert "用户说我冷淡" in log.response["rawCompletionText"]
+        assert "Thinking Process" not in log.completion_text
+    finally:
+        kernel.close()
+        _stop_fake_openai_server(server, thread)
+
+
+def test_external_model_streaming_buffers_prefixed_chinese_thinking_process_dump():
+    server, handler, thread = _start_fake_openai_stream_server(
+        [
+            "用户说我冷淡，需要调整语气，稍微带点温度，但保持“同行者”的简洁风格。",
+            "现在是下午三点多，可以稍微闲聊一句天气或者状态，拉近距离。\n\n",
+            "Thinking Process:\n",
+            "1.  **Analyze the User's Input**: The user says \"你咋这么冷淡\".\n",
+            "2.  **Drafting the Response**: 没冷淡，刚才怕打扰你。",
+        ]
+    )
+    kernel = Kernel(":memory:")
+    try:
+        kernel.storage.patch_openai_config(
+            OpenAICompatibleConfigPatch(
+                enabled=True,
+                baseUrl=f"http://127.0.0.1:{server.server_port}/v1",
+                apiKey="test-key",
+                model="prefixed-thinking-stream-model",
+            )
+        )
+        events = list(
+            kernel.stream_message_events(
+                "s1", MessageRequest(mode="sms", text="你咋这么冷淡", now=NOW)
+            )
+        )
+
+        deltas = [event["text"] for event in events if event["type"] == "delta"]
+        assert deltas == ["收到。"]
+        response = events[-1]["response"]
+        assert response["reply"] == "收到。"
+        assert "Thinking Process" not in response["reply"]
+        assert "用户说" not in response["reply"]
+        completed = next(
+            action for action in response["actions"] if action["actionType"] == "external_model_render"
+        )
+        log = kernel.storage.get_model_call_log(completed["payload"]["modelCallLogId"])
+        assert log.response["visibleSanitized"] is True
+        assert log.response["sanitizeReason"] == "reasoning_dump"
+        assert "Thinking Process" in log.response["rawCompletionText"]
+        assert "用户说我冷淡" in log.response["rawCompletionText"]
+        assert "Thinking Process" not in log.completion_text
+    finally:
+        kernel.close()
+        _stop_fake_openai_server(server, thread)
+
+
 def test_external_model_streaming_tool_json_falls_back_to_human_reply():
     server, handler, thread = _start_fake_openai_stream_server(
         ['{"actions":[{"actionType":"create_reminder","payload":{"title":"喝水"}}]}']

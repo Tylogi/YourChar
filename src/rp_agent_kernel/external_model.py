@@ -554,7 +554,7 @@ def _sanitize_visible_content(
     if _looks_like_tool_json(text):
         return _fallback_visible_text(request, execution, raw, "tool_json", fallback_reply)
 
-    if _looks_like_reasoning_dump(text):
+    if _looks_like_reasoning_dump(text) or _has_embedded_reasoning_dump(text):
         extracted = _extract_final_visible_text(text)
         if extracted and not _looks_like_tool_json(extracted) and not _looks_like_reasoning_dump(extracted):
             return _VisibleText(
@@ -639,10 +639,24 @@ def _looks_like_reasoning_dump(text: str) -> bool:
         r"^\*+\s+\*{0,2}\s*(analy[sz]e|determine|formulate|drafting|refining)\b",
         r"^(analysis|reasoning|chain of thought)\s*[:：]",
         r"^(the user|i need to|we need to|let me|action\s*:)\b",
-        r"^(分析|推理|思考|内部分析|我的思路)\s*[:：]",
+        r"^(分析|推理|思考|内部分析|我的思路|思考过程)\s*[:：]",
+        r"^(用户说|用户表示|用户觉得|用户希望|用户要求|用户需要|用户问|用户想|用户输入|用户的请求)",
+        r"^(现在是|当前是).{0,40}(可以|需要|应该).{0,80}(回复|聊|拉近|语气)",
         r"^\d+\.\s+\*{0,2}\s*(分析|理解|判断|确定|构思|草拟|润色|最终检查|输出生成)",
     )
     return any(re.search(pattern, lower if "分析" not in pattern else first, re.I) for pattern in patterns)
+
+
+def _has_embedded_reasoning_dump(text: str) -> bool:
+    head = text[:5000]
+    patterns = (
+        r"(?im)^\s*(thinking process|thought process|internal notes|reasoning process)\s*[:：]",
+        r"(?im)^\s*(analysis|reasoning|chain of thought)\s*[:：]",
+        r"(?m)^\s*(分析|推理|思考|内部分析|我的思路|思考过程)\s*[:：]",
+        r"(?im)^\s*\d+[.)]\s+\*{0,2}\s*(analy[sz]e|understand|determine|formulate|drafting|refining|final review|output generation)\b",
+        r"(?m)^\s*\d+[.)]\s+\*{0,2}\s*(分析|理解|判断|确定|构思|草拟|润色|最终检查|输出生成)",
+    )
+    return any(re.search(pattern, head) for pattern in patterns)
 
 
 def _extract_final_visible_text(text: str) -> str:
@@ -699,14 +713,16 @@ def _content_prefix_requires_full_buffer(text: str) -> bool:
         return True
     if stripped.startswith(("{", "[")):
         return True
-    return _looks_like_reasoning_dump(stripped)
+    return _looks_like_reasoning_dump(stripped) or _has_embedded_reasoning_dump(stripped)
 
 
 def _content_prefix_ready_to_stream(text: str) -> bool:
     stripped = text.lstrip()
     if not stripped:
         return False
-    return _contains_cjk(stripped) or len(stripped) >= 40
+    if _looks_like_reasoning_dump(stripped) or _has_embedded_reasoning_dump(stripped):
+        return False
+    return _contains_cjk(stripped) or len(stripped) >= 80
 
 
 def _prompt_token_estimate(payload: dict[str, Any]) -> int:
