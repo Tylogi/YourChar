@@ -986,6 +986,12 @@ def test_eval_capabilities_and_run_endpoint(tmp_path):
     assert "POST /api/runtime/tick" in capabilities.json()["endpoints"]
     assert "setFeature(name, enabled)" in capabilities.json()["sdkMethods"]
     assert "ackEvent(deliveryId)" in capabilities.json()["sdkMethods"]
+    prompt_layout = capabilities.json()["promptLayout"]
+    assert prompt_layout["externalModel"] == "cache-friendly-v1"
+    assert prompt_layout["dynamicContextRole"] == "user"
+    assert "system:stable-render-contract" in prompt_layout["messageOrder"]
+    assert "user:dynamic-runtime-context-and-current-message" in prompt_layout["messageOrder"]
+    assert "think_tags" in prompt_layout["reasoningFormats"]
 
     response = client.post(
         "/api/eval/run",

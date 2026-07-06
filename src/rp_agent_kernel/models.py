@@ -491,4 +491,5 @@ class CapabilityReport(KernelModel):
     features: list[FeatureFlag]
     endpoints: list[str]
     sdk_methods: list[str] = Field(alias="sdkMethods")
+    prompt_layout: dict[str, Any] = Field(default_factory=dict, alias="promptLayout")
     eval_contract_version: str = Field(alias="evalContractVersion")

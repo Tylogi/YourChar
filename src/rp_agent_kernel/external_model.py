@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import re
 import urllib.error
@@ -110,6 +111,7 @@ class OpenAICompatibleClient:
             "model": config["model"],
             "messages": _build_messages(storage, session_id, request, execution),
         }
+        prompt_layout = _prompt_layout_metrics(payload["messages"])
         if config.get("temperature") is not None:
             payload["temperature"] = config["temperature"]
         if config.get("max_tokens") is not None:
@@ -143,6 +145,10 @@ class OpenAICompatibleClient:
             )
             content = visible.text
             reasoning_content = _extract_reasoning_content(response)
+            reasoning_content = _merge_reasoning_content(
+                reasoning_content,
+                _extract_inline_reasoning_content(raw_content),
+            )
         except ExternalModelError as exc:
             storage.complete_model_call_log(
                 log.id,
@@ -161,6 +167,7 @@ class OpenAICompatibleClient:
                 "reasoningContent": reasoning_content,
                 "visibleSanitized": visible.sanitized,
                 "sanitizeReason": visible.reason,
+                "promptLayout": prompt_layout,
                 **({"rawCompletionText": visible.raw_text} if visible.sanitized else {}),
                 "raw": response,
             },
@@ -193,6 +200,7 @@ class OpenAICompatibleClient:
             "stream": True,
             "stream_options": {"include_usage": True},
         }
+        prompt_layout = _prompt_layout_metrics(payload["messages"])
         if config.get("temperature") is not None:
             payload["temperature"] = config["temperature"]
         if config.get("max_tokens") is not None:
@@ -260,12 +268,20 @@ class OpenAICompatibleClient:
                     "rawCompletionText": visible_filter.raw_content,
                     "reasoningContent": state.reasoning_content,
                     "reasoningChunks": reasoning_chunks,
+                    "promptLayout": prompt_layout,
                 },
                 completion_text=state.content,
                 error=str(exc),
             )
             raise
         final_visible = visible_filter.finish()
+        inline_reasoning = _extract_inline_reasoning_content(visible_filter.raw_content)
+        if inline_reasoning:
+            state.reasoning_content = _merge_reasoning_content(
+                state.reasoning_content, inline_reasoning
+            )
+            if inline_reasoning not in reasoning_chunks:
+                reasoning_chunks.append(inline_reasoning)
         if final_visible.text:
             state.content += final_visible.text
             chunks.append(final_visible.text)
@@ -291,6 +307,7 @@ class OpenAICompatibleClient:
                 "reasoningContent": state.reasoning_content,
                 "reasoningChunks": reasoning_chunks,
                 "chunkCount": len(chunks),
+                "promptLayout": prompt_layout,
             },
             completion_text=state.content,
         )
@@ -520,6 +537,27 @@ def _extract_reasoning_delta(response: dict[str, Any]) -> str:
     return ""
 
 
+def _extract_inline_reasoning_content(text: str) -> str:
+    parts: list[str] = []
+    for match in re.finditer(r"(?is)<(think|reasoning)\b[^>]*>(.*?)</\1>", text):
+        content = match.group(2).strip()
+        if content:
+            parts.append(content)
+    return "\n".join(parts)
+
+
+def _merge_reasoning_content(existing: str, extra: str) -> str:
+    existing = existing.strip()
+    extra = extra.strip()
+    if not extra:
+        return existing
+    if not existing:
+        return extra
+    if extra in existing:
+        return existing
+    return existing + "\n" + extra
+
+
 def _normalize_model_text(text: str) -> str:
     if "\\u" not in text and "\\U" not in text:
         return text
@@ -592,10 +630,8 @@ def _fallback_visible_text(
 
 
 def _strip_hidden_reasoning_tags(text: str) -> str:
-    cleaned = re.sub(r"(?is)<think>.*?</think>", "", text)
-    cleaned = re.sub(r"(?is)<reasoning>.*?</reasoning>", "", cleaned)
-    cleaned = re.sub(r"(?is)^.*?</think>", "", cleaned, count=1)
-    cleaned = re.sub(r"(?is)^.*?</reasoning>", "", cleaned, count=1)
+    cleaned = re.sub(r"(?is)<(think|reasoning)\b[^>]*>.*?</\1>", "", text)
+    cleaned = re.sub(r"(?is)^.*?</(?:think|reasoning)>", "", cleaned, count=1)
     return cleaned
 
 
@@ -739,15 +775,40 @@ def _prompt_token_estimate(payload: dict[str, Any]) -> int:
     return total
 
 
+def _prompt_layout_metrics(messages: list[dict[str, str]]) -> dict[str, Any]:
+    leading_system: list[str] = []
+    for message in messages:
+        if message.get("role") != "system":
+            break
+        leading_system.append(str(message.get("content") or ""))
+    stable_prefix = "\n\n".join(leading_system)
+    dynamic_content = str(messages[-1].get("content") or "") if messages else ""
+    return {
+        "contract": "cache-friendly-v1",
+        "messageRoles": [message.get("role", "") for message in messages],
+        "leadingSystemCount": len(leading_system),
+        "stablePrefixHash": hashlib.sha256(stable_prefix.encode("utf-8")).hexdigest(),
+        "stablePrefixTokens": max(0, len(stable_prefix) // 4),
+        "dynamicPromptTokens": max(0, len(dynamic_content) // 4),
+        "dynamicContextRole": messages[-1].get("role") if messages else None,
+    }
+
+
 def _build_messages(
     storage: Storage, session_id: str, request: MessageRequest, execution: ExecutionResult
 ) -> list[dict[str, str]]:
-    return [
-        {"role": "system", "content": _system_prompt(request.mode)},
-        {"role": "system", "content": _context_prompt(storage, session_id, request, execution)},
-        *_recent_chat_messages(storage, session_id),
-        {"role": "user", "content": request.text},
-    ]
+    messages = [{"role": "system", "content": _system_prompt(request.mode)}]
+    semi_stable = _semi_stable_prompt(storage, request)
+    if semi_stable:
+        messages.append({"role": "system", "content": semi_stable})
+    messages.extend(_recent_chat_messages(storage, session_id))
+    messages.append(
+        {
+            "role": "user",
+            "content": _runtime_user_prompt(storage, session_id, request, execution),
+        }
+    )
+    return messages
 
 
 def _system_prompt(mode: str) -> str:
@@ -773,17 +834,12 @@ def _system_prompt(mode: str) -> str:
     )
 
 
-def _context_prompt(
-    storage: Storage, session_id: str, request: MessageRequest, execution: ExecutionResult
-) -> str:
-    now = ensure_tz(request.now, request.timezone)
+def _semi_stable_prompt(storage: Storage, request: MessageRequest) -> str:
     lines = [
+        "Cacheable companion/session context.",
         f"mode: {request.mode}",
-        f"now: {now.isoformat()}",
-        f"timezone: {request.timezone}",
-        "",
-        "Authoritative action/result summary:",
-        json.dumps(_execution_summary(execution), ensure_ascii=False, default=str),
+        "This block should contain only low-frequency profile or character information.",
+        "Per-turn memory, current time, retrieval results, and tool outputs are supplied in the final user message.",
     ]
     if storage.is_enabled(FeatureName.companion_persona):
         profile = storage.get_companion_profile()
@@ -813,6 +869,22 @@ def _context_prompt(
             )
         except KeyError:
             lines.extend(["", f"Requested character not found: {request.character_id}"])
+    return "\n".join(lines)
+
+
+def _runtime_user_prompt(
+    storage: Storage, session_id: str, request: MessageRequest, execution: ExecutionResult
+) -> str:
+    now = ensure_tz(request.now, request.timezone)
+    lines = [
+        "Runtime context for this turn. Use it to render the final reply, but do not quote this wrapper.",
+        "This block is intentionally placed at the end of the prompt to preserve KV-cache reuse for stable prefixes.",
+        f"now: {now.isoformat()}",
+        f"timezone: {request.timezone}",
+        "",
+        "Authoritative action/result summary:",
+        json.dumps(_execution_summary(execution), ensure_ascii=False, default=str),
+    ]
 
     memory_mode = "rp" if request.mode == "rp" else "sms"
     memories = storage.recent_memories(
@@ -851,6 +923,7 @@ def _context_prompt(
         )
         if not reminders:
             lines.append("- none")
+    lines.extend(["", "User message:", request.text])
     return "\n".join(lines)
 
 

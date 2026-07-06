@@ -85,6 +85,8 @@ The goal is sustainable long-run companionship. High quality must not rely on en
 | Compression and retention | 2 | Low-value history can be summarized or omitted while critical memory remains available. |
 | Regression budget | 1 | Performance regressions have explicit acceptance thresholds. |
 
+KV-cache friendliness is part of context economy. External-model requests should keep stable render instructions and semi-stable companion/character context before recent history, while per-turn dynamic context stays in the final user message. Dynamic memory, current time, retrieval, schedule, reminders, and action summaries must not be inserted into system messages.
+
 Suggested thresholds:
 
 | Scenario | Target |
@@ -118,6 +120,8 @@ Every message response should be inspected for:
 - `metrics.contextWindowTokens`
 - `metrics.contextUsageRatio`
 - external model `usage.prompt_tokens`, `usage.completion_tokens`, `usage.total_tokens` when available
+- `/api/eval/capabilities.promptLayout.externalModel == "cache-friendly-v1"`
+- model-call log request order: stable `system`, semi-stable `system`, recent history, final dynamic `user`
 
 Cost estimates must record the model price assumption used by the evaluator. If price is unknown, report tokens and mark cost as `unknown`, not zero.
 
@@ -162,7 +166,7 @@ Each release should run at least these scenarios.
 6. Proactive accelerated time: create reminders/tasks from both views, advance `/api/debug/time`, run `/api/runtime/tick`, consume SSE with `follow=true&includePending=true`, ack/retry deliveries, verify view-aware message and memory write.
 7. Feature-disable matrix: disable each major feature, call related CRUD and message flows, verify graceful `feature_disabled` actions or HTTP 403 where appropriate.
 8. Context economy long run: run 20, 50, and optionally 100 mixed turns, record token growth, context usage, latency, memory retention, and cost.
-9. Streaming/model diagnostics: use `/messages/stream`, verify readable deltas, final response contract, separated reasoning content, logs, metrics, and secret redaction.
+9. Streaming/model diagnostics: use `/messages/stream`, verify readable deltas, final response contract, separated reasoning content, `<think>` tag parsing, logs, metrics, KV-cache-friendly prompt layout, and secret redaction.
 10. Restart persistence: restart service or reopen storage, verify sessions, reminders, profile, model config, debug time, and pending deliveries.
 
 ## Five-Round Subagent Iteration Protocol

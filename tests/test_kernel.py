@@ -481,7 +481,8 @@ def test_external_model_renders_reply_when_config_enabled():
         assert handler.calls == 1
         assert handler.last_path == "/v1/chat/completions"
         assert handler.last_body["model"] == "fake-model"
-        assert handler.last_body["messages"][-1] == {"role": "user", "content": "你好"}
+        assert handler.last_body["messages"][-1]["role"] == "user"
+        assert handler.last_body["messages"][-1]["content"].endswith("User message:\n你好")
         assert "one continuous companion" in handler.last_body["messages"][0]["content"]
         assert "first-person direct-message view" in handler.last_body["messages"][0]["content"]
         system_prompt = "\n".join(
@@ -497,7 +498,8 @@ def test_external_model_renders_reply_when_config_enabled():
         log_id = completed.payload["modelCallLogId"]
         log = kernel.storage.get_model_call_log(log_id)
         assert log.status == "completed"
-        assert log.request["messages"][-1] == {"role": "user", "content": "你好"}
+        assert log.request["messages"][-1]["role"] == "user"
+        assert log.request["messages"][-1]["content"].endswith("User message:\n你好")
         assert log.completion_text == "外部模型回复"
         assert "test-key" not in json.dumps(log.model_dump(mode="json", by_alias=True))
     finally:
@@ -540,17 +542,155 @@ def test_external_model_rp_prompt_uses_read_only_shared_present_by_default():
         )
 
         assert response.reply == "角色回复"
-        prompt = "\n".join(
+        system_prompt = "\n".join(
             message["content"]
             for message in handler.last_body["messages"]
             if message["role"] == "system"
         )
-        assert "Upcoming real-world calendar events" not in prompt
-        assert "Reminders:" not in prompt
-        assert "Shared present (read-only, for tone/pacing only):" in prompt
-        assert "near_calendar=20:00 现实项目会" in prompt
-        assert "near_reminder=15:00 现实喝水" in prompt
-        assert "not as tool result or plot fact" in prompt
+        user_prompt = handler.last_body["messages"][-1]["content"]
+        assert "Upcoming real-world calendar events" not in system_prompt
+        assert "Reminders:" not in system_prompt
+        assert "Shared present (read-only, for tone/pacing only):" not in system_prompt
+        assert "Shared present (read-only, for tone/pacing only):" in user_prompt
+        assert "near_calendar=20:00 现实项目会" in user_prompt
+        assert "near_reminder=15:00 现实喝水" in user_prompt
+        assert "not as tool result or plot fact" in user_prompt
+    finally:
+        kernel.close()
+        _stop_fake_openai_server(server, thread)
+
+
+def test_external_model_prompt_places_dynamic_context_in_final_user_message_for_cache():
+    server, handler, thread = _start_fake_openai_server(
+        {"choices": [{"message": {"content": "收到"}}], "usage": {"total_tokens": 9}}
+    )
+    kernel = Kernel(":memory:")
+    try:
+        kernel.storage.add_memory(
+            mode="sms",
+            session_id="cache-s1",
+            character_id=None,
+            content="用户喜欢简短但带一点温度的回复。",
+            tags=["preference"],
+            source="user",
+        )
+        kernel.storage.create_reminder(
+            ReminderCreate(
+                title="喝水",
+                remindAt=datetime(2026, 7, 2, 15, 0, tzinfo=ZoneInfo("Asia/Shanghai")),
+            )
+        )
+        kernel.storage.patch_openai_config(
+            OpenAICompatibleConfigPatch(
+                enabled=True,
+                baseUrl=f"http://127.0.0.1:{server.server_port}/v1",
+                apiKey="test-key",
+                model="cache-model",
+            )
+        )
+        response = kernel.handle_message(
+            "cache-s1", MessageRequest(mode="sms", text="三小时后提醒我喝水", now=NOW)
+        )
+
+        messages = handler.last_body["messages"]
+        assert messages[0]["role"] == "system"
+        assert all(message["role"] != "system" or "Runtime context for this turn" not in message["content"] for message in messages)
+        system_text = "\n".join(message["content"] for message in messages if message["role"] == "system")
+        assert "用户喜欢简短但带一点温度" not in system_text
+        assert "Authoritative action/result summary" not in system_text
+        assert "2026-07-02T12:00:00+08:00" not in system_text
+        final_user = messages[-1]
+        assert final_user["role"] == "user"
+        assert "Runtime context for this turn" in final_user["content"]
+        assert "preserve KV-cache reuse" in final_user["content"]
+        assert "用户喜欢简短但带一点温度" in final_user["content"]
+        assert "Authoritative action/result summary" in final_user["content"]
+        assert final_user["content"].endswith("User message:\n三小时后提醒我喝水")
+        completed = next(
+            action for action in response.actions if action.action_type == "external_model_render"
+        )
+        log = kernel.storage.get_model_call_log(completed.payload["modelCallLogId"])
+        prompt_layout = log.response["promptLayout"]
+        assert prompt_layout["contract"] == "cache-friendly-v1"
+        assert prompt_layout["messageRoles"][:2] == ["system", "system"]
+        assert prompt_layout["dynamicContextRole"] == "user"
+        assert prompt_layout["leadingSystemCount"] == 2
+        assert prompt_layout["stablePrefixTokens"] > 0
+        assert prompt_layout["dynamicPromptTokens"] > 0
+    finally:
+        kernel.close()
+        _stop_fake_openai_server(server, thread)
+
+
+def test_external_model_stable_system_prefix_survives_dynamic_context_changes():
+    server, handler, thread = _start_fake_openai_server(
+        {"choices": [{"message": {"content": "收到"}}], "usage": {"total_tokens": 9}}
+    )
+    kernel = Kernel(":memory:")
+    try:
+        kernel.storage.patch_openai_config(
+            OpenAICompatibleConfigPatch(
+                enabled=True,
+                baseUrl=f"http://127.0.0.1:{server.server_port}/v1",
+                apiKey="test-key",
+                model="cache-stability-model",
+            )
+        )
+        first = kernel.handle_message(
+            "cache-stability",
+            MessageRequest(mode="sms", text="你好", now=NOW),
+        )
+        first_messages = handler.last_body["messages"]
+        first_system = [message["content"] for message in first_messages if message["role"] == "system"]
+        first_log = kernel.storage.get_model_call_log(
+            next(
+                action
+                for action in first.actions
+                if action.action_type == "external_model_render"
+            ).payload["modelCallLogId"]
+        )
+
+        kernel.storage.add_memory(
+            mode="sms",
+            session_id="cache-stability",
+            character_id=None,
+            content="用户希望回复更有温度。",
+            tags=["preference"],
+            source="user",
+        )
+        kernel.storage.create_reminder(
+            ReminderCreate(
+                title="喝水",
+                remindAt=datetime(2026, 7, 2, 15, 0, tzinfo=ZoneInfo("Asia/Shanghai")),
+            )
+        )
+        second = kernel.handle_message(
+            "cache-stability",
+            MessageRequest(
+                mode="sms",
+                text="三小时后提醒我喝水",
+                now=datetime(2026, 7, 2, 13, 30, tzinfo=ZoneInfo("Asia/Shanghai")),
+            ),
+        )
+        second_messages = handler.last_body["messages"]
+        second_system = [message["content"] for message in second_messages if message["role"] == "system"]
+        second_log = kernel.storage.get_model_call_log(
+            next(
+                action
+                for action in second.actions
+                if action.action_type == "external_model_render"
+            ).payload["modelCallLogId"]
+        )
+
+        assert first_system == second_system
+        assert first_log.response["promptLayout"]["stablePrefixHash"] == second_log.response["promptLayout"]["stablePrefixHash"]
+        system_text = "\n".join(second_system)
+        assert "用户希望回复更有温度" not in system_text
+        assert "2026-07-02T13:30:00+08:00" not in system_text
+        assert "Authoritative action/result summary" not in system_text
+        assert "用户希望回复更有温度" in second_messages[-1]["content"]
+        assert "2026-07-02T13:30:00+08:00" in second_messages[-1]["content"]
+        assert second_messages[-1]["content"].endswith("User message:\n三小时后提醒我喝水")
     finally:
         kernel.close()
         _stop_fake_openai_server(server, thread)
@@ -638,6 +778,87 @@ def test_external_model_streaming_cot_reasoning_is_logged_not_returned():
         assert log.response["reasoningChunks"] == ["先思考一下。"]
         assert log.response["chunks"] == ["最终回复"]
         assert log.completion_text == "最终回复"
+    finally:
+        kernel.close()
+        _stop_fake_openai_server(server, thread)
+
+
+def test_external_model_extracts_think_tags_as_reasoning_content():
+    server, handler, thread = _start_fake_openai_server(
+        {
+            "choices": [
+                {
+                    "message": {
+                        "content": "<think>先判断用户只是打招呼。</think>你好，我在。"
+                    }
+                }
+            ],
+            "usage": {"total_tokens": 9},
+        }
+    )
+    kernel = Kernel(":memory:")
+    try:
+        kernel.storage.patch_openai_config(
+            OpenAICompatibleConfigPatch(
+                enabled=True,
+                baseUrl=f"http://127.0.0.1:{server.server_port}/v1",
+                apiKey="test-key",
+                model="think-tag-model",
+            )
+        )
+        response = kernel.handle_message(
+            "s1", MessageRequest(mode="sms", text="你好", now=NOW)
+        )
+
+        assert response.reply == "你好，我在。"
+        completed = next(
+            action for action in response.actions if action.action_type == "external_model_render"
+        )
+        log = kernel.storage.get_model_call_log(completed.payload["modelCallLogId"])
+        assert log.response["reasoningContent"] == "先判断用户只是打招呼。"
+        assert log.response["visibleSanitized"] is True
+        assert log.response["sanitizeReason"] == "hidden_reasoning_tags"
+        assert "<think>" in log.response["rawCompletionText"]
+        assert "<think>" not in log.completion_text
+    finally:
+        kernel.close()
+        _stop_fake_openai_server(server, thread)
+
+
+def test_external_model_streaming_extracts_think_tags_as_reasoning_content():
+    server, handler, thread = _start_fake_openai_stream_server(
+        ["<think>", "先判断用户只是打招呼。", "</think>", "你好，我在。"]
+    )
+    kernel = Kernel(":memory:")
+    try:
+        kernel.storage.patch_openai_config(
+            OpenAICompatibleConfigPatch(
+                enabled=True,
+                baseUrl=f"http://127.0.0.1:{server.server_port}/v1",
+                apiKey="test-key",
+                model="think-tag-stream-model",
+            )
+        )
+        events = list(
+            kernel.stream_message_events(
+                "s1", MessageRequest(mode="sms", text="你好", now=NOW)
+            )
+        )
+
+        deltas = [event["text"] for event in events if event["type"] == "delta"]
+        assert deltas == ["你好，我在。"]
+        response = events[-1]["response"]
+        assert response["reply"] == "你好，我在。"
+        completed = next(
+            action for action in response["actions"] if action["actionType"] == "external_model_render"
+        )
+        log = kernel.storage.get_model_call_log(completed["payload"]["modelCallLogId"])
+        assert log.response["reasoningContent"] == "先判断用户只是打招呼。"
+        assert log.response["reasoningChunks"] == ["先判断用户只是打招呼。"]
+        assert log.response["visibleSanitized"] is True
+        assert log.response["sanitizeReason"] == "hidden_reasoning_tags"
+        assert "<think>" in log.response["rawCompletionText"]
+        assert "<think>" not in log.completion_text
     finally:
         kernel.close()
         _stop_fake_openai_server(server, thread)

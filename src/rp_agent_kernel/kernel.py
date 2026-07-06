@@ -708,6 +708,31 @@ class Kernel:
                 "importCharacterCard(file)",
                 "runEval(cases)",
             ],
+            promptLayout={
+                "externalModel": "cache-friendly-v1",
+                "messageOrder": [
+                    "system:stable-render-contract",
+                    "system:semi-stable-companion-and-character",
+                    "history:recent-chat",
+                    "user:dynamic-runtime-context-and-current-message",
+                ],
+                "dynamicContextRole": "user",
+                "dynamicContextIncludes": [
+                    "current_time",
+                    "action_result_summary",
+                    "retrieved_memory",
+                    "shared_present",
+                    "calendar",
+                    "reminders",
+                ],
+                "reasoningFormats": [
+                    "reasoning_content",
+                    "reasoning",
+                    "reasoningContent",
+                    "think_tags",
+                    "reasoning_tags",
+                ],
+            },
             evalContractVersion="eval-contract-v1",
         )
 

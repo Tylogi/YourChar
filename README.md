@@ -41,6 +41,19 @@ When OpenAI-compatible API settings are enabled, chat replies call the configure
 
 In the UI model panel, save the Base URL/API Key first, then click `拉取模型` to read `{baseUrl}/models` and select an existing model from the dropdown. Manual model entry remains available for providers that do not expose `/models`.
 
+## External Model Prompt Layout
+
+The OpenAI-compatible renderer uses a cache-friendly message order:
+
+1. `system`: stable render contract for the selected view.
+2. `system`: semi-stable companion profile and current character card.
+3. recent chat history.
+4. final `user`: dynamic runtime context plus the current user message.
+
+Dynamic data such as current time, retrieved memory, action results, nearby schedule, reminders, and shared-present projection intentionally stays in the final user message. This preserves KV-cache reuse for stable prefixes and avoids invalidating the whole prompt whenever memory or time changes.
+
+Reasoning content is never returned to the user. The adapter logs structured reasoning fields (`reasoning_content`, `reasoning`, `reasoningContent`) and also treats `<think>...</think>` / `<reasoning>...</reasoning>` content as reasoning by default. Visible replies are sanitized; model-call logs keep sanitized raw completion text for debugging.
+
 ## Core Contracts
 
 - `POST /api/sessions/{id}/messages`
