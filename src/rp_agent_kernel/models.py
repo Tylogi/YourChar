@@ -222,6 +222,28 @@ class CharacterCardImportResponse(KernelModel):
     warnings: list[str] = Field(default_factory=list)
 
 
+class CompanionProfile(KernelModel):
+    id: str = "default"
+    name: str = "同行者"
+    practical_voice: str = Field(
+        default="清醒、简短、可靠，像同一个人在帮用户收束现实事务。",
+        alias="practicalVoice",
+    )
+    immersive_voice: str = Field(
+        default="沉浸、克制、记得共同经历，像真实角色共享同一条时间线。",
+        alias="immersiveVoice",
+    )
+    address_style: str = Field(default="自然称呼，不暴露系统模式。", alias="addressStyle")
+    updated_at: datetime | None = None
+
+
+class CompanionProfilePatch(KernelModel):
+    name: str | None = None
+    practical_voice: str | None = Field(default=None, alias="practicalVoice")
+    immersive_voice: str | None = Field(default=None, alias="immersiveVoice")
+    address_style: str | None = Field(default=None, alias="addressStyle")
+
+
 class OpenAICompatibleConfig(KernelModel):
     provider: str = "openai_compatible"
     enabled: bool = False

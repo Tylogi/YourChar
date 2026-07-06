@@ -372,6 +372,13 @@ def test_external_model_renders_reply_when_config_enabled():
         assert handler.last_body["messages"][-1] == {"role": "user", "content": "你好"}
         assert "one continuous companion" in handler.last_body["messages"][0]["content"]
         assert "practical posture" in handler.last_body["messages"][0]["content"]
+        system_prompt = "\n".join(
+            message["content"]
+            for message in handler.last_body["messages"]
+            if message["role"] == "system"
+        )
+        assert "Companion identity:" in system_prompt
+        assert "name: 同行者" in system_prompt
         completed = next(
             action for action in response.actions if action.action_type == "external_model_render"
         )

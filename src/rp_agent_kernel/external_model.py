@@ -737,6 +737,18 @@ def _context_prompt(
         "Authoritative action/result summary:",
         json.dumps(_execution_summary(execution), ensure_ascii=False, default=str),
     ]
+    if storage.is_enabled(FeatureName.companion_persona):
+        profile = storage.get_companion_profile()
+        lines.extend(
+            [
+                "",
+                "Companion identity:",
+                f"name: {profile.name}",
+                f"practical_voice: {profile.practical_voice}",
+                f"immersive_voice: {profile.immersive_voice}",
+                f"address_style: {profile.address_style}",
+            ]
+        )
 
     if request.mode == "rp" and request.character_id:
         try:

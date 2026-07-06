@@ -62,16 +62,21 @@ class ContextBuilder:
         )
 
         if self.storage.is_enabled(FeatureName.companion_persona):
+            profile = self.storage.get_companion_profile()
             blocks.append(
                 self._block(
                     block_id="semi:companion-persona:v1",
                     layer="semi_stable",
                     name="Companion persona",
                     source="companion_persona",
-                    text=(
-                        "One continuous companion, not two separate bots. SMS is the practical, "
-                        "clear posture; RP is the embodied, scene-aware posture. Avoid exposing "
-                        "mode labels unless safety requires a real-world boundary."
+                    text="\n".join(
+                        [
+                            f"name={profile.name}",
+                            f"practical_voice={profile.practical_voice}",
+                            f"immersive_voice={profile.immersive_voice}",
+                            f"address_style={profile.address_style}",
+                            "One continuous companion, not two separate bots. Avoid exposing mode labels unless safety requires a real-world boundary.",
+                        ]
                     ),
                 )
             )

@@ -18,6 +18,8 @@ from .models import (
     Character,
     CharacterCreate,
     CharacterPatch,
+    CompanionProfile,
+    CompanionProfilePatch,
     ConfirmationRecord,
     ContextTrace,
     ContextTraceBlock,
@@ -143,6 +145,15 @@ class Storage:
                     tags TEXT NOT NULL,
                     metadata TEXT NOT NULL,
                     created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL
+                );
+
+                CREATE TABLE IF NOT EXISTS companion_profile (
+                    id TEXT PRIMARY KEY,
+                    name TEXT NOT NULL,
+                    practical_voice TEXT NOT NULL,
+                    immersive_voice TEXT NOT NULL,
+                    address_style TEXT NOT NULL,
                     updated_at TEXT NOT NULL
                 );
 
@@ -276,6 +287,20 @@ class Storage:
                     """,
                     (name.value, int(enabled), FEATURE_DESCRIPTIONS[name]),
                 )
+            self.conn.execute(
+                """
+                INSERT OR IGNORE INTO companion_profile
+                (id, name, practical_voice, immersive_voice, address_style, updated_at)
+                VALUES ('default', ?, ?, ?, ?, ?)
+                """,
+                (
+                    "同行者",
+                    "清醒、简短、可靠，像同一个人在帮用户收束现实事务。",
+                    "沉浸、克制、记得共同经历，像真实角色共享同一条时间线。",
+                    "自然称呼，不暴露系统模式。",
+                    _iso(utc_now()),
+                ),
+            )
 
     def _ensure_column(self, table: str, column: str, definition: str) -> None:
         existing = {
@@ -1004,6 +1029,37 @@ class Storage:
         with self._lock, self.conn:
             self.conn.execute("DELETE FROM characters WHERE id = ?", (character_id,))
 
+    def get_companion_profile(self) -> CompanionProfile:
+        with self._lock:
+            row = self.conn.execute(
+                "SELECT * FROM companion_profile WHERE id = 'default'"
+            ).fetchone()
+        if row is None:
+            raise KeyError("default")
+        return self._row_to_companion_profile(row)
+
+    def patch_companion_profile(self, patch: CompanionProfilePatch) -> CompanionProfile:
+        current = self.get_companion_profile()
+        values = current.model_dump()
+        values.update(patch.model_dump(exclude_unset=True))
+        with self._lock, self.conn:
+            self.conn.execute(
+                """
+                UPDATE companion_profile
+                SET name = ?, practical_voice = ?, immersive_voice = ?,
+                    address_style = ?, updated_at = ?
+                WHERE id = 'default'
+                """,
+                (
+                    values["name"],
+                    values["practical_voice"],
+                    values["immersive_voice"],
+                    values["address_style"],
+                    _iso(utc_now()),
+                ),
+            )
+        return self.get_companion_profile()
+
     def add_memory(
         self,
         *,
@@ -1523,6 +1579,16 @@ class Storage:
             tags=_loads(row["tags"], []),
             metadata=_loads(row["metadata"], {}),
             created_at=row["created_at"],
+            updated_at=row["updated_at"],
+        )
+
+    def _row_to_companion_profile(self, row: sqlite3.Row) -> CompanionProfile:
+        return CompanionProfile(
+            id=row["id"],
+            name=row["name"],
+            practicalVoice=row["practical_voice"],
+            immersiveVoice=row["immersive_voice"],
+            addressStyle=row["address_style"],
             updated_at=row["updated_at"],
         )
 

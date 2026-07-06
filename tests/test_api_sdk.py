@@ -148,6 +148,35 @@ def test_openai_compatible_config_masks_api_key(tmp_path):
     assert cleared["apiKeySet"] is False
 
 
+def test_companion_profile_endpoint_shapes_context(tmp_path):
+    app = create_app(str(tmp_path / "companion-profile.sqlite3"))
+    client = TestClient(app)
+
+    default_profile = client.get("/api/companion-profile")
+    assert default_profile.status_code == 200
+    assert default_profile.json()["name"] == "同行者"
+
+    patched = client.patch(
+        "/api/companion-profile",
+        json={
+            "name": "林岚",
+            "practicalVoice": "简短、可靠、带一点熟悉感。",
+            "immersiveVoice": "克制、细腻、像和用户共享同一条时间线。",
+            "addressStyle": "自然称呼，不提系统模式。",
+        },
+    )
+    assert patched.status_code == 200
+    assert patched.json()["name"] == "林岚"
+
+    response = client.post(
+        "/api/sessions/profile-s1/messages",
+        json={"mode": "sms", "text": "你好", "now": NOW.isoformat()},
+    ).json()
+    trace = client.get(f"/api/context-traces/{response['contextTraceId']}").json()
+    persona = next(block for block in trace["blocks"] if block["source"] == "companion_persona")
+    assert persona["tokenCount"] > 1
+
+
 def test_ui_prefixed_api_routes_match_real_api(tmp_path):
     app = create_app(str(tmp_path / "ui-prefix.sqlite3"))
     client = TestClient(app)

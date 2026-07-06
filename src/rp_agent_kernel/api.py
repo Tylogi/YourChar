@@ -21,6 +21,7 @@ from .models import (
     CharacterCreate,
     CharacterCardImportRequest,
     CharacterPatch,
+    CompanionProfilePatch,
     ConfirmationDecision,
     EventDeliveryPatch,
     EvalRunRequest,
@@ -78,6 +79,7 @@ def create_app(db_path: str | None = None) -> FastAPI:
             "sessions": "GET /api/sessions",
             "messageHistory": "GET /api/sessions/{id}/messages",
             "featureFlags": "/api/features",
+            "companionProfile": "/api/companion-profile",
             "modelConfig": "/api/model-config/openai-compatible",
             "modelList": "/api/model-config/openai-compatible/models",
             "modelLogs": "/api/model-call-logs",
@@ -104,6 +106,18 @@ def create_app(db_path: str | None = None) -> FastAPI:
     @app.patch("/api/features")
     def patch_features(patch: FeaturePatch):
         return _kernel(app).storage.set_features(patch.flags)
+
+    @app.get("/api/companion-profile")
+    def get_companion_profile():
+        kernel = _kernel(app)
+        _require(kernel, FeatureName.companion_persona)
+        return kernel.storage.get_companion_profile()
+
+    @app.patch("/api/companion-profile")
+    def patch_companion_profile(patch: CompanionProfilePatch):
+        kernel = _kernel(app)
+        _require(kernel, FeatureName.companion_persona)
+        return kernel.storage.patch_companion_profile(patch)
 
     @app.get("/api/model-config/openai-compatible")
     def get_openai_compatible_config():
