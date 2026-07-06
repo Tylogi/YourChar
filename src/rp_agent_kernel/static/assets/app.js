@@ -683,16 +683,16 @@ function setMode(mode, persist = true) {
   $$("#modeSms, #modeRp").forEach((item) => {
     item.classList.toggle("active", item.dataset.mode === state.mode);
   });
-  nodes.composerMode.textContent = state.mode === "rp" ? "沉浸" : "日常";
-  nodes.chatTitle.textContent = state.mode === "rp" ? "沉浸姿态" : "日常姿态";
+  nodes.composerMode.textContent = state.mode === "rp" ? "生活" : "消息";
+  nodes.chatTitle.textContent = state.mode === "rp" ? "生活叙事视角" : "消息视角";
   nodes.chatSubtitle.textContent =
     state.mode === "rp"
-      ? "同一个 companion 的场景、角色和共同时间线"
-      : "同一个 companion 的清醒、简短、实践侧";
+      ? "同一个 companion 的第三人称生活场景和共同时间线"
+      : "同一个 companion 的第一人称直接消息";
   nodes.messageText.placeholder =
     state.mode === "rp"
-      ? "输入台词、动作或场景推进；选择角色后更容易延续共同经历。"
-      : "输入日常请求，例如安排日程、设置提醒或确认动作。";
+      ? "输入生活场景、对白，或直接安排现实日程/提醒。"
+      : "输入消息，例如安排日程、设置提醒或确认动作。";
   renderChatContext();
   if (persist) {
     touchSession();
@@ -787,10 +787,10 @@ function runCommand(command) {
   const text = command.trim();
   if (text === "/sms") {
     setMode("sms");
-    addMessage("system", "已切换到日常姿态。");
+    addMessage("system", "已切换到消息视角。");
   } else if (text === "/rp") {
     setMode("rp");
-    addMessage("system", "已切换到沉浸姿态。");
+    addMessage("system", "已切换到生活叙事视角。");
   } else if (text === "/calendar") {
     setInspectorOpen(true);
     switchPanel("schedulePanel");
@@ -1538,7 +1538,7 @@ function humanActionType(type) {
     create_task: "任务",
     list_tasks: "查任务",
     write_rp_memory: "场景记忆",
-    write_secretary_memory: "日常记忆",
+    write_secretary_memory: "消息记忆",
     record_shared_episode: "共同经历",
     external_model_render: "外部模型",
   };
@@ -2099,7 +2099,7 @@ function useCharacterFormId() {
   setMode("rp");
   savePreferences();
   renderChatContext();
-  addMessage("system", `当前沉浸角色已设为 ${id}。`);
+  addMessage("system", `当前生活叙事角色已设为 ${id}。`);
 }
 
 async function importCharacterCard() {

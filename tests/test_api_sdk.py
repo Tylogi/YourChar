@@ -107,7 +107,8 @@ def test_temporary_ui_is_served(tmp_path):
     assert "renderChatContext" in script.text
     assert "SMS Secretary" not in script.text
     assert "RP Tavern" not in script.text
-    assert "沉浸姿态" in script.text
+    assert "生活叙事视角" in script.text
+    assert "消息视角" in script.text
 
 
 def test_openai_compatible_config_masks_api_key(tmp_path):
@@ -325,7 +326,7 @@ def test_due_event_poll_and_stream_are_shell_friendly_and_idempotent(tmp_path):
     assert types == {"ReminderDue", "TaskOverdue"}
     reminder_event = next(event for event in body["events"] if event["type"] == "ReminderDue")
     task_event = next(event for event in body["events"] if event["type"] == "TaskOverdue")
-    assert reminder_event["message"] == "提醒到点：喝水。时间 2026-07-02 11:50。"
+    assert reminder_event["message"] == "我来提醒你：喝水。时间 2026-07-02 11:50。"
     assert reminder_event["sessionId"] == "sms-events"
     assert reminder_event["delivery"]["status"] == "claimed"
     assert reminder_event["delivery"]["claimedBy"] == "poll"
@@ -333,7 +334,7 @@ def test_due_event_poll_and_stream_are_shell_friendly_and_idempotent(tmp_path):
     assert reminder_event["eventDeliveryId"] == reminder_event["delivery"]["id"]
     assert reminder_event["action"]["actionType"] == "reminder_due"
     assert reminder_event["memory"]["source"] == "proactive_event"
-    assert task_event["message"].startswith("任务已逾期：提交周报。")
+    assert task_event["message"].startswith("我来提醒你：任务已逾期，提交周报。")
     assert task_event["action"]["actionType"] == "task_overdue"
 
     reminder_status = next(
@@ -541,6 +542,46 @@ def test_rp_due_reminder_uses_character_voice_and_memory(tmp_path):
     assert event["memoryPolicy"]["useAsPlotFact"] is False
     assert event["memory"]["mode"] == "rp"
     assert event["memory"]["characterId"] == "archivist"
+    assert event["memory"]["source"] == "proactive_event"
+    assert "out_of_character" in event["memory"]["tags"]
+
+
+def test_rp_message_created_reminder_triggers_life_narrative_due_event(tmp_path):
+    app = create_app(str(tmp_path / "rp-message-reminder.sqlite3"))
+    client = TestClient(app)
+    character = client.post(
+        "/api/characters",
+        json={
+            "id": "linlan",
+            "name": "林岚",
+            "persona": "冷静的档案管理员。",
+            "scenario": "雨夜档案室。",
+        },
+    ).json()
+
+    created = client.post(
+        "/api/sessions/rp-message-reminder/messages",
+        json={
+            "mode": "rp",
+            "text": "三小时后提醒我喝水",
+            "now": NOW.isoformat(),
+            "characterId": character["id"],
+        },
+    ).json()
+    assert any(action["actionType"] == "create_reminder" for action in created["actions"])
+    assert "她把提醒写进现实清单" in created["reply"]
+
+    event = client.get(
+        "/api/events/poll",
+        params={"now": "2026-07-02T15:00:00+08:00"},
+    ).json()["events"][0]
+    assert event["type"] == "ReminderDue"
+    assert event["mode"] == "rp"
+    assert event["sessionId"] == "rp-message-reminder"
+    assert event["characterId"] == "linlan"
+    assert "林岚" in event["message"]
+    assert "现实提醒" in event["message"]
+    assert event["memoryPolicy"]["useAsPlotFact"] is False
     assert event["memory"]["source"] == "proactive_event"
     assert "out_of_character" in event["memory"]["tags"]
 

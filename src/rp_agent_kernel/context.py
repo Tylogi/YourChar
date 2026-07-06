@@ -4,6 +4,7 @@ import hashlib
 from dataclasses import dataclass
 from datetime import timedelta
 
+from .intent import include_authoritative_real_state
 from .models import ContextTraceBlock, FeatureName, MessageRequest
 from .storage import Storage
 from .timeparse import ensure_tz
@@ -34,10 +35,10 @@ class ContextBuilder:
                 name="System contract",
                 source="kernel",
                 text=(
-                    "Headless companion kernel. The same companion can take a practical posture "
-                    "for real-world tasks or an immersive posture for roleplay. Shared timeline "
-                    "episodes can shape tone and continuity, but only explicit real-world intent "
-                    "can create, modify, or delete real calendar, task, and reminder state."
+                    "Headless companion kernel. The same companion can use a direct-message "
+                    "view or a third-person life-narrative view. Both views share real time, "
+                    "schedule, reminders, tasks, and proactive events. Shared timeline episodes "
+                    "shape tone and continuity; fictional framing cannot mutate real tools."
                 ),
             )
         )
@@ -268,22 +269,19 @@ class ContextBuilder:
 def _mode_rules(mode: str) -> str:
     if mode == "sms":
         return (
-            "Reply briefly from the practical posture of the same companion. Use only real-world "
-            "memory and explicit real-world intent for tools; shared timeline may shape wording."
+            "Reply briefly in first-person direct-message view as the same companion contacting "
+            "the user. Real-world tools are available when intent is real; shared timeline may "
+            "shape wording."
         )
     return (
-        "Reply with immersive prose from the embodied posture of the same companion. Reality may "
-        "softly shape pacing and care; real-world tools require explicit real-world phrasing."
+        "Reply with third-person life-narrative prose for the same companion. Reality is part "
+        "of the shared everyday timeline; real-world tools are available when intent is real, "
+        "while fictional framing remains memory-only."
     )
 
 
 def _include_real_state(request: MessageRequest) -> bool:
-    if request.mode == "sms":
-        return True
-    text = request.text.strip()
-    return text.startswith("/real") or any(
-        phrase in text for phrase in ("现实日程", "真实日程", "现实提醒", "真实提醒")
-    )
+    return include_authoritative_real_state(request.mode, request.text)
 
 
 def _filter_memories_for_context(memories, request: MessageRequest):

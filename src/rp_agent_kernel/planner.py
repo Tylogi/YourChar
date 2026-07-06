@@ -5,6 +5,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from typing import Any
 
+from .intent import allows_real_tools
 from .models import MessageRequest
 from .timeparse import ParsedTime, ensure_tz, parse_time_expression, strip_time_expression
 
@@ -31,7 +32,7 @@ class Planner:
         parsed_time = parse_time_expression(request.text, now, request.timezone)
         text = request.text.strip()
         operations: list[PlannedOperation] = []
-        real_ops_allowed = request.mode == "sms" or _rp_allows_real_ops(text)
+        real_ops_allowed = allows_real_tools(request.mode, text)
 
         if real_ops_allowed and _is_bulk_delete(text):
             operations.append(
@@ -138,10 +139,6 @@ class Planner:
         return Plan(operations=operations, parsed_time=parsed_time, now=now)
 
 
-def _rp_allows_real_ops(text: str) -> bool:
-    return text.startswith("/real") or "现实日程" in text or "真实日程" in text or "现实提醒" in text
-
-
 def _is_bulk_delete(text: str) -> bool:
     return bool(re.search(r"(删除|清空).*(全部|所有).*(日程|安排|提醒|任务)?", text))
 
@@ -231,6 +228,9 @@ def _extract_title(text: str, parsed_time: ParsedTime, fallback: str) -> str:
         "现实日程",
         "真实日程",
         "现实提醒",
+        "真实提醒",
+        "现实任务",
+        "真实任务",
     ):
         cleaned = cleaned.replace(token, "")
     cleaned = cleaned.strip(" ，,。.")

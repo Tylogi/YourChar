@@ -74,6 +74,57 @@ def test_rp_memory_does_not_pollute_sms_schedule_judgment():
         kernel.close()
 
 
+def test_rp_real_reminder_intent_works_without_real_prefix():
+    kernel = Kernel(":memory:")
+    try:
+        response = kernel.handle_message(
+            "rp-real-tools",
+            MessageRequest(mode="rp", text="三小时后提醒我喝水", now=NOW),
+        )
+
+        assert any(action.action_type == "create_reminder" for action in response.actions)
+        reminder = kernel.storage.list_reminders()[0]
+        assert reminder.title == "喝水"
+        assert reminder.remind_at.isoformat() == "2026-07-02T15:00:00+08:00"
+        assert "她把提醒写进现实清单" in response.reply
+        assert "每一处细节" not in response.reply
+    finally:
+        kernel.close()
+
+
+def test_rp_real_calendar_result_renders_before_memory_ack():
+    kernel = Kernel(":memory:")
+    try:
+        response = kernel.handle_message(
+            "rp-real-calendar",
+            MessageRequest(mode="rp", text="今晚八点安排项目会", now=NOW),
+        )
+
+        assert any(action.action_type == "create_calendar" for action in response.actions)
+        assert any(action.action_type == "write_rp_memory" for action in response.actions)
+        assert "她看了眼时间" in response.reply
+        assert "项目会" in response.reply
+        assert "2026-07-02 20:00" in response.reply
+        assert "每一处细节" not in response.reply
+    finally:
+        kernel.close()
+
+
+def test_rp_fictional_schedule_marker_stays_memory_only():
+    kernel = Kernel(":memory:")
+    try:
+        response = kernel.handle_message(
+            "rp-fictional-boundary",
+            MessageRequest(mode="rp", text="剧情里明晚八点安排旧钟楼交接。", now=NOW),
+        )
+
+        assert any(action.action_type == "write_rp_memory" for action in response.actions)
+        assert all(action.action_type != "create_calendar" for action in response.actions)
+        assert kernel.storage.list_events() == []
+    finally:
+        kernel.close()
+
+
 def test_rp_records_shared_timeline_without_real_tool_pollution():
     kernel = Kernel(":memory:")
     try:
@@ -159,7 +210,7 @@ def test_secretary_memory_query_does_not_write_new_memory():
         kernel.close()
 
 
-def test_rp_context_excludes_real_state_until_explicit_real_request():
+def test_rp_context_excludes_real_state_until_real_tool_intent():
     kernel = Kernel(":memory:")
     try:
         kernel.storage.create_event(
@@ -190,7 +241,7 @@ def test_rp_context_excludes_real_state_until_explicit_real_request():
 
         real = kernel.handle_message(
             "rp1",
-            MessageRequest(mode="rp", text="/real 今天有什么安排", now=NOW, characterId="archive"),
+            MessageRequest(mode="rp", text="今天有什么安排", now=NOW, characterId="archive"),
         )
         real_trace = kernel.storage.get_context_trace(real.context_trace_id)
         assert any(block.source == "calendar_events" for block in real_trace.blocks)
@@ -432,7 +483,7 @@ def test_external_model_renders_reply_when_config_enabled():
         assert handler.last_body["model"] == "fake-model"
         assert handler.last_body["messages"][-1] == {"role": "user", "content": "你好"}
         assert "one continuous companion" in handler.last_body["messages"][0]["content"]
-        assert "practical posture" in handler.last_body["messages"][0]["content"]
+        assert "first-person direct-message view" in handler.last_body["messages"][0]["content"]
         system_prompt = "\n".join(
             message["content"]
             for message in handler.last_body["messages"]

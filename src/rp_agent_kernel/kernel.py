@@ -609,8 +609,9 @@ class Kernel:
         due_text = due_at.strftime("%Y-%m-%d %H:%M") if due_at else "现在"
         label = "提醒" if kind == "reminder" else "任务"
         if origin["mode"] != "rp":
-            status_text = "已逾期" if kind == "task" else "到点"
-            return f"{label}{status_text}：{title}。时间 {due_text}。"
+            if kind == "task":
+                return f"我来提醒你：任务已逾期，{title}。时间 {due_text}。"
+            return f"我来提醒你：{title}。时间 {due_text}。"
 
         character_name = ""
         persona = ""
@@ -623,7 +624,7 @@ class Kernel:
                 scenario = character.scenario
             except KeyError:
                 character_name = ""
-        speaker = character_name or "角色"
+        speaker = character_name or "她"
         voice = _rp_voice_phrase(persona, scenario)
         return (
             f"{speaker}{voice}没有打断场景，只把一张便签推到你手边："

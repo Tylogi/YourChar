@@ -92,7 +92,7 @@ class Renderer:
         if execution.confirmations:
             confirmation = execution.confirmations[0]
             return (
-                f"我停下动作，把这件事从剧情里单独拎出来：{confirmation.reason}"
+                f"她停下动作，把这件事从叙事里单独拎出来：{confirmation.reason}"
                 f"如果要继续，请确认 {confirmation.id}。在此之前，现实日程不会被改动。"
             )
 
@@ -101,28 +101,69 @@ class Renderer:
             features = _feature_labels(disabled)
             return (
                 f"这段叙事可以继续，但{features}暂时不可用。"
-                "我不会把场景内容写进对应的现实工具。"
+                "她不会把场景内容写进对应的现实工具。"
             )
+
+        events: list[CalendarEvent] = execution.artifacts.get("calendarEvents", [])
+        tasks: list[Task] = execution.artifacts.get("tasks", [])
+        reminders: list[Reminder] = execution.artifacts.get("reminders", [])
+
+        created_event = _first_action(execution, "create_calendar")
+        if created_event and events:
+            event = events[0]
+            return (
+                f"她看了眼时间，把这件现实安排记了下来：{event.title}，"
+                f"{event.start.strftime('%Y-%m-%d %H:%M')}。"
+                "那条记录留在现实日程里，场景里的脚步也随之放慢了一点。"
+            )
+
+        listed_calendar = _first_action(execution, "list_calendar")
+        if listed_calendar:
+            if not events:
+                return "她把当前日程快速扫过一遍，抬头看向你：这段时间没有现实日程。"
+            lines = [f"{event.start.strftime('%m-%d %H:%M')} {event.title}" for event in events[:5]]
+            return "她把现实日程摊在桌边：\n" + "\n".join(lines)
+
+        created_reminder = _first_action(execution, "create_reminder")
+        if created_reminder and reminders:
+            reminder = reminders[0]
+            return (
+                f"她把提醒写进现实清单：{reminder.title}，"
+                f"{reminder.remind_at.strftime('%Y-%m-%d %H:%M')}。"
+                "到点时，她会把这件事重新递到你面前。"
+            )
+
+        created_task = _first_action(execution, "create_task")
+        if created_task and tasks:
+            task = tasks[0]
+            due = f"，截止 {task.due_at.strftime('%Y-%m-%d %H:%M')}" if task.due_at else ""
+            return f"她在清单上添了一行现实任务：{task.title}{due}。"
+
+        listed_tasks = _first_action(execution, "list_tasks")
+        if listed_tasks:
+            if not tasks:
+                return "她翻过任务清单，声音很轻：现在没有打开的任务。"
+            lines = [f"{task.status} {task.title}" for task in tasks[:8]]
+            return "她把任务清单推到你面前：\n" + "\n".join(lines)
 
         memory_action = _first_action(execution, "write_rp_memory")
         if memory_action:
             return (
                 "灯影压低，场景里的气息被慢慢收束成一条清晰的线。"
-                "我没有急着追问，只把刚才的细节压在指腹下，像按住一页尚未归档的证词。"
-                "片刻后，我抬眼看向你，声音放得很低：“继续说。这里每一处细节，都要留下证据。”"
+                "她没有急着追问，只把刚才的细节压在指腹下，像按住一页尚未归档的证词。"
+                "片刻后，她抬眼看向你，声音放得很低：“继续说。这里每一处细节，都要留下证据。”"
             )
 
-        events: list[CalendarEvent] = execution.artifacts.get("calendarEvents", [])
         if events:
             event = events[0]
             return (
-                f"我把叙事暂时放在一边，替你处理现实日程：{event.title} 已放到 "
-                f"{event.start.strftime('%Y-%m-%d %H:%M')}。回到角色视角时，这条现实安排不会被当作剧情事实。"
+                f"她确认了现实日程：{event.title}，{event.start.strftime('%Y-%m-%d %H:%M')}。"
+                "这件事属于现实时间线，不会被误写成剧情事实。"
             )
 
         return (
             "场景保持安静，角色没有急着推动事件。"
-            "我把手边的卷宗合上一半，留出足够的沉默给你继续说明。"
+            "她把手边的卷宗合上一半，留出足够的沉默给你继续说明。"
             "雨声落在窗沿上，像一串被压低的编号，等待下一条线索被放到桌面。"
         )
 
@@ -176,8 +217,8 @@ def _feature_label(feature: str) -> str:
         "reminders": "提醒功能",
         "characters": "角色功能",
         "external_model": "外部模型",
-        "rp_memory": "沉浸记忆",
-        "secretary_memory": "日常记忆",
+        "rp_memory": "生活记忆",
+        "secretary_memory": "消息记忆",
         "context_trace": "上下文追踪",
         "confirmation_safety": "安全确认",
         "ics": "日历导入导出",

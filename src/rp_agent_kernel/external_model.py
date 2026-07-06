@@ -9,6 +9,7 @@ from dataclasses import dataclass, field
 from datetime import timedelta
 from typing import Any
 
+from .intent import include_authoritative_real_state
 from .models import FeatureName, MessageRequest
 from .storage import Storage
 from .timeparse import ensure_tz
@@ -736,22 +737,23 @@ def _build_messages(
 def _system_prompt(mode: str) -> str:
     if mode == "sms":
         return (
-            "You are the final response renderer for one continuous companion in a concise "
-            "practical posture. Reply in Chinese unless the user clearly uses another language. "
-            "Sound like the same person who can also share immersive scenes, but stay brief "
-            "and useful for real-world tasks. "
+            "You are the final response renderer for one continuous companion in first-person "
+            "direct-message view. Reply in Chinese unless the user clearly uses another language. "
+            "Speak as the character directly contacting the user, using first person naturally. "
+            "Stay brief and useful while still sounding like the same person who shares everyday scenes. "
             "Return only the user-facing message. Do not expose analysis, chain-of-thought, "
             "tool calls, JSON, markdown plans, or internal action payloads. "
             "Tool actions have already been decided and executed; do not invent, cancel, "
             "or modify actions. If confirmation is required, tell the user clearly."
         )
     return (
-        "You are the final response renderer for one continuous companion in an immersive "
-        "posture. Write Chinese RP prose by default. Reality may softly shape pacing and "
-        "care, but real-world tools have already been decided and executed. Return only "
-        "the in-character visible reply. Do not expose analysis, chain-of-thought, tool "
-        "calls, JSON, markdown plans, or internal action payloads. Do not invent, cancel, "
-        "or modify real-world actions."
+        "You are the final response renderer for one continuous companion in third-person "
+        "life-narrative view. Write Chinese scene prose by default, describing the character "
+        "with third-person narration such as name/她/他, while dialogue may use first person. "
+        "Reality is part of the shared everyday timeline; real-world tools have already been "
+        "decided and executed. Return only the visible scene reply. Do not expose analysis, "
+        "chain-of-thought, tool calls, JSON, markdown plans, or internal action payloads. "
+        "Do not invent, cancel, or modify real-world actions."
     )
 
 
@@ -774,8 +776,8 @@ def _context_prompt(
                 "",
                 "Companion identity:",
                 f"name: {profile.name}",
-                f"practical_voice: {profile.practical_voice}",
-                f"immersive_voice: {profile.immersive_voice}",
+                f"direct_message_voice: {profile.practical_voice}",
+                f"life_narrative_voice: {profile.immersive_voice}",
                 f"address_style: {profile.address_style}",
             ]
         )
@@ -837,12 +839,7 @@ def _context_prompt(
 
 
 def _include_real_state(request: MessageRequest) -> bool:
-    if request.mode == "sms":
-        return True
-    text = request.text.strip()
-    return text.startswith("/real") or any(
-        phrase in text for phrase in ("现实日程", "真实日程", "现实提醒", "真实提醒")
-    )
+    return include_authoritative_real_state(request.mode, request.text)
 
 
 def _shared_present_lines(storage: Storage, now) -> list[str]:

@@ -2,19 +2,20 @@
 
 Headless companion agent kernel prototype.
 
-The product model is one continuous companion with two postures:
+The product model is one continuous companion with two views:
 
-- `sms`: practical posture for real-world schedule, reminders, tasks, and concise confirmations.
-- `rp`: immersive posture for character scenes, shared time, and common memories.
+- `sms`: first-person direct message view. The character contacts the user as an NPC-like real companion.
+- `rp`: third-person life narrative view. The character and user are described inside a shared everyday scene.
 
-The internal API still uses `sms` and `rp` as stable runtime labels. User-facing copy should present them as practical and immersive postures, not as two separate bots.
+The internal API still uses `sms` and `rp` as stable runtime labels. User-facing copy should present them as message and life-narrative views, not as two separate bots.
 
 ## Product Principles
 
 - Shared timeline first: the companion should remember common experiences with the user.
-- Reality can softly shape immersion: time of day, nearby reminders, and task pressure may influence pacing and care.
-- Immersion cannot silently mutate reality: real calendar, reminder, and task writes require practical posture or explicit real-world phrasing.
-- Practical replies should still feel like the same person, only shorter and more action-oriented.
+- One reality timeline: both views share real time, schedule, reminders, tasks, and proactive events.
+- View changes expression, not capability: `sms` is direct first-person messaging; `rp` is third-person life narration.
+- Fiction cannot silently mutate reality: story markers such as plot, scene, character setting, or fictional framing stay in memory and do not write real calendar, reminder, or task state.
+- Real-world writes are decided by intent and safety gates, not by mode alone.
 - Product copy should avoid exposing mode mechanics unless a safety boundary needs to be clear.
 
 ## Run
@@ -32,7 +33,7 @@ Chat-first browser UI:
 http://127.0.0.1:8765/ui
 ```
 
-The UI includes practical/immersive chat, session history reload, keyboard send, slash commands, schedule and reminder panels, OpenAI-compatible API settings, character settings/card import, feature flag toggles, eval runner, model-call logs, and context trace viewer.
+The UI includes message/life-narrative chat, session history reload, keyboard send, slash commands, schedule and reminder panels, OpenAI-compatible API settings, character settings/card import, feature flag toggles, eval runner, model-call logs, and context trace viewer.
 
 Useful UI commands: `/sms`, `/rp`, `/calendar`, `/features`, `/model`, `/characters`, `/trace`, `/eval`, `/clear`.
 
@@ -90,7 +91,7 @@ Immersive interactions write `SharedEpisode` records. These are common-experienc
 - available through `GET /api/shared-timeline`;
 - included in context trace as `shared_timeline`.
 
-Practical replies can refer to the existence of a recent shared experience without treating fictional details as real schedule state.
+Direct-message replies can refer to the existence of a recent shared experience without treating fictional details as real schedule state.
 
 ## Debug Time
 
@@ -110,15 +111,15 @@ curl -X PATCH http://127.0.0.1:8765/api/debug/time \
   -d '{"clear":true}'
 ```
 
-## Reality Projection
+## Shared Reality
 
-Normal immersive replies receive a read-only `shared_reality` projection:
+Normal life-narrative replies receive a compact `shared_reality` projection:
 
 - local time;
 - nearby real-world calendar/reminders;
 - rough task pressure.
 
-This projection may shape pacing and care. It is not an authoritative tool result and cannot create or modify real-world state. Explicit real-world phrasing still uses the normal calendar/reminder/task tools and safety gates.
+This projection may shape pacing and care. It is not an authoritative tool result and cannot create or modify real-world state by itself. Real-world calendar/reminder/task writes are available in both views when the user's intent is real-world and the usual safety gates pass.
 
 ## Feature Flags
 

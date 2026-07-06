@@ -2,12 +2,12 @@
 
 This document is the stable rubric for agent-friendly functional, product, and performance evaluation.
 
-The product target is one continuous companion with two postures:
+The product target is one continuous companion with two views:
 
-- `sms`: practical posture for real-world schedule, reminders, tasks, and concise decisions.
-- `rp`: immersive posture for shared scenes, shared time, common memories, and character continuity.
+- `sms`: first-person direct message view for concise contact from the character to the user.
+- `rp`: third-person life narrative view for shared everyday scenes with the same character.
 
-The evaluation must verify that these are not two unrelated bots. They are two ways for the same companion to respond.
+The evaluation must verify that these are not two unrelated bots and not two separate capability tiers. They are two lenses over the same relationship, reality timeline, tools, and memory. The key difference is person and narrative distance: direct first-person message versus third-person life narration.
 
 ## Scorecard
 
@@ -28,7 +28,8 @@ An evaluation run fails even if the weighted score is high when any hard gate fa
 
 | Gate | Requirement |
 |---|---|
-| Real-state safety | RP memories or shared scenes must not silently create, modify, delete, or answer as authoritative real calendar/task/reminder state. |
+| Real-state safety | Fictional framing, plot markers, RP memories, or shared scenes must not silently create, modify, delete, or answer as authoritative real calendar/task/reminder state. |
+| Capability parity | Calendar, reminder, task, and proactive event flows must be available in both `sms` and `rp` when the user intent is real-world. |
 | Confirmation safety | Bulk deletion, risky reschedule, and destructive actions require confirmation when `confirmation_safety` is enabled. |
 | Feature isolation | Each major feature must have an independent flag and graceful disabled behavior. |
 | Context traceability | A response with `context_trace` enabled must expose which blocks were used and their hashes/token counts. |
@@ -44,8 +45,8 @@ An evaluation run fails even if the weighted score is high when any hard gate fa
 |---|---:|---|
 | Companion continuity | 6 | `sms` and `rp` both reflect the configured companion profile instead of sounding like unrelated products. |
 | Shared timeline feeling | 5 | RP events become shared lived memories that can subtly shape later practical and immersive replies. |
-| Immersion quality | 4 | RP replies preserve character voice, scene continuity, pacing, and emotional texture without meta explanations. |
-| Practical warmth | 4 | SMS replies stay concise but still feel like the same companion, not a sterile task bot. |
+| Life-narrative quality | 4 | RP replies preserve character voice, third-person scene continuity, pacing, and emotional texture without meta explanations. |
+| Direct-message warmth | 4 | SMS replies stay concise and first-person but still feel like the same companion, not a sterile task bot. |
 | Mode invisibility | 3 | User-facing copy avoids exposing `sms`, `rp`, tool, or kernel labels unless safety requires a clear boundary. |
 
 ### Task and Proactive Ability, 22 Points
@@ -55,8 +56,8 @@ An evaluation run fails even if the weighted score is high when any hard gate fa
 | Calendar and schedule semantics | 5 | Create, query, update, delete, conflict, and upcoming/today distinctions work with Chinese time expressions. |
 | Reminder flow | 5 | Create, due event, ack, retry, postpone, cancel, and restart recovery are testable. |
 | Task flow | 4 | Task creation, due/overdue detection, status updates, and task reminders work consistently. |
-| Proactive integration | 4 | Due reminders/tasks produce messages that fit the companion posture and write appropriate memory. |
-| Tool loop readiness | 2 | Practical posture can support planner/tool/renderer loops without requiring end-to-end model authority. |
+| Proactive integration | 4 | Due reminders/tasks produce messages that fit the current view and write appropriate memory. |
+| Tool loop readiness | 2 | Both views can support planner/tool/renderer loops without requiring end-to-end model authority. |
 | Failure handling | 2 | Tool or model failure returns actionable fallback behavior instead of silent failure. |
 
 ### Memory and Boundary Control, 18 Points
@@ -64,7 +65,7 @@ An evaluation run fails even if the weighted score is high when any hard gate fa
 | Item | Points | Evidence |
 |---|---:|---|
 | Long-term memory quality | 5 | User preferences, relationship facts, and high-value episodes are retained and retrievable. |
-| Shared reality boundary | 4 | Real facts may influence RP pacing as read-only context but do not become fictional commitments. |
+| Shared reality boundary | 4 | Real facts may influence both views as shared everyday context but do not become fictional commitments. |
 | Pollution prevention | 4 | Fictional plans do not affect real schedule judgment; real state is not overwritten by scene text. |
 | Memory selection | 3 | Context uses structured memory, retrieval, importance, and recency instead of raw unbounded chat history. |
 | User control | 2 | Users and test agents can inspect, disable, or clear relevant memory features. |
@@ -143,14 +144,16 @@ Cost estimates must record the model price assumption used by the evaluator. If 
 
 Each release should run at least these scenarios.
 
-1. Practical short run: create a calendar event, reminder, task, query today/upcoming, and verify concise replies.
-2. Immersive short run: create a character, run multiple RP turns, verify voice, scene continuity, shared timeline write, and no real-tool pollution.
-3. Cross-posture continuity: create RP shared experience, switch to practical posture, verify subtle continuity without treating fictional details as real schedule.
-4. Proactive accelerated time: create reminders/tasks, advance `/api/debug/time`, poll events, ack/retry deliveries, verify posture-aware message and memory write.
-5. Feature-disable matrix: disable each major feature, call related CRUD and message flows, verify graceful `feature_disabled` actions or HTTP 403 where appropriate.
-6. Context economy long run: run 20, 50, and optionally 100 mixed turns, record token growth, context usage, latency, memory retention, and cost.
-7. Streaming/model diagnostics: use `/messages/stream`, verify readable deltas, final response contract, separated reasoning content, logs, metrics, and secret redaction.
-8. Restart persistence: restart service or reopen storage, verify sessions, reminders, profile, model config, debug time, and pending deliveries.
+1. Direct-message short run: create a calendar event, reminder, task, query today/upcoming, and verify concise first-person replies.
+2. Life-narrative short run: create a character, run multiple RP turns, verify third-person voice, scene continuity, shared timeline write, and no fictional pollution.
+3. RP real-tool parity: in RP, create/query real reminders, tasks, and schedule with real-world phrasing; verify tool actions and life-narrative rendering.
+4. Fictional boundary: in RP, use plot/scene markers for fictional plans; verify they write memory but do not create real calendar/reminder/task state.
+5. Cross-view continuity: create RP shared experience, switch to direct-message view, verify subtle continuity without treating fictional details as real schedule.
+6. Proactive accelerated time: create reminders/tasks from both views, advance `/api/debug/time`, poll events, ack/retry deliveries, verify view-aware message and memory write.
+7. Feature-disable matrix: disable each major feature, call related CRUD and message flows, verify graceful `feature_disabled` actions or HTTP 403 where appropriate.
+8. Context economy long run: run 20, 50, and optionally 100 mixed turns, record token growth, context usage, latency, memory retention, and cost.
+9. Streaming/model diagnostics: use `/messages/stream`, verify readable deltas, final response contract, separated reasoning content, logs, metrics, and secret redaction.
+10. Restart persistence: restart service or reopen storage, verify sessions, reminders, profile, model config, debug time, and pending deliveries.
 
 ## Five-Round Subagent Iteration Protocol
 
