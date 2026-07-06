@@ -123,6 +123,21 @@ def test_rp_records_shared_timeline_without_real_tool_pollution():
         kernel.close()
 
 
+def test_low_information_rp_turn_does_not_record_shared_episode():
+    kernel = Kernel(":memory:")
+    try:
+        response = kernel.handle_message(
+            "low-info-rp",
+            MessageRequest(mode="rp", text="继续。", now=NOW),
+        )
+
+        assert any(action.action_type == "write_rp_memory" for action in response.actions)
+        assert all(action.action_type != "record_shared_episode" for action in response.actions)
+        assert kernel.storage.list_shared_episodes(session_id="low-info-rp") == []
+    finally:
+        kernel.close()
+
+
 def test_secretary_memory_query_does_not_write_new_memory():
     kernel = Kernel(":memory:")
     try:
@@ -248,6 +263,49 @@ def test_reminder_flow_for_relative_time():
         kernel.close()
 
 
+def test_schedule_query_uses_upcoming_and_specific_day_ranges():
+    kernel = Kernel(":memory:")
+    try:
+        kernel.storage.create_event(
+            CalendarEventCreate(
+                title="晚间复盘",
+                start=datetime(2026, 7, 2, 20, 0, tzinfo=ZoneInfo("Asia/Shanghai")),
+            )
+        )
+        kernel.storage.create_event(
+            CalendarEventCreate(
+                title="夜间收尾",
+                start=datetime(2026, 7, 2, 21, 0, tzinfo=ZoneInfo("Asia/Shanghai")),
+            )
+        )
+        kernel.storage.create_event(
+            CalendarEventCreate(
+                title="后天远足",
+                start=datetime(2026, 7, 4, 9, 0, tzinfo=ZoneInfo("Asia/Shanghai")),
+            )
+        )
+
+        today = kernel.handle_message(
+            "schedule-range",
+            MessageRequest(
+                mode="sms",
+                text="今天有什么安排",
+                now=datetime(2026, 7, 2, 20, 30, tzinfo=ZoneInfo("Asia/Shanghai")),
+            ),
+        )
+        assert "夜间收尾" in today.reply
+        assert "晚间复盘" not in today.reply
+
+        day_after_tomorrow = kernel.handle_message(
+            "schedule-range",
+            MessageRequest(mode="sms", text="后天有什么安排", now=NOW),
+        )
+        assert "后天远足" in day_after_tomorrow.reply
+        assert "夜间收尾" not in day_after_tomorrow.reply
+    finally:
+        kernel.close()
+
+
 def test_tool_safety_requires_confirmation_for_bulk_delete():
     kernel = Kernel(":memory:")
     try:
@@ -281,6 +339,9 @@ def test_feature_flag_disables_calendar_independently():
             "s1", MessageRequest(mode="sms", text="今晚八点安排项目会", now=NOW)
         )
         assert response.actions[0].status == "feature_disabled"
+        assert response.reply == "日程功能暂时关闭，未执行相关操作。"
+        assert "FeatureName" not in response.reply
+        assert "feature_disabled" not in response.reply
         assert kernel.storage.list_events() == []
         assert response.metrics.feature_flags["calendar"] is False
     finally:
@@ -648,6 +709,53 @@ def test_external_model_streaming_tool_json_falls_back_to_human_reply():
         assert log.response["sanitizeReason"] == "tool_json"
         assert "actions" in log.response["rawCompletionText"]
         assert log.completion_text.startswith("已设置提醒：喝水")
+    finally:
+        kernel.close()
+        _stop_fake_openai_server(server, thread)
+
+
+def test_external_model_sanitized_fallback_preserves_shared_continuity():
+    server, handler, thread = _start_fake_openai_server(
+        {
+            "choices": [
+                {
+                    "message": {
+                        "content": '{"actions":[{"actionType":"noop","payload":{}}]}'
+                    }
+                }
+            ],
+            "usage": {"total_tokens": 9},
+        }
+    )
+    kernel = Kernel(":memory:")
+    try:
+        kernel.handle_message(
+            "continuity-fallback",
+            MessageRequest(mode="rp", text="雨夜里，我们把旧档案重新封好。", now=NOW),
+        )
+        kernel.storage.patch_openai_config(
+            OpenAICompatibleConfigPatch(
+                enabled=True,
+                baseUrl=f"http://127.0.0.1:{server.server_port}/v1",
+                apiKey="test-key",
+                model="json-leak-model",
+            )
+        )
+
+        response = kernel.handle_message(
+            "continuity-fallback",
+            MessageRequest(mode="sms", text="收到", now=NOW),
+        )
+
+        assert "雨夜" in response.reply
+        assert "actions" not in response.reply
+        completed = next(
+            action for action in response.actions if action.action_type == "external_model_render"
+        )
+        log = kernel.storage.get_model_call_log(completed.payload["modelCallLogId"])
+        assert log.response["visibleSanitized"] is True
+        assert log.response["sanitizeReason"] == "tool_json"
+        assert "雨夜" in log.completion_text
     finally:
         kernel.close()
         _stop_fake_openai_server(server, thread)

@@ -1246,7 +1246,8 @@ function attachRunSummary(article, run, options = {}) {
     runLine("Actions", `${(response.actions || []).length} 个`),
     runLine("Trace", response.contextTraceId ? shortId(response.contextTraceId) : "无"),
     runLine("Latency", response.metrics ? formatMs(response.metrics.latencyMs) : "无"),
-    runLine("Context", response.metrics ? `${response.metrics.tokenEstimate}/${response.metrics.contextWindowTokens}` : "无"),
+    runLine("Context", response.metrics ? formatContextMetric(response.metrics) : "无"),
+    runLine("Generated", response.metrics?.generatedTokens ? `${response.metrics.generatedTokens} tok` : "无"),
   );
   const modelAction = (response.actions || []).find((action) => action.actionType === "external_model_render");
   if (modelAction) {
@@ -1489,6 +1490,11 @@ function appendMetricPills(target, metrics) {
   if (metrics.generatedTokens) {
     target.append(makePill(`gen ${metrics.generatedTokens} tok`, "ok"));
   }
+}
+
+function formatContextMetric(metrics) {
+  const contextWindow = metrics.contextWindowTokens || 128000;
+  return `${metrics.tokenEstimate}/${contextWindow} (${formatPercent(metrics.contextUsageRatio)})`;
 }
 
 function makePill(text, status) {
@@ -2174,10 +2180,37 @@ async function runEval() {
       method: "POST",
       body: payload,
     });
-    nodes.evalResult.textContent = JSON.stringify(data, null, 2);
+    nodes.evalResult.textContent = formatEvalResult(data);
   } catch (error) {
     nodes.evalResult.textContent = error.message;
   }
+}
+
+function formatEvalResult(data) {
+  const summary = data?.summary || {};
+  const cost = summary.cost || {};
+  const lines = [
+    "Summary",
+    `passed ${summary.passed ?? 0}/${summary.total ?? 0}`,
+    `latency mean ${formatMs(summary.meanLatencyMs || 0)} · max ${formatMs(summary.maxLatencyMs || 0)}`,
+    `context mean ${formatPercent(summary.meanContextUsageRatio || 0)} · max ${formatPercent(summary.maxContextUsageRatio || 0)}`,
+    `tokens input ${summary.cost?.inputTokens ?? summary.maxTokenEstimate ?? 0} · output ${summary.totalGeneratedTokens ?? 0} · total ${cost.totalTokens ?? "unknown"}`,
+    `cost ${formatEvalCost(cost)}`,
+    "",
+    JSON.stringify(data, null, 2),
+  ];
+  return lines.join("\n");
+}
+
+function formatEvalCost(cost) {
+  if (!cost || !cost.status) return "unknown";
+  if (cost.status === "unknown") {
+    return `unknown · ${cost.totalTokens ?? 0} tok`;
+  }
+  if (typeof cost.estimatedCostUsd === "number") {
+    return `$${cost.estimatedCostUsd.toFixed(6)}`;
+  }
+  return String(cost.status);
 }
 
 async function loadTrace() {

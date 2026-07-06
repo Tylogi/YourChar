@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 import statistics
 import time
 from collections.abc import Iterator
@@ -69,6 +70,7 @@ class Kernel:
             total_start=total_start,
             prepared=prepared,
             renderer_ms=renderer_ms,
+            generated_text=reply,
         )
         return self._finalize_message(
             session_id=session_id,
@@ -230,7 +232,7 @@ class Kernel:
         if request.mode != "rp" or not self.storage.is_enabled(FeatureName.shared_timeline):
             return
         text = request.text.strip()
-        if not text:
+        if not text or not _should_record_shared_episode(text):
             return
         occurred_at = request.now or datetime.now().astimezone()
         character_name = ""
@@ -312,6 +314,7 @@ class Kernel:
             execution=prepared.execution,
             config=config,
             state=state,
+            fallback_reply=prepared.fallback_reply,
         ):
             now = time.perf_counter()
             if first_delta_at is None:
@@ -734,6 +737,7 @@ class Kernel:
                 request=request,
                 execution=execution,
                 config=config,
+                fallback_reply=fallback_reply,
             )
         except ExternalModelError as exc:
             execution.actions.append(
@@ -791,12 +795,43 @@ class Kernel:
                         )
                     )
             latencies = [result.latency_ms for result in results]
+            token_estimates = [
+                result.response.metrics.token_estimate
+                for result in results
+                if result.response.metrics is not None
+            ]
+            context_ratios = [
+                result.response.metrics.context_usage_ratio
+                for result in results
+                if result.response.metrics is not None
+            ]
+            generated_tokens = [
+                result.response.metrics.generated_tokens
+                for result in results
+                if result.response.metrics is not None
+                and result.response.metrics.generated_tokens is not None
+            ]
             summary: dict[str, Any] = {
                 "total": len(results),
                 "passed": sum(1 for result in results if result.passed),
                 "failed": sum(1 for result in results if not result.passed),
                 "meanLatencyMs": statistics.mean(latencies) if latencies else 0,
                 "maxLatencyMs": max(latencies) if latencies else 0,
+                "meanTokenEstimate": statistics.mean(token_estimates) if token_estimates else 0,
+                "maxTokenEstimate": max(token_estimates) if token_estimates else 0,
+                "meanContextUsageRatio": (
+                    statistics.mean(context_ratios) if context_ratios else 0
+                ),
+                "maxContextUsageRatio": max(context_ratios) if context_ratios else 0,
+                "totalGeneratedTokens": sum(generated_tokens),
+                "cost": {
+                    "status": "unknown",
+                    "reason": "model token prices are not configured",
+                    "inputTokens": sum(token_estimates),
+                    "outputTokens": sum(generated_tokens),
+                    "totalTokens": sum(token_estimates) + sum(generated_tokens),
+                    "estimatedCostUsd": None,
+                },
             }
             return EvalRunResponse(
                 deterministic=True,
@@ -857,6 +892,31 @@ def _compact_episode_text(text: str, limit: int = 120) -> str:
     return compact[: limit - 1].rstrip() + "…"
 
 
+def _should_record_shared_episode(text: str) -> bool:
+    normalized = re.sub(r"[\s。！？!?.,，…~～]+", "", text).lower()
+    if not normalized:
+        return False
+    if text.lstrip().startswith("/real"):
+        return False
+    low_information = {
+        "继续",
+        "我们继续",
+        "你继续",
+        "然后呢",
+        "嗯",
+        "哦",
+        "好",
+        "好的",
+        "收到",
+        "ok",
+        "okay",
+        "继续说",
+    }
+    if normalized in low_information:
+        return False
+    return len(normalized) >= 3
+
+
 def _first_sentence(text: str) -> str:
     stripped = " ".join(text.replace("\n", " ").split()).strip()
     if not stripped:
@@ -890,6 +950,19 @@ def _run_assertions(response: MessageResponse, assertions: dict[str, Any], laten
         results["maxLatencyMs"] = latency_ms <= float(assertions["maxLatencyMs"])
     if "minReplyChars" in assertions:
         results["minReplyChars"] = len(response.reply) >= int(assertions["minReplyChars"])
+    if "maxTokenEstimate" in assertions:
+        results["maxTokenEstimate"] = bool(response.metrics) and (
+            response.metrics.token_estimate <= int(assertions["maxTokenEstimate"])
+        )
+    if "maxContextUsageRatio" in assertions:
+        results["maxContextUsageRatio"] = bool(response.metrics) and (
+            response.metrics.context_usage_ratio <= float(assertions["maxContextUsageRatio"])
+        )
+    if "maxGeneratedTokens" in assertions:
+        generated_tokens = response.metrics.generated_tokens if response.metrics else None
+        results["maxGeneratedTokens"] = generated_tokens is not None and (
+            generated_tokens <= int(assertions["maxGeneratedTokens"])
+        )
     return results
 
 

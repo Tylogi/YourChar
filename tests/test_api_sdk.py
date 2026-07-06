@@ -77,6 +77,9 @@ def test_temporary_ui_is_served(tmp_path):
     assert "clearCurrentSessionHistory" in script.text
     assert "exportCurrentSessionEvalCase" in script.text
     assert "attachRunSummary" in script.text
+    assert "formatContextMetric" in script.text
+    assert "formatEvalResult" in script.text
+    assert "formatEvalCost" in script.text
     assert "captureRunSnapshot" in script.text
     assert "copyRunSummary" in script.text
     assert "exportRunEvalCase" in script.text
@@ -808,7 +811,13 @@ def test_eval_capabilities_and_run_endpoint(tmp_path):
                         "text": "三小时后提醒我喝水",
                         "now": NOW.isoformat(),
                     },
-                    "assertions": {"actionType": "create_reminder", "replyContains": "已设置提醒"},
+                    "assertions": {
+                        "actionType": "create_reminder",
+                        "replyContains": "已设置提醒",
+                        "maxContextUsageRatio": 0.1,
+                        "maxTokenEstimate": 2000,
+                        "maxGeneratedTokens": 80,
+                    },
                 }
             ]
         },
@@ -817,4 +826,13 @@ def test_eval_capabilities_and_run_endpoint(tmp_path):
     data = response.json()
     assert data["deterministic"] is True
     assert data["summary"]["passed"] == 1
+    assert data["summary"]["maxTokenEstimate"] > 0
+    assert data["summary"]["maxContextUsageRatio"] > 0
+    assert data["summary"]["meanContextUsageRatio"] > 0
+    assert data["summary"]["totalGeneratedTokens"] > 0
+    assert data["summary"]["cost"]["status"] == "unknown"
+    assert data["summary"]["cost"]["totalTokens"] > 0
     assert data["results"][0]["response"]["metrics"]["latencyMs"] >= 0
+    assert data["results"][0]["response"]["metrics"]["generatedTokens"] > 0
+    assert data["results"][0]["assertionResults"]["maxContextUsageRatio"] is True
+    assert data["results"][0]["assertionResults"]["maxGeneratedTokens"] is True

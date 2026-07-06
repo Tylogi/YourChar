@@ -85,7 +85,7 @@ class ContextBuilder:
             episodes = self.storage.list_shared_episodes(
                 session_id=session_id,
                 character_id=request.character_id if request.mode == "rp" else None,
-                limit=6,
+                limit=4,
             )
             blocks.append(
                 self._block(

@@ -35,8 +35,8 @@ class Renderer:
 
         disabled = [action for action in execution.actions if action.status == "feature_disabled"]
         if disabled:
-            features = "、".join(str(action.feature) for action in disabled)
-            return f"功能已关闭：{features}。未执行相关操作。"
+            features = _feature_labels(disabled)
+            return f"{features}暂时关闭，未执行相关操作。"
 
         events: list[CalendarEvent] = execution.artifacts.get("calendarEvents", [])
         tasks: list[Task] = execution.artifacts.get("tasks", [])
@@ -98,10 +98,10 @@ class Renderer:
 
         disabled = [action for action in execution.actions if action.status == "feature_disabled"]
         if disabled:
-            features = "、".join(str(action.feature) for action in disabled)
+            features = _feature_labels(disabled)
             return (
-                f"这段叙事可以继续，但被关闭的能力不会介入：{features}。"
-                "我会只保留当前对话的表演层，不写入对应的内核状态。"
+                f"这段叙事可以继续，但{features}暂时不可用。"
+                "我不会把场景内容写进对应的现实工具。"
             )
 
         memory_action = _first_action(execution, "write_rp_memory")
@@ -156,4 +156,37 @@ def _shared_continuity_hint(
 def _with_continuity(reply: str, continuity: str) -> str:
     if not continuity:
         return reply
-    return f"{reply}{continuity}"
+    separator = "\n" if "\n" in reply and not reply.endswith("\n") else ""
+    return f"{reply}{separator}{continuity}"
+
+
+def _feature_labels(actions) -> str:
+    labels = []
+    for action in actions:
+        feature = getattr(action, "feature", None)
+        labels.append(_feature_label(str(feature.value if hasattr(feature, "value") else feature)))
+    compact = [label for index, label in enumerate(labels) if label and label not in labels[:index]]
+    return "、".join(compact) or "相关功能"
+
+
+def _feature_label(feature: str) -> str:
+    return {
+        "calendar": "日程功能",
+        "tasks": "任务功能",
+        "reminders": "提醒功能",
+        "characters": "角色功能",
+        "external_model": "外部模型",
+        "rp_memory": "沉浸记忆",
+        "secretary_memory": "日常记忆",
+        "context_trace": "上下文追踪",
+        "confirmation_safety": "安全确认",
+        "ics": "日历导入导出",
+        "event_stream": "事件流",
+        "metrics": "指标统计",
+        "deterministic_eval": "评估接口",
+        "fts_search": "记忆检索",
+        "shared_timeline": "共同时间线",
+        "companion_persona": "同行者设定",
+        "reality_projection": "现实投影",
+        "debug_time": "调试时间",
+    }.get(feature, "相关功能")

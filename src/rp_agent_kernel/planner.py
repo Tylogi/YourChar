@@ -54,18 +54,16 @@ class Planner:
                 )
             )
         elif real_ops_allowed and _is_schedule_query(text):
-            start = now.replace(hour=0, minute=0, second=0, microsecond=0)
-            end = start + timedelta(days=7)
-            if "今天" in text:
-                end = start + timedelta(days=1)
-            elif "明天" in text:
-                start = start + timedelta(days=1)
-                end = start + timedelta(days=1)
+            start, end, scope = _schedule_query_range(text, parsed_time, now)
             operations.append(
                 PlannedOperation(
                     op_type="list_calendar",
                     feature="calendar",
-                    payload={"start": start.isoformat(), "end": end.isoformat()},
+                    payload={
+                        "start": start.isoformat(),
+                        "end": end.isoformat(),
+                        "scope": scope,
+                    },
                 )
             )
         elif real_ops_allowed and _is_task_query(text):
@@ -154,6 +152,39 @@ def _is_reschedule(text: str) -> bool:
 
 def _is_schedule_query(text: str) -> bool:
     return any(word in text for word in ("有什么安排", "查看日程", "查询日程", "列出日程", "schedule"))
+
+
+def _schedule_query_range(
+    text: str, parsed_time: ParsedTime, now: datetime
+) -> tuple[datetime, datetime, str]:
+    day_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
+    if "今晚" in text:
+        evening_start = day_start.replace(hour=18)
+        return max(now, evening_start), day_start + timedelta(days=1), "tonight"
+    if "今天" in text:
+        return now, day_start + timedelta(days=1), "today_upcoming"
+    if "明天" in text:
+        start = day_start + timedelta(days=1)
+        return start, start + timedelta(days=1), "tomorrow"
+    if "后天" in text:
+        start = day_start + timedelta(days=2)
+        return start, start + timedelta(days=1), "day_after_tomorrow"
+    if "本周" in text or "这周" in text:
+        next_week_start = day_start + timedelta(days=7 - now.weekday())
+        return now, next_week_start, "this_week_upcoming"
+    if "下周" in text:
+        start = day_start + timedelta(days=7 - now.weekday())
+        if parsed_time.when is not None and parsed_time.matched_text:
+            start = parsed_time.when.replace(hour=0, minute=0, second=0, microsecond=0)
+            return start, start + timedelta(days=1), "specific_day"
+        return start, start + timedelta(days=7), "next_week"
+    if parsed_time.when is not None and parsed_time.matched_text:
+        start = parsed_time.when.replace(hour=0, minute=0, second=0, microsecond=0)
+        if any(token in parsed_time.matched_text for token in ("点", "早上", "上午", "中午", "下午", "晚上")):
+            start = parsed_time.when.replace(second=0, microsecond=0)
+            return start, start + timedelta(hours=1), "specific_time"
+        return start, start + timedelta(days=1), "specific_day"
+    return now, now + timedelta(days=7), "upcoming_7d"
 
 
 def _is_task_query(text: str) -> bool:

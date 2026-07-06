@@ -49,6 +49,7 @@ class _VisibleText:
 class _StreamVisibleFilter:
     request: MessageRequest
     execution: ExecutionResult
+    fallback_reply: str | None = None
     pending: str = ""
     raw_content: str = ""
     mode: str = "undecided"
@@ -78,7 +79,12 @@ class _StreamVisibleFilter:
         if self.mode == "stream":
             return _VisibleText(text="", raw_text=self.raw_content)
 
-        visible = _sanitize_visible_content(self.raw_content, self.request, self.execution)
+        visible = _sanitize_visible_content(
+            self.raw_content,
+            self.request,
+            self.execution,
+            fallback_reply=self.fallback_reply,
+        )
         self.sanitized = visible.sanitized
         self.sanitize_reason = visible.reason
         return visible
@@ -96,6 +102,7 @@ class OpenAICompatibleClient:
         request: MessageRequest,
         execution: ExecutionResult,
         config: dict[str, Any],
+        fallback_reply: str | None = None,
     ) -> ExternalModelResult:
         _validate_config(config)
         payload: dict[str, Any] = {
@@ -127,7 +134,12 @@ class OpenAICompatibleClient:
         try:
             response = _post_json(endpoint, payload, headers, timeout=self.timeout)
             raw_content = _extract_content(response)
-            visible = _sanitize_visible_content(raw_content, request, execution)
+            visible = _sanitize_visible_content(
+                raw_content,
+                request,
+                execution,
+                fallback_reply=fallback_reply,
+            )
             content = visible.text
             reasoning_content = _extract_reasoning_content(response)
         except ExternalModelError as exc:
@@ -170,6 +182,7 @@ class OpenAICompatibleClient:
         execution: ExecutionResult,
         config: dict[str, Any],
         state: ExternalModelStreamState,
+        fallback_reply: str | None = None,
     ) -> Iterator[str]:
         _validate_config(config)
         state.model = str(config["model"])
@@ -205,7 +218,11 @@ class OpenAICompatibleClient:
         chunks: list[str] = []
         raw_chunks: list[str] = []
         reasoning_chunks: list[str] = []
-        visible_filter = _StreamVisibleFilter(request=request, execution=execution)
+        visible_filter = _StreamVisibleFilter(
+            request=request,
+            execution=execution,
+            fallback_reply=fallback_reply,
+        )
         try:
             for chunk in _post_stream_json(endpoint, payload, headers, timeout=self.timeout):
                 if isinstance(chunk.get("model"), str):
@@ -517,16 +534,20 @@ def _normalize_model_text(text: str) -> str:
 
 
 def _sanitize_visible_content(
-    content: str, request: MessageRequest, execution: ExecutionResult
+    content: str,
+    request: MessageRequest,
+    execution: ExecutionResult,
+    *,
+    fallback_reply: str | None = None,
 ) -> _VisibleText:
     raw = _normalize_model_text(content).strip()
     text = _strip_hidden_reasoning_tags(raw).strip()
 
     if not text:
-        return _fallback_visible_text(request, execution, raw, "empty_content")
+        return _fallback_visible_text(request, execution, raw, "empty_content", fallback_reply)
 
     if _looks_like_tool_json(text):
-        return _fallback_visible_text(request, execution, raw, "tool_json")
+        return _fallback_visible_text(request, execution, raw, "tool_json", fallback_reply)
 
     if _looks_like_reasoning_dump(text):
         extracted = _extract_final_visible_text(text)
@@ -537,7 +558,7 @@ def _sanitize_visible_content(
                 reason="reasoning_dump",
                 raw_text=raw,
             )
-        return _fallback_visible_text(request, execution, raw, "reasoning_dump")
+        return _fallback_visible_text(request, execution, raw, "reasoning_dump", fallback_reply)
 
     sanitized = text != raw
     return _VisibleText(
@@ -549,12 +570,16 @@ def _sanitize_visible_content(
 
 
 def _fallback_visible_text(
-    request: MessageRequest, execution: ExecutionResult, raw: str, reason: str
+    request: MessageRequest,
+    execution: ExecutionResult,
+    raw: str,
+    reason: str,
+    fallback_reply: str | None = None,
 ) -> _VisibleText:
     from .renderer import Renderer
 
     return _VisibleText(
-        text=Renderer().render(request, execution),
+        text=fallback_reply if fallback_reply is not None else Renderer().render(request, execution),
         sanitized=True,
         reason=reason,
         raw_text=raw,

@@ -138,7 +138,9 @@ Disabled features return `403` on their direct CRUD endpoints. Message handling 
 
 ## Agent Evaluation
 
-The eval endpoint is deterministic and returns assertion results plus latency metrics.
+The stable evaluation rubric is in [docs/evaluation.md](docs/evaluation.md). It covers product quality, task reliability, memory boundaries, performance, token cost, context-window health, UI usability, and the five-round evaluator/modifier subagent protocol.
+
+The eval endpoint is deterministic and returns assertion results plus latency, context, token, and cost-estimation metrics. If model token prices are not configured, cost is reported as `unknown` with input/output token counts instead of being treated as zero.
 
 ```bash
 curl -X POST http://127.0.0.1:8765/api/eval/run \
@@ -161,7 +163,7 @@ curl -X POST http://127.0.0.1:8765/api/eval/run \
   }'
 ```
 
-Supported assertions: `replyContains`, `replyNotContains`, `actionType`, `actionStatus`, `contextTracePresent`, `maxLatencyMs`, `minReplyChars`.
+Supported assertions: `replyContains`, `replyNotContains`, `actionType`, `actionStatus`, `contextTracePresent`, `maxLatencyMs`, `minReplyChars`, `maxTokenEstimate`, `maxContextUsageRatio`, `maxGeneratedTokens`.
 
 ## SDKs
 
