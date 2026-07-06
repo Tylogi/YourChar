@@ -34,9 +34,10 @@ class ContextBuilder:
                 name="System contract",
                 source="kernel",
                 text=(
-                    "Headless dual-mode agent kernel. Modes: sms for concise real-world secretary "
-                    "tasks; rp for immersive roleplay. RP memories must not affect real schedule "
-                    "judgment unless an explicit real-world command is given."
+                    "Headless companion kernel. The same companion can take a practical posture "
+                    "for real-world tasks or an immersive posture for roleplay. Shared timeline "
+                    "episodes can shape tone and continuity, but only explicit real-world intent "
+                    "can create, modify, or delete real calendar, task, and reminder state."
                 ),
             )
         )
@@ -59,6 +60,37 @@ class ContextBuilder:
                 text=_mode_rules(request.mode),
             )
         )
+
+        if self.storage.is_enabled(FeatureName.companion_persona):
+            blocks.append(
+                self._block(
+                    block_id="semi:companion-persona:v1",
+                    layer="semi_stable",
+                    name="Companion persona",
+                    source="companion_persona",
+                    text=(
+                        "One continuous companion, not two separate bots. SMS is the practical, "
+                        "clear posture; RP is the embodied, scene-aware posture. Avoid exposing "
+                        "mode labels unless safety requires a real-world boundary."
+                    ),
+                )
+            )
+
+        if self.storage.is_enabled(FeatureName.shared_timeline):
+            episodes = self.storage.list_shared_episodes(
+                session_id=session_id,
+                character_id=request.character_id if request.mode == "rp" else None,
+                limit=6,
+            )
+            blocks.append(
+                self._block(
+                    block_id="semi:shared-timeline:v1",
+                    layer="semi_stable",
+                    name="Shared timeline",
+                    source="shared_timeline",
+                    text=_format_shared_timeline(episodes),
+                )
+            )
 
         if request.mode == "sms" and self.storage.is_enabled(FeatureName.secretary_memory):
             memories = self.storage.recent_memories(mode="sms", session_id=session_id, limit=6)
@@ -216,10 +248,13 @@ class ContextBuilder:
 
 def _mode_rules(mode: str) -> str:
     if mode == "sms":
-        return "Reply briefly. Surface actions and confirmations clearly. Use only real-world memory."
+        return (
+            "Reply briefly from the practical posture of the same companion. Use only real-world "
+            "memory and explicit real-world intent for tools; shared timeline may shape wording."
+        )
     return (
-        "Reply with immersive prose. Keep roleplay memories separate from real calendar state. "
-        "Real-world tools require explicit real-world phrasing."
+        "Reply with immersive prose from the embodied posture of the same companion. Reality may "
+        "softly shape pacing and care; real-world tools require explicit real-world phrasing."
     )
 
 
@@ -240,3 +275,17 @@ def _filter_memories_for_context(memories, request: MessageRequest):
         for memory in memories
         if memory.source != "proactive_event" and "out_of_character" not in memory.tags
     ]
+
+
+def _format_shared_timeline(episodes) -> str:
+    if not episodes:
+        return "No shared episodes yet."
+    lines: list[str] = []
+    for episode in episodes:
+        tool_scope = "tools=no" if not episode.usable_for_real_world_tools else "tools=yes"
+        character = f" character={episode.character_id}" if episode.character_id else ""
+        lines.append(
+            f"- {episode.occurred_at.isoformat()} [{episode.reality_scope}; {tool_scope}{character}] "
+            f"{episode.summary} {episode.character_interpretation}".strip()
+        )
+    return "\n".join(lines)

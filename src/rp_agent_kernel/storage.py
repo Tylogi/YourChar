@@ -32,6 +32,8 @@ from .models import (
     Reminder,
     ReminderCreate,
     ReminderPatch,
+    SharedEpisode,
+    SharedEpisodeCreate,
     Task,
     TaskCreate,
     TaskPatch,
@@ -152,6 +154,21 @@ class Storage:
                     content TEXT NOT NULL,
                     tags TEXT NOT NULL,
                     source TEXT NOT NULL,
+                    created_at TEXT NOT NULL
+                );
+
+                CREATE TABLE IF NOT EXISTS shared_timeline (
+                    id TEXT PRIMARY KEY,
+                    session_id TEXT NOT NULL,
+                    mode TEXT NOT NULL,
+                    character_id TEXT,
+                    summary TEXT NOT NULL,
+                    character_interpretation TEXT NOT NULL,
+                    relationship_delta TEXT NOT NULL,
+                    reality_scope TEXT NOT NULL,
+                    usable_for_real_world_tools INTEGER NOT NULL,
+                    metadata TEXT NOT NULL,
+                    occurred_at TEXT NOT NULL,
                     created_at TEXT NOT NULL
                 );
 
@@ -1080,6 +1097,67 @@ class Storage:
             ).fetchall()
         return [self._row_to_memory(row) for row in rows]
 
+    def add_shared_episode(self, data: SharedEpisodeCreate) -> SharedEpisode:
+        episode_id = str(uuid.uuid4())
+        created_at = utc_now()
+        with self._lock, self.conn:
+            self.conn.execute(
+                """
+                INSERT INTO shared_timeline
+                (id, session_id, mode, character_id, summary, character_interpretation,
+                    relationship_delta, reality_scope, usable_for_real_world_tools,
+                    metadata, occurred_at, created_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    episode_id,
+                    data.session_id,
+                    data.mode,
+                    data.character_id,
+                    data.summary,
+                    data.character_interpretation,
+                    _json(data.relationship_delta),
+                    data.reality_scope,
+                    int(data.usable_for_real_world_tools),
+                    _json(data.metadata),
+                    _iso(data.occurred_at),
+                    _iso(created_at),
+                ),
+            )
+        return self.get_shared_episode(episode_id)
+
+    def get_shared_episode(self, episode_id: str) -> SharedEpisode:
+        with self._lock:
+            row = self.conn.execute(
+                "SELECT * FROM shared_timeline WHERE id = ?", (episode_id,)
+            ).fetchone()
+        if row is None:
+            raise KeyError(episode_id)
+        return self._row_to_shared_episode(row)
+
+    def list_shared_episodes(
+        self,
+        *,
+        session_id: str | None = None,
+        character_id: str | None = None,
+        limit: int = 8,
+    ) -> list[SharedEpisode]:
+        clauses: list[str] = []
+        params: list[Any] = []
+        if session_id is not None:
+            clauses.append("session_id = ?")
+            params.append(session_id)
+        if character_id is not None:
+            clauses.append("(character_id = ? OR character_id IS NULL)")
+            params.append(character_id)
+        sql = "SELECT * FROM shared_timeline"
+        if clauses:
+            sql += " WHERE " + " AND ".join(clauses)
+        sql += " ORDER BY occurred_at DESC, created_at DESC LIMIT ?"
+        with self._lock:
+            rows = self.conn.execute(sql, [*params, limit]).fetchall()
+        return [self._row_to_shared_episode(row) for row in rows]
+
     def add_action(
         self,
         *,
@@ -1457,6 +1535,22 @@ class Storage:
             content=row["content"],
             tags=_loads(row["tags"], []),
             source=row["source"],
+            created_at=row["created_at"],
+        )
+
+    def _row_to_shared_episode(self, row: sqlite3.Row) -> SharedEpisode:
+        return SharedEpisode(
+            id=row["id"],
+            sessionId=row["session_id"],
+            mode=row["mode"],
+            characterId=row["character_id"],
+            summary=row["summary"],
+            characterInterpretation=row["character_interpretation"],
+            relationshipDelta=_loads(row["relationship_delta"], {}),
+            realityScope=row["reality_scope"],
+            usableForRealWorldTools=bool(row["usable_for_real_world_tools"]),
+            metadata=_loads(row["metadata"], {}),
+            occurredAt=row["occurred_at"],
             created_at=row["created_at"],
         )
 

@@ -430,6 +430,20 @@ def create_app(db_path: str | None = None) -> FastAPI:
         except KeyError as exc:
             raise HTTPException(status_code=404, detail="context trace not found") from exc
 
+    @app.get("/api/shared-timeline")
+    def list_shared_timeline(
+        session_id: Annotated[str | None, Query(alias="sessionId")] = None,
+        character_id: Annotated[str | None, Query(alias="characterId")] = None,
+        limit: Annotated[int, Query(ge=1, le=100)] = 20,
+    ):
+        kernel = _kernel(app)
+        _require(kernel, FeatureName.shared_timeline)
+        return kernel.storage.list_shared_episodes(
+            session_id=session_id,
+            character_id=character_id,
+            limit=limit,
+        )
+
     @app.get("/api/eval/capabilities")
     def eval_capabilities():
         kernel = _kernel(app)

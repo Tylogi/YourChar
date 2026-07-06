@@ -74,6 +74,49 @@ def test_rp_memory_does_not_pollute_sms_schedule_judgment():
         kernel.close()
 
 
+def test_rp_records_shared_timeline_without_real_tool_pollution():
+    kernel = Kernel(":memory:")
+    try:
+        kernel.storage.create_character(
+            CharacterCreate(id="linlan", name="林岚", persona="冷静的档案管理员。")
+        )
+        rp = kernel.handle_message(
+            "shared-1",
+            MessageRequest(
+                mode="rp",
+                text="雨夜里，我们把旧档案重新封好，没有继续追问。",
+                now=NOW,
+                characterId="linlan",
+            ),
+        )
+        assert any(action.action_type == "record_shared_episode" for action in rp.actions)
+        episodes = kernel.storage.list_shared_episodes(
+            session_id="shared-1", character_id="linlan"
+        )
+        assert len(episodes) == 1
+        assert "雨夜" in episodes[0].summary
+        assert episodes[0].usable_for_real_world_tools is False
+        assert episodes[0].reality_scope == "shared_experience"
+        assert kernel.storage.list_events() == []
+
+        sms = kernel.handle_message(
+            "shared-1", MessageRequest(mode="sms", text="今天有什么安排", now=NOW)
+        )
+        assert "雨夜" not in sms.reply
+        sms_trace = kernel.storage.get_context_trace(sms.context_trace_id)
+        assert any(block.source == "shared_timeline" for block in sms_trace.blocks)
+
+        rp_again = kernel.handle_message(
+            "shared-1",
+            MessageRequest(mode="rp", text="我们继续。", now=NOW, characterId="linlan"),
+        )
+        rp_trace = kernel.storage.get_context_trace(rp_again.context_trace_id)
+        timeline_block = next(block for block in rp_trace.blocks if block.source == "shared_timeline")
+        assert timeline_block.token_count > 1
+    finally:
+        kernel.close()
+
+
 def test_secretary_memory_query_does_not_write_new_memory():
     kernel = Kernel(":memory:")
     try:

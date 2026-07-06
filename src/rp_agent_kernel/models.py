@@ -25,6 +25,8 @@ class FeatureName(str, Enum):
     metrics = "metrics"
     deterministic_eval = "deterministic_eval"
     fts_search = "fts_search"
+    shared_timeline = "shared_timeline"
+    companion_persona = "companion_persona"
 
 
 FEATURE_DESCRIPTIONS: dict[FeatureName, str] = {
@@ -42,6 +44,8 @@ FEATURE_DESCRIPTIONS: dict[FeatureName, str] = {
     FeatureName.metrics: "Per-request timing and context metrics.",
     FeatureName.deterministic_eval: "Agent-friendly deterministic evaluation endpoints.",
     FeatureName.fts_search: "SQLite FTS-assisted memory search.",
+    FeatureName.shared_timeline: "Shared lived timeline across practical and roleplay postures.",
+    FeatureName.companion_persona: "Continuity layer for one companion persona across modes.",
 }
 
 
@@ -60,6 +64,8 @@ DEFAULT_FEATURE_FLAGS: dict[FeatureName, bool] = {
     FeatureName.metrics: True,
     FeatureName.deterministic_eval: True,
     FeatureName.fts_search: True,
+    FeatureName.shared_timeline: True,
+    FeatureName.companion_persona: True,
 }
 
 
@@ -266,6 +272,38 @@ class Memory(KernelModel):
     tags: list[str] = Field(default_factory=list)
     source: str = "message"
     created_at: datetime
+
+
+class SharedEpisode(KernelModel):
+    id: str
+    session_id: str = Field(alias="sessionId")
+    mode: Mode
+    character_id: str | None = Field(default=None, alias="characterId")
+    summary: str
+    character_interpretation: str = Field(default="", alias="characterInterpretation")
+    relationship_delta: dict[str, float] = Field(default_factory=dict, alias="relationshipDelta")
+    reality_scope: Literal["shared_experience", "real_world", "fictional"] = Field(
+        default="shared_experience", alias="realityScope"
+    )
+    usable_for_real_world_tools: bool = Field(default=False, alias="usableForRealWorldTools")
+    metadata: dict[str, Any] = Field(default_factory=dict)
+    occurred_at: datetime = Field(alias="occurredAt")
+    created_at: datetime
+
+
+class SharedEpisodeCreate(KernelModel):
+    session_id: str = Field(alias="sessionId")
+    mode: Mode
+    character_id: str | None = Field(default=None, alias="characterId")
+    summary: str
+    character_interpretation: str = Field(default="", alias="characterInterpretation")
+    relationship_delta: dict[str, float] = Field(default_factory=dict, alias="relationshipDelta")
+    reality_scope: Literal["shared_experience", "real_world", "fictional"] = Field(
+        default="shared_experience", alias="realityScope"
+    )
+    usable_for_real_world_tools: bool = Field(default=False, alias="usableForRealWorldTools")
+    metadata: dict[str, Any] = Field(default_factory=dict)
+    occurred_at: datetime = Field(alias="occurredAt")
 
 
 class ActionRecord(KernelModel):

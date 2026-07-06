@@ -22,6 +22,7 @@ from .models import (
     MessageMetrics,
     MessageRequest,
     MessageResponse,
+    SharedEpisodeCreate,
 )
 from .planner import Planner
 from .renderer import Renderer
@@ -207,6 +208,7 @@ class Kernel:
             content=reply,
             character_id=request.character_id,
         )
+        self._record_shared_episode(session_id, request, reply, prepared)
 
         return MessageResponse(
             reply=reply,
@@ -214,6 +216,60 @@ class Kernel:
             confirmations=prepared.execution.confirmations,
             contextTraceId=prepared.context.trace_id,
             metrics=metrics,
+        )
+
+    def _record_shared_episode(
+        self,
+        session_id: str,
+        request: MessageRequest,
+        reply: str,
+        prepared: PreparedMessage,
+    ) -> None:
+        if request.mode != "rp" or not self.storage.is_enabled(FeatureName.shared_timeline):
+            return
+        text = request.text.strip()
+        if not text:
+            return
+        occurred_at = request.now or datetime.now().astimezone()
+        character_name = ""
+        if request.character_id:
+            try:
+                character_name = self.storage.get_character(request.character_id).name
+            except KeyError:
+                character_name = ""
+        companion = character_name or "我"
+        summary = f"你和{companion}在这段场景里共同经历了：{_compact_episode_text(text)}"
+        interpretation = "这会影响之后的熟悉感、等待感和语气，但不会自动变成真实日程或任务。"
+        episode = self.storage.add_shared_episode(
+            SharedEpisodeCreate(
+                sessionId=session_id,
+                mode="rp",
+                characterId=request.character_id,
+                summary=summary,
+                characterInterpretation=interpretation,
+                relationshipDelta={},
+                realityScope="shared_experience",
+                usableForRealWorldTools=False,
+                metadata={
+                    "source": "rp_message",
+                    "assistantReplyPreview": _compact_episode_text(reply, limit=80),
+                },
+                occurredAt=occurred_at,
+            )
+        )
+        prepared.execution.artifacts.setdefault("sharedEpisodes", []).append(episode)
+        prepared.execution.actions.append(
+            self.storage.add_action(
+                action_type="record_shared_episode",
+                status="completed",
+                feature=FeatureName.shared_timeline,
+                payload={
+                    "episodeId": episode.id,
+                    "sessionId": session_id,
+                    "characterId": request.character_id,
+                    "usableForRealWorldTools": False,
+                },
+            )
         )
 
     def _stream_reply(
@@ -619,6 +675,7 @@ class Kernel:
                 "GET/DELETE /api/model-call-logs",
                 "GET/PATCH /api/features",
                 "GET /api/context-traces/{id}",
+                "GET /api/shared-timeline",
                 "POST /api/confirmations/{id}",
                 "GET /api/eval/capabilities",
                 "POST /api/eval/run",
@@ -783,6 +840,13 @@ def _rp_voice_phrase(persona: str, scenario: str) -> str:
     if len(hint) > 24:
         hint = hint[:24]
     return f"保持着{hint}的分寸，"
+
+
+def _compact_episode_text(text: str, limit: int = 120) -> str:
+    compact = " ".join(text.replace("\n", " ").split()).strip()
+    if len(compact) <= limit:
+        return compact
+    return compact[: limit - 1].rstrip() + "…"
 
 
 def _first_sentence(text: str) -> str:
