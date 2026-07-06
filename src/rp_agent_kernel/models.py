@@ -28,6 +28,7 @@ class FeatureName(str, Enum):
     shared_timeline = "shared_timeline"
     companion_persona = "companion_persona"
     reality_projection = "reality_projection"
+    debug_time = "debug_time"
 
 
 FEATURE_DESCRIPTIONS: dict[FeatureName, str] = {
@@ -48,6 +49,7 @@ FEATURE_DESCRIPTIONS: dict[FeatureName, str] = {
     FeatureName.shared_timeline: "Shared lived timeline across practical and roleplay postures.",
     FeatureName.companion_persona: "Continuity layer for one companion persona across modes.",
     FeatureName.reality_projection: "Read-only real-life projection for immersive continuity.",
+    FeatureName.debug_time: "Debug clock override for accelerated long-run evaluation.",
 }
 
 
@@ -69,6 +71,7 @@ DEFAULT_FEATURE_FLAGS: dict[FeatureName, bool] = {
     FeatureName.shared_timeline: True,
     FeatureName.companion_persona: True,
     FeatureName.reality_projection: True,
+    FeatureName.debug_time: True,
 }
 
 
@@ -242,6 +245,21 @@ class CompanionProfilePatch(KernelModel):
     practical_voice: str | None = Field(default=None, alias="practicalVoice")
     immersive_voice: str | None = Field(default=None, alias="immersiveVoice")
     address_style: str | None = Field(default=None, alias="addressStyle")
+
+
+class DebugTimeState(KernelModel):
+    id: str = "default"
+    enabled: bool = False
+    now: datetime | None = None
+    timezone: str = "Asia/Shanghai"
+    updated_at: datetime | None = None
+
+
+class DebugTimePatch(KernelModel):
+    enabled: bool | None = None
+    now: datetime | None = None
+    timezone: str | None = None
+    clear: bool = False
 
 
 class OpenAICompatibleConfig(KernelModel):

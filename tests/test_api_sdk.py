@@ -177,6 +177,44 @@ def test_companion_profile_endpoint_shapes_context(tmp_path):
     assert persona["tokenCount"] > 1
 
 
+def test_debug_time_drives_messages_and_event_poll_when_now_is_omitted(tmp_path):
+    app = create_app(str(tmp_path / "debug-time.sqlite3"))
+    client = TestClient(app)
+
+    default_state = client.get("/api/debug/time")
+    assert default_state.status_code == 200
+    assert default_state.json()["enabled"] is False
+
+    patched = client.patch(
+        "/api/debug/time",
+        json={
+            "enabled": True,
+            "now": "2026-07-02T12:00:00+08:00",
+            "timezone": "Asia/Shanghai",
+        },
+    )
+    assert patched.status_code == 200
+    assert patched.json()["enabled"] is True
+
+    created = client.post(
+        "/api/sessions/debug-clock/messages",
+        json={"mode": "sms", "text": "三小时后提醒我喝水"},
+    ).json()
+    assert "2026-07-02 15:00" in created["reply"]
+    reminder = client.get("/api/reminders").json()[0]
+    assert reminder["remindAt"] == "2026-07-02T15:00:00+08:00"
+
+    client.patch("/api/debug/time", json={"now": "2026-07-02T15:00:00+08:00"})
+    due = client.get("/api/events/poll", params={"clientId": "debug-test"}).json()
+    assert due["count"] == 1
+    assert due["events"][0]["type"] == "ReminderDue"
+    assert due["events"][0]["delivery"]["claimedBy"] == "debug-test"
+
+    cleared = client.patch("/api/debug/time", json={"clear": True}).json()
+    assert cleared["enabled"] is False
+    assert cleared["now"] is None
+
+
 def test_ui_prefixed_api_routes_match_real_api(tmp_path):
     app = create_app(str(tmp_path / "ui-prefix.sqlite3"))
     client = TestClient(app)

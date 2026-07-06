@@ -23,6 +23,8 @@ from .models import (
     ConfirmationRecord,
     ContextTrace,
     ContextTraceBlock,
+    DebugTimePatch,
+    DebugTimeState,
     EventDelivery,
     EventDeliveryPatch,
     FeatureFlag,
@@ -154,6 +156,14 @@ class Storage:
                     practical_voice TEXT NOT NULL,
                     immersive_voice TEXT NOT NULL,
                     address_style TEXT NOT NULL,
+                    updated_at TEXT NOT NULL
+                );
+
+                CREATE TABLE IF NOT EXISTS debug_time (
+                    id TEXT PRIMARY KEY,
+                    enabled INTEGER NOT NULL,
+                    now TEXT,
+                    timezone TEXT NOT NULL,
                     updated_at TEXT NOT NULL
                 );
 
@@ -300,6 +310,14 @@ class Storage:
                     "自然称呼，不暴露系统模式。",
                     _iso(utc_now()),
                 ),
+            )
+            self.conn.execute(
+                """
+                INSERT OR IGNORE INTO debug_time
+                (id, enabled, now, timezone, updated_at)
+                VALUES ('default', 0, NULL, 'Asia/Shanghai', ?)
+                """,
+                (_iso(utc_now()),),
             )
 
     def _ensure_column(self, table: str, column: str, definition: str) -> None:
@@ -1060,6 +1078,46 @@ class Storage:
             )
         return self.get_companion_profile()
 
+    def get_debug_time(self) -> DebugTimeState:
+        with self._lock:
+            row = self.conn.execute("SELECT * FROM debug_time WHERE id = 'default'").fetchone()
+        if row is None:
+            raise KeyError("default")
+        return self._row_to_debug_time(row)
+
+    def patch_debug_time(self, patch: DebugTimePatch) -> DebugTimeState:
+        current = self.get_debug_time()
+        values = current.model_dump()
+        updates = patch.model_dump(exclude_unset=True)
+        if patch.clear:
+            values["now"] = None
+            values["enabled"] = False if "enabled" not in updates else bool(patch.enabled)
+        else:
+            if "now" in updates:
+                values["now"] = patch.now
+                if patch.enabled is None:
+                    values["enabled"] = True
+            if patch.enabled is not None:
+                values["enabled"] = bool(patch.enabled)
+        if patch.timezone is not None:
+            values["timezone"] = patch.timezone
+
+        with self._lock, self.conn:
+            self.conn.execute(
+                """
+                UPDATE debug_time
+                SET enabled = ?, now = ?, timezone = ?, updated_at = ?
+                WHERE id = 'default'
+                """,
+                (
+                    int(values["enabled"]),
+                    _iso(values.get("now")),
+                    values["timezone"] or "Asia/Shanghai",
+                    _iso(utc_now()),
+                ),
+            )
+        return self.get_debug_time()
+
     def add_memory(
         self,
         *,
@@ -1589,6 +1647,15 @@ class Storage:
             practicalVoice=row["practical_voice"],
             immersiveVoice=row["immersive_voice"],
             addressStyle=row["address_style"],
+            updated_at=row["updated_at"],
+        )
+
+    def _row_to_debug_time(self, row: sqlite3.Row) -> DebugTimeState:
+        return DebugTimeState(
+            id=row["id"],
+            enabled=bool(row["enabled"]),
+            now=row["now"],
+            timezone=row["timezone"],
             updated_at=row["updated_at"],
         )
 

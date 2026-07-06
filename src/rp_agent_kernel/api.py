@@ -23,6 +23,7 @@ from .models import (
     CharacterPatch,
     CompanionProfilePatch,
     ConfirmationDecision,
+    DebugTimePatch,
     EventDeliveryPatch,
     EvalRunRequest,
     FeatureName,
@@ -34,6 +35,7 @@ from .models import (
     TaskCreate,
     TaskPatch,
 )
+from .timeparse import ensure_tz
 
 
 def create_app(db_path: str | None = None) -> FastAPI:
@@ -80,6 +82,7 @@ def create_app(db_path: str | None = None) -> FastAPI:
             "messageHistory": "GET /api/sessions/{id}/messages",
             "featureFlags": "/api/features",
             "companionProfile": "/api/companion-profile",
+            "debugTime": "/api/debug/time",
             "modelConfig": "/api/model-config/openai-compatible",
             "modelList": "/api/model-config/openai-compatible/models",
             "modelLogs": "/api/model-call-logs",
@@ -118,6 +121,18 @@ def create_app(db_path: str | None = None) -> FastAPI:
         kernel = _kernel(app)
         _require(kernel, FeatureName.companion_persona)
         return kernel.storage.patch_companion_profile(patch)
+
+    @app.get("/api/debug/time")
+    def get_debug_time():
+        kernel = _kernel(app)
+        _require(kernel, FeatureName.debug_time)
+        return kernel.storage.get_debug_time()
+
+    @app.patch("/api/debug/time")
+    def patch_debug_time(patch: DebugTimePatch):
+        kernel = _kernel(app)
+        _require(kernel, FeatureName.debug_time)
+        return kernel.storage.patch_debug_time(patch)
 
     @app.get("/api/model-config/openai-compatible")
     def get_openai_compatible_config():
@@ -174,11 +189,13 @@ def create_app(db_path: str | None = None) -> FastAPI:
 
     @app.post("/api/sessions/{session_id}/messages")
     def send_message(session_id: str, request: MessageRequest):
-        return _kernel(app).handle_message(session_id, request)
+        kernel = _kernel(app)
+        return kernel.handle_message(session_id, _request_with_debug_now(kernel, request))
 
     @app.post("/api/sessions/{session_id}/messages/stream")
     def stream_message(session_id: str, request: MessageRequest):
         kernel = _kernel(app)
+        request = _request_with_debug_now(kernel, request)
 
         def _events():
             try:
@@ -233,7 +250,7 @@ def create_app(db_path: str | None = None) -> FastAPI:
         kernel = _kernel(app)
         _require(kernel, FeatureName.event_stream)
         payloads = kernel.due_events(
-            now or datetime.now().astimezone(),
+            now or _debug_now(kernel) or datetime.now().astimezone(),
             client_id=client_id,
             lease_seconds=lease_seconds,
         )
@@ -256,7 +273,7 @@ def create_app(db_path: str | None = None) -> FastAPI:
         kernel = _kernel(app)
         _require(kernel, FeatureName.event_stream)
         events = kernel.due_events(
-            now or datetime.now().astimezone(),
+            now or _debug_now(kernel) or datetime.now().astimezone(),
             include_pending=include_pending,
             client_id=client_id,
             lease_seconds=lease_seconds,
@@ -475,6 +492,24 @@ def create_app(db_path: str | None = None) -> FastAPI:
 
 def _kernel(app: FastAPI) -> Kernel:
     return app.state.kernel
+
+
+def _request_with_debug_now(kernel: Kernel, request: MessageRequest) -> MessageRequest:
+    if request.now is not None:
+        return request
+    now = _debug_now(kernel, request.timezone)
+    if now is None:
+        return request
+    return request.model_copy(update={"now": now})
+
+
+def _debug_now(kernel: Kernel, timezone: str | None = None) -> datetime | None:
+    if not kernel.storage.is_enabled(FeatureName.debug_time):
+        return None
+    state = kernel.storage.get_debug_time()
+    if not state.enabled or state.now is None:
+        return None
+    return ensure_tz(state.now, timezone or state.timezone)
 
 
 def _require(kernel: Kernel, feature: FeatureName) -> None:

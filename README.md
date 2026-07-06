@@ -49,6 +49,7 @@ In the UI model panel, save the Base URL/API Key first, then click `拉取模型
 - `GET /api/events/pending`
 - `POST /api/events/{deliveryId}/delivery`
 - `GET/PATCH /api/companion-profile`
+- `GET/PATCH /api/debug/time`
 - `GET /api/shared-timeline`
 - `GET/POST/PATCH/DELETE /api/calendar/events`
 - `GET/POST/PATCH/DELETE /api/tasks`
@@ -91,6 +92,24 @@ Immersive interactions write `SharedEpisode` records. These are common-experienc
 
 Practical replies can refer to the existence of a recent shared experience without treating fictional details as real schedule state.
 
+## Debug Time
+
+Long-run tests can accelerate the kernel clock:
+
+```bash
+curl -X PATCH http://127.0.0.1:8765/api/debug/time \
+  -H 'content-type: application/json' \
+  -d '{"enabled":true,"now":"2026-07-08T08:00:00+08:00","timezone":"Asia/Shanghai"}'
+```
+
+When a message or event poll omits `now`, the kernel uses this debug clock. Explicit per-request `now` still wins. Clear it with:
+
+```bash
+curl -X PATCH http://127.0.0.1:8765/api/debug/time \
+  -H 'content-type: application/json' \
+  -d '{"clear":true}'
+```
+
 ## Reality Projection
 
 Normal immersive replies receive a read-only `shared_reality` projection:
@@ -105,7 +124,7 @@ This projection may shape pacing and care. It is not an authoritative tool resul
 
 Every major capability has an independent switch through `GET/PATCH /api/features`:
 
-`calendar`, `tasks`, `reminders`, `characters`, `rp_memory`, `secretary_memory`, `shared_timeline`, `companion_persona`, `reality_projection`, `context_trace`, `confirmation_safety`, `ics`, `event_stream`, `metrics`, `deterministic_eval`, `fts_search`.
+`calendar`, `tasks`, `reminders`, `characters`, `rp_memory`, `secretary_memory`, `shared_timeline`, `companion_persona`, `reality_projection`, `debug_time`, `context_trace`, `confirmation_safety`, `ics`, `event_stream`, `metrics`, `deterministic_eval`, `fts_search`.
 
 Example:
 
