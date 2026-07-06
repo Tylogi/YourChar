@@ -9,7 +9,7 @@ def export_ics(events: list[CalendarEvent]) -> str:
     lines = [
         "BEGIN:VCALENDAR",
         "VERSION:2.0",
-        "PRODID:-//RP Agent Kernel//Prototype//EN",
+        "PRODID:-//Companion Kernel//Prototype//EN",
     ]
     for event in events:
         lines.extend(

@@ -683,16 +683,16 @@ function setMode(mode, persist = true) {
   $$("#modeSms, #modeRp").forEach((item) => {
     item.classList.toggle("active", item.dataset.mode === state.mode);
   });
-  nodes.composerMode.textContent = state.mode.toUpperCase();
-  nodes.chatTitle.textContent = state.mode === "rp" ? "RP Tavern" : "SMS Secretary";
+  nodes.composerMode.textContent = state.mode === "rp" ? "沉浸" : "日常";
+  nodes.chatTitle.textContent = state.mode === "rp" ? "沉浸姿态" : "日常姿态";
   nodes.chatSubtitle.textContent =
     state.mode === "rp"
-      ? "长段 RP 体验，剧情记忆与现实日程隔离"
-      : "短消息式日常秘书，适合日程、提醒和确认动作";
+      ? "同一个 companion 的场景、角色和共同时间线"
+      : "同一个 companion 的清醒、简短、实践侧";
   nodes.messageText.placeholder =
     state.mode === "rp"
-      ? "输入 RP 台词、动作或场景推进；选择角色后更容易复现。"
-      : "输入短信式请求，例如安排日程、设置提醒或确认动作。";
+      ? "输入台词、动作或场景推进；选择角色后更容易延续共同经历。"
+      : "输入日常请求，例如安排日程、设置提醒或确认动作。";
   renderChatContext();
   if (persist) {
     touchSession();
@@ -787,10 +787,10 @@ function runCommand(command) {
   const text = command.trim();
   if (text === "/sms") {
     setMode("sms");
-    addMessage("system", "已切换到 SMS 模式。");
+    addMessage("system", "已切换到日常姿态。");
   } else if (text === "/rp") {
     setMode("rp");
-    addMessage("system", "已切换到 RP 模式。");
+    addMessage("system", "已切换到沉浸姿态。");
   } else if (text === "/calendar") {
     setInspectorOpen(true);
     switchPanel("schedulePanel");
@@ -1531,8 +1531,9 @@ function humanActionType(type) {
     create_reminder: "提醒",
     create_task: "任务",
     list_tasks: "查任务",
-    write_rp_memory: "RP 记忆",
-    write_secretary_memory: "秘书记忆",
+    write_rp_memory: "场景记忆",
+    write_secretary_memory: "日常记忆",
+    record_shared_episode: "共同经历",
     external_model_render: "外部模型",
   };
   return labels[type] || String(type || "action").replace(/_/g, " ");
@@ -2092,7 +2093,7 @@ function useCharacterFormId() {
   setMode("rp");
   savePreferences();
   renderChatContext();
-  addMessage("system", `当前 RP 角色已设为 ${id}。`);
+  addMessage("system", `当前沉浸角色已设为 ${id}。`);
 }
 
 async function importCharacterCard() {

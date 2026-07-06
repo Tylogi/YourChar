@@ -45,7 +45,7 @@ def test_temporary_ui_is_served(tmp_path):
 
     page = client.get("/ui")
     assert page.status_code == 200
-    assert "RP Agent Kernel" in page.text
+    assert "Companion Kernel" in page.text
     assert "Inspector" in page.text
     assert "OpenAI Compatible API" in page.text
     assert "上传解析角色卡" in page.text
@@ -102,6 +102,9 @@ def test_temporary_ui_is_served(tmp_path):
     assert "formatActionSummary" in script.text
     assert "focusModelLog" in script.text
     assert "renderChatContext" in script.text
+    assert "SMS Secretary" not in script.text
+    assert "RP Tavern" not in script.text
+    assert "沉浸姿态" in script.text
 
 
 def test_openai_compatible_config_masks_api_key(tmp_path):

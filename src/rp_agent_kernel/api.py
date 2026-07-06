@@ -41,7 +41,7 @@ def create_app(db_path: str | None = None) -> FastAPI:
         yield
         app.state.kernel.close()
 
-    app = FastAPI(title="RP Agent Kernel", version="0.1.0", lifespan=lifespan)
+    app = FastAPI(title="Companion Kernel", version="0.1.0", lifespan=lifespan)
     app.state.kernel = Kernel(db_path or os.getenv("RP_AGENT_DB", "rp_agent_kernel.sqlite3"))
     static_dir = Path(__file__).resolve().parent / "static"
 
@@ -68,7 +68,7 @@ def create_app(db_path: str | None = None) -> FastAPI:
     @app.get("/")
     def root() -> dict[str, object]:
         return {
-            "name": "RP Agent Kernel",
+            "name": "Companion Kernel",
             "status": "ok",
             "docs": "/docs",
             "ui": "/ui",

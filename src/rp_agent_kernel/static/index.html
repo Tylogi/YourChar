@@ -4,7 +4,7 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <base href="/" />
-    <title>RP Agent Kernel</title>
+    <title>Companion Kernel</title>
     <link rel="stylesheet" href="/ui/assets/app.css?v=20260704-round5" />
   </head>
   <body>
@@ -13,7 +13,7 @@
         <div class="brand">
           <span class="brand-mark">RK</span>
           <div class="brand-copy">
-            <h1>RP Agent Kernel</h1>
+            <h1>Companion Kernel</h1>
             <span id="statusText" class="muted">连接中</span>
           </div>
         </div>
@@ -36,17 +36,17 @@
               <input id="sessionId" type="text" value="demo" autocomplete="off" />
             </label>
             <div class="session-actions">
-              <button id="newSessionBtn" class="toolbar-button" type="button">新建当前模式</button>
-              <button id="newSmsSessionBtn" class="toolbar-button" type="button">新建 SMS</button>
-              <button id="newRpSessionBtn" class="toolbar-button" type="button">新建 RP</button>
+              <button id="newSessionBtn" class="toolbar-button" type="button">新建当前姿态</button>
+              <button id="newSmsSessionBtn" class="toolbar-button" type="button">新建日常</button>
+              <button id="newRpSessionBtn" class="toolbar-button" type="button">新建沉浸</button>
               <button id="copySessionBtn" class="toolbar-button" type="button">复制 ID</button>
             </div>
             <div class="session-filter-row">
               <input id="sessionSearch" type="search" placeholder="搜索 session / 角色" autocomplete="off" />
-              <select id="sessionModeFilter" aria-label="按模式过滤会话">
+              <select id="sessionModeFilter" aria-label="按姿态过滤会话">
                 <option value="all">全部</option>
-                <option value="sms">SMS</option>
-                <option value="rp">RP</option>
+                <option value="sms">日常</option>
+                <option value="rp">沉浸</option>
               </select>
             </div>
             <div class="session-server-actions">
@@ -56,13 +56,13 @@
               <button id="exportSessionEvalBtn" class="toolbar-button" type="button">导出 Eval</button>
             </div>
             <div id="sessionList" class="session-list" aria-label="最近会话"></div>
-            <div class="segmented" role="group" aria-label="Mode">
-              <button id="modeSms" class="active" type="button" data-mode="sms">SMS</button>
-              <button id="modeRp" type="button" data-mode="rp">RP</button>
+            <div class="segmented" role="group" aria-label="Posture">
+              <button id="modeSms" class="active" type="button" data-mode="sms">日常</button>
+              <button id="modeRp" type="button" data-mode="rp">沉浸</button>
             </div>
             <label>
               <span>Character ID</span>
-              <input id="characterId" type="text" placeholder="rp 可选" autocomplete="off" />
+              <input id="characterId" type="text" placeholder="沉浸姿态可选" autocomplete="off" />
             </label>
             <select id="characterSelect" aria-label="选择角色">
               <option value="">选择已有角色</option>
@@ -98,7 +98,7 @@
               <button class="preset" type="button" data-mode="sms" data-text="今晚八点安排项目会">今晚八点安排项目会</button>
               <button class="preset" type="button" data-mode="sms" data-text="三小时后提醒我喝水">三小时后提醒我喝水</button>
               <button class="preset" type="button" data-mode="sms" data-text="删除所有日程">删除所有日程</button>
-              <button class="preset" type="button" data-mode="rp" data-text="月光下，角色推开门。">RP 场景</button>
+              <button class="preset" type="button" data-mode="rp" data-text="月光下，角色推开门。">沉浸场景</button>
             </div>
           </section>
         </aside>
@@ -106,8 +106,8 @@
         <section class="chat-workspace" aria-label="Chat">
           <div class="chat-header">
             <div>
-              <h2 id="chatTitle">SMS Secretary</h2>
-              <p id="chatSubtitle">短消息式日常秘书测试</p>
+              <h2 id="chatTitle">日常姿态</h2>
+              <p id="chatSubtitle">同一个 companion 的清醒、简短、实践侧</p>
               <div id="chatContext" class="chat-context" aria-label="当前会话上下文"></div>
             </div>
             <div id="lastMetrics" class="metrics-strip"></div>
@@ -117,7 +117,7 @@
 
           <form id="messageForm" class="composer">
             <div class="composer-tools">
-              <span id="composerMode" class="mode-badge">SMS</span>
+              <span id="composerMode" class="mode-badge">日常</span>
               <span class="muted">Enter 发送 · Shift+Enter 换行 · / 命令</span>
               <button id="retryBtn" class="toolbar-button hidden" type="button">重试</button>
             </div>
@@ -246,7 +246,7 @@
 
           <section id="charactersPanel" class="panel-view">
             <div class="panel-heading">
-              <h2>RP Characters</h2>
+              <h2>Characters</h2>
               <button id="refreshCharactersBtn" class="icon-button small" type="button" title="刷新角色">↻</button>
             </div>
             <form id="characterForm" class="stacked-form">
@@ -272,7 +272,7 @@
               </label>
               <div class="button-row">
                 <button type="submit">保存角色</button>
-                <button id="useCharacterBtn" type="button">用于当前 RP</button>
+                <button id="useCharacterBtn" type="button">用于当前沉浸姿态</button>
               </div>
             </form>
             <div class="import-box">
