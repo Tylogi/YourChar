@@ -1,16 +1,34 @@
 from __future__ import annotations
 
-from .models import CalendarEvent, MessageRequest, Reminder, Task
+from .models import CalendarEvent, FeatureName, MessageRequest, Reminder, Task
+from .storage import Storage
 from .tools import ExecutionResult
 
 
 class Renderer:
-    def render(self, request: MessageRequest, execution: ExecutionResult) -> str:
+    def render(
+        self,
+        request: MessageRequest,
+        execution: ExecutionResult,
+        *,
+        storage: Storage | None = None,
+        session_id: str | None = None,
+    ) -> str:
         if request.mode == "rp":
             return self._render_rp(request, execution)
-        return self._render_sms(execution)
+        return self._render_sms(execution, storage=storage, session_id=session_id)
 
-    def _render_sms(self, execution: ExecutionResult) -> str:
+    def _render_sms(
+        self,
+        execution: ExecutionResult,
+        *,
+        storage: Storage | None = None,
+        session_id: str | None = None,
+    ) -> str:
+        continuity = _shared_continuity_hint(storage, session_id)
+        practical_continuity = _shared_continuity_hint(
+            storage, session_id, include_detail=False
+        )
         if execution.confirmations:
             confirmation = execution.confirmations[0]
             return f"需要确认：{confirmation.reason} 确认 ID：{confirmation.id}"
@@ -27,42 +45,48 @@ class Renderer:
         created_event = _first_action(execution, "create_calendar")
         if created_event and events:
             event = events[0]
-            return f"已安排：{event.title}，时间 {event.start.strftime('%Y-%m-%d %H:%M')}。"
+            return _with_continuity(
+                f"已安排：{event.title}，时间 {event.start.strftime('%Y-%m-%d %H:%M')}。",
+                practical_continuity,
+            )
 
         listed_calendar = _first_action(execution, "list_calendar")
         if listed_calendar:
             if not events:
-                return "这段时间没有日程。"
+                return _with_continuity("这段时间没有日程。", practical_continuity)
             lines = [f"{event.start.strftime('%m-%d %H:%M')} {event.title}" for event in events[:5]]
-            return "日程：\n" + "\n".join(lines)
+            return _with_continuity("日程：\n" + "\n".join(lines), practical_continuity)
 
         created_reminder = _first_action(execution, "create_reminder")
         if created_reminder and reminders:
             reminder = reminders[0]
-            return f"已设置提醒：{reminder.title}，时间 {reminder.remind_at.strftime('%Y-%m-%d %H:%M')}。"
+            return _with_continuity(
+                f"已设置提醒：{reminder.title}，时间 {reminder.remind_at.strftime('%Y-%m-%d %H:%M')}。",
+                practical_continuity,
+            )
 
         created_task = _first_action(execution, "create_task")
         if created_task and tasks:
             task = tasks[0]
             due = f"，截止 {task.due_at.strftime('%Y-%m-%d %H:%M')}" if task.due_at else ""
-            return f"已添加任务：{task.title}{due}。"
+            return _with_continuity(f"已添加任务：{task.title}{due}。", practical_continuity)
 
         listed_tasks = _first_action(execution, "list_tasks")
         if listed_tasks:
             if not tasks:
-                return "当前没有任务。"
+                return _with_continuity("当前没有任务。", practical_continuity)
             lines = [f"{task.status} {task.title}" for task in tasks[:8]]
-            return "任务：\n" + "\n".join(lines)
+            return _with_continuity("任务：\n" + "\n".join(lines), practical_continuity)
 
         memory_action = _first_action(execution, "write_secretary_memory")
         if memory_action:
-            return "已记住。"
+            return "我记住了。"
 
         bulk_delete = _first_action(execution, "bulk_delete_calendar")
         if bulk_delete:
             return f"已删除 {bulk_delete.payload.get('deleted', 0)} 条日程。"
 
-        return "收到。"
+        return _with_continuity("收到。", continuity)
 
     def _render_rp(self, request: MessageRequest, execution: ExecutionResult) -> str:
         if execution.confirmations:
@@ -105,3 +129,31 @@ class Renderer:
 
 def _first_action(execution: ExecutionResult, action_type: str):
     return next((action for action in execution.actions if action.action_type == action_type), None)
+
+
+def _shared_continuity_hint(
+    storage: Storage | None, session_id: str | None, *, include_detail: bool = True
+) -> str:
+    if storage is None or not session_id or not storage.is_enabled(FeatureName.shared_timeline):
+        return ""
+    episodes = storage.list_shared_episodes(session_id=session_id, limit=1)
+    if not episodes:
+        return ""
+    if not include_detail:
+        return "我还记得刚才那段。"
+    summary = episodes[0].summary
+    marker = "共同经历了："
+    if marker in summary:
+        summary = summary.split(marker, 1)[1]
+    summary = " ".join(summary.replace("\n", " ").split()).strip("。")
+    if not summary:
+        return ""
+    if len(summary) > 28:
+        summary = summary[:27].rstrip() + "…"
+    return f"我还记得刚才那段：{summary}。"
+
+
+def _with_continuity(reply: str, continuity: str) -> str:
+    if not continuity:
+        return reply
+    return f"{reply}{continuity}"

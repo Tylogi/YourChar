@@ -102,9 +102,15 @@ def test_rp_records_shared_timeline_without_real_tool_pollution():
         sms = kernel.handle_message(
             "shared-1", MessageRequest(mode="sms", text="今天有什么安排", now=NOW)
         )
+        assert "我还记得刚才那段" in sms.reply
         assert "雨夜" not in sms.reply
         sms_trace = kernel.storage.get_context_trace(sms.context_trace_id)
         assert any(block.source == "shared_timeline" for block in sms_trace.blocks)
+
+        practical = kernel.handle_message(
+            "shared-1", MessageRequest(mode="sms", text="收到", now=NOW)
+        )
+        assert "雨夜" in practical.reply
 
         rp_again = kernel.handle_message(
             "shared-1",
@@ -364,6 +370,8 @@ def test_external_model_renders_reply_when_config_enabled():
         assert handler.last_path == "/v1/chat/completions"
         assert handler.last_body["model"] == "fake-model"
         assert handler.last_body["messages"][-1] == {"role": "user", "content": "你好"}
+        assert "one continuous companion" in handler.last_body["messages"][0]["content"]
+        assert "practical posture" in handler.last_body["messages"][0]["content"]
         completed = next(
             action for action in response.actions if action.action_type == "external_model_render"
         )

@@ -175,7 +175,9 @@ class Kernel:
         tool_start = time.perf_counter()
         execution = self.executor.execute(session_id, request, plan)
         tool_ms = _elapsed_ms(tool_start)
-        fallback_reply = self.renderer.render(request, execution)
+        fallback_reply = self.renderer.render(
+            request, execution, storage=self.storage, session_id=session_id
+        )
         return PreparedMessage(
             context=context,
             execution=execution,
