@@ -239,6 +239,10 @@ class OpenAICompatibleClient:
                     continue
                 raw_chunks.append(delta)
                 for visible_delta in visible_filter.push(delta):
+                    if not state.content:
+                        visible_delta = visible_delta.lstrip()
+                    if not visible_delta:
+                        continue
                     state.content += visible_delta
                     chunks.append(visible_delta)
                     yield visible_delta
@@ -629,6 +633,7 @@ def _looks_like_reasoning_dump(text: str) -> bool:
     first = stripped[:500]
     lower = first.lower()
     patterns = (
+        r"^(thinking process|thought process|internal notes|reasoning process)\s*[:：]",
         r"^\d+\.\s+\*{0,2}\s*(analy[sz]e|understand|determine|formulate|drafting|refining|final review|output generation)\b",
         r"^\*+\s+\*{0,2}\s*(analy[sz]e|determine|formulate|drafting|refining)\b",
         r"^(analysis|reasoning|chain of thought)\s*[:：]",

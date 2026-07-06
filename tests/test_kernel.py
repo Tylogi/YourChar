@@ -678,6 +678,49 @@ def test_external_model_streaming_buffers_and_strips_cot_dump():
         _stop_fake_openai_server(server, thread)
 
 
+def test_external_model_streaming_buffers_thinking_process_dump():
+    server, handler, thread = _start_fake_openai_stream_server(
+        [
+            "\nThinking Process:\n\n",
+            "1.  **Analyze the Request:** internal notes\n",
+            "2.  **Final Output Generation:**\n",
+            "\"哈……你好。突然找我，是有什么急事吗？\"",
+        ]
+    )
+    kernel = Kernel(":memory:")
+    try:
+        kernel.storage.patch_openai_config(
+            OpenAICompatibleConfigPatch(
+                enabled=True,
+                baseUrl=f"http://127.0.0.1:{server.server_port}/v1",
+                apiKey="test-key",
+                model="thinking-process-model",
+            )
+        )
+        events = list(
+            kernel.stream_message_events(
+                "s1", MessageRequest(mode="rp", text="hello", now=NOW)
+            )
+        )
+
+        deltas = [event["text"] for event in events if event["type"] == "delta"]
+        assert deltas == ["哈……你好。突然找我，是有什么急事吗？"]
+        response = events[-1]["response"]
+        assert response["reply"] == "哈……你好。突然找我，是有什么急事吗？"
+        assert "Thinking Process" not in response["reply"]
+        completed = next(
+            action for action in response["actions"] if action["actionType"] == "external_model_render"
+        )
+        log = kernel.storage.get_model_call_log(completed["payload"]["modelCallLogId"])
+        assert log.response["visibleSanitized"] is True
+        assert log.response["sanitizeReason"] == "reasoning_dump"
+        assert "Thinking Process" in log.response["rawCompletionText"]
+        assert "Thinking Process" not in log.completion_text
+    finally:
+        kernel.close()
+        _stop_fake_openai_server(server, thread)
+
+
 def test_external_model_streaming_tool_json_falls_back_to_human_reply():
     server, handler, thread = _start_fake_openai_stream_server(
         ['{"actions":[{"actionType":"create_reminder","payload":{"title":"喝水"}}]}']
