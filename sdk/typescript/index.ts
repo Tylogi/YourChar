@@ -11,6 +11,14 @@ export interface KernelClientOptions {
   baseUrl?: string;
 }
 
+export interface SubscribeEventsOptions {
+  follow?: boolean;
+  includePending?: boolean;
+  clientId?: string;
+  leaseSeconds?: number;
+  intervalSeconds?: number;
+}
+
 export interface OpenAICompatibleConfigPatch {
   enabled?: boolean;
   baseUrl?: string;
@@ -40,8 +48,15 @@ export class KernelClient {
     });
   }
 
-  subscribeEvents(handler: (event: unknown) => void): EventSource {
-    const source = new EventSource(`${this.baseUrl}/api/events/stream`);
+  subscribeEvents(handler: (event: unknown) => void, options: SubscribeEventsOptions = {}): EventSource {
+    const query = new URLSearchParams({
+      follow: String(options.follow ?? true),
+      includePending: String(options.includePending ?? true),
+      clientId: options.clientId ?? "typescript-sdk",
+      leaseSeconds: String(options.leaseSeconds ?? 60),
+      intervalSeconds: String(options.intervalSeconds ?? 5),
+    });
+    const source = new EventSource(`${this.baseUrl}/api/events/stream?${query.toString()}`);
     source.onmessage = (message) => handler(JSON.parse(message.data));
     return source;
   }
@@ -56,6 +71,13 @@ export class KernelClient {
 
   async confirmAction(actionId: string, decision: ConfirmationDecision) {
     return this.request("POST", `/api/confirmations/${encodeURIComponent(actionId)}`, { decision });
+  }
+
+  async ackEvent(deliveryId: string, options: { clientId?: string } = {}) {
+    return this.request("POST", `/api/events/${encodeURIComponent(deliveryId)}/delivery`, {
+      status: "acked",
+      clientId: options.clientId ?? "typescript-sdk",
+    });
   }
 
   async getFeatures() {

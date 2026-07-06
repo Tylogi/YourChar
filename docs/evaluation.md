@@ -34,6 +34,7 @@ An evaluation run fails even if the weighted score is high when any hard gate fa
 | Feature isolation | Each major feature must have an independent flag and graceful disabled behavior. |
 | Context traceability | A response with `context_trace` enabled must expose which blocks were used and their hashes/token counts. |
 | Debug clock | Long-run tests must be able to advance time through `/api/debug/time` without patching source code. |
+| Runtime push delivery | Due reminders/tasks must be testable through `POST /api/runtime/tick`, SSE `follow=true&includePending=true`, and `ackEvent` with a stable client id. |
 | No internal leakage | User-visible replies must not leak JSON, action ids, chain-of-thought text, model debug headings, or raw tool internals. |
 | Streaming integrity | Streaming replies must produce readable text, separate reasoning content when present, and finish with the same response contract as non-streaming calls. |
 
@@ -130,6 +131,15 @@ Cost estimates must record the model price assumption used by the evaluator. If 
 | Feature flags | 2 | All major features can be toggled independently with graceful behavior. |
 | Restart consistency | 2 | SQLite persistence survives service restart for sessions, tasks, reminders, profile, and debug settings. |
 
+Runtime push checks for other agents:
+
+- Use `/api/debug/time` to set and advance the clock.
+- Use `POST /api/runtime/tick` to create due deliveries without claiming them.
+- Use SSE `/api/events/stream?follow=true&includePending=true&clientId=<stable-id>` or SDK `subscribeEvents` to claim pending deliveries.
+- Use `ackEvent(deliveryId, clientId=<same-id>)` or `POST /api/events/{deliveryId}/delivery` to acknowledge.
+- Verify stale claimed deliveries become claimable after lease expiry, and ack with the wrong client id fails while the lease is active.
+- Verify `ReminderDue`/`TaskOverdue` payloads include view-aware `message`, `sessionId`, `mode`, `characterId`, `memoryPolicy`, `eventDeliveryId`, and `delivery` metadata.
+
 ### UI Usability, 10 Points
 
 | Item | Points | Evidence |
@@ -149,7 +159,7 @@ Each release should run at least these scenarios.
 3. RP real-tool parity: in RP, create/query real reminders, tasks, and schedule with real-world phrasing; verify tool actions and life-narrative rendering.
 4. Fictional boundary: in RP, use plot/scene markers for fictional plans; verify they write memory but do not create real calendar/reminder/task state.
 5. Cross-view continuity: create RP shared experience, switch to direct-message view, verify subtle continuity without treating fictional details as real schedule.
-6. Proactive accelerated time: create reminders/tasks from both views, advance `/api/debug/time`, poll events, ack/retry deliveries, verify view-aware message and memory write.
+6. Proactive accelerated time: create reminders/tasks from both views, advance `/api/debug/time`, run `/api/runtime/tick`, consume SSE with `follow=true&includePending=true`, ack/retry deliveries, verify view-aware message and memory write.
 7. Feature-disable matrix: disable each major feature, call related CRUD and message flows, verify graceful `feature_disabled` actions or HTTP 403 where appropriate.
 8. Context economy long run: run 20, 50, and optionally 100 mixed turns, record token growth, context usage, latency, memory retention, and cost.
 9. Streaming/model diagnostics: use `/messages/stream`, verify readable deltas, final response contract, separated reasoning content, logs, metrics, and secret redaction.

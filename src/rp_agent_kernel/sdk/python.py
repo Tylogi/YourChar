@@ -42,8 +42,26 @@ class KernelClient:
             payload["now"] = now.isoformat() if isinstance(now, datetime) else now
         return self._request("POST", f"/api/sessions/{sessionId}/messages", payload)
 
-    def subscribeEvents(self, handler: Callable[[dict[str, Any]], None] | None = None) -> Iterator[dict[str, Any]]:
-        with urllib.request.urlopen(self.base_url + "/api/events/stream") as response:
+    def subscribeEvents(
+        self,
+        handler: Callable[[dict[str, Any]], None] | None = None,
+        *,
+        follow: bool = True,
+        includePending: bool = True,
+        clientId: str = "python-sdk",
+        leaseSeconds: int = 60,
+        intervalSeconds: float = 5,
+    ) -> Iterator[dict[str, Any]]:
+        query = urllib.parse.urlencode(
+            {
+                "follow": str(follow).lower(),
+                "includePending": str(includePending).lower(),
+                "clientId": clientId,
+                "leaseSeconds": leaseSeconds,
+                "intervalSeconds": intervalSeconds,
+            }
+        )
+        with urllib.request.urlopen(self.base_url + "/api/events/stream?" + query) as response:
             for raw in response:
                 line = raw.decode("utf-8").strip()
                 if not line.startswith("data: "):
@@ -68,6 +86,13 @@ class KernelClient:
 
     def confirmAction(self, actionId: str, decision: str) -> dict[str, Any]:
         return self._request("POST", f"/api/confirmations/{actionId}", {"decision": decision})
+
+    def ackEvent(self, deliveryId: str, *, clientId: str = "python-sdk") -> dict[str, Any]:
+        return self._request(
+            "POST",
+            f"/api/events/{deliveryId}/delivery",
+            {"status": "acked", "clientId": clientId},
+        )
 
     def getFeatures(self) -> list[dict[str, Any]]:
         return self._request("GET", "/api/features")
@@ -146,6 +171,36 @@ class InProcessKernelClient:
     def confirmAction(self, actionId: str, decision: str) -> dict[str, Any]:
         response = self.kernel.confirm_action(actionId, ConfirmationDecision(decision=decision))
         return response.model_dump(mode="json", by_alias=True)
+
+    def subscribeEvents(
+        self,
+        handler: Callable[[dict[str, Any]], None] | None = None,
+        *,
+        follow: bool = True,
+        includePending: bool = True,
+        clientId: str = "python-sdk",
+        leaseSeconds: int = 60,
+        intervalSeconds: float = 5,
+    ) -> Iterator[dict[str, Any]]:
+        del follow, intervalSeconds
+        events = self.kernel.due_events(
+            include_pending=includePending,
+            client_id=clientId,
+            lease_seconds=leaseSeconds,
+        )
+        for event in events:
+            if handler:
+                handler(event)
+            yield event
+
+    def ackEvent(self, deliveryId: str, *, clientId: str = "python-sdk") -> dict[str, Any]:
+        from rp_agent_kernel.models import EventDeliveryPatch
+
+        delivery = self.kernel.update_event_delivery(
+            deliveryId,
+            EventDeliveryPatch(status="acked", clientId=clientId),
+        )
+        return delivery.model_dump(mode="json", by_alias=True)
 
     def getFeatures(self) -> list[dict[str, Any]]:
         return [

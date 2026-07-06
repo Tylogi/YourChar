@@ -4,6 +4,7 @@ from datetime import datetime
 import hashlib
 from http.server import BaseHTTPRequestHandler, HTTPServer
 import json
+from pathlib import Path
 import struct
 import threading
 from zoneinfo import ZoneInfo
@@ -12,7 +13,7 @@ from fastapi.testclient import TestClient
 
 from rp_agent_kernel.api import create_app
 from rp_agent_kernel.kernel import Kernel
-from rp_agent_kernel.models import CharacterCreate, MessageRequest
+from rp_agent_kernel.models import CharacterCreate, MessageRequest, ReminderCreate
 from rp_agent_kernel.sdk import InProcessKernelClient
 
 
@@ -105,6 +106,12 @@ def test_temporary_ui_is_served(tmp_path):
     assert "formatActionSummary" in script.text
     assert "focusModelLog" in script.text
     assert "renderChatContext" in script.text
+    assert "EVENT_CLIENT_ID" in script.text
+    assert "startEventSubscription" in script.text
+    assert "handleRuntimeEvent" in script.text
+    assert "ackRuntimeEvent" in script.text
+    assert "includePending" in script.text
+    assert "intervalSeconds" in script.text
     assert 'nodes.fixedNow.value = saved.fixedNow || "";' in script.text
     assert 'nodes.fixedNow.value = saved.fixedNow || "2026-07-02T12:00";' not in script.text
     assert "SMS Secretary" not in script.text
@@ -355,6 +362,71 @@ def test_due_event_poll_and_stream_are_shell_friendly_and_idempotent(tmp_path):
     assert _sse_events(streamed.text) == [{"type": "Noop"}]
 
 
+def test_runtime_tick_generates_pending_wake_event_for_sse_delivery(tmp_path):
+    app = create_app(str(tmp_path / "runtime-tick.sqlite3"))
+    client = TestClient(app)
+    client.post(
+        "/api/reminders",
+        json={
+            "title": "喝水",
+            "remindAt": "2026-07-02T11:59:00+08:00",
+            "metadata": {"sessionId": "runtime-s1", "mode": "sms"},
+        },
+    )
+
+    tick = client.post("/api/runtime/tick", params={"now": NOW.isoformat()})
+    assert tick.status_code == 200
+    tick_body = tick.json()
+    assert tick_body["count"] == 1
+    assert tick_body["events"][0]["type"] == "ReminderDue"
+    assert tick_body["events"][0]["delivery"]["status"] == "pending"
+
+    pending = client.get("/api/events/pending").json()
+    assert pending["count"] == 1
+    assert pending["events"][0]["delivery"]["status"] == "pending"
+
+    streamed = client.get(
+        "/api/events/stream",
+        params={"includePending": True, "clientId": "ui-sse", "leaseSeconds": 30},
+    )
+    assert streamed.status_code == 200
+    events = _sse_events(streamed.text)
+    assert len(events) == 1
+    assert events[0]["type"] == "ReminderDue"
+    assert events[0]["delivery"]["status"] == "claimed"
+    assert events[0]["delivery"]["claimedBy"] == "ui-sse"
+    assert events[0]["delivery"]["claimExpiresAt"]
+    assert events[0]["eventDeliveryId"] == events[0]["delivery"]["id"]
+    assert events[0]["sessionId"] == "runtime-s1"
+    assert events[0]["mode"] == "sms"
+    assert events[0]["message"]
+    assert events[0]["action"]["actionType"] == "reminder_due"
+
+    delivery_id = events[0]["eventDeliveryId"]
+    wrong_client = client.post(
+        f"/api/events/{delivery_id}/delivery",
+        json={"status": "acked", "clientId": "other-ui"},
+    )
+    assert wrong_client.status_code == 409
+    still_pending = client.get("/api/events/pending").json()
+    assert still_pending["count"] == 1
+    assert still_pending["events"][0]["delivery"]["status"] == "claimed"
+    assert still_pending["events"][0]["delivery"]["claimedBy"] == "ui-sse"
+    assert still_pending["events"][0]["delivery"]["acknowledgedAt"] is None
+
+    acked = client.post(
+        f"/api/events/{delivery_id}/delivery",
+        json={"status": "acked", "clientId": "ui-sse"},
+    ).json()
+    assert acked["status"] == "acked"
+    assert acked["acknowledgedAt"]
+    assert client.get("/api/events/pending").json() == {"events": [], "count": 0}
+    assert client.post(
+        f"/api/events/{delivery_id}/delivery",
+        json={"status": "acked", "clientId": "ui-sse"},
+    ).json()["status"] == "acked"
+
+
 def test_event_delivery_ack_and_failed_retry_are_agent_friendly(tmp_path):
     app = create_app(str(tmp_path / "event-delivery.sqlite3"))
     client = TestClient(app)
@@ -432,6 +504,77 @@ def test_event_delivery_ack_and_failed_retry_are_agent_friendly(tmp_path):
         f"/api/events/{failed_id}/delivery",
         json={"status": "failed", "error": "too late"},
     ).status_code == 409
+
+
+def test_inprocess_sdk_can_ack_claimed_event_delivery():
+    kernel = Kernel(":memory:")
+    sdk = InProcessKernelClient(kernel)
+    try:
+        kernel.storage.create_reminder(
+            ReminderCreate(
+                title="喝水",
+                remindAt=datetime(2026, 7, 2, 11, 59, tzinfo=ZoneInfo("Asia/Shanghai")),
+                metadata={"sessionId": "sdk-events", "mode": "sms"},
+            )
+        )
+        event = kernel.due_events(NOW, client_id="python-sdk")[0]
+
+        acked = sdk.ackEvent(event["eventDeliveryId"], clientId="python-sdk")
+
+        assert acked["status"] == "acked"
+        assert acked["id"] == event["eventDeliveryId"]
+    finally:
+        kernel.close()
+
+
+def test_inprocess_sdk_subscribe_events_claims_and_acks_delivery():
+    kernel = Kernel(":memory:")
+    sdk = InProcessKernelClient(kernel)
+    try:
+        kernel.storage.create_reminder(
+            ReminderCreate(
+                title="站起来活动",
+                remindAt=datetime(2020, 1, 1, 9, 0, tzinfo=ZoneInfo("Asia/Shanghai")),
+                metadata={"sessionId": "sdk-subscribe", "mode": "sms"},
+            )
+        )
+        seen: list[dict] = []
+
+        events = list(
+            sdk.subscribeEvents(
+                seen.append,
+                follow=False,
+                includePending=True,
+                clientId="sdk-subscribe",
+                leaseSeconds=30,
+                intervalSeconds=1,
+            )
+        )
+
+        assert len(events) == 1
+        assert seen == events
+        event = events[0]
+        assert event["type"] == "ReminderDue"
+        assert event["sessionId"] == "sdk-subscribe"
+        assert event["eventDeliveryId"] == event["delivery"]["id"]
+        assert event["delivery"]["status"] == "claimed"
+        assert event["delivery"]["claimedBy"] == "sdk-subscribe"
+        assert event["memoryPolicy"]["useAsPlotFact"] is False
+
+        acked = sdk.ackEvent(event["eventDeliveryId"], clientId="sdk-subscribe")
+        assert acked["status"] == "acked"
+    finally:
+        kernel.close()
+
+
+def test_sdk_sources_expose_runtime_subscription_interval_option():
+    python_source = Path("src/rp_agent_kernel/sdk/python.py").read_text()
+    ts_source = Path("sdk/typescript/index.ts").read_text()
+
+    assert "intervalSeconds" in python_source
+    assert '"intervalSeconds": intervalSeconds' in python_source
+    assert "intervalSeconds?: number" in ts_source
+    assert "options.intervalSeconds ?? 5" in ts_source
 
 
 def test_event_delivery_claim_lease_prevents_parallel_notifications(tmp_path):
@@ -840,7 +983,9 @@ def test_eval_capabilities_and_run_endpoint(tmp_path):
     capabilities = client.get("/api/eval/capabilities")
     assert capabilities.status_code == 200
     assert "POST /api/eval/run" in capabilities.json()["endpoints"]
+    assert "POST /api/runtime/tick" in capabilities.json()["endpoints"]
     assert "setFeature(name, enabled)" in capabilities.json()["sdkMethods"]
+    assert "ackEvent(deliveryId)" in capabilities.json()["sdkMethods"]
 
     response = client.post(
         "/api/eval/run",

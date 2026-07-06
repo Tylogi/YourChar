@@ -453,6 +453,7 @@ class Kernel:
         include_pending: bool = False,
         client_id: str = "kernel",
         lease_seconds: int = 60,
+        claim_new: bool = True,
     ) -> list[dict[str, Any]]:
         due_at = now or datetime.now().astimezone()
         deliveries: list[EventDelivery] = []
@@ -478,7 +479,7 @@ class Kernel:
             deliveries = self.storage.claim_event_deliveries(
                 client_id=client_id, lease_seconds=lease_seconds, now=due_at
             )
-        elif deliveries:
+        elif deliveries and claim_new:
             deliveries = self.storage.claim_event_deliveries(
                 client_id=client_id,
                 lease_seconds=lease_seconds,
@@ -670,6 +671,7 @@ class Kernel:
                 "GET /api/events/stream",
                 "GET /api/events/poll",
                 "GET /api/events/pending",
+                "POST /api/runtime/tick",
                 "POST /api/events/{deliveryId}/delivery",
                 "GET/POST/PATCH/DELETE /api/calendar/events",
                 "GET/POST/PATCH/DELETE /api/tasks",
@@ -691,6 +693,7 @@ class Kernel:
             sdkMethods=[
                 "sendMessage(sessionId, mode, text)",
                 "subscribeEvents(handler)",
+                "ackEvent(deliveryId)",
                 "listSchedule(range)",
                 "confirmAction(actionId, decision)",
                 "getFeatures()",

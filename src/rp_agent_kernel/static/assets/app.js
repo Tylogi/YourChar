@@ -1,5 +1,7 @@
 const STORAGE_KEY = "rp-agent-kernel-ui";
 const RUN_ARTIFACTS_KEY = "rp-agent-kernel-run-artifacts";
+const EVENT_CLIENT_ID_KEY = `${STORAGE_KEY}:event-client-id`;
+const EVENT_CLIENT_ID = getOrCreateEventClientId();
 const MAX_SESSIONS = 24;
 const MAX_RUN_ARTIFACTS = 120;
 
@@ -14,6 +16,8 @@ const state = {
   characters: [],
   focusModelLogId: "",
   copyResetTimer: 0,
+  eventSource: null,
+  runtimeEventIds: new Set(),
 };
 
 const $ = (selector) => document.querySelector(selector);
@@ -96,6 +100,7 @@ function init() {
   renderEmptyChat();
   refreshAll();
   loadHistory();
+  startEventSubscription();
 }
 
 function loadPreferences() {
@@ -171,6 +176,20 @@ function syncControls() {
   renderSessionList();
 }
 
+function getOrCreateEventClientId() {
+  try {
+    const saved = localStorage.getItem(EVENT_CLIENT_ID_KEY);
+    if (saved) return saved;
+    const randomPart =
+      window.crypto?.randomUUID?.() || Math.random().toString(36).slice(2);
+    const next = `web-ui-${randomPart}`;
+    localStorage.setItem(EVENT_CLIENT_ID_KEY, next);
+    return next;
+  } catch {
+    return `web-ui-${Math.random().toString(36).slice(2)}`;
+  }
+}
+
 function currentSessionId() {
   const value = nodes.sessionId.value.trim();
   return value || "demo";
@@ -220,6 +239,27 @@ function touchSession(options = {}) {
   renderSessionList();
   renderChatContext();
   if (persist) savePreferences();
+}
+
+function updateSessionPreview(sessionId, mode, characterId, preview) {
+  const id = String(sessionId || "").trim();
+  if (!id) return;
+  const existing = state.sessions.find((session) => session.id === id);
+  const next = {
+    id,
+    mode: mode === "rp" ? "rp" : "sms",
+    characterId: characterId || existing?.characterId || "",
+    updatedAt: new Date().toISOString(),
+    messageCount: (existing?.messageCount || 0) + 1,
+    lastPreview: compactStatus(preview),
+    source: existing?.source || "runtime",
+  };
+  state.sessions = [
+    next,
+    ...state.sessions.filter((session) => session.id !== id),
+  ].slice(0, MAX_SESSIONS);
+  renderSessionList();
+  savePreferences();
 }
 
 function createNewSession(modeOverride = state.mode) {
@@ -678,6 +718,121 @@ function handleSseFrame(frame, onEvent) {
   onEvent(event);
 }
 
+function startEventSubscription() {
+  if (!window.EventSource || state.eventSource) return;
+  const params = new URLSearchParams({
+    follow: "true",
+    includePending: "true",
+    clientId: EVENT_CLIENT_ID,
+    leaseSeconds: "60",
+    intervalSeconds: "5",
+  });
+  const source = new EventSource(`/api/events/stream?${params.toString()}`);
+  state.eventSource = source;
+  source.onopen = () => {
+    nodes.statusText.textContent = "在线 · 事件流";
+    nodes.statusText.style.color = "var(--ok)";
+  };
+  source.onmessage = (message) => {
+    try {
+      handleRuntimeEvent(JSON.parse(message.data));
+    } catch (error) {
+      addMessage("system", `事件流解析失败：${error.message}`);
+    }
+  };
+  source.onerror = () => {
+    nodes.statusText.textContent = "事件流重连中";
+    nodes.statusText.style.color = "var(--accent-2)";
+  };
+}
+
+function handleRuntimeEvent(event) {
+  if (!event || event.type === "Noop") return;
+  const eventId = runtimeEventId(event);
+  if (eventId && state.runtimeEventIds.has(eventId)) return;
+  if (eventId) state.runtimeEventIds.add(eventId);
+
+  const text = runtimeEventText(event);
+  const mode = event.mode === "rp" ? "rp" : "sms";
+  const sessionId = event.sessionId || event.action?.payload?.sessionId || "";
+  const characterId = event.characterId || event.action?.payload?.characterId || "";
+  const payload = runtimeEventPayload(event);
+  const label = runtimeEventLabel(event);
+  if (sessionId) {
+    updateSessionPreview(sessionId, mode, characterId, text);
+  }
+  if (!sessionId || sessionId === currentSessionId()) {
+    addMessage("assistant", text, payload, { mode, label, createdAt: new Date().toISOString() });
+  } else {
+    addMessage("system", `[${sessionId}] ${text}`, payload, {
+      label: `${label} · other session`,
+      createdAt: new Date().toISOString(),
+    });
+  }
+  refreshReminders();
+  refreshSchedule();
+  ackRuntimeEvent(event);
+}
+
+function runtimeEventId(event) {
+  return (
+    event.eventDeliveryId ||
+    event.delivery?.id ||
+    (event.type && (event.reminder?.id || event.task?.id)
+      ? `${event.type}:${event.reminder?.id || event.task?.id}`
+      : "")
+  );
+}
+
+function runtimeEventPayload(event) {
+  return {
+    actions: event.action ? [event.action] : [],
+    confirmations: event.confirmations || [],
+    metrics: null,
+  };
+}
+
+function runtimeEventLabel(event) {
+  const labels = {
+    ReminderDue: "assistant · reminder",
+    TaskOverdue: "assistant · task",
+    ConfirmationRequired: "assistant · confirmation",
+    StateChanged: "system · state",
+  };
+  return labels[event.type] || `system · ${String(event.type || "event")}`;
+}
+
+function runtimeEventText(event) {
+  if (event.message) return event.message;
+  const resource = event.reminder || event.task || {};
+  const title = resource.title || event.type || "事件";
+  const at = resource.remindAt || resource.dueAt || resource.due_at || "";
+  return at ? `${runtimeEventTypeText(event.type)}：${title} · ${formatDate(at)}` : `${runtimeEventTypeText(event.type)}：${title}`;
+}
+
+function runtimeEventTypeText(type) {
+  const labels = {
+    ReminderDue: "提醒到点",
+    TaskOverdue: "任务逾期",
+    ConfirmationRequired: "需要确认",
+    StateChanged: "状态变化",
+  };
+  return labels[type] || String(type || "事件");
+}
+
+async function ackRuntimeEvent(event) {
+  const deliveryId = event.eventDeliveryId || event.delivery?.id;
+  if (!deliveryId) return;
+  try {
+    await api(`/api/events/${encodeURIComponent(deliveryId)}/delivery`, {
+      method: "POST",
+      body: { status: "acked", clientId: EVENT_CLIENT_ID },
+    });
+  } catch (error) {
+    addMessage("system", `事件确认失败：${error.message}`);
+  }
+}
+
 function setMode(mode, persist = true) {
   state.mode = mode === "rp" ? "rp" : "sms";
   $$("#modeSms, #modeRp").forEach((item) => {
@@ -1025,7 +1180,7 @@ function addMessage(role, text, payload = null, options = {}) {
   const header = document.createElement("div");
   header.className = "message-header";
   const label = document.createElement("span");
-  label.textContent = options.protectedHistory ? `${role} · visible-only` : role;
+  label.textContent = options.label || (options.protectedHistory ? `${role} · visible-only` : role);
   const time = document.createElement("span");
   time.textContent = options.createdAt ? formatDate(options.createdAt) : "";
   header.append(label, time);

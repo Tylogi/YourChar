@@ -33,7 +33,7 @@ Chat-first browser UI:
 http://127.0.0.1:8765/ui
 ```
 
-The UI includes message/life-narrative chat, session history reload, keyboard send, slash commands, schedule and reminder panels, OpenAI-compatible API settings, character settings/card import, feature flag toggles, eval runner, model-call logs, and context trace viewer.
+The UI includes message/life-narrative chat, session history reload, keyboard send, slash commands, schedule and reminder panels, runtime reminder/task event subscription, OpenAI-compatible API settings, character settings/card import, feature flag toggles, eval runner, model-call logs, and context trace viewer.
 
 Useful UI commands: `/sms`, `/rp`, `/calendar`, `/features`, `/model`, `/characters`, `/trace`, `/eval`, `/clear`.
 
@@ -48,6 +48,7 @@ In the UI model panel, save the Base URL/API Key first, then click `拉取模型
 - `GET /api/events/stream`
 - `GET /api/events/poll`
 - `GET /api/events/pending`
+- `POST /api/runtime/tick`
 - `POST /api/events/{deliveryId}/delivery`
 - `GET/PATCH /api/companion-profile`
 - `GET/PATCH /api/debug/time`
@@ -110,6 +111,44 @@ curl -X PATCH http://127.0.0.1:8765/api/debug/time \
   -H 'content-type: application/json' \
   -d '{"clear":true}'
 ```
+
+## Runtime Events
+
+The production service starts an in-process runtime scheduler by default. It periodically checks due reminders/tasks and creates pending event deliveries. Tests that instantiate `create_app(db_path=...)` do not auto-start the scheduler unless `RP_AGENT_RUNTIME_SCHEDULER=true` is set. The interval is controlled by `RP_AGENT_RUNTIME_INTERVAL_SECONDS` and defaults to 15 seconds.
+
+Agent-friendly manual push test:
+
+```bash
+curl -X PATCH http://127.0.0.1:8765/api/debug/time \
+  -H 'content-type: application/json' \
+  -d '{"enabled":true,"now":"2026-07-08T08:00:00+08:00","timezone":"Asia/Shanghai"}'
+
+curl -X POST http://127.0.0.1:8765/api/sessions/push-eval/messages \
+  -H 'content-type: application/json' \
+  -d '{"mode":"sms","text":"五分钟后提醒我喝水"}'
+
+curl -X PATCH http://127.0.0.1:8765/api/debug/time \
+  -H 'content-type: application/json' \
+  -d '{"now":"2026-07-08T08:05:00+08:00"}'
+
+curl -X POST http://127.0.0.1:8765/api/runtime/tick
+```
+
+`POST /api/runtime/tick` creates due deliveries but leaves them `pending`, which makes it safe for an SDK/UI/client agent to claim them. Consume and claim them through SSE:
+
+```bash
+curl -N "http://127.0.0.1:8765/api/events/stream?follow=true&includePending=true&clientId=eval-agent&leaseSeconds=30&intervalSeconds=1"
+```
+
+Then acknowledge the returned `eventDeliveryId` with the same client id:
+
+```bash
+curl -X POST http://127.0.0.1:8765/api/events/{deliveryId}/delivery \
+  -H 'content-type: application/json' \
+  -d '{"status":"acked","clientId":"eval-agent"}'
+```
+
+The Python and TypeScript SDKs expose the same flow as `subscribeEvents(handler, follow=true, includePending=true, clientId=...)` plus `ackEvent(deliveryId, clientId=...)`. The temporary WebUI subscribes automatically and displays `ReminderDue`/`TaskOverdue` events as chat messages, then acknowledges them.
 
 ## Shared Reality
 

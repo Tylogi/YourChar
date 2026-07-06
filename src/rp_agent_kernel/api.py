@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import json
 import os
 from contextlib import asynccontextmanager
@@ -35,14 +36,19 @@ from .models import (
     TaskCreate,
     TaskPatch,
 )
+from .runtime import RuntimeScheduler, stop_runtime_scheduler
 from .timeparse import ensure_tz
 
 
 def create_app(db_path: str | None = None) -> FastAPI:
     @asynccontextmanager
     async def lifespan(app: FastAPI):
-        yield
-        app.state.kernel.close()
+        app.state.runtime_scheduler = _start_runtime_scheduler(app, db_path)
+        try:
+            yield
+        finally:
+            await stop_runtime_scheduler(getattr(app.state, "runtime_scheduler", None))
+            app.state.kernel.close()
 
     app = FastAPI(title="Companion Kernel", version="0.1.0", lifespan=lifespan)
     app.state.kernel = Kernel(db_path or os.getenv("RP_AGENT_DB", "rp_agent_kernel.sqlite3"))
@@ -246,22 +252,41 @@ def create_app(db_path: str | None = None) -> FastAPI:
         now: Annotated[datetime | None, Query()] = None,
         client_id: Annotated[str, Query(alias="clientId")] = "sse",
         lease_seconds: Annotated[int, Query(alias="leaseSeconds", ge=1, le=3600)] = 60,
+        follow: Annotated[bool, Query()] = False,
+        include_pending: Annotated[bool, Query(alias="includePending")] = False,
+        interval_seconds: Annotated[float, Query(alias="intervalSeconds", ge=0.5, le=60)] = 5,
     ):
         kernel = _kernel(app)
         _require(kernel, FeatureName.event_stream)
-        payloads = kernel.due_events(
-            now or _debug_now(kernel) or datetime.now().astimezone(),
-            client_id=client_id,
-            lease_seconds=lease_seconds,
-        )
 
-        def _events():
-            for payload in payloads:
-                yield "data: " + json.dumps(payload, ensure_ascii=False) + "\n\n"
-            if not payloads:
-                yield "data: " + json.dumps({"type": "Noop"}, ensure_ascii=False) + "\n\n"
+        async def _events():
+            while True:
+                payloads = kernel.due_events(
+                    now or _debug_now(kernel) or datetime.now().astimezone(),
+                    include_pending=follow or include_pending,
+                    client_id=client_id,
+                    lease_seconds=lease_seconds,
+                )
+                if payloads:
+                    for payload in payloads:
+                        yield "data: " + json.dumps(payload, ensure_ascii=False) + "\n\n"
+                else:
+                    yield "data: " + json.dumps({"type": "Noop"}, ensure_ascii=False) + "\n\n"
+                if not follow:
+                    break
+                await asyncio.sleep(interval_seconds)
 
         return StreamingResponse(_events(), media_type="text/event-stream")
+
+    @app.post("/api/runtime/tick")
+    def runtime_tick(now: Annotated[datetime | None, Query()] = None):
+        kernel = _kernel(app)
+        _require(kernel, FeatureName.event_stream)
+        events = kernel.due_events(
+            now or _debug_now(kernel) or datetime.now().astimezone(),
+            claim_new=False,
+        )
+        return {"events": events, "count": len(events)}
 
     @app.get("/api/events/poll")
     def poll_events(
@@ -492,6 +517,29 @@ def create_app(db_path: str | None = None) -> FastAPI:
 
 def _kernel(app: FastAPI) -> Kernel:
     return app.state.kernel
+
+
+def _start_runtime_scheduler(app: FastAPI, db_path: str | None) -> RuntimeScheduler | None:
+    if not _runtime_scheduler_enabled(db_path):
+        return None
+    interval = float(os.getenv("RP_AGENT_RUNTIME_INTERVAL_SECONDS", "15"))
+    kernel = _kernel(app)
+    scheduler = RuntimeScheduler(
+        kernel,
+        now_provider=lambda: _debug_now(kernel) or datetime.now().astimezone(),
+        interval_seconds=interval,
+    )
+    scheduler.start()
+    return scheduler
+
+
+def _runtime_scheduler_enabled(db_path: str | None) -> bool:
+    configured = os.getenv("RP_AGENT_RUNTIME_SCHEDULER", "auto").strip().lower()
+    if configured in {"0", "false", "no", "off"}:
+        return False
+    if configured in {"1", "true", "yes", "on"}:
+        return True
+    return db_path is None
 
 
 def _request_with_debug_now(kernel: Kernel, request: MessageRequest) -> MessageRequest:
