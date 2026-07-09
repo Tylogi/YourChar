@@ -1,9 +1,10 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { CompanionKernel } from "../src/domain/index.js";
 import { createHttpServer } from "../src/http/router.js";
 
 test("server serves chat UI and debug context logs", async () => {
-  const server = createHttpServer();
+  const server = createHttpServer({ kernel: new CompanionKernel({ stateDir: false }) });
   await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
   try {
     const address = server.address();

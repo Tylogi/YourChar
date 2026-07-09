@@ -3,7 +3,7 @@ import test from "node:test";
 import { CompanionKernel } from "../src/domain/index.js";
 
 test("sms reminder creates real reminder through tool loop", async () => {
-  const kernel = new CompanionKernel();
+  const kernel = new CompanionKernel({ stateDir: false });
   const response = await kernel.sendMessage("s1", {
     mode: "sms",
     text: "5分钟后提醒我喝水",
@@ -16,7 +16,7 @@ test("sms reminder creates real reminder through tool loop", async () => {
 });
 
 test("rp fictional reminder-like text writes memory only", async () => {
-  const kernel = new CompanionKernel();
+  const kernel = new CompanionKernel({ stateDir: false });
   const response = await kernel.sendMessage("rp1", {
     mode: "rp",
     text: "剧情里5分钟后提醒我去旧钟楼",

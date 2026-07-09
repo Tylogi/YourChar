@@ -6,15 +6,23 @@ import {
   textOf,
   toolResultsOf,
 } from "../harness/index.js";
+import { tryExternalModelReply } from "./external-model.js";
 import { extractReminderTitle, parseReminderTime, resolveNow } from "./time.js";
 import type { MessageRequest, Mode, Reminder } from "./types.js";
 
-export async function companionModel(context: AgentContext): Promise<AgentMessage> {
+export async function companionModel(context: AgentContext, signal?: AbortSignal): Promise<AgentMessage> {
   const request = context.state.request as MessageRequest;
   const mode = (request.mode ?? "sms") as Mode;
   const last = context.messages.at(-1);
 
   if (last?.role === "tool") {
+    const toolResult = toolResultsOf(last)[0];
+    if (toolResult?.name === "write_memory") {
+      const external = await tryExternalModelReply(context, mode, signal);
+      if (external) {
+        return external;
+      }
+    }
     return renderToolResult(mode, last);
   }
 
@@ -45,6 +53,11 @@ export async function companionModel(context: AgentContext): Promise<AgentMessag
         }),
       ],
     };
+  }
+
+  const external = await tryExternalModelReply(context, mode, signal);
+  if (external) {
+    return external;
   }
 
   return textMessage("assistant", mode === "sms" ? "收到。" : "她轻轻点头，把这一刻留在安静的间隙里。");

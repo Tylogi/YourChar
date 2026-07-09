@@ -1,4 +1,6 @@
 import { randomUUID } from "node:crypto";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { dirname, join, resolve } from "node:path";
 import type { AgentMessage } from "../harness/index.js";
 import type {
   ActionRecord,
@@ -11,20 +13,36 @@ import type {
   SessionRecord,
 } from "./types.js";
 
+type StoredModelApiConfig = ModelApiConfig & { apiKey?: string };
+
+export type CompanionStoreOptions = {
+  stateDir?: string | false;
+};
+
+const defaultModelApiConfig: StoredModelApiConfig = {
+  enabled: false,
+  provider: "openai_compatible",
+  baseUrl: "http://127.0.0.1:8317/v1",
+  model: "",
+  apiKeySet: false,
+  apiKeyMasked: "",
+};
+
 export class CompanionStore {
   readonly sessions = new Map<string, SessionRecord>();
   readonly reminders = new Map<string, Reminder>();
   readonly memories: Memory[] = [];
   readonly actions: ActionRecord[] = [];
   readonly contextLogs: ContextLogEntry[] = [];
-  private modelApiConfig: ModelApiConfig & { apiKey?: string } = {
-    enabled: false,
-    provider: "openai_compatible",
-    baseUrl: "http://127.0.0.1:8317/v1",
-    model: "",
-    apiKeySet: false,
-    apiKeyMasked: "",
-  };
+  private readonly modelApiConfigPath?: string;
+  private modelApiConfig: StoredModelApiConfig;
+
+  constructor(options: CompanionStoreOptions = {}) {
+    const stateDir =
+      options.stateDir === undefined ? process.env.RP_AGENT_STATE_DIR ?? ".rp-agent" : options.stateDir;
+    this.modelApiConfigPath = stateDir === false ? undefined : join(resolve(stateDir), "model-api.json");
+    this.modelApiConfig = this.loadModelApiConfig();
+  }
 
   getSession(sessionId: string): SessionRecord {
     const existing = this.sessions.get(sessionId);
@@ -137,9 +155,16 @@ export class CompanionStore {
       this.modelApiConfig.model = patch.model.trim();
     }
     if (typeof patch.apiKey === "string") {
-      this.modelApiConfig.apiKey = patch.apiKey;
-      this.modelApiConfig.apiKeySet = patch.apiKey.length > 0;
-      this.modelApiConfig.apiKeyMasked = maskSecret(patch.apiKey);
+      const apiKey = patch.apiKey.trim();
+      if (apiKey) {
+        this.modelApiConfig.apiKey = apiKey;
+        this.modelApiConfig.apiKeySet = true;
+        this.modelApiConfig.apiKeyMasked = maskSecret(apiKey);
+      } else {
+        delete this.modelApiConfig.apiKey;
+        this.modelApiConfig.apiKeySet = false;
+        this.modelApiConfig.apiKeyMasked = "";
+      }
     }
     if (patch.clearApiKey) {
       delete this.modelApiConfig.apiKey;
@@ -157,7 +182,29 @@ export class CompanionStore {
       this.modelApiConfig.maxTokens = Math.max(1, Math.floor(patch.maxTokens));
     }
     this.modelApiConfig.updatedAt = new Date().toISOString();
+    this.persistModelApiConfig();
     return this.getModelApiConfig();
+  }
+
+  private loadModelApiConfig(): StoredModelApiConfig {
+    if (!this.modelApiConfigPath || !existsSync(this.modelApiConfigPath)) {
+      return { ...defaultModelApiConfig };
+    }
+
+    try {
+      const parsed = JSON.parse(readFileSync(this.modelApiConfigPath, "utf8")) as unknown;
+      return normalizeStoredModelApiConfig(parsed);
+    } catch {
+      return { ...defaultModelApiConfig };
+    }
+  }
+
+  private persistModelApiConfig(): void {
+    if (!this.modelApiConfigPath) {
+      return;
+    }
+    mkdirSync(dirname(this.modelApiConfigPath), { recursive: true });
+    writeFileSync(this.modelApiConfigPath, JSON.stringify(this.modelApiConfig, null, 2), "utf8");
   }
 }
 
@@ -165,4 +212,30 @@ function maskSecret(secret: string): string {
   if (!secret) return "";
   if (secret.length <= 8) return "****";
   return `${secret.slice(0, 4)}...${secret.slice(-4)}`;
+}
+
+function normalizeStoredModelApiConfig(value: unknown): StoredModelApiConfig {
+  const input = isRecord(value) ? value : {};
+  const apiKey = typeof input.apiKey === "string" ? input.apiKey : undefined;
+  const config: StoredModelApiConfig = {
+    ...defaultModelApiConfig,
+    enabled: typeof input.enabled === "boolean" ? input.enabled : defaultModelApiConfig.enabled,
+    baseUrl: typeof input.baseUrl === "string" ? input.baseUrl : defaultModelApiConfig.baseUrl,
+    model: typeof input.model === "string" ? input.model : defaultModelApiConfig.model,
+    apiKey,
+    apiKeySet: Boolean(apiKey),
+    apiKeyMasked: apiKey ? maskSecret(apiKey) : "",
+    updatedAt: typeof input.updatedAt === "string" ? input.updatedAt : undefined,
+  };
+  if (typeof input.temperature === "number") {
+    config.temperature = input.temperature;
+  }
+  if (typeof input.maxTokens === "number") {
+    config.maxTokens = Math.max(1, Math.floor(input.maxTokens));
+  }
+  return config;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value && typeof value === "object" && !Array.isArray(value));
 }

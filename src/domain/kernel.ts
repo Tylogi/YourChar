@@ -1,7 +1,7 @@
 import type { AgentContext, AgentMessage } from "../harness/index.js";
 import { runAgentLoop, textMessage, textOf } from "../harness/index.js";
 import { companionModel } from "./model.js";
-import { CompanionStore } from "./store.js";
+import { CompanionStore, type CompanionStoreOptions } from "./store.js";
 import { createCompanionTools, getActionBucket } from "./tools.js";
 import type {
   MessageRequest,
@@ -17,11 +17,15 @@ type NormalizedMessageRequest = MessageRequest & {
   timezone: string;
 };
 
+export type CompanionKernelOptions = CompanionStoreOptions & {
+  store?: CompanionStore;
+};
+
 export class CompanionKernel {
   readonly store: CompanionStore;
 
-  constructor(store = new CompanionStore()) {
-    this.store = store;
+  constructor(options: CompanionKernelOptions | CompanionStore = {}) {
+    this.store = options instanceof CompanionStore ? options : options.store ?? new CompanionStore(options);
   }
 
   async sendMessage(sessionId: string, request: MessageRequest): Promise<MessageResponse> {

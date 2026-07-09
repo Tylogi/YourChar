@@ -2,6 +2,7 @@ node_modules/
 dist/
 coverage/
 .env
+.rp-agent/
 .DS_Store
 *.log
 *.sqlite
