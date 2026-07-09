@@ -4,13 +4,12 @@ import re
 import statistics
 import time
 from collections.abc import Iterator
+from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-from .domain.agent import CompanionAgent, PreparedTurn as PreparedMessage
-from .domain.renderer import Renderer
-from .domain.tools import ToolExecutor
+from .context import ContextBuilder
 from .external_model import ExternalModelError, ExternalModelStreamState, OpenAICompatibleClient
 from .models import (
     CapabilityReport,
@@ -26,17 +25,29 @@ from .models import (
     MessageResponse,
     SharedEpisodeCreate,
 )
+from .planner import Planner
+from .renderer import Renderer
 from .storage import Storage
+from .tools import ToolExecutor
+
+
+@dataclass(frozen=True)
+class PreparedMessage:
+    context: Any
+    execution: Any
+    fallback_reply: str
+    planner_ms: float
+    context_ms: float
+    tool_ms: float
 
 
 class Kernel:
     def __init__(self, db_path: str | Path = "rp_agent_kernel.sqlite3") -> None:
         self.storage = Storage(db_path)
-        self.agent = CompanionAgent(storage=self.storage)
-        self.planner = self.agent.planner
-        self.context_builder = self.agent.context_builder
-        self.executor = self.agent.executor
-        self.renderer = self.agent.renderer
+        self.planner = Planner()
+        self.context_builder = ContextBuilder(self.storage)
+        self.executor = ToolExecutor(self.storage)
+        self.renderer = Renderer()
         self.external_model = OpenAICompatibleClient()
 
     def close(self) -> None:
@@ -155,7 +166,28 @@ class Kernel:
         yield {"type": "done", "response": response.model_dump(mode="json", by_alias=True)}
 
     def _prepare_message(self, session_id: str, request: MessageRequest) -> PreparedMessage:
-        return self.agent.prepare_message(session_id, request)
+        planner_start = time.perf_counter()
+        plan = self.planner.plan(request)
+        planner_ms = _elapsed_ms(planner_start)
+
+        context_start = time.perf_counter()
+        context = self.context_builder.build(session_id, request)
+        context_ms = _elapsed_ms(context_start)
+
+        tool_start = time.perf_counter()
+        execution = self.executor.execute(session_id, request, plan)
+        tool_ms = _elapsed_ms(tool_start)
+        fallback_reply = self.renderer.render(
+            request, execution, storage=self.storage, session_id=session_id
+        )
+        return PreparedMessage(
+            context=context,
+            execution=execution,
+            fallback_reply=fallback_reply,
+            planner_ms=planner_ms,
+            context_ms=context_ms,
+            tool_ms=tool_ms,
+        )
 
     def _finalize_message(
         self,

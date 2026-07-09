@@ -1,0 +1,346 @@
+from __future__ import annotations
+
+import hashlib
+from dataclasses import dataclass
+from datetime import timedelta
+
+from .intent import include_authoritative_real_state
+from ..models import ContextTraceBlock, FeatureName, MessageRequest
+from ..storage import Storage
+from ..timeparse import ensure_tz
+
+
+@dataclass(frozen=True)
+class ContextAssembly:
+    blocks: list[ContextTraceBlock]
+    trace_id: str | None
+    token_estimate: int
+
+
+class ContextBuilder:
+    CONTRACT_VERSION = "kernel-contract-v1"
+
+    def __init__(self, storage: Storage) -> None:
+        self.storage = storage
+
+    def build(self, session_id: str, request: MessageRequest) -> ContextAssembly:
+        now = ensure_tz(request.now, request.timezone)
+        flags = self.storage.feature_flags_json()
+        blocks: list[ContextTraceBlock] = []
+
+        blocks.append(
+            self._block(
+                block_id="stable:contract:v1",
+                layer="stable",
+                name="System contract",
+                source="kernel",
+                text=(
+                    "Headless companion kernel. The same companion can use a direct-message "
+                    "view or a third-person life-narrative view. Both views share real time, "
+                    "schedule, reminders, tasks, and proactive events. Shared timeline episodes "
+                    "shape tone and continuity; fictional framing cannot mutate real tools."
+                ),
+            )
+        )
+        enabled_tools = ",".join(sorted(name for name, enabled in flags.items() if enabled))
+        blocks.append(
+            self._block(
+                block_id=f"stable:tools:v1:{hashlib.sha1(enabled_tools.encode()).hexdigest()[:8]}",
+                layer="stable",
+                name="Tool schema",
+                source="feature_flags",
+                text=f"Enabled features: {enabled_tools}",
+            )
+        )
+        blocks.append(
+            self._block(
+                block_id=f"stable:mode:v1:{request.mode}",
+                layer="stable",
+                name="Mode rules",
+                source="mode",
+                text=_mode_rules(request.mode),
+            )
+        )
+
+        if self.storage.is_enabled(FeatureName.companion_persona):
+            profile = self.storage.get_companion_profile()
+            blocks.append(
+                self._block(
+                    block_id="semi:companion-persona:v1",
+                    layer="semi_stable",
+                    name="Companion persona",
+                    source="companion_persona",
+                    text="\n".join(
+                        [
+                            f"name={profile.name}",
+                            f"practical_voice={profile.practical_voice}",
+                            f"immersive_voice={profile.immersive_voice}",
+                            f"address_style={profile.address_style}",
+                            "One continuous companion, not two separate bots. Avoid exposing mode labels unless safety requires a real-world boundary.",
+                        ]
+                    ),
+                )
+            )
+
+        if self.storage.is_enabled(FeatureName.shared_timeline):
+            episodes = self.storage.list_shared_episodes(
+                session_id=session_id,
+                character_id=request.character_id if request.mode == "rp" else None,
+                limit=4,
+            )
+            blocks.append(
+                self._block(
+                    block_id="semi:shared-timeline:v1",
+                    layer="semi_stable",
+                    name="Shared timeline",
+                    source="shared_timeline",
+                    text=_format_shared_timeline(episodes),
+                )
+            )
+
+        if request.mode == "sms" and self.storage.is_enabled(FeatureName.secretary_memory):
+            memories = self.storage.recent_memories(mode="sms", session_id=session_id, limit=6)
+            blocks.append(
+                self._block(
+                    block_id="semi:secretary-memory:v1",
+                    layer="semi_stable",
+                    name="Secretary memory",
+                    source="memories.sms",
+                    text="\n".join(memory.content for memory in memories) or "No secretary memory.",
+                )
+            )
+        if request.mode == "rp" and self.storage.is_enabled(FeatureName.characters) and request.character_id:
+            try:
+                character = self.storage.get_character(request.character_id)
+                blocks.append(
+                    self._block(
+                        block_id=f"semi:character:v1:{character.id}",
+                        layer="semi_stable",
+                        name="Character card",
+                        source="characters",
+                        text=f"{character.name}\n{character.persona}\n{character.scenario}",
+                    )
+                )
+            except KeyError:
+                blocks.append(
+                    self._block(
+                        block_id=f"semi:character-missing:v1:{request.character_id}",
+                        layer="semi_stable",
+                        name="Character card missing",
+                        source="characters",
+                        text=f"Character {request.character_id} was requested but not found.",
+                    )
+                )
+        if request.mode == "rp" and self.storage.is_enabled(FeatureName.rp_memory):
+            memories = self.storage.recent_memories(
+                mode="rp", session_id=session_id, character_id=request.character_id, limit=6
+            )
+            memories = _filter_memories_for_context(memories, request)
+            blocks.append(
+                self._block(
+                    block_id="semi:rp-memory:v1",
+                    layer="semi_stable",
+                    name="RP memory",
+                    source="memories.rp",
+                    text="\n".join(memory.content for memory in memories) or "No RP memory.",
+                )
+            )
+
+        blocks.append(
+            self._block(
+                block_id="dynamic:time",
+                layer="dynamic",
+                name="Current time",
+                source="request",
+                text=f"now={now.isoformat()} timezone={request.timezone}",
+            )
+        )
+        include_real_state = _include_real_state(request)
+        if (
+            request.mode == "rp"
+            and not include_real_state
+            and self.storage.is_enabled(FeatureName.reality_projection)
+        ):
+            blocks.append(
+                self._block(
+                    block_id="dynamic:shared-reality",
+                    layer="dynamic",
+                    name="Shared present",
+                    source="shared_reality",
+                    text=_format_shared_reality(self.storage, now),
+                )
+            )
+        if include_real_state and self.storage.is_enabled(FeatureName.calendar):
+            start = now.replace(hour=0, minute=0, second=0, microsecond=0)
+            end = start + timedelta(days=7)
+            events = self.storage.list_events(start, end)
+            blocks.append(
+                self._block(
+                    block_id="dynamic:calendar:7d",
+                    layer="dynamic",
+                    name="Upcoming calendar",
+                    source="calendar_events",
+                    text="\n".join(
+                        f"{event.start.isoformat()} {event.title}" for event in events
+                    )
+                    or "No upcoming events.",
+                )
+            )
+        if include_real_state and self.storage.is_enabled(FeatureName.reminders):
+            reminders = self.storage.list_reminders()[:8]
+            blocks.append(
+                self._block(
+                    block_id="dynamic:reminders",
+                    layer="dynamic",
+                    name="Reminders",
+                    source="reminders",
+                    text="\n".join(
+                        f"{reminder.remind_at.isoformat()} {reminder.title} {reminder.status}"
+                        for reminder in reminders
+                    )
+                    or "No reminders.",
+                )
+            )
+        if self.storage.is_enabled(FeatureName.fts_search):
+            search_mode = "rp" if request.mode == "rp" else "sms"
+            memory_feature = FeatureName.rp_memory if request.mode == "rp" else FeatureName.secretary_memory
+            if self.storage.is_enabled(memory_feature):
+                memories = self.storage.search_memories(
+                    mode=search_mode,
+                    query=request.text[:64],
+                    character_id=request.character_id if request.mode == "rp" else None,
+                    limit=5,
+                )
+                memories = _filter_memories_for_context(memories, request)
+                blocks.append(
+                    self._block(
+                        block_id=f"dynamic:memory-search:{search_mode}",
+                        layer="dynamic",
+                        name="Memory retrieval",
+                        source="memory_search",
+                        text="\n".join(memory.content for memory in memories) or "No retrieved memories.",
+                    )
+                )
+        recent = self.storage.recent_messages(session_id, limit=8)
+        blocks.append(
+            self._block(
+                block_id="dynamic:recent-messages",
+                layer="dynamic",
+                name="Recent messages",
+                source="messages",
+                text="\n".join(f"{item['role']}: {item['content']}" for item in recent) or "No recent messages.",
+            )
+        )
+
+        token_estimate = sum(block.token_count for block in blocks)
+        trace_id = None
+        if self.storage.is_enabled(FeatureName.context_trace):
+            trace = self.storage.create_context_trace(
+                session_id=session_id,
+                mode=request.mode,
+                character_id=request.character_id,
+                blocks=blocks,
+                feature_flags=flags,
+            )
+            trace_id = trace.id
+        return ContextAssembly(blocks=blocks, trace_id=trace_id, token_estimate=token_estimate)
+
+    def _block(
+        self,
+        *,
+        block_id: str,
+        layer: str,
+        name: str,
+        source: str,
+        text: str,
+        truncated: bool = False,
+    ) -> ContextTraceBlock:
+        return ContextTraceBlock(
+            id=block_id,
+            layer=layer,
+            name=name,
+            hash=hashlib.sha256(text.encode("utf-8")).hexdigest(),
+            tokenCount=max(1, len(text) // 4),
+            source=source,
+            truncated=truncated,
+        )
+
+
+def _mode_rules(mode: str) -> str:
+    if mode == "sms":
+        return (
+            "Reply briefly in first-person direct-message view as the same companion contacting "
+            "the user. Real-world tools are available when intent is real; shared timeline may "
+            "shape wording."
+        )
+    return (
+        "Reply with third-person life-narrative prose for the same companion. Reality is part "
+        "of the shared everyday timeline; real-world tools are available when intent is real, "
+        "while fictional framing remains memory-only."
+    )
+
+
+def _include_real_state(request: MessageRequest) -> bool:
+    return include_authoritative_real_state(request.mode, request.text)
+
+
+def _filter_memories_for_context(memories, request: MessageRequest):
+    if request.mode != "rp" or _include_real_state(request):
+        return memories
+    return [
+        memory
+        for memory in memories
+        if memory.source != "proactive_event" and "out_of_character" not in memory.tags
+    ]
+
+
+def _format_shared_timeline(episodes) -> str:
+    if not episodes:
+        return "No shared episodes yet."
+    lines: list[str] = []
+    for episode in episodes:
+        tool_scope = "tools=no" if not episode.usable_for_real_world_tools else "tools=yes"
+        character = f" character={episode.character_id}" if episode.character_id else ""
+        lines.append(
+            f"- {episode.occurred_at.isoformat()} [{episode.reality_scope}; {tool_scope}{character}] "
+            f"{episode.summary} {episode.character_interpretation}".strip()
+        )
+    return "\n".join(lines)
+
+
+def _format_shared_reality(storage: Storage, now) -> str:
+    lines = [
+        "Read-only shared present for immersive continuity.",
+        "Use this only for pacing, care, and time awareness; it is not a tool result or plot fact.",
+        f"local_time={now.isoformat()}",
+    ]
+    day_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
+    events = storage.list_events(now, day_start + timedelta(days=1))[:3]
+    if events:
+        lines.append(
+            "near_calendar="
+            + "; ".join(f"{event.start.strftime('%H:%M')} {event.title}" for event in events)
+        )
+    else:
+        lines.append("near_calendar=none")
+
+    reminders = [
+        reminder
+        for reminder in storage.list_reminders()
+        if reminder.status == "scheduled" and reminder.remind_at >= now
+    ][:3]
+    if reminders:
+        lines.append(
+            "near_reminders="
+            + "; ".join(
+                f"{reminder.remind_at.strftime('%H:%M')} {reminder.title}"
+                for reminder in reminders
+            )
+        )
+    else:
+        lines.append("near_reminders=none")
+
+    open_tasks = [task for task in storage.list_tasks() if task.status in {"open", "overdue"}]
+    pressure = "heavy" if len(open_tasks) >= 5 else "medium" if len(open_tasks) >= 2 else "light"
+    lines.append(f"task_pressure={pressure}; open_task_count={len(open_tasks)}")
+    return "\n".join(lines)

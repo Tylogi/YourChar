@@ -10,11 +10,11 @@ from dataclasses import dataclass, field
 from datetime import timedelta
 from typing import Any
 
-from .domain.intent import include_authoritative_real_state
+from .intent import include_authoritative_real_state
 from .models import FeatureName, MessageRequest
 from .storage import Storage
 from .timeparse import ensure_tz
-from .domain.tools import ExecutionResult
+from .tools import ExecutionResult
 
 
 class ExternalModelError(RuntimeError):
@@ -619,7 +619,7 @@ def _fallback_visible_text(
     reason: str,
     fallback_reply: str | None = None,
 ) -> _VisibleText:
-    from .domain.renderer import Renderer
+    from .renderer import Renderer
 
     return _VisibleText(
         text=fallback_reply if fallback_reply is not None else Renderer().render(request, execution),
