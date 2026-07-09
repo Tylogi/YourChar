@@ -28,18 +28,22 @@ async function route(input: {
 }) {
   const method = input.request.method ?? "GET";
   const url = new URL(input.request.url ?? "/", "http://127.0.0.1");
+  const pathname = normalizePath(url.pathname);
 
-  if (method === "GET" && url.pathname === "/health") {
+  if (method === "GET" && (pathname === "/health" || pathname === "/api/health")) {
     sendJson(input.response, 200, { status: "ok" });
     return;
   }
 
-  if (method === "GET" && (url.pathname === "/" || url.pathname === "/ui")) {
+  if (
+    method === "GET" &&
+    (pathname === "/" || pathname === "/ui" || pathname === "/ui/index.html" || pathname === "/index.html")
+  ) {
     sendHtml(input.response, 200, renderAppHtml());
     return;
   }
 
-  if (method === "GET" && url.pathname === "/api") {
+  if (method === "GET" && pathname === "/api") {
     sendJson(input.response, 200, {
       name: "RP Agent",
       status: "ok",
@@ -50,7 +54,7 @@ async function route(input: {
     return;
   }
 
-  const messageMatch = url.pathname.match(/^\/api\/sessions\/([^/]+)\/messages$/);
+  const messageMatch = pathname.match(/^\/api\/sessions\/([^/]+)\/messages$/);
   if (messageMatch && method === "POST") {
     const body = (await readJson(input.request)) as MessageRequest;
     const result = await input.kernel.sendMessage(decodeURIComponent(messageMatch[1]), body);
@@ -64,13 +68,31 @@ async function route(input: {
     return;
   }
 
-  if (method === "GET" && url.pathname === "/api/debug/context-logs") {
+  if (method === "GET" && pathname === "/api/debug/context-logs") {
     const limit = Number(url.searchParams.get("limit") ?? "20");
     sendJson(input.response, 200, { logs: input.kernel.recentContextLogs(limit) });
     return;
   }
 
+  if (method === "GET" && !pathname.startsWith("/api/")) {
+    sendHtml(input.response, 200, renderAppHtml());
+    return;
+  }
+
   sendJson(input.response, 404, { error: "Not Found" });
+}
+
+function normalizePath(pathname: string): string {
+  let path = pathname;
+  if (path === "/ui/api" || path.startsWith("/ui/api/")) {
+    path = path.slice("/ui".length);
+  } else if (path === "/ui/health") {
+    path = "/health";
+  }
+  if (path.length > 1 && path.endsWith("/")) {
+    path = path.slice(0, -1);
+  }
+  return path || "/";
 }
 
 async function readJson(request: IncomingMessage): Promise<unknown> {

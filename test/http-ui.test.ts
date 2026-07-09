@@ -18,6 +18,18 @@ test("server serves chat UI and debug context logs", async () => {
     assert.match(html, /normalBtn/);
     assert.match(html, /debugBtn/);
 
+    const pageWithSlash = await fetch(`${baseUrl}/ui/`);
+    assert.equal(pageWithSlash.status, 200);
+    assert.match(await pageWithSlash.text(), /RP Agent/);
+
+    const apiHealth = await fetch(`${baseUrl}/api/health`);
+    assert.equal(apiHealth.status, 200);
+    assert.deepEqual(await apiHealth.json(), { status: "ok" });
+
+    const uiApiRoot = await fetch(`${baseUrl}/ui/api`);
+    assert.equal(uiApiRoot.status, 200);
+    assert.equal(((await uiApiRoot.json()) as { status: string }).status, "ok");
+
     const message = await fetch(`${baseUrl}/api/sessions/ui-test/messages`, {
       method: "POST",
       headers: { "content-type": "application/json" },
