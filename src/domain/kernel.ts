@@ -1,0 +1,94 @@
+import type { AgentContext, AgentMessage } from "../harness/index.js";
+import { runAgentLoop, textMessage, textOf } from "../harness/index.js";
+import { companionModel } from "./model.js";
+import { CompanionStore } from "./store.js";
+import { createCompanionTools, getActionBucket } from "./tools.js";
+import type { MessageRequest, MessageResponse, Mode, SessionRecord } from "./types.js";
+
+type NormalizedMessageRequest = MessageRequest & {
+  mode: Mode;
+  text: string;
+  timezone: string;
+};
+
+export class CompanionKernel {
+  readonly store: CompanionStore;
+
+  constructor(store = new CompanionStore()) {
+    this.store = store;
+  }
+
+  async sendMessage(sessionId: string, request: MessageRequest): Promise<MessageResponse> {
+    const normalized = normalizeRequest(request);
+    const session = this.store.getSession(sessionId);
+    const prompt = textMessage("user", normalized.text, {
+      sessionId,
+      mode: normalized.mode,
+      characterId: normalized.characterId,
+    });
+    const state: Record<string, unknown> = {
+      store: this.store,
+      sessionId,
+      mode: normalized.mode,
+      characterId: normalized.characterId,
+      request: normalized,
+      actions: [],
+    };
+    const context: AgentContext = {
+      systemPrompt: systemPromptFor(normalized.mode),
+      messages: session.messages,
+      tools: createCompanionTools(),
+      state,
+    };
+
+    const result = await runAgentLoop({
+      prompts: [prompt],
+      context,
+      config: {
+        model: companionModel,
+        toolExecution: "sequential",
+        maxTurns: 6,
+      },
+    });
+
+    this.store.appendMessages(sessionId, result.messages);
+    return {
+      reply: finalAssistantText(result.messages),
+      actions: getActionBucket(state),
+      events: result.events,
+    };
+  }
+
+  getSession(sessionId: string): SessionRecord {
+    return this.store.getSession(sessionId);
+  }
+}
+
+function normalizeRequest(request: MessageRequest): NormalizedMessageRequest {
+  return {
+    ...request,
+    mode: request.mode ?? "sms",
+    text: request.text,
+    timezone: request.timezone ?? "Asia/Shanghai",
+  };
+}
+
+function systemPromptFor(mode: Mode): string {
+  if (mode === "rp") {
+    return "You are a life-narrative companion. Third-person narration; real tools remain real-world state.";
+  }
+  return "You are a direct-message companion. First person, concise, practical.";
+}
+
+function finalAssistantText(messages: AgentMessage[]): string {
+  for (let index = messages.length - 1; index >= 0; index -= 1) {
+    const message = messages[index];
+    if (message.role === "assistant") {
+      const text = textOf(message).trim();
+      if (text) {
+        return text;
+      }
+    }
+  }
+  return "";
+}

@@ -1,0 +1,20 @@
+{
+  "name": "rp-agent",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Pi-style TypeScript RP companion agent kernel.",
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "dev": "npm run build && node dist/src/server.js",
+    "start": "node dist/src/server.js",
+    "test": "npm run build && node --test dist/test"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "devDependencies": {
+    "@types/node": "^20.19.2",
+    "typescript": "^5.8.3"
+  }
+}
