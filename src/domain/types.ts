@@ -44,6 +44,20 @@ export type MessageResponse = {
   events: AgentEvent[];
 };
 
+export type ContextLogEntry = {
+  id: string;
+  sessionId: string;
+  mode: Mode;
+  requestText: string;
+  systemPrompt: string;
+  messageCountBefore: number;
+  toolNames: string[];
+  reply: string;
+  actions: ActionRecord[];
+  events: AgentEvent[];
+  createdAt: string;
+};
+
 export type SessionRecord = {
   id: string;
   messages: AgentMessage[];

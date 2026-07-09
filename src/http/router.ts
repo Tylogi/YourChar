@@ -2,6 +2,7 @@ import { createServer, type IncomingMessage, type ServerResponse } from "node:ht
 import { URL } from "node:url";
 import { CompanionKernel } from "../domain/index.js";
 import type { MessageRequest } from "../domain/index.js";
+import { renderAppHtml } from "./ui.js";
 
 export type HttpServerOptions = {
   kernel?: CompanionKernel;
@@ -33,11 +34,18 @@ async function route(input: {
     return;
   }
 
-  if (method === "GET" && url.pathname === "/") {
+  if (method === "GET" && (url.pathname === "/" || url.pathname === "/ui")) {
+    sendHtml(input.response, 200, renderAppHtml());
+    return;
+  }
+
+  if (method === "GET" && url.pathname === "/api") {
     sendJson(input.response, 200, {
       name: "RP Agent",
       status: "ok",
+      ui: "/ui",
       messageEndpoint: "POST /api/sessions/{id}/messages",
+      debugContextLogs: "GET /api/debug/context-logs",
     });
     return;
   }
@@ -53,6 +61,12 @@ async function route(input: {
   if (messageMatch && method === "GET") {
     const session = input.kernel.getSession(decodeURIComponent(messageMatch[1]));
     sendJson(input.response, 200, session.messages);
+    return;
+  }
+
+  if (method === "GET" && url.pathname === "/api/debug/context-logs") {
+    const limit = Number(url.searchParams.get("limit") ?? "20");
+    sendJson(input.response, 200, { logs: input.kernel.recentContextLogs(limit) });
     return;
   }
 
@@ -76,4 +90,12 @@ function sendJson(response: ServerResponse, statusCode: number, payload: unknown
     "content-type": "application/json; charset=utf-8",
   });
   response.end(JSON.stringify(payload));
+}
+
+function sendHtml(response: ServerResponse, statusCode: number, html: string): void {
+  response.writeHead(statusCode, {
+    "content-type": "text/html; charset=utf-8",
+    "cache-control": "no-store",
+  });
+  response.end(html);
 }

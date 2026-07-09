@@ -21,6 +21,7 @@ export class CompanionKernel {
   async sendMessage(sessionId: string, request: MessageRequest): Promise<MessageResponse> {
     const normalized = normalizeRequest(request);
     const session = this.store.getSession(sessionId);
+    const messageCountBefore = session.messages.length;
     const prompt = textMessage("user", normalized.text, {
       sessionId,
       mode: normalized.mode,
@@ -52,15 +53,32 @@ export class CompanionKernel {
     });
 
     this.store.appendMessages(sessionId, result.messages);
+    const reply = finalAssistantText(result.messages);
+    const actions = getActionBucket(state);
+    this.store.addContextLog({
+      sessionId,
+      mode: normalized.mode,
+      requestText: normalized.text,
+      systemPrompt: context.systemPrompt,
+      messageCountBefore,
+      toolNames: context.tools.map((tool) => tool.name),
+      reply,
+      actions,
+      events: result.events,
+    });
     return {
-      reply: finalAssistantText(result.messages),
-      actions: getActionBucket(state),
+      reply,
+      actions,
       events: result.events,
     };
   }
 
   getSession(sessionId: string): SessionRecord {
     return this.store.getSession(sessionId);
+  }
+
+  recentContextLogs(limit?: number) {
+    return this.store.recentContextLogs(limit);
   }
 }
 

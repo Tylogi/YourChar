@@ -1,12 +1,13 @@
 import { randomUUID } from "node:crypto";
 import type { AgentMessage } from "../harness/index.js";
-import type { ActionRecord, Memory, Mode, Reminder, SessionRecord } from "./types.js";
+import type { ActionRecord, ContextLogEntry, Memory, Mode, Reminder, SessionRecord } from "./types.js";
 
 export class CompanionStore {
   readonly sessions = new Map<string, SessionRecord>();
   readonly reminders = new Map<string, Reminder>();
   readonly memories: Memory[] = [];
   readonly actions: ActionRecord[] = [];
+  readonly contextLogs: ContextLogEntry[] = [];
 
   getSession(sessionId: string): SessionRecord {
     const existing = this.sessions.get(sessionId);
@@ -80,5 +81,22 @@ export class CompanionStore {
     };
     this.actions.push(action);
     return action;
+  }
+
+  addContextLog(entry: Omit<ContextLogEntry, "id" | "createdAt">): ContextLogEntry {
+    const log: ContextLogEntry = {
+      ...entry,
+      id: randomUUID(),
+      createdAt: new Date().toISOString(),
+    };
+    this.contextLogs.unshift(log);
+    if (this.contextLogs.length > 100) {
+      this.contextLogs.length = 100;
+    }
+    return log;
+  }
+
+  recentContextLogs(limit = 20): ContextLogEntry[] {
+    return this.contextLogs.slice(0, Math.max(1, Math.min(limit, 100)));
   }
 }
