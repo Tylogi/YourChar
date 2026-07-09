@@ -58,7 +58,7 @@ export function renderAppHtml(): string {
     }
     .segmented {
       display: inline-grid;
-      grid-template-columns: 1fr 1fr;
+      grid-template-columns: 1fr 1fr 1fr;
       border: 1px solid var(--line);
       border-radius: 8px;
       overflow: hidden;
@@ -107,6 +107,69 @@ export function renderAppHtml(): string {
       grid-template-rows: 1fr auto;
       min-height: 0;
       border-right: 1px solid var(--line);
+    }
+    .settings-page {
+      grid-column: 1 / -1;
+      padding: 18px;
+      overflow: auto;
+      background: var(--bg);
+    }
+    .settings-shell {
+      max-width: 860px;
+      margin: 0 auto;
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 18px;
+    }
+    .settings-shell h2 {
+      margin: 0 0 14px;
+      font-size: 18px;
+    }
+    .settings-grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 12px;
+    }
+    .settings-field {
+      display: grid;
+      gap: 6px;
+    }
+    .settings-field.full {
+      grid-column: 1 / -1;
+    }
+    .checkbox-row.full {
+      grid-column: 1 / -1;
+    }
+    .settings-field label,
+    .checkbox-row {
+      color: var(--muted);
+      font-size: 13px;
+    }
+    .checkbox-row {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .checkbox-row input {
+      width: 16px;
+      height: 16px;
+    }
+    .settings-actions {
+      display: flex;
+      gap: 10px;
+      align-items: center;
+      flex-wrap: wrap;
+      margin-top: 16px;
+    }
+    .secondary {
+      height: 38px;
+      padding: 0 12px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: white;
+      color: var(--text);
+      cursor: pointer;
     }
     .messages {
       overflow: auto;
@@ -258,6 +321,7 @@ export function renderAppHtml(): string {
       aside { border-top: 1px solid var(--line); min-height: 360px; }
       .composer { grid-template-columns: 1fr; }
       .primary { width: 100%; }
+      .settings-grid { grid-template-columns: 1fr; }
     }
   </style>
 </head>
@@ -267,7 +331,8 @@ export function renderAppHtml(): string {
       <div class="header-left">
         <h1>RP Agent</h1>
         <div class="segmented" aria-label="UI mode">
-          <button id="normalBtn" class="active" type="button">正常</button>
+          <button id="normalBtn" class="active" type="button">聊天</button>
+          <button id="settingsBtn" type="button">设置</button>
           <button id="debugBtn" type="button">Debug</button>
         </div>
       </div>
@@ -286,7 +351,7 @@ export function renderAppHtml(): string {
       </div>
     </header>
     <main>
-      <section class="chat">
+      <section id="chatPane" class="chat">
         <div id="messages" class="messages" aria-live="polite"></div>
         <form id="composer" class="composer">
           <textarea id="textInput" placeholder="输入消息，例如：5分钟后提醒我喝水"></textarea>
@@ -300,6 +365,42 @@ export function renderAppHtml(): string {
         </div>
         <div id="debugList" class="debug-list"></div>
       </aside>
+      <section id="settingsPage" class="settings-page" hidden>
+        <div class="settings-shell">
+          <h2>模型 API 设置</h2>
+          <div class="settings-grid">
+            <label class="checkbox-row full">
+              <input id="apiEnabled" type="checkbox" />
+              <span>启用 OpenAI-compatible API</span>
+            </label>
+            <div class="settings-field full">
+              <label for="apiBaseUrl">Base URL</label>
+              <input id="apiBaseUrl" placeholder="http://127.0.0.1:8317/v1" />
+            </div>
+            <div class="settings-field">
+              <label for="apiModel">模型名</label>
+              <input id="apiModel" placeholder="例如 qwen3、gpt-4.1、local-model" />
+            </div>
+            <div class="settings-field">
+              <label for="apiKey">API Key</label>
+              <input id="apiKey" type="password" placeholder="留空表示不修改" autocomplete="off" />
+            </div>
+            <div class="settings-field">
+              <label for="apiTemperature">Temperature</label>
+              <input id="apiTemperature" type="number" step="0.1" min="0" max="2" placeholder="可选" />
+            </div>
+            <div class="settings-field">
+              <label for="apiMaxTokens">Max Tokens</label>
+              <input id="apiMaxTokens" type="number" min="1" step="1" placeholder="可选" />
+            </div>
+          </div>
+          <div class="settings-actions">
+            <button id="saveApiSettingsBtn" class="primary" type="button">保存设置</button>
+            <button id="clearApiKeyBtn" class="secondary" type="button">清除 Key</button>
+            <span id="apiSettingsState" class="muted"></span>
+          </div>
+        </div>
+      </section>
     </main>
     <footer style="padding: 8px 14px; background: var(--panel); border-top: 1px solid var(--line);">
       <div id="status" class="status">就绪</div>
@@ -313,7 +414,10 @@ export function renderAppHtml(): string {
     };
     const nodes = {
       normalBtn: document.getElementById("normalBtn"),
+      settingsBtn: document.getElementById("settingsBtn"),
       debugBtn: document.getElementById("debugBtn"),
+      chatPane: document.getElementById("chatPane"),
+      settingsPage: document.getElementById("settingsPage"),
       debugPane: document.getElementById("debugPane"),
       debugList: document.getElementById("debugList"),
       refreshLogsBtn: document.getElementById("refreshLogsBtn"),
@@ -323,12 +427,24 @@ export function renderAppHtml(): string {
       sendBtn: document.getElementById("sendBtn"),
       status: document.getElementById("status"),
       sessionInput: document.getElementById("sessionInput"),
-      modeSelect: document.getElementById("modeSelect")
+      modeSelect: document.getElementById("modeSelect"),
+      apiEnabled: document.getElementById("apiEnabled"),
+      apiBaseUrl: document.getElementById("apiBaseUrl"),
+      apiModel: document.getElementById("apiModel"),
+      apiKey: document.getElementById("apiKey"),
+      apiTemperature: document.getElementById("apiTemperature"),
+      apiMaxTokens: document.getElementById("apiMaxTokens"),
+      saveApiSettingsBtn: document.getElementById("saveApiSettingsBtn"),
+      clearApiKeyBtn: document.getElementById("clearApiKeyBtn"),
+      apiSettingsState: document.getElementById("apiSettingsState")
     };
 
     nodes.normalBtn.addEventListener("click", () => setUiMode("normal"));
+    nodes.settingsBtn.addEventListener("click", () => setUiMode("settings"));
     nodes.debugBtn.addEventListener("click", () => setUiMode("debug"));
     nodes.refreshLogsBtn.addEventListener("click", loadDebugLogs);
+    nodes.saveApiSettingsBtn.addEventListener("click", saveApiSettings);
+    nodes.clearApiKeyBtn.addEventListener("click", clearApiKey);
     nodes.composer.addEventListener("submit", async (event) => {
       event.preventDefault();
       await sendMessage();
@@ -345,10 +461,16 @@ export function renderAppHtml(): string {
     function setUiMode(mode) {
       state.uiMode = mode;
       nodes.normalBtn.classList.toggle("active", mode === "normal");
+      nodes.settingsBtn.classList.toggle("active", mode === "settings");
       nodes.debugBtn.classList.toggle("active", mode === "debug");
+      nodes.chatPane.hidden = mode === "settings";
+      nodes.settingsPage.hidden = mode !== "settings";
       nodes.debugPane.hidden = mode !== "debug";
       if (mode === "debug") {
         loadDebugLogs();
+      }
+      if (mode === "settings") {
+        loadApiSettings();
       }
     }
 
@@ -425,6 +547,72 @@ export function renderAppHtml(): string {
       }
     }
 
+    async function loadApiSettings() {
+      nodes.apiSettingsState.textContent = "加载中...";
+      try {
+        const response = await fetch("/api/settings/model-api");
+        const config = await response.json();
+        if (!response.ok) throw new Error(config.error || "加载失败");
+        nodes.apiEnabled.checked = Boolean(config.enabled);
+        nodes.apiBaseUrl.value = config.baseUrl || "";
+        nodes.apiModel.value = config.model || "";
+        nodes.apiKey.value = "";
+        nodes.apiTemperature.value = config.temperature ?? "";
+        nodes.apiMaxTokens.value = config.maxTokens ?? "";
+        nodes.apiSettingsState.textContent = config.apiKeySet ? "Key: " + config.apiKeyMasked : "Key: 未设置";
+      } catch (error) {
+        nodes.apiSettingsState.textContent = error.message || String(error);
+      }
+    }
+
+    async function saveApiSettings() {
+      nodes.apiSettingsState.textContent = "保存中...";
+      const payload = {
+        enabled: nodes.apiEnabled.checked,
+        baseUrl: nodes.apiBaseUrl.value.trim(),
+        model: nodes.apiModel.value.trim(),
+        temperature: optionalNumber(nodes.apiTemperature.value),
+        maxTokens: optionalInteger(nodes.apiMaxTokens.value)
+      };
+      if (nodes.apiKey.value) {
+        payload.apiKey = nodes.apiKey.value;
+      }
+      try {
+        const response = await fetch("/api/settings/model-api", {
+          method: "PATCH",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify(payload)
+        });
+        const config = await response.json();
+        if (!response.ok) throw new Error(config.error || "保存失败");
+        nodes.apiKey.value = "";
+        nodes.apiSettingsState.textContent = config.apiKeySet ? "已保存，Key: " + config.apiKeyMasked : "已保存，Key: 未设置";
+        setStatus("API 设置已保存");
+      } catch (error) {
+        nodes.apiSettingsState.textContent = error.message || String(error);
+        setStatus(error.message || String(error), true);
+      }
+    }
+
+    async function clearApiKey() {
+      nodes.apiSettingsState.textContent = "清除中...";
+      try {
+        const response = await fetch("/api/settings/model-api", {
+          method: "PATCH",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ clearApiKey: true })
+        });
+        const config = await response.json();
+        if (!response.ok) throw new Error(config.error || "清除失败");
+        nodes.apiKey.value = "";
+        nodes.apiSettingsState.textContent = config.apiKeySet ? "Key: " + config.apiKeyMasked : "Key: 未设置";
+        setStatus("API Key 已清除");
+      } catch (error) {
+        nodes.apiSettingsState.textContent = error.message || String(error);
+        setStatus(error.message || String(error), true);
+      }
+    }
+
     function renderLogs(logs) {
       if (!logs.length) {
         nodes.debugList.innerHTML = '<div class="muted">暂无上下文日志。发送一条消息后会显示最近运行记录。</div>';
@@ -466,6 +654,18 @@ export function renderAppHtml(): string {
     function setStatus(text, isError) {
       nodes.status.textContent = text;
       nodes.status.classList.toggle("error", Boolean(isError));
+    }
+
+    function optionalNumber(value) {
+      if (value === "") return null;
+      const number = Number(value);
+      return Number.isFinite(number) ? number : null;
+    }
+
+    function optionalInteger(value) {
+      if (value === "") return null;
+      const number = Number(value);
+      return Number.isFinite(number) ? Math.floor(number) : null;
     }
 
     function escapeHtml(value) {

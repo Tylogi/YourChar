@@ -1,7 +1,7 @@
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { URL } from "node:url";
 import { CompanionKernel } from "../domain/index.js";
-import type { MessageRequest } from "../domain/index.js";
+import type { MessageRequest, ModelApiConfigPatch } from "../domain/index.js";
 import { renderAppHtml } from "./ui.js";
 
 export type HttpServerOptions = {
@@ -50,6 +50,7 @@ async function route(input: {
       ui: "/ui",
       messageEndpoint: "POST /api/sessions/{id}/messages",
       debugContextLogs: "GET /api/debug/context-logs",
+      modelApiSettings: "GET/PATCH /api/settings/model-api",
     });
     return;
   }
@@ -74,6 +75,18 @@ async function route(input: {
     return;
   }
 
+  if (isModelApiSettingsPath(pathname)) {
+    if (method === "GET") {
+      sendJson(input.response, 200, input.kernel.getModelApiConfig());
+      return;
+    }
+    if (method === "PATCH") {
+      const patch = (await readJson(input.request)) as ModelApiConfigPatch;
+      sendJson(input.response, 200, input.kernel.patchModelApiConfig(patch));
+      return;
+    }
+  }
+
   if (method === "GET" && !pathname.startsWith("/api/")) {
     sendHtml(input.response, 200, renderAppHtml());
     return;
@@ -93,6 +106,13 @@ function normalizePath(pathname: string): string {
     path = path.slice(0, -1);
   }
   return path || "/";
+}
+
+function isModelApiSettingsPath(pathname: string): boolean {
+  return (
+    pathname === "/api/settings/model-api" ||
+    pathname === "/api/model-config/openai-compatible"
+  );
 }
 
 async function readJson(request: IncomingMessage): Promise<unknown> {

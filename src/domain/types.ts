@@ -44,6 +44,28 @@ export type MessageResponse = {
   events: AgentEvent[];
 };
 
+export type ModelApiConfig = {
+  enabled: boolean;
+  provider: "openai_compatible";
+  baseUrl: string;
+  model: string;
+  apiKeySet: boolean;
+  apiKeyMasked: string;
+  temperature?: number;
+  maxTokens?: number;
+  updatedAt?: string;
+};
+
+export type ModelApiConfigPatch = {
+  enabled?: boolean;
+  baseUrl?: string;
+  model?: string;
+  apiKey?: string;
+  clearApiKey?: boolean;
+  temperature?: number | null;
+  maxTokens?: number | null;
+};
+
 export type ContextLogEntry = {
   id: string;
   sessionId: string;

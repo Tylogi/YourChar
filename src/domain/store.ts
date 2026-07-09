@@ -1,6 +1,15 @@
 import { randomUUID } from "node:crypto";
 import type { AgentMessage } from "../harness/index.js";
-import type { ActionRecord, ContextLogEntry, Memory, Mode, Reminder, SessionRecord } from "./types.js";
+import type {
+  ActionRecord,
+  ContextLogEntry,
+  Memory,
+  Mode,
+  ModelApiConfig,
+  ModelApiConfigPatch,
+  Reminder,
+  SessionRecord,
+} from "./types.js";
 
 export class CompanionStore {
   readonly sessions = new Map<string, SessionRecord>();
@@ -8,6 +17,14 @@ export class CompanionStore {
   readonly memories: Memory[] = [];
   readonly actions: ActionRecord[] = [];
   readonly contextLogs: ContextLogEntry[] = [];
+  private modelApiConfig: ModelApiConfig & { apiKey?: string } = {
+    enabled: false,
+    provider: "openai_compatible",
+    baseUrl: "http://127.0.0.1:8317/v1",
+    model: "",
+    apiKeySet: false,
+    apiKeyMasked: "",
+  };
 
   getSession(sessionId: string): SessionRecord {
     const existing = this.sessions.get(sessionId);
@@ -99,4 +116,53 @@ export class CompanionStore {
   recentContextLogs(limit = 20): ContextLogEntry[] {
     return this.contextLogs.slice(0, Math.max(1, Math.min(limit, 100)));
   }
+
+  getModelApiConfig(): ModelApiConfig {
+    const { apiKey: _apiKey, ...safe } = this.modelApiConfig;
+    return { ...safe };
+  }
+
+  getRawModelApiConfig(): ModelApiConfig & { apiKey?: string } {
+    return { ...this.modelApiConfig };
+  }
+
+  patchModelApiConfig(patch: ModelApiConfigPatch): ModelApiConfig {
+    if (typeof patch.enabled === "boolean") {
+      this.modelApiConfig.enabled = patch.enabled;
+    }
+    if (typeof patch.baseUrl === "string") {
+      this.modelApiConfig.baseUrl = patch.baseUrl.trim();
+    }
+    if (typeof patch.model === "string") {
+      this.modelApiConfig.model = patch.model.trim();
+    }
+    if (typeof patch.apiKey === "string") {
+      this.modelApiConfig.apiKey = patch.apiKey;
+      this.modelApiConfig.apiKeySet = patch.apiKey.length > 0;
+      this.modelApiConfig.apiKeyMasked = maskSecret(patch.apiKey);
+    }
+    if (patch.clearApiKey) {
+      delete this.modelApiConfig.apiKey;
+      this.modelApiConfig.apiKeySet = false;
+      this.modelApiConfig.apiKeyMasked = "";
+    }
+    if (patch.temperature === null) {
+      delete this.modelApiConfig.temperature;
+    } else if (typeof patch.temperature === "number") {
+      this.modelApiConfig.temperature = patch.temperature;
+    }
+    if (patch.maxTokens === null) {
+      delete this.modelApiConfig.maxTokens;
+    } else if (typeof patch.maxTokens === "number") {
+      this.modelApiConfig.maxTokens = Math.max(1, Math.floor(patch.maxTokens));
+    }
+    this.modelApiConfig.updatedAt = new Date().toISOString();
+    return this.getModelApiConfig();
+  }
+}
+
+function maskSecret(secret: string): string {
+  if (!secret) return "";
+  if (secret.length <= 8) return "****";
+  return `${secret.slice(0, 4)}...${secret.slice(-4)}`;
 }

@@ -3,7 +3,13 @@ import { runAgentLoop, textMessage, textOf } from "../harness/index.js";
 import { companionModel } from "./model.js";
 import { CompanionStore } from "./store.js";
 import { createCompanionTools, getActionBucket } from "./tools.js";
-import type { MessageRequest, MessageResponse, Mode, SessionRecord } from "./types.js";
+import type {
+  MessageRequest,
+  MessageResponse,
+  Mode,
+  ModelApiConfigPatch,
+  SessionRecord,
+} from "./types.js";
 
 type NormalizedMessageRequest = MessageRequest & {
   mode: Mode;
@@ -79,6 +85,14 @@ export class CompanionKernel {
 
   recentContextLogs(limit?: number) {
     return this.store.recentContextLogs(limit);
+  }
+
+  getModelApiConfig() {
+    return this.store.getModelApiConfig();
+  }
+
+  patchModelApiConfig(patch: ModelApiConfigPatch) {
+    return this.store.patchModelApiConfig(patch);
   }
 }
 

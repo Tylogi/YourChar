@@ -15,7 +15,9 @@ test("server serves chat UI and debug context logs", async () => {
     const html = await page.text();
     assert.match(html, /RP Agent/);
     assert.match(html, /最近上下文日志/);
+    assert.match(html, /模型 API 设置/);
     assert.match(html, /normalBtn/);
+    assert.match(html, /settingsBtn/);
     assert.match(html, /debugBtn/);
 
     const pageWithSlash = await fetch(`${baseUrl}/ui/`);
@@ -29,6 +31,30 @@ test("server serves chat UI and debug context logs", async () => {
     const uiApiRoot = await fetch(`${baseUrl}/ui/api`);
     assert.equal(uiApiRoot.status, 200);
     assert.equal(((await uiApiRoot.json()) as { status: string }).status, "ok");
+
+    const savedSettings = await fetch(`${baseUrl}/api/settings/model-api`, {
+      method: "PATCH",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        enabled: true,
+        baseUrl: "http://127.0.0.1:8317/v1",
+        model: "local-model",
+        apiKey: "client-secret",
+        temperature: 0.7,
+        maxTokens: 2048,
+      }),
+    });
+    assert.equal(savedSettings.status, 200);
+    const savedBody = await savedSettings.json();
+    assert.equal(savedBody.apiKeySet, true);
+    assert.equal(savedBody.apiKeyMasked, "clie...cret");
+    assert.equal(JSON.stringify(savedBody).includes("client-secret"), false);
+
+    const fetchedSettings = await fetch(`${baseUrl}/api/model-config/openai-compatible`);
+    assert.equal(fetchedSettings.status, 200);
+    const fetchedBody = await fetchedSettings.json();
+    assert.equal(fetchedBody.model, "local-model");
+    assert.equal(JSON.stringify(fetchedBody).includes("client-secret"), false);
 
     const message = await fetch(`${baseUrl}/api/sessions/ui-test/messages`, {
       method: "POST",
