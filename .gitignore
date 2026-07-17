@@ -3,8 +3,11 @@ dist/
 coverage/
 .env
 .rp-agent/
+.rp-agent-ephemeral/
 .DS_Store
 *.log
 *.sqlite
 *.sqlite3
 *.db
+browser-artifacts/
+eval-artifacts/

@@ -1,101 +1,78 @@
-import type { AgentTool } from "../harness/index.js";
+import { defineTool, type ToolDefinition } from "@earendil-works/pi-coding-agent";
+import { Type } from "typebox";
+import type { RpService } from "../rp/service.js";
 import type { CompanionStore } from "./store.js";
-import type { Memory, Mode, Reminder } from "./types.js";
+import type { ActionRecord, Mode } from "./types.js";
+import type { ContextPlan } from "../context/types.js";
 
 type RuntimeState = {
   store: CompanionStore;
+  rpService: RpService;
   sessionId: string;
   mode: Mode;
   characterId?: string;
+  actions: ActionRecord[];
+  stableContextPrompt: string;
+  turnContextPrompt: string;
+  contextPlan?: ContextPlan;
+  memoryTouchCompleted: boolean;
+  pendingEconomicsIds: string[];
+  cacheBreakReason?: string;
+  timezone: string;
+  traceKind: "user" | "reminder_due";
+  traceRequestText: string;
+  toolMutationsAllowed: boolean;
+  realWorldMutationConfirmed: boolean;
+  confirmedMutationId?: string;
+  confirmedToolName?: string;
+  outputGuardRetryUsed: boolean;
+  outputGuardBlocked: boolean;
+  outputGuardRecoveryPrompt?: string;
 };
 
-export function createCompanionTools(): AgentTool<any, any>[] {
-  return [createReminderTool(), writeMemoryTool()];
+export type CompanionToolRuntimeState = RuntimeState;
+
+export function createRpTools(state: RuntimeState): ToolDefinition<any, any>[] {
+  if (!state.characterId) return [];
+  return state.mode === "rp" ? [updateSceneTool(state)] : [];
 }
 
-function createReminderTool(): AgentTool<{ title: string; remindAt: string; timezone: string }, Reminder> {
-  return {
-    name: "create_reminder",
-    description: "Create a real-world reminder in the shared companion timeline.",
+const updateSceneParameters = Type.Object({
+  location: Type.Optional(Type.String()),
+  inWorldTime: Type.Optional(Type.String()),
+  participants: Type.Optional(Type.Array(Type.String())),
+  currentObjective: Type.Optional(Type.String()),
+  openThreads: Type.Optional(Type.Array(Type.String())),
+  summary: Type.Optional(Type.String()),
+});
+
+
+function updateSceneTool(state: RuntimeState): ToolDefinition<typeof updateSceneParameters, unknown> {
+  return defineTool({
+    name: "update_scene",
+    label: "Update RP scene",
+    description: "Update durable current-scene state after a meaningful RP transition. Do not copy ordinary dialogue into the summary.",
+    parameters: updateSceneParameters,
     executionMode: "sequential",
-    validate(input) {
-      const title = requiredString(input.title, "title");
-      const remindAt = requiredString(input.remindAt, "remindAt");
-      const timezone = typeof input.timezone === "string" ? input.timezone : "Asia/Shanghai";
-      return { title, remindAt, timezone };
-    },
-    async execute(input, context) {
-      const state = context.state as RuntimeState;
-      const reminder = state.store.createReminder({
-        ...input,
-        metadata: {
-          sessionId: state.sessionId,
-          mode: state.mode,
-          characterId: state.characterId,
-        },
+    async execute(toolCallId, input) {
+      if (state.mode !== "rp" || !state.characterId) {
+        throw new Error("update_scene requires an RP session with a selected character");
+      }
+      const scene = state.rpService.updateScene(
+        state.sessionId,
+        input,
+        state.characterId,
+        toolCallId,
+      );
+      const action = state.store.addAction("update_scene", "completed", {
+        roleSessionId: scene.roleSessionId,
+        location: scene.location,
       });
-      const action = state.store.addAction("create_reminder", "completed", {
-        reminderId: reminder.id,
-        title: reminder.title,
-        remindAt: reminder.remindAt,
-      });
-      const actions = getActionBucket(context.state);
-      actions.push(action);
+      state.actions.push(action);
       return {
-        content: reminder,
-        metadata: { action },
+        content: [{ type: "text", text: "当前场景已更新。" }],
+        details: scene,
       };
     },
-  };
-}
-
-function writeMemoryTool(): AgentTool<{ content: string; tags: string[] }, Memory> {
-  return {
-    name: "write_memory",
-    description: "Write companion memory. RP memory is not automatically real-world state.",
-    executionMode: "sequential",
-    validate(input) {
-      return {
-        content: requiredString(input.content, "content"),
-        tags: Array.isArray(input.tags) ? input.tags.map(String) : [],
-      };
-    },
-    async execute(input, context) {
-      const state = context.state as RuntimeState;
-      const memory = state.store.addMemory({
-        mode: state.mode,
-        sessionId: state.sessionId,
-        characterId: state.characterId,
-        content: input.content,
-        tags: input.tags,
-      });
-      const action = state.store.addAction("write_memory", "completed", {
-        memoryId: memory.id,
-        mode: memory.mode,
-        tags: memory.tags,
-      });
-      getActionBucket(context.state).push(action);
-      return {
-        content: memory,
-        metadata: { action },
-      };
-    },
-  };
-}
-
-export function getActionBucket(state: Record<string, unknown>) {
-  const existing = state.actions;
-  if (Array.isArray(existing)) {
-    return existing as ReturnType<CompanionStore["addAction"]>[];
-  }
-  const actions: ReturnType<CompanionStore["addAction"]>[] = [];
-  state.actions = actions;
-  return actions;
-}
-
-function requiredString(value: unknown, field: string): string {
-  if (typeof value !== "string" || !value.trim()) {
-    throw new Error(`${field} is required`);
-  }
-  return value.trim();
+  });
 }

@@ -1,13 +1,30 @@
-import type { AgentEvent, AgentMessage } from "../harness/index.js";
+import type { AgentMessage } from "@earendil-works/pi-agent-core";
+import type { AgentSessionEvent } from "@earendil-works/pi-coding-agent";
 
 export type Mode = "sms" | "rp";
+export type TurnStatus = "completed" | "failed" | "cancelled" | "blocked";
+export type SystemEventType =
+  | "model_unavailable"
+  | "module_disabled"
+  | "operation_completed"
+  | "operation_blocked"
+  | "operation_failed"
+  | "input_required"
+  | "cancelled";
 
 export type MessageRequest = {
   mode?: Mode;
   text: string;
-  now?: string;
   timezone?: string;
   characterId?: string;
+  attachments?: MessageAttachment[];
+};
+
+export type MessageAttachment = {
+  path: string;
+  name?: string;
+  contentType?: string;
+  size?: number;
 };
 
 export type ActionRecord = {
@@ -18,30 +35,17 @@ export type ActionRecord = {
   createdAt: string;
 };
 
-export type Reminder = {
-  id: string;
-  title: string;
-  remindAt: string;
-  timezone: string;
-  status: "scheduled" | "due" | "cancelled";
-  metadata: Record<string, unknown>;
-  createdAt: string;
-};
-
-export type Memory = {
-  id: string;
-  mode: Mode;
-  sessionId: string;
-  characterId?: string;
-  content: string;
-  tags: string[];
-  createdAt: string;
-};
-
 export type MessageResponse = {
   reply: string;
   actions: ActionRecord[];
-  events: AgentEvent[];
+  events: AgentSessionEvent[];
+  status: TurnStatus;
+  messageType: "assistant" | "system";
+  eventType?: SystemEventType;
+  canRetry: boolean;
+  nativeModelSuccess?: boolean;
+  recoveryUsed?: boolean;
+  recoveryReason?: "output_guard_exhausted";
 };
 
 export type ModelApiConfig = {
@@ -49,6 +53,7 @@ export type ModelApiConfig = {
   provider: "openai_compatible";
   baseUrl: string;
   model: string;
+  visionInputEnabled: boolean;
   apiKeySet: boolean;
   apiKeyMasked: string;
   temperature?: number;
@@ -60,6 +65,7 @@ export type ModelApiConfigPatch = {
   enabled?: boolean;
   baseUrl?: string;
   model?: string;
+  visionInputEnabled?: boolean;
   apiKey?: string;
   clearApiKey?: boolean;
   temperature?: number | null;
@@ -75,8 +81,20 @@ export type ContextLogEntry = {
   messageCountBefore: number;
   toolNames: string[];
   reply: string;
+  status: TurnStatus;
+  canRetry: boolean;
   actions: ActionRecord[];
-  events: AgentEvent[];
+  events: AgentSessionEvent[];
+  createdAt: string;
+};
+
+export type ModelContextTrace = {
+  id: string;
+  sessionId: string;
+  mode: Mode;
+  turnKind: "user" | "reminder_due";
+  requestText: string;
+  payload: Record<string, unknown>;
   createdAt: string;
 };
 

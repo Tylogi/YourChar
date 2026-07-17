@@ -3,18 +3,44 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "description": "Pi-style TypeScript RP companion agent kernel.",
+  "description": "RP companion app layered on the original Pi agent runtime.",
   "scripts": {
     "build": "tsc -p tsconfig.json",
-    "dev": "npm run build && node dist/src/server.js",
-    "start": "node dist/src/server.js",
-    "test": "npm run build && node --test dist/test"
+    "dev": "npm run build && node --disable-warning=ExperimentalWarning dist/src/server.js",
+    "start": "node --disable-warning=ExperimentalWarning dist/src/server.js",
+    "test": "npm run build && node --disable-warning=ExperimentalWarning --test dist/test/*.test.js",
+    "test:memory-durability": "npm run build && node --disable-warning=ExperimentalWarning --test dist/test/memory-durability-r5.test.js",
+    "test:browser": "npm run build && CLOAKBROWSER_AUTO_UPDATE=false LD_LIBRARY_PATH=${CLOAKBROWSER_LIB_DIR:-$HOME/.local/share/cloakbrowser-libs/usr/lib/x86_64-linux-gnu}:$LD_LIBRARY_PATH node --disable-warning=ExperimentalWarning test/browser.mjs",
+    "eval:real-model": "npm run build && node --disable-warning=ExperimentalWarning scripts/eval-real-model.mjs",
+    "eval:real-model:long": "npm run eval:real-model -- --long",
+    "scan:sensitive": "node scripts/scan-sensitive.mjs",
+    "backup": "node --disable-warning=ExperimentalWarning scripts/backup-state.mjs",
+    "restore": "node --disable-warning=ExperimentalWarning scripts/restore-state.mjs",
+    "release:gate": "node scripts/release-gate.mjs",
+    "release:gate:real": "node scripts/release-gate.mjs --real"
   },
   "engines": {
-    "node": ">=20"
+    "node": ">=22.19.0"
   },
+  "packageManager": "npm@10.9.3",
   "devDependencies": {
-    "@types/node": "^20.19.2",
+    "@types/node": "^22.20.1",
+    "cloakbrowser": "^0.4.10",
+    "playwright-core": "^1.61.1",
     "typescript": "^5.8.3"
+  },
+  "dependencies": {
+    "@earendil-works/pi-agent-core": "0.80.3",
+    "@earendil-works/pi-ai": "0.80.3",
+    "@earendil-works/pi-coding-agent": "0.80.3",
+    "@modelcontextprotocol/sdk": "1.29.0",
+    "dompurify": "^3.4.12",
+    "fflate": "^0.8.2",
+    "lucide": "^1.24.0",
+    "marked": "^18.0.6",
+    "typebox": "1.1.38",
+    "undici": "8.5.0",
+    "yaml": "2.9.0",
+    "zod": "4.4.3"
   }
 }

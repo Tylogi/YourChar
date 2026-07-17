@@ -1,0 +1,67 @@
+import type { AppDatabase } from "./database.js";
+
+export class DataManagementRepository {
+  constructor(private readonly database: AppDatabase) {}
+
+  check(): void {
+    this.database.connection.prepare("SELECT 1").get();
+  }
+
+  deleteSessionObservability(sessionId: string): {
+    contextLogs: number;
+    modelTraces: number;
+    contextEconomics: number;
+    memoryContextItems: number;
+    memoryContextSessions: number;
+  } {
+    return this.database.transaction(() => {
+      this.database.connection.prepare("DELETE FROM memory_extraction_jobs WHERE session_id = ?").run(sessionId);
+      const contextEconomics = Number(this.database.connection.prepare(
+        "DELETE FROM context_economics WHERE session_id = ?",
+      ).run(sessionId).changes);
+      const memoryContextSessions = Number(this.database.connection.prepare(
+        "DELETE FROM memory_context_sessions WHERE session_id = ?",
+      ).run(sessionId).changes);
+      const memoryContextItems = Number(this.database.connection.prepare(
+        "DELETE FROM memory_context_items WHERE session_id = ?",
+      ).run(sessionId).changes);
+      return {
+        contextLogs: Number(this.database.connection.prepare(
+          "DELETE FROM context_log_summaries WHERE session_id = ?",
+        ).run(sessionId).changes),
+        modelTraces: Number(this.database.connection.prepare(
+          "DELETE FROM model_context_traces WHERE session_id = ?",
+        ).run(sessionId).changes),
+        contextEconomics,
+        memoryContextItems,
+        memoryContextSessions,
+      };
+    });
+  }
+
+  deleteAllUserData(): void {
+    this.database.transaction(() => {
+      this.database.connection.exec(`
+        DELETE FROM notification_outbox;
+        DELETE FROM reminder_occurrences;
+        DELETE FROM schedule_items;
+        DELETE FROM pending_real_mutations;
+        DELETE FROM rp_memories_fts;
+        DELETE FROM rp_memories;
+        DELETE FROM scene_states;
+        DELETE FROM role_sessions;
+        DELETE FROM characters;
+        DELETE FROM user_profiles;
+        DELETE FROM agent_module_settings;
+        DELETE FROM memory_extraction_jobs;
+        DELETE FROM context_economics;
+        DELETE FROM memory_context_sessions;
+        DELETE FROM memory_context_items;
+        DELETE FROM memory_retrieval_stats;
+        DELETE FROM model_context_traces;
+        DELETE FROM context_log_summaries;
+        DELETE FROM audit_actions;
+      `);
+    });
+  }
+}

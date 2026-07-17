@@ -8,31 +8,44 @@ export function renderAppHtml(): string {
   <style>
     :root {
       color-scheme: light;
-      --bg: #f6f7f9;
+      --bg: #f2f2f2;
       --panel: #ffffff;
-      --line: #d9dee7;
-      --text: #17202f;
-      --muted: #637083;
-      --primary: #2563eb;
-      --primary-strong: #1749b5;
-      --user: #e7f0ff;
+      --line: #dedede;
+      --text: #191919;
+      --muted: #7a7a7a;
+      --primary: #07c160;
+      --primary-strong: #06ad56;
+      --user: #95ec69;
       --assistant: #ffffff;
-      --tool: #fff7df;
+      --tool: #fff8e6;
       --event: #eef8f1;
-      --danger: #a53636;
+      --danger: #d54941;
+      --rail: #2e3033;
+      --shadow: 0 1px 2px rgba(0, 0, 0, 0.08);
+      --control-height: 36px;
+      --control-radius: 6px;
+      --control-icon-size: 16px;
     }
     * { box-sizing: border-box; }
+    html,
+    body {
+      height: 100%;
+    }
     body {
       margin: 0;
       background: var(--bg);
       color: var(--text);
-      font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
       letter-spacing: 0;
+      overflow: hidden;
     }
+    [hidden] { display: none !important; }
     .app {
-      min-height: 100vh;
+      height: 100vh;
+      min-height: 0;
       display: grid;
       grid-template-rows: auto 1fr auto;
+      overflow: hidden;
     }
     header {
       border-bottom: 1px solid var(--line);
@@ -58,7 +71,7 @@ export function renderAppHtml(): string {
     }
     .segmented {
       display: inline-grid;
-      grid-template-columns: 1fr 1fr 1fr;
+      grid-template-columns: repeat(6, 1fr);
       border: 1px solid var(--line);
       border-radius: 8px;
       overflow: hidden;
@@ -98,16 +111,167 @@ export function renderAppHtml(): string {
     }
     main {
       display: grid;
-      grid-template-columns: minmax(0, 1fr) 380px;
+      grid-template-columns: minmax(0, 1fr);
       gap: 0;
       min-height: 0;
+      overflow: hidden;
     }
-    .chat {
-      display: grid;
-      grid-template-rows: 1fr auto;
+    .chat { min-height: 0; overflow: hidden; }
+    .chat-workspace {
+      height: 100%;
       min-height: 0;
-      border-right: 1px solid var(--line);
+      display: grid;
+      grid-template-columns: 276px minmax(0, 1fr);
     }
+    .conversation-sidebar {
+      min-width: 0;
+      display: flex;
+      flex-direction: column;
+      border-right: 1px solid var(--line);
+      background: #f7f7f7;
+    }
+    .conversation-list-head {
+      height: 52px;
+      padding: 0 12px 0 16px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      border-bottom: 1px solid #e4e4e4;
+    }
+    .conversation-list-head strong { font-size: 14px; }
+    .conversation-list-head .icon-button { width: 30px; height: 30px; }
+    .conversation-list { min-height: 0; overflow: auto; }
+    .conversation-group { border-bottom: 1px solid #e5e5e5; }
+    .conversation-group-head {
+      min-width: 0;
+      height: 52px;
+      padding: 0 10px 0 12px;
+      display: grid;
+      grid-template-columns: 34px minmax(0, 1fr) 20px;
+      gap: 9px;
+      align-items: center;
+      color: var(--text);
+      background: #f3f3f3;
+    }
+    button.conversation-group-head {
+      width: 100%;
+      border: 0;
+      border-radius: 0;
+      text-align: left;
+      cursor: pointer;
+    }
+    button.conversation-group-head:hover { background: #ebebeb; }
+    .conversation-group-head.batch { grid-template-columns: 18px 34px minmax(0, 1fr); cursor: pointer; }
+    .conversation-group-head input,
+    .conversation-item input {
+      width: 16px;
+      height: 16px;
+      margin: 0;
+      padding: 0;
+      accent-color: var(--primary);
+    }
+    .conversation-group-avatar {
+      width: 34px;
+      height: 34px;
+      border-radius: 6px;
+      display: grid;
+      place-items: center;
+      overflow: hidden;
+      background: hsl(var(--avatar-hue, 145) 52% 46%);
+      color: #ffffff;
+      font-size: 12px;
+      font-weight: 700;
+    }
+    .conversation-group-avatar img { width: 100%; height: 100%; object-fit: cover; }
+    .conversation-group-copy { min-width: 0; display: grid; gap: 2px; }
+    .conversation-group-copy strong,
+    .conversation-group-copy span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .conversation-group-copy strong { font-size: 13px; font-weight: 680; }
+    .conversation-group-copy span { color: var(--muted); font-size: 10px; }
+    .conversation-group-chevron { width: 15px; height: 15px; color: #8c9297; transition: transform 160ms ease; }
+    .conversation-group.collapsed .conversation-group-chevron { transform: rotate(-90deg); }
+    .conversation-group-sessions[hidden] { display: none; }
+    .conversation-item {
+      width: 100%;
+      min-width: 0;
+      min-height: 58px;
+      padding: 7px 10px 7px 18px;
+      border: 0;
+      border-bottom: 1px solid #ececec;
+      border-radius: 0;
+      background: transparent;
+      color: var(--text);
+      display: grid;
+      grid-template-columns: 28px minmax(0, 1fr);
+      gap: 8px;
+      align-items: center;
+      text-align: left;
+      cursor: pointer;
+    }
+    .conversation-item.batch { grid-template-columns: 18px 28px minmax(0, 1fr); padding-left: 12px; }
+    .conversation-item.batch-disabled { cursor: default; opacity: 0.62; }
+    .conversation-item:hover { background: #ededed; }
+    .conversation-item.active { background: #dedede; }
+    .conversation-mode-icon {
+      width: 28px;
+      height: 28px;
+      border-radius: 50%;
+      display: grid;
+      place-items: center;
+      background: #e5e8e6;
+      color: #59615c;
+    }
+    .conversation-mode-icon.rp { background: #e8e3ee; color: #6d5a7b; }
+    .conversation-mode-icon svg { width: 14px; height: 14px; }
+    .conversation-copy { min-width: 0; display: grid; gap: 4px; }
+    .conversation-line { min-width: 0; display: flex; align-items: center; gap: 8px; }
+    .conversation-line strong,
+    .conversation-preview { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .conversation-line strong { font-size: 13px; font-weight: 650; }
+    .conversation-time { margin-left: auto; color: #a0a0a0; font-size: 10px; white-space: nowrap; }
+    .conversation-preview { color: var(--muted); font-size: 11px; }
+    .conversation-list-empty { padding: 24px 14px; color: var(--muted); font-size: 12px; text-align: center; }
+    .conversation-batch-bar {
+      flex: 0 0 auto;
+      padding: 10px 12px 12px;
+      border-top: 1px solid #dddddd;
+      background: #ffffff;
+      display: grid;
+      gap: 9px;
+    }
+    .conversation-batch-bar[hidden] { display: none; }
+    .conversation-batch-summary,
+    .conversation-batch-actions { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+    .conversation-batch-summary strong { font-size: 12px; }
+    .conversation-batch-actions button { flex: 1 1 0; }
+    .text-button {
+      padding: 3px 0;
+      border: 0;
+      background: transparent;
+      color: #168653;
+      font-size: 12px;
+      cursor: pointer;
+    }
+    .danger-button {
+      width: auto;
+      height: var(--control-height);
+      min-height: var(--control-height);
+      padding: 0 13px;
+      border: 1px solid #e4b8b5;
+      border-radius: var(--control-radius);
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 6px;
+      background: #ffffff;
+      color: var(--danger);
+      cursor: pointer;
+    }
+    .danger-button svg { width: var(--control-icon-size); height: var(--control-icon-size); }
+    .danger-button:hover:not(:disabled) { background: #fff5f4; border-color: #d9938e; }
+    .conversation-batch-actions button:disabled { opacity: 0.45; cursor: not-allowed; }
+    .chat-thread { min-width: 0; min-height: 0; display: grid; grid-template-rows: 1fr auto; overflow: hidden; }
+    .conversation-list-toggle { display: none; }
     .settings-page {
       grid-column: 1 / -1;
       padding: 18px;
@@ -162,6 +326,563 @@ export function renderAppHtml(): string {
       flex-wrap: wrap;
       margin-top: 16px;
     }
+    .vault-health-panel {
+      height: min(164px, 28vh);
+      min-height: 130px;
+      margin-top: 14px;
+      overflow: auto;
+      border-block: 1px solid var(--line);
+    }
+    .vault-health-row {
+      display: grid;
+      grid-template-columns: minmax(120px, 0.8fr) minmax(0, 1.4fr);
+      gap: 12px;
+      padding: 9px 2px;
+      border-bottom: 1px solid var(--line);
+      font-size: 12px;
+    }
+    .vault-health-row:last-child { border-bottom: 0; }
+    .vault-health-row span:first-child { color: var(--muted); }
+    .vault-health-row code { overflow-wrap: anywhere; }
+    .schedule-shell {
+      max-width: 1180px;
+      margin: 0 auto;
+      display: grid;
+      gap: 16px;
+    }
+    .schedule-owner-head {
+      min-width: 0;
+      display: flex;
+      align-items: flex-end;
+      justify-content: space-between;
+      gap: 16px;
+      flex-wrap: wrap;
+    }
+    .schedule-title-group { display: flex; align-items: center; gap: 18px; flex-wrap: wrap; }
+    .schedule-title-group h2 { margin: 0; font-size: 18px; }
+    .schedule-owner-tabs { grid-template-columns: repeat(2, minmax(116px, 1fr)); }
+    .schedule-owner-tabs button { min-width: 116px; display: inline-flex; align-items: center; justify-content: center; gap: 6px; }
+    .schedule-owner-tabs svg { width: 15px; height: 15px; }
+    .schedule-character-field { min-width: 220px; display: grid; grid-template-columns: auto minmax(160px, 1fr); gap: 8px; align-items: center; color: var(--muted); font-size: 12px; }
+    .schedule-view-tabs { display: none; grid-template-columns: repeat(3, minmax(0, 1fr)); }
+    .schedule-navigation { min-height: 36px; }
+    .schedule-scope-summary { color: var(--muted); font-size: 12px; }
+    .schedule-head {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      flex-wrap: wrap;
+    }
+    .schedule-head h2 { margin: 0; font-size: 18px; }
+    .schedule-filters { grid-template-columns: repeat(3, 1fr); }
+    .schedule-editor {
+      background: var(--panel);
+      border-bottom: 1px solid var(--line);
+      padding: 16px 0;
+    }
+    .schedule-form {
+      display: grid;
+      grid-template-columns: repeat(12, minmax(0, 1fr));
+      gap: 12px;
+    }
+    .schedule-title-field { grid-column: span 6; }
+    .schedule-kind-field,
+    .schedule-recurrence-field { grid-column: span 3; }
+    .schedule-all-day { grid-column: span 2; }
+    .schedule-start-field,
+    .schedule-end-field { grid-column: span 5; }
+    .schedule-editor.without-end .schedule-start-field { grid-column: span 10; }
+    .schedule-form .full { grid-column: 1 / -1; }
+    .schedule-form label {
+      display: grid;
+      gap: 6px;
+      color: var(--muted);
+      font-size: 13px;
+    }
+    .schedule-form textarea { min-height: 72px; max-height: 120px; }
+    .schedule-list {
+      background: var(--panel);
+      border-top: 1px solid var(--line);
+    }
+    .schedule-row {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto;
+      gap: 14px;
+      align-items: center;
+      padding: 14px 0;
+      border-bottom: 1px solid var(--line);
+    }
+    .schedule-title { margin: 0 0 5px; font-size: 15px; }
+    .schedule-meta { color: var(--muted); font-size: 13px; line-height: 1.5; }
+    .schedule-actions { display: flex; gap: 7px; flex-wrap: wrap; justify-content: flex-end; }
+    .schedule-actions button { height: 34px; }
+    .schedule-toolbar { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+    .schedule-toolbar .primary { width: auto; height: 34px; padding: 0 12px; display: inline-flex; align-items: center; gap: 6px; }
+    .schedule-toolbar .primary svg { width: 16px; height: 16px; }
+    .schedule-month-nav { display: grid; grid-template-columns: 34px minmax(118px, auto) 34px; align-items: center; }
+    .schedule-month-nav button { width: 34px; height: 34px; padding: 0; }
+    .schedule-month-label { padding: 0 10px; text-align: center; font-size: 14px; font-weight: 650; }
+    .schedule-dashboard { display: grid; grid-template-columns: minmax(0, 1.7fr) minmax(300px, 0.8fr); gap: 16px; align-items: start; }
+    .schedule-side { min-width: 0; display: grid; gap: 16px; align-content: start; }
+    .calendar-panel,
+    .task-panel,
+    .schedule-agenda {
+      min-width: 0;
+      border: 1px solid #dfdfdf;
+      border-radius: 6px;
+      background: #ffffff;
+      box-shadow: var(--shadow);
+    }
+    .calendar-weekdays,
+    .calendar-grid { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); }
+    .calendar-weekdays { border-bottom: 1px solid #e5e5e5; }
+    .calendar-weekdays span { padding: 9px 4px; color: var(--muted); font-size: 11px; text-align: center; }
+    .calendar-day {
+      position: relative;
+      min-width: 0;
+      min-height: 92px;
+      padding: 7px;
+      border: 0;
+      border-right: 1px solid #ececec;
+      border-bottom: 1px solid #ececec;
+      border-radius: 0;
+      background: #ffffff;
+      color: var(--text);
+      text-align: left;
+      cursor: pointer;
+      overflow: hidden;
+    }
+    .calendar-day:nth-child(7n) { border-right: 0; }
+    .calendar-day.outside { background: #fafafa; color: #aaa; }
+    .calendar-day.today .calendar-day-number { background: var(--primary); color: #fff; }
+    .calendar-day.selected { background: #effaf3; box-shadow: inset 0 0 0 2px #65c98b; }
+    .calendar-day-number { width: 24px; height: 24px; border-radius: 50%; display: grid; place-items: center; font-size: 12px; }
+    .calendar-events { display: grid; gap: 3px; margin-top: 5px; }
+    .calendar-event {
+      min-width: 0;
+      padding: 2px 4px;
+      border-radius: 3px;
+      background: #e8f5ed;
+      color: #25643b;
+      font-size: 10px;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .calendar-event.event { background: #e9f1ff; color: #315b9d; }
+    .calendar-event.reminder { background: #fff3d8; color: #8a6300; }
+    .calendar-event.delivered,
+    .calendar-event.completed { background: #eeeeee; color: #777777; text-decoration: line-through; }
+    .calendar-event.failed { background: #fff0ef; color: #a43b35; }
+    .calendar-more { color: var(--muted); font-size: 9px; }
+    .task-panel-head,
+    .schedule-agenda-head { padding: 13px 14px; border-bottom: 1px solid #e7e7e7; display: grid; gap: 8px; }
+    .task-panel-head h3,
+    .schedule-agenda-head h3 { margin: 0; font-size: 15px; }
+    .task-filters { grid-template-columns: repeat(3, 1fr); }
+    .task-list { max-height: 280px; overflow: auto; }
+    .task-item { display: grid; grid-template-columns: 24px minmax(0, 1fr) 28px; gap: 8px; align-items: start; padding: 11px 12px; border-bottom: 1px solid #ededed; }
+    .task-check,
+    .task-edit { width: 24px; height: 24px; padding: 0; border: 0; background: transparent; color: #717171; cursor: pointer; }
+    .task-check svg,
+    .task-edit svg { width: 17px; height: 17px; }
+    .task-item.completed .task-copy strong { color: #969696; text-decoration: line-through; }
+    .task-copy { min-width: 0; display: grid; gap: 3px; }
+    .task-copy strong { font-size: 13px; overflow-wrap: anywhere; }
+    .task-copy span { color: var(--muted); font-size: 11px; }
+    .schedule-agenda .schedule-list { border-top: 0; }
+    .schedule-agenda .schedule-row { padding-inline: 14px; }
+    .schedule-side .schedule-list { max-height: 320px; overflow: auto; }
+    .schedule-side .schedule-row { grid-template-columns: minmax(0, 1fr); gap: 10px; padding-block: 12px; }
+    .schedule-side .schedule-actions { justify-content: flex-start; }
+    .schedule-status-badge { display: inline-flex; align-items: center; margin-left: 5px; padding: 1px 5px; border-radius: 4px; background: #eeeeee; color: #717171; font-size: 10px; font-weight: 500; }
+    .schedule-status-badge.scheduled { background: #e8f5ed; color: #25643b; }
+    .schedule-status-badge.failed { background: #fff0ef; color: #a43b35; }
+    .schedule-empty { padding: 24px 14px; color: var(--muted); font-size: 12px; text-align: center; }
+    .schedule-editor-dialog {
+      width: min(760px, calc(100vw - 28px));
+      max-height: calc(100vh - 40px);
+      padding: 0;
+      border: 1px solid #d8d8d8;
+      border-radius: 8px;
+      background: #fff;
+      color: var(--text);
+      box-shadow: 0 12px 34px rgba(0, 0, 0, 0.2);
+    }
+    .schedule-editor-dialog::backdrop { background: rgba(0, 0, 0, 0.28); }
+    .schedule-editor-head { min-height: 58px; padding: 8px 10px 8px 16px; border-bottom: 1px solid var(--line); display: flex; align-items: center; justify-content: space-between; }
+    .schedule-editor-head h3 { margin: 0; font-size: 15px; }
+    .schedule-editor-head > div:first-child { display: grid; gap: 3px; }
+    .schedule-editor-scope { color: var(--muted); font-size: 11px; }
+    .schedule-editor-dialog .schedule-editor { padding: 16px; border: 0; }
+    .schedule-form .schedule-all-day { align-self: end; min-height: 38px; display: inline-flex; align-items: center; gap: 8px; }
+    .character-shell {
+      max-width: 1120px;
+      margin: 0 auto;
+      display: grid;
+      gap: 18px;
+    }
+    .character-head {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      flex-wrap: wrap;
+    }
+    .character-head h2,
+    .workspace-section h3 { margin: 0; font-size: 18px; }
+    .character-picker { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+    .character-picker select { min-width: 220px; }
+    .character-card-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); gap: 12px; }
+    .character-card {
+      min-width: 0;
+      min-height: 94px;
+      padding: 12px;
+      border: 1px solid #dedede;
+      border-radius: 6px;
+      background: #ffffff;
+      color: var(--text);
+      display: grid;
+      grid-template-columns: 56px minmax(0, 1fr);
+      gap: 11px;
+      align-items: center;
+      text-align: left;
+      cursor: pointer;
+      box-shadow: var(--shadow);
+    }
+    .character-card:hover { border-color: #9ecfb0; }
+    .character-card.active { border-color: var(--primary); box-shadow: inset 0 0 0 1px var(--primary); }
+    .character-card.new { border-style: dashed; box-shadow: none; color: var(--muted); }
+    .character-card-avatar,
+    .avatar-preview {
+      overflow: hidden;
+      border-radius: 7px;
+      background: hsl(var(--avatar-hue, 145) 52% 46%);
+      color: #fff;
+      display: grid;
+      place-items: center;
+      font-weight: 700;
+    }
+    .character-card-avatar { width: 52px; height: 52px; font-size: 18px; }
+    .character-card-avatar img,
+    .avatar-preview img,
+    .conversation-avatar img,
+    .message-avatar img,
+    .brand-mark img { width: 100%; height: 100%; object-fit: cover; display: block; }
+    .character-card-copy { min-width: 0; display: grid; gap: 5px; }
+    .character-card-copy strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 14px; }
+    .character-card-copy span { color: var(--muted); font-size: 11px; line-height: 1.4; }
+    .character-list-empty {
+      min-height: 190px;
+      border: 1px dashed #d7d7d7;
+      display: grid;
+      place-content: center;
+      justify-items: center;
+      gap: 8px;
+      color: var(--muted);
+    }
+    .character-list-empty svg { width: 28px; height: 28px; stroke-width: 1.5; }
+    .character-list-empty strong { color: var(--text); font-size: 14px; }
+    .character-editor-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; margin-bottom: 14px; }
+    .avatar-editor { display: grid; grid-template-columns: 72px minmax(0, 1fr); gap: 12px; align-items: center; }
+    .avatar-preview { width: 72px; height: 72px; font-size: 22px; }
+    .avatar-actions { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+    .avatar-actions button { height: 34px; }
+    .avatar-hint { grid-column: 2; color: var(--muted); font-size: 11px; }
+    .character-grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 12px;
+    }
+    .character-grid .full { grid-column: 1 / -1; }
+    .character-grid label {
+      display: grid;
+      gap: 6px;
+      color: var(--muted);
+      font-size: 13px;
+    }
+    .character-grid input,
+    .character-grid select,
+    .character-grid textarea { width: 100%; min-width: 0; }
+    .workspace-section {
+      background: var(--panel);
+      border-top: 1px solid var(--line);
+      padding: 16px 0 0;
+    }
+    .workspace-section h3 { font-size: 16px; margin-bottom: 12px; }
+    .memory-toolbar { display: grid; grid-template-columns: 1fr auto; gap: 8px; margin-bottom: 12px; }
+    .memory-list { border-top: 1px solid var(--line); }
+    .memory-row {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto;
+      gap: 12px;
+      padding: 12px 0;
+      border-bottom: 1px solid var(--line);
+      align-items: center;
+    }
+    .memory-content { line-height: 1.5; }
+    .memory-actions { display: flex; gap: 7px; flex-wrap: wrap; justify-content: flex-end; }
+    .character-detail {
+      min-width: 0;
+      border-top: 1px solid var(--line);
+      background: var(--panel);
+    }
+    .character-detail-head {
+      min-height: 66px;
+      padding: 12px clamp(16px, 2vw, 22px);
+      border-bottom: 1px solid var(--line);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 16px;
+    }
+    .character-detail-title { min-width: 0; display: grid; gap: 2px; }
+    .character-detail-title > span { color: var(--muted); font-size: 11px; }
+    .character-detail-title h3 { margin: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 17px; }
+    .character-tabs { width: min(360px, 44vw); grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    .character-panel { min-width: 0; padding: 20px clamp(16px, 2vw, 22px) 22px; }
+    .character-editor-form { display: grid; }
+    .character-editor-head h4,
+    .character-memory-head h4 { margin: 0; font-size: 15px; }
+    .character-save-actions { justify-content: flex-end; }
+    .character-save-actions .primary { min-width: 104px; }
+    .character-memory-head {
+      min-height: 40px;
+      margin-bottom: 14px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+    }
+    .character-memory-head > div { display: flex; align-items: baseline; gap: 8px; }
+    .character-memory-head .primary { width: auto; }
+    .character-memory-head .primary svg { width: 16px; height: 16px; }
+    #characterMemoryPanel .memory-toolbar { margin-bottom: 0; padding-bottom: 12px; border-bottom: 1px solid var(--line); }
+    #characterMemoryPanel .memory-list { border-top: 0; }
+    .memory-empty { padding: 38px 12px; color: var(--muted); text-align: center; font-size: 13px; }
+    .memory-editor-dialog { width: min(680px, calc(100vw - 28px)); }
+    .memory-editor-form { padding: 18px; display: grid; gap: 16px; }
+    .memory-editor-form textarea { min-height: 112px; }
+    .management-shell {
+      max-width: 1080px;
+      margin: 0 auto;
+      display: grid;
+      gap: 14px;
+    }
+    .management-head {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      flex-wrap: wrap;
+    }
+    .management-head h2 { margin: 0; font-size: 18px; }
+    .management-tabs { grid-template-columns: repeat(3, 1fr); }
+    .management-panel {
+      background: var(--panel);
+      border-top: 1px solid var(--line);
+      border-bottom: 1px solid var(--line);
+      padding: 16px;
+      min-width: 0;
+    }
+    .management-panel h3 {
+      margin: 0 0 12px;
+      font-size: 15px;
+    }
+    .module-list { border-top: 1px solid var(--line); }
+    .module-row {
+      min-width: 0;
+      display: grid;
+      grid-template-columns: auto minmax(0, 1fr) auto auto;
+      gap: 12px;
+      align-items: center;
+      padding: 13px 0;
+      border-bottom: 1px solid var(--line);
+    }
+    .module-detail-button { width: 32px; height: 32px; }
+    .module-detail-dialog,
+    .message-edit-dialog {
+      width: min(720px, calc(100vw - 28px));
+      max-height: min(720px, calc(100vh - 40px));
+      padding: 0;
+      border: 1px solid #d8d8d8;
+      border-radius: 8px;
+      background: #ffffff;
+      color: var(--text);
+      box-shadow: 0 12px 34px rgba(0, 0, 0, 0.2);
+    }
+    .module-detail-dialog::backdrop,
+    .message-edit-dialog::backdrop { background: rgba(0, 0, 0, 0.28); }
+    .module-detail-content {
+      max-height: min(620px, calc(100vh - 112px));
+      padding: 16px 18px 26px;
+      overflow: auto;
+    }
+    .module-detail-meta { margin-bottom: 12px; color: var(--muted); font-size: 11px; }
+    .message-edit-form { padding: 16px; display: grid; gap: 12px; }
+    .message-edit-form textarea { min-height: 150px; max-height: 46vh; resize: vertical; }
+    .module-type {
+      min-width: 48px;
+      padding: 3px 7px;
+      border-radius: 6px;
+      background: #e6f7fa;
+      color: #0e6674;
+      font-size: 11px;
+      font-weight: 700;
+      text-align: center;
+    }
+    .module-type.skill { background: #eaf7ee; color: #25643b; }
+    .module-name { font-size: 14px; font-weight: 700; }
+    .module-description { margin-top: 3px; color: #465468; font-size: 12px; line-height: 1.45; }
+    .module-metadata { display: flex; flex-wrap: wrap; gap: 4px 10px; margin-top: 3px; }
+    .module-source { color: var(--muted); font-size: 11px; overflow-wrap: anywhere; }
+    .module-token { color: #344054; font-size: 11px; }
+    .permission-section {
+      margin-top: 22px;
+      padding-top: 16px;
+      border-top: 1px solid var(--line);
+    }
+    .permission-path {
+      max-width: 62%;
+      overflow-wrap: anywhere;
+      text-align: right;
+      font-size: 11px;
+      color: var(--muted);
+    }
+    .permission-list { border-top: 1px solid var(--line); }
+    .memory-manager-toolbar {
+      display: grid;
+      grid-template-columns: repeat(5, minmax(0, 1fr)) auto;
+      gap: 8px;
+      margin-bottom: 14px;
+    }
+    .memory-manager-toolbar input,
+    .memory-manager-toolbar select { width: 100%; min-width: 0; }
+    .memory-manager-form {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 10px;
+      padding: 14px 0;
+      border-top: 1px solid var(--line);
+    }
+    .memory-manager-form label { display: grid; gap: 5px; min-width: 0; color: var(--muted); font-size: 12px; }
+    .memory-manager-form .full { grid-column: 1 / -1; }
+    .memory-manager-form input,
+    .memory-manager-form select,
+    .memory-manager-form textarea { width: 100%; min-width: 0; }
+    .memory-source { margin-top: 4px; color: var(--muted); font-size: 11px; overflow-wrap: anywhere; }
+    .memory-badges { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 6px; }
+    .memory-badge {
+      padding: 2px 6px;
+      border: 1px solid #d7dee8;
+      border-radius: 5px;
+      background: #f7f9fc;
+      color: #465468;
+      font-size: 10px;
+      font-weight: 700;
+    }
+    .memory-badge.core { border-color: #97d7ad; background: #effaf2; color: #25643b; }
+    .retrieval-preview {
+      margin: 14px 0;
+      padding: 12px 0;
+      border-top: 1px solid var(--line);
+      border-bottom: 1px solid var(--line);
+    }
+    .retrieval-preview-toolbar {
+      display: grid;
+      grid-template-columns: 110px minmax(180px, 1fr) 120px auto;
+      gap: 8px;
+    }
+    .retrieval-preview-toolbar input,
+    .retrieval-preview-toolbar select { width: 100%; min-width: 0; }
+    .retrieval-preview-results {
+      max-height: 260px;
+      margin-top: 10px;
+      overflow: auto;
+      border-top: 1px solid var(--line);
+    }
+    .retrieval-preview-row {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto;
+      gap: 10px;
+      padding: 9px 0;
+      border-bottom: 1px solid var(--line);
+      font-size: 12px;
+    }
+    .memory-job-list { border-top: 1px solid var(--line); margin-top: 18px; }
+    .memory-job-row { padding: 10px 0; border-bottom: 1px solid var(--line); display: grid; gap: 4px; }
+    .permission-row {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto;
+      gap: 14px;
+      align-items: center;
+      min-width: 0;
+      padding: 13px 0;
+      border-bottom: 1px solid var(--line);
+    }
+    .permission-access { grid-template-columns: repeat(3, minmax(72px, 1fr)); }
+    .permission-runtime { margin-top: 9px; }
+    .toggle {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      color: var(--muted);
+      font-size: 12px;
+      cursor: pointer;
+    }
+    .toggle input {
+      appearance: none;
+      width: 42px;
+      height: 24px;
+      margin: 0;
+      padding: 0;
+      border: 1px solid #a9b3c2;
+      border-radius: 12px;
+      background: #d9dee7;
+      position: relative;
+      cursor: pointer;
+      transition: background 140ms ease, border-color 140ms ease;
+    }
+    .toggle input::after {
+      content: "";
+      width: 18px;
+      height: 18px;
+      border-radius: 50%;
+      background: white;
+      position: absolute;
+      top: 2px;
+      left: 2px;
+      box-shadow: 0 1px 2px rgba(16, 24, 40, 0.2);
+      transition: transform 140ms ease;
+    }
+    .toggle input:checked { border-color: var(--primary); background: var(--primary); }
+    .toggle input:checked::after { transform: translateX(18px); }
+    .toggle input:disabled { opacity: 0.55; cursor: not-allowed; }
+    .toggle:has(input:disabled) { cursor: not-allowed; }
+    .profile-document-form {
+      display: grid;
+      gap: 12px;
+    }
+    .profile-markdown,
+    .character-soul-markdown {
+      min-height: 360px;
+      height: min(52vh, 520px);
+      max-height: none;
+      resize: vertical;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+      line-height: 1.6;
+      tab-size: 2;
+    }
+    .character-soul-head {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+    }
+    .character-soul-head h4 { margin: 0; color: var(--text); font-size: 14px; }
+    .profile-character-count.error,
+    .character-soul-count.error { color: var(--danger); }
     .secondary {
       height: 38px;
       padding: 0 12px;
@@ -184,8 +905,11 @@ export function renderAppHtml(): string {
       border-radius: 8px;
       padding: 10px 12px;
       background: var(--assistant);
-      white-space: pre-wrap;
       line-height: 1.5;
+    }
+    .bubble-text {
+      white-space: pre-wrap;
+      overflow-wrap: anywhere;
     }
     .bubble.user {
       margin-left: auto;
@@ -195,23 +919,128 @@ export function renderAppHtml(): string {
     .bubble.assistant {
       margin-right: auto;
     }
-    .bubble.tool {
-      background: var(--tool);
-      font-size: 13px;
-      color: #6d540e;
-    }
     .meta {
       display: block;
       margin-bottom: 4px;
       color: var(--muted);
       font-size: 12px;
     }
+    .message-progress {
+      margin: 0 0 7px;
+      padding: 0;
+      border: 0;
+      color: #465468;
+      font-size: 12px;
+      white-space: normal;
+    }
+    .message-progress summary {
+      min-height: 26px;
+      cursor: pointer;
+      color: #344054;
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      font-weight: 600;
+      list-style: none;
+      user-select: none;
+    }
+    .message-progress summary::-webkit-details-marker { display: none; }
+    .message-progress summary::marker { content: ""; }
+    .progress-chevron {
+      flex: 0 0 auto;
+      width: 14px;
+      height: 14px;
+      color: #8a9199;
+      transition: transform 140ms ease;
+    }
+    .message-progress[open] .progress-chevron { transform: rotate(90deg); }
+    .progress-summary { min-width: 0; display: inline-flex; align-items: center; }
+    .typing-indicator {
+      display: inline-flex;
+      align-items: center;
+      gap: 7px;
+      color: #5f676f;
+      font-weight: 500;
+    }
+    .typing-dots {
+      height: 12px;
+      display: inline-flex;
+      align-items: center;
+      gap: 3px;
+    }
+    .typing-dot {
+      width: 4px;
+      height: 4px;
+      border-radius: 50%;
+      background: #6f777f;
+      opacity: 0.35;
+      animation: message-typing-dot 1.1s ease-in-out infinite;
+    }
+    .typing-dot:nth-child(2) { animation-delay: 140ms; }
+    .typing-dot:nth-child(3) { animation-delay: 280ms; }
+    @keyframes message-typing-dot {
+      0%, 60%, 100% { opacity: 0.35; transform: translateY(0); }
+      30% { opacity: 1; transform: translateY(-2px); }
+    }
+    @media (prefers-reduced-motion: reduce) {
+      .typing-dot { animation: none; opacity: 0.65; }
+      .progress-chevron { transition: none; }
+    }
+    .progress-state { margin-left: 7px; color: var(--muted); font-weight: 400; }
+    .progress-state.active { color: #1d4ed8; }
+    .progress-state.failed { color: var(--danger); }
+    .progress-list {
+      display: grid;
+      gap: 4px;
+      margin: 5px 0 2px 20px;
+      padding: 7px 9px;
+      border-left: 2px solid #d9dde1;
+      background: #f7f8f9;
+      list-style: none;
+    }
+    .progress-step {
+      display: grid;
+      grid-template-columns: 14px minmax(0, 1fr);
+      gap: 6px;
+      align-items: start;
+    }
+    .progress-step-body { min-width: 0; }
+    .progress-mark { color: #667085; text-align: center; }
+    .progress-step.active .progress-mark { color: #2563eb; }
+    .progress-step.failed .progress-mark { color: var(--danger); }
+    .progress-tool-result {
+      margin-top: 3px;
+      color: #59616b;
+    }
+    .progress-tool-result summary {
+      min-height: 22px;
+      gap: 7px;
+      color: #667085;
+      font-size: 11px;
+      font-weight: 500;
+    }
+    .progress-tool-result[open] summary { margin-bottom: 4px; }
+    .progress-tool-size { color: #8a9199; font-weight: 400; }
+    .progress-tool-output {
+      max-height: 320px;
+      margin: 0;
+      overflow: auto;
+      padding: 7px 9px;
+      border: 0;
+      border-left: 2px solid #d8dde3;
+      border-radius: 0;
+      background: rgba(255, 255, 255, 0.72);
+      color: #39414a;
+      font: 11px/1.55 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      overflow-wrap: anywhere;
+      white-space: pre-wrap;
+    }
     .composer {
       border-top: 1px solid var(--line);
       padding: 12px;
       background: var(--panel);
       display: grid;
-      grid-template-columns: 1fr auto;
+      grid-template-columns: minmax(0, 1fr) auto auto auto;
       gap: 10px;
       align-items: end;
     }
@@ -239,11 +1068,13 @@ export function renderAppHtml(): string {
     .primary:hover:not(:disabled) {
       background: var(--primary-strong);
     }
+    .composer .secondary { height: 48px; min-width: 48px; padding: 0 12px; }
     aside {
       background: var(--panel);
       min-height: 0;
       display: grid;
       grid-template-rows: auto 1fr;
+      overflow: hidden;
     }
     .side-head {
       padding: 14px;
@@ -257,51 +1088,230 @@ export function renderAppHtml(): string {
       margin: 0;
       font-size: 15px;
     }
-    .debug-list {
+    .debug-workspace {
+      min-height: 0;
+      display: grid;
+      grid-template-columns: 280px minmax(0, 1fr);
+      overflow: hidden;
+    }
+    .trace-index {
+      min-width: 0;
       min-height: 0;
       overflow: auto;
-      padding: 12px;
+      padding: 10px;
+      border-right: 1px solid var(--line);
+      background: #f8fafc;
       display: flex;
       flex-direction: column;
-      gap: 10px;
+      gap: 7px;
     }
-    .log {
-      border: 1px solid var(--line);
-      border-radius: 8px;
-      padding: 10px;
-      background: #fbfcfe;
+    .trace-index-item {
+      width: 100%;
+      min-width: 0;
+      padding: 9px 10px;
+      border: 1px solid transparent;
+      border-radius: 7px;
+      background: transparent;
+      color: var(--text);
+      text-align: left;
+      cursor: pointer;
+      display: grid;
+      gap: 5px;
     }
-    .log h3 {
-      margin: 0 0 6px;
+    .trace-index-item:hover { background: #eef2f7; }
+    .trace-index-item.active {
+      border-color: #9bb8ef;
+      background: #eaf1ff;
+    }
+    .trace-index-title {
+      display: -webkit-box;
+      overflow: hidden;
+      -webkit-box-orient: vertical;
+      -webkit-line-clamp: 2;
       font-size: 13px;
+      font-weight: 700;
+      line-height: 1.35;
+      overflow-wrap: anywhere;
     }
-    .log pre {
-      margin: 8px 0 0;
-      max-height: 220px;
+    .trace-index-meta {
+      color: var(--muted);
+      font-size: 11px;
+      line-height: 1.3;
+    }
+    .trace-inspector,
+    .trace-detail {
+      min-width: 0;
+      min-height: 0;
+      overflow: hidden;
+    }
+    .trace-detail {
+      height: 100%;
+      display: grid;
+      grid-template-rows: auto minmax(0, 1fr);
+    }
+    .trace-detail-head {
+      padding: 10px 14px;
+      border-bottom: 1px solid var(--line);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px 18px;
+      flex-wrap: wrap;
+    }
+    .trace-detail-title {
+      margin: 0 0 3px;
+      font-size: 14px;
+      overflow-wrap: anywhere;
+    }
+    .trace-detail-meta {
+      color: var(--muted);
+      font-size: 11px;
+    }
+    .trace-actions,
+    .trace-view-tabs {
+      display: flex;
+      align-items: center;
+      gap: 7px;
+      flex-wrap: wrap;
+    }
+    .trace-view-tabs {
+      padding: 3px;
+      border: 1px solid var(--line);
+      border-radius: 7px;
+      background: #eef1f6;
+    }
+    .trace-view-tabs button {
+      height: 30px;
+      padding: 0 10px;
+      border: 0;
+      border-radius: 5px;
+      background: transparent;
+      color: var(--muted);
+      cursor: pointer;
+    }
+    .trace-view-tabs button.active {
+      background: white;
+      color: var(--text);
+      box-shadow: 0 1px 2px rgba(16, 24, 40, 0.12);
+    }
+    .trace-actions > .secondary {
+      height: 36px;
+      padding-inline: 10px;
+      font-size: 12px;
+    }
+    .trace-content {
+      min-width: 0;
+      min-height: 0;
       overflow: auto;
+      padding: 12px 14px 28px;
+      display: flex;
+      flex-direction: column;
+      gap: 9px;
+      scroll-behavior: smooth;
+    }
+    .trace-block {
+      flex: 0 0 auto;
+      border-left: 4px solid #7b8798;
+      background: #f3f5f8;
+    }
+    .trace-block.system { border-color: #e11d48; background: #fff1f2; }
+    .trace-block.user { border-color: #2563eb; background: #eff6ff; }
+    .trace-block.assistant { border-color: #16a34a; background: #f0fdf4; }
+    .trace-block.tool { border-color: #d97706; background: #fffbeb; }
+    .trace-block.schema { border-color: #0891b2; background: #ecfeff; }
+    .trace-block.parameters { border-color: #64748b; background: #f8fafc; }
+    .trace-block.economics { border-color: #5b6472; background: #f7f8fa; }
+    .economics-grid {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 8px;
+    }
+    .economics-metric {
+      min-width: 0;
+      padding: 9px;
+      border: 1px solid var(--line);
+      background: #fafafa;
+    }
+    .economics-metric span { display: block; color: var(--muted); font-size: 10px; }
+    .economics-metric strong { display: block; margin-top: 3px; font-size: 14px; overflow-wrap: anywhere; }
+    .retrieval-candidate { padding: 7px 0; border-top: 1px solid var(--line); font-size: 12px; }
+    .retrieval-candidate:first-child { border-top: 0; }
+    .trace-block summary {
+      min-height: 38px;
+      padding: 8px 10px;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+      color: #344054;
+      font-size: 11px;
+      font-weight: 700;
+      text-transform: uppercase;
+    }
+    .trace-block-size {
+      color: var(--muted);
+      font-weight: 400;
+      text-transform: none;
+      white-space: nowrap;
+    }
+    .trace-block pre,
+    .trace-json {
+      margin: 0;
+      padding: 10px 12px 14px;
+      border-top: 1px solid rgba(99, 112, 131, 0.18);
+      white-space: pre-wrap;
+      overflow-wrap: anywhere;
+      font-size: 12px;
+      line-height: 1.55;
+      tab-size: 2;
+    }
+    .trace-content.nowrap pre {
+      white-space: pre;
+      overflow-wrap: normal;
+    }
+    .trace-json {
+      flex: 0 0 auto;
+      min-height: 100%;
+      overflow: visible;
+      border: 0;
+      border-radius: 6px;
       background: #101827;
       color: #d7e0f5;
-      border-radius: 6px;
-      padding: 8px;
-      font-size: 12px;
-      line-height: 1.45;
     }
-    .pills {
+    .trace-empty {
+      height: 100%;
+      display: grid;
+      place-items: center;
+      padding: 20px;
+      color: var(--muted);
+      font-size: 13px;
+      text-align: center;
+    }
+    .trace-legend {
       display: flex;
-      gap: 5px;
+      gap: 8px;
       flex-wrap: wrap;
-      margin-top: 6px;
+      margin-top: 5px;
     }
-    .pill {
+    .trace-key {
       display: inline-flex;
       align-items: center;
-      min-height: 22px;
-      border-radius: 999px;
-      padding: 2px 8px;
-      font-size: 12px;
-      background: var(--event);
-      color: #24613a;
+      gap: 4px;
+      color: var(--muted);
+      font-size: 11px;
     }
+    .trace-swatch {
+      width: 8px;
+      height: 8px;
+      border-radius: 2px;
+      background: #64748b;
+    }
+    .trace-swatch.system { background: #e11d48; }
+    .trace-swatch.user { background: #2563eb; }
+    .trace-swatch.assistant { background: #16a34a; }
+    .trace-swatch.tool { background: #d97706; }
+    .trace-swatch.schema { background: #0891b2; }
     .muted {
       color: var(--muted);
       font-size: 13px;
@@ -315,13 +1325,1338 @@ export function renderAppHtml(): string {
       color: var(--danger);
     }
     @media (max-width: 900px) {
-      header { align-items: flex-start; }
+      header { align-items: stretch; flex-direction: column; }
+      .header-left, .header-right { width: 100%; }
+      .header-left { align-items: flex-start; }
+      .header-left .segmented { width: 100%; }
+      .segmented button { min-width: 0; padding-inline: 7px; }
+      .header-right { justify-content: flex-start; }
+      .controls { min-width: 0; }
+      .controls input, .controls select { min-width: 0; max-width: 180px; }
       main { grid-template-columns: 1fr; }
-      .chat { border-right: 0; }
-      aside { border-top: 1px solid var(--line); min-height: 360px; }
       .composer { grid-template-columns: 1fr; }
       .primary { width: 100%; }
       .settings-grid { grid-template-columns: 1fr; }
+      .schedule-form { grid-template-columns: 1fr; }
+      .schedule-form > label { grid-column: auto; }
+      .schedule-row { grid-template-columns: 1fr; }
+      .schedule-actions { justify-content: flex-start; }
+      .character-grid { grid-template-columns: 1fr; }
+      .character-grid .full { grid-column: auto; }
+      .memory-toolbar, .memory-row { grid-template-columns: 1fr; }
+      .memory-actions { justify-content: flex-start; }
+      .module-row { grid-template-columns: auto minmax(0, 1fr); }
+      .module-row .module-detail-button { grid-column: 1; justify-self: start; }
+      .module-row .toggle { grid-column: 2; grid-row: 2; justify-self: start; }
+      .permission-row { grid-template-columns: 1fr; }
+      .permission-row .toggle { justify-self: start; }
+      .permission-path { max-width: 100%; text-align: left; }
+      .permission-access { width: 100%; }
+      .memory-manager-toolbar,
+      .memory-manager-form,
+      .retrieval-preview-toolbar { grid-template-columns: 1fr; }
+      .memory-manager-form .full { grid-column: auto; }
+      .economics-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+      .profile-markdown,
+      .character-soul-markdown { min-height: 280px; height: 44vh; }
+      .debug-workspace {
+        grid-template-columns: minmax(0, 1fr);
+        grid-template-rows: auto minmax(0, 1fr);
+      }
+      .trace-index {
+        max-height: 124px;
+        overflow-x: hidden;
+        overflow-y: auto;
+        border-right: 0;
+        border-bottom: 1px solid var(--line);
+        flex-direction: column;
+      }
+      .trace-index-item {
+        flex: 0 0 auto;
+      }
+      .trace-detail-head { align-items: flex-start; }
+      .trace-actions { width: 100%; }
+    }
+
+    /* WeChat-inspired application shell */
+    .app {
+      grid-template-columns: 76px minmax(0, 1fr);
+      grid-template-rows: 64px minmax(0, 1fr) 28px;
+      background: var(--bg);
+    }
+    header { display: contents; }
+    .header-left {
+      grid-column: 1;
+      grid-row: 1 / 4;
+      width: 76px;
+      min-width: 0;
+      padding: 14px 8px 10px;
+      background: var(--rail);
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 20px;
+      overflow: hidden;
+    }
+    .header-left h1 {
+      width: 60px;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 6px;
+      color: #f5f5f5;
+    }
+    .brand-mark {
+      width: 42px;
+      height: 42px;
+      border-radius: 8px;
+      display: grid;
+      place-items: center;
+      background: var(--primary);
+      color: #ffffff;
+      font-size: 15px;
+      font-weight: 750;
+      box-shadow: 0 2px 8px rgba(0, 0, 0, 0.18);
+    }
+    .brand-name {
+      color: #b6b9bd;
+      font-size: 10px;
+      font-weight: 600;
+      white-space: nowrap;
+    }
+    .nav-segmented {
+      width: 60px;
+      display: flex;
+      flex: 1;
+      flex-direction: column;
+      gap: 3px;
+      border: 0;
+      border-radius: 0;
+      background: transparent;
+      overflow: visible;
+    }
+    .nav-segmented button {
+      width: 60px;
+      min-width: 0;
+      height: 54px;
+      padding: 5px 2px;
+      border-radius: 6px;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 4px;
+      color: #aeb2b7;
+      font-size: 10px;
+      line-height: 1;
+    }
+    .nav-segmented button svg { width: 21px; height: 21px; stroke-width: 1.8; }
+    .nav-segmented button:hover { background: rgba(255, 255, 255, 0.07); color: #ffffff; }
+    .nav-segmented button.active {
+      background: rgba(255, 255, 255, 0.1);
+      color: #ffffff;
+    }
+    .nav-segmented button.active svg { color: #20d874; }
+    .header-right {
+      grid-column: 2;
+      grid-row: 1;
+      min-width: 0;
+      padding: 0 20px;
+      border-bottom: 1px solid #e3e3e3;
+      background: rgba(250, 250, 250, 0.96);
+      display: flex;
+      align-items: center;
+      justify-content: flex-end;
+      gap: 12px;
+      flex-wrap: nowrap;
+    }
+    .conversation-heading {
+      min-width: 168px;
+      max-width: 280px;
+      margin-right: auto;
+      display: grid;
+      gap: 1px;
+      overflow: hidden;
+    }
+    .conversation-heading strong,
+    .conversation-heading span {
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .conversation-heading strong { font-size: 15px; font-weight: 650; }
+    .conversation-heading span { color: var(--muted); font-size: 11px; }
+    .conversation-heading .conversation-scene { color: #52705e; }
+    .session-picker { display: flex; align-items: center; gap: 6px; min-width: 0; }
+    .session-picker .controls { min-width: 0; }
+    #sessionSelect { width: 190px; }
+    .session-picker > .icon-button { flex: 0 0 34px; width: 34px; height: 34px; }
+    .header-right .controls { gap: 6px; flex-wrap: nowrap; }
+    .header-right .controls > .muted { font-size: 11px; white-space: nowrap; }
+    .header-right input,
+    .header-right select {
+      height: 34px;
+      border-color: #d7d7d7;
+      background: #ffffff;
+      font-size: 13px;
+    }
+    .header-right input { width: 148px; }
+    select:focus,
+    input:focus,
+    textarea:focus {
+      border-color: #73d9a1;
+      outline: 2px solid rgba(7, 193, 96, 0.12);
+      outline-offset: 0;
+    }
+    main {
+      grid-column: 2;
+      grid-row: 2;
+      background: var(--bg);
+    }
+    footer {
+      grid-column: 2;
+      grid-row: 3;
+      padding: 4px 14px !important;
+      border-top-color: #e5e5e5 !important;
+      background: #fafafa !important;
+    }
+    footer .status { min-height: 18px; font-size: 11px; }
+    .chat { background: #f3f3f3; }
+    .messages {
+      padding: 24px clamp(18px, 4vw, 56px) 28px;
+      gap: 18px;
+      scrollbar-color: #c7c7c7 transparent;
+    }
+    .message-row {
+      width: min(100%, 980px);
+      margin: 0 auto;
+      display: flex;
+      align-items: flex-start;
+      gap: 10px;
+    }
+    .message-row.user { flex-direction: row-reverse; }
+    .message-row.tool { padding-inline: 46px; }
+    .message-row.system {
+      width: 100%;
+      justify-content: center;
+      padding: 0 42px;
+    }
+    .system-event {
+      max-width: min(680px, 100%);
+      display: flex;
+      align-items: flex-start;
+      justify-content: center;
+      gap: 6px;
+      padding: 5px 10px;
+      color: #777d82;
+      font-size: 12px;
+      line-height: 1.5;
+      text-align: center;
+    }
+    .system-event svg { flex: 0 0 auto; width: 14px; height: 14px; margin-top: 2px; }
+    .system-event .markdown-body > :first-child { margin-top: 0; }
+    .system-event .markdown-body > :last-child { margin-bottom: 0; }
+    .system-event-actions { display: inline-flex; gap: 4px; margin-left: 2px; }
+    .system-event-action {
+      width: 24px;
+      height: 24px;
+      padding: 0;
+      border: 1px solid #d7dadd;
+      border-radius: 5px;
+      background: transparent;
+      color: #656b70;
+      display: inline-grid;
+      place-items: center;
+      cursor: pointer;
+    }
+    .system-event-action:hover { background: #e9ebed; color: #25292c; }
+    .system-event-action svg { width: 13px; height: 13px; margin: 0; }
+    .archived-dialog,
+    .session-action-dialog {
+      width: min(620px, calc(100vw - 28px));
+      max-height: min(640px, calc(100vh - 48px));
+      padding: 0;
+      border: 1px solid #d8d8d8;
+      border-radius: 8px;
+      background: #ffffff;
+      color: var(--text);
+      box-shadow: 0 12px 34px rgba(0, 0, 0, 0.2);
+    }
+    .session-action-dialog { width: min(440px, calc(100vw - 28px)); }
+    .archived-dialog::backdrop,
+    .session-action-dialog::backdrop { background: rgba(0, 0, 0, 0.28); }
+    .archived-dialog-head {
+      height: 52px;
+      padding: 0 12px 0 16px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      border-bottom: 1px solid #e4e4e4;
+    }
+    .archived-dialog-head h2 { margin: 0; font-size: 15px; }
+    .archived-list { max-height: min(540px, calc(100vh - 120px)); overflow: auto; }
+    .archived-row {
+      min-width: 0;
+      padding: 12px 14px;
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto;
+      gap: 10px;
+      align-items: center;
+      border-bottom: 1px solid #ededed;
+    }
+    .archived-row:last-child { border-bottom: 0; }
+    .archived-row strong,
+    .archived-row span { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .archived-row strong { font-size: 13px; }
+    .archived-row span { margin-top: 3px; color: var(--muted); font-size: 11px; }
+    .archived-row-actions { display: flex; gap: 6px; }
+    .archived-row-actions .icon-button { width: 30px; height: 30px; }
+    .archived-empty { padding: 30px 16px; color: var(--muted); font-size: 13px; text-align: center; }
+    .session-action-form { padding: 16px; display: grid; gap: 14px; }
+    .session-action-copy { margin: 0; color: var(--muted); font-size: 13px; line-height: 1.55; }
+    .session-action-field { display: grid; gap: 6px; color: #3d4246; font-size: 12px; font-weight: 600; }
+    .session-action-field input { width: 100%; height: 38px; }
+    .dialog-error { min-height: 18px; color: var(--danger); font-size: 12px; line-height: 1.5; }
+    .dialog-actions { display: flex; justify-content: flex-end; gap: 8px; }
+    .dialog-actions button { min-width: 78px; }
+    .session-actions-desktop { display: flex; align-items: center; gap: 6px; }
+    .session-actions-desktop .icon-button { width: 34px; height: 34px; }
+    .mobile-session-actions { position: relative; display: none; }
+    .session-actions-menu {
+      position: absolute;
+      z-index: 30;
+      top: calc(100% + 6px);
+      right: 0;
+      width: 168px;
+      padding: 5px;
+      border: 1px solid #d9d9d9;
+      border-radius: 6px;
+      background: #ffffff;
+      box-shadow: 0 10px 28px rgba(0, 0, 0, 0.18);
+    }
+    .session-actions-menu[hidden] { display: none; }
+    .session-actions-menu button {
+      width: 100%;
+      min-height: 36px;
+      padding: 7px 9px;
+      border: 0;
+      background: transparent;
+      color: var(--text);
+      display: flex;
+      align-items: center;
+      gap: 9px;
+      text-align: left;
+      cursor: pointer;
+    }
+    .session-actions-menu button:hover,
+    .session-actions-menu button:focus-visible { background: #f0f1f2; }
+    .session-actions-menu button:disabled { color: #b5b8bb; cursor: not-allowed; }
+    .session-actions-menu button svg { width: 15px; height: 15px; }
+    .message-avatar {
+      flex: 0 0 38px;
+      width: 38px;
+      height: 38px;
+      border-radius: 6px;
+      display: grid;
+      place-items: center;
+      background: #ffffff;
+      color: #4a4a4a;
+      border: 1px solid rgba(0, 0, 0, 0.06);
+      box-shadow: var(--shadow);
+      font-size: 12px;
+      font-weight: 700;
+    }
+    .message-row.user .message-avatar { background: #dff8d1; color: #176d3a; }
+    .message-row.tool .message-avatar { background: #fff3ca; color: #8b6400; }
+    .message-avatar svg { width: 18px; height: 18px; }
+    .message-stack {
+      min-width: 0;
+      max-width: min(760px, calc(100% - 48px));
+      display: flex;
+      flex-direction: column;
+      align-items: flex-start;
+    }
+    .message-row.user .message-stack { align-items: flex-end; }
+    .message-row.tool .message-stack { width: min(760px, 100%); max-width: 100%; }
+    .meta {
+      margin: 0 4px 5px;
+      color: #8b8b8b;
+      font-size: 11px;
+      line-height: 1.2;
+    }
+    .bubble {
+      position: relative;
+      max-width: 100%;
+      margin: 0;
+      padding: 9px 12px;
+      border: 0;
+      border-radius: 6px;
+      background: var(--assistant);
+      box-shadow: var(--shadow);
+      line-height: 1.62;
+    }
+    .bubble-text.markdown-body { white-space: normal; }
+    .message-bubble-row { max-width: 100%; display: flex; align-items: center; gap: 5px; }
+    .message-row.user .message-bubble-row { flex-direction: row-reverse; }
+    .message-actions { display: inline-flex; gap: 2px; opacity: 0; transition: opacity 120ms ease; }
+    .message-row:hover .message-actions,
+    .message-actions:focus-within { opacity: 1; }
+    .message-action {
+      width: 26px;
+      height: 26px;
+      padding: 0;
+      border: 0;
+      border-radius: 5px;
+      background: transparent;
+      color: #777d82;
+      display: inline-grid;
+      place-items: center;
+      cursor: pointer;
+    }
+    .message-action:hover { background: #e3e5e7; color: #202326; }
+    .message-action svg { width: 14px; height: 14px; }
+    .bubble.assistant::before,
+    .bubble.user::before {
+      content: "";
+      position: absolute;
+      top: 12px;
+      width: 0;
+      height: 0;
+      border-top: 6px solid transparent;
+      border-bottom: 6px solid transparent;
+    }
+    .bubble.assistant::before {
+      left: -6px;
+      border-right: 7px solid #ffffff;
+    }
+    .bubble.user {
+      margin: 0;
+      background: var(--user);
+      border: 0;
+    }
+    .bubble.user::before {
+      right: -6px;
+      border-left: 7px solid var(--user);
+    }
+    .bubble.media-only { padding: 0; background: transparent; box-shadow: none; }
+    .bubble.media-only::before { display: none; }
+    .message-attachments { display: grid; gap: 7px; }
+    .message-image-grid { display: grid; grid-template-columns: minmax(0, 1fr); gap: 5px; }
+    .message-image-grid.multiple { grid-template-columns: repeat(2, minmax(0, 136px)); }
+    .message-image-thumb,
+    .message-inline-image {
+      width: min(230px, 52vw);
+      aspect-ratio: 4 / 3;
+      padding: 0;
+      border: 1px solid rgba(0, 0, 0, 0.09);
+      border-radius: 6px;
+      background: #f4f4f4;
+      display: block;
+      overflow: hidden;
+      cursor: zoom-in;
+    }
+    .message-image-grid.multiple .message-image-thumb { width: 136px; aspect-ratio: 1; }
+    .message-image-thumb img,
+    .message-inline-image img { width: 100%; height: 100%; display: block; object-fit: contain; }
+    .message-inline-image { margin: 0.7em 0; }
+    .message-inline-image img { margin: 0; }
+    .message-file-attachment {
+      max-width: 280px;
+      min-height: 42px;
+      padding: 7px 9px;
+      border: 1px solid rgba(0, 0, 0, 0.1);
+      border-radius: 6px;
+      background: rgba(255, 255, 255, 0.72);
+      color: var(--text);
+      display: grid;
+      grid-template-columns: 24px minmax(0, 1fr) 16px;
+      gap: 7px;
+      align-items: center;
+      text-decoration: none;
+    }
+    .message-file-attachment:hover { background: #ffffff; }
+    .message-file-attachment > svg { width: 18px; height: 18px; color: #687078; }
+    .message-file-copy { min-width: 0; display: grid; gap: 1px; }
+    .message-file-copy strong,
+    .message-file-copy small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .message-file-copy strong { font-size: 11px; }
+    .message-file-copy small { color: var(--muted); font-size: 9px; }
+    .message-file-download { width: 14px; height: 14px; color: #687078; }
+    .message-attachments + .bubble-text { margin-top: 8px; }
+    .message-progress {
+      margin: 0 0 7px;
+      padding: 0;
+      color: #60656f;
+    }
+    .progress-step.active .progress-mark,
+    .progress-state.active { color: #07994e; }
+    .chat-empty {
+      min-height: 100%;
+      display: grid;
+      place-content: center;
+      justify-items: center;
+      gap: 10px;
+      color: var(--muted);
+    }
+    .chat-empty .brand-mark { width: 48px; height: 48px; }
+    .chat-empty strong { color: #505050; font-size: 14px; font-weight: 600; }
+    .composer {
+      padding: 10px 18px 12px;
+      grid-template-columns: minmax(0, 1fr) 38px 38px auto;
+      gap: 8px;
+      border-top-color: #dfdfdf;
+      background: #fafafa;
+    }
+    .composer textarea {
+      grid-column: 1 / -1;
+      min-height: 66px;
+      max-height: 180px;
+      padding: 8px 4px;
+      border: 0;
+      border-radius: 0;
+      background: transparent;
+      line-height: 1.55;
+      resize: none;
+    }
+    .composer textarea:focus { outline: 0; }
+    .composer #cancelMessageBtn { grid-column: 2; }
+    .composer #retryMessageBtn { grid-column: 3; }
+    .composer #sendBtn { grid-column: 4; }
+    .composer .secondary,
+    .composer .primary {
+      height: 36px;
+      min-width: 36px;
+      border-radius: 6px;
+    }
+    .icon-button {
+      padding: 0;
+      display: inline-grid;
+      place-items: center;
+    }
+    .icon-button svg { width: 16px; height: 16px; }
+    .header-right .conversation-list-toggle { display: none; }
+    .send-button {
+      padding: 0 14px;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 6px;
+    }
+    .send-button svg { width: 16px; height: 16px; }
+    .primary { background: var(--primary); }
+    .primary:hover:not(:disabled) { background: var(--primary-strong); }
+    .secondary:hover:not(:disabled) { border-color: #bfbfbf; background: #f5f5f5; }
+
+    .markdown-body { min-width: 0; overflow-wrap: anywhere; }
+    .markdown-body > :first-child { margin-top: 0; }
+    .markdown-body > :last-child { margin-bottom: 0; }
+    .markdown-body p { margin: 0 0 0.7em; }
+    .markdown-body h1,
+    .markdown-body h2,
+    .markdown-body h3,
+    .markdown-body h4 {
+      margin: 1em 0 0.5em;
+      color: #181818;
+      line-height: 1.35;
+      font-weight: 680;
+    }
+    .markdown-body h1 { font-size: 20px; }
+    .markdown-body h2 { padding-bottom: 5px; border-bottom: 1px solid rgba(0, 0, 0, 0.1); font-size: 17px; }
+    .markdown-body h3 { font-size: 15px; }
+    .markdown-body h4 { font-size: 14px; }
+    .markdown-body ul,
+    .markdown-body ol { margin: 0.45em 0 0.75em; padding-left: 1.5em; }
+    .markdown-body li { margin: 0.2em 0; }
+    .markdown-body li > p { margin: 0; }
+    .markdown-body blockquote {
+      margin: 0.75em 0;
+      padding: 6px 10px;
+      border-left: 3px solid #47bd78;
+      background: rgba(0, 0, 0, 0.035);
+      color: #5d5d5d;
+    }
+    .markdown-body code {
+      padding: 0.12em 0.32em;
+      border-radius: 4px;
+      background: rgba(0, 0, 0, 0.07);
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+      font-size: 0.9em;
+    }
+    .markdown-body pre {
+      max-width: 100%;
+      margin: 0.75em 0;
+      padding: 11px 12px;
+      border-radius: 6px;
+      background: #24272c;
+      color: #f2f2f2;
+      overflow: auto;
+      line-height: 1.5;
+    }
+    .markdown-body pre code { padding: 0; background: transparent; color: inherit; font-size: 12px; }
+    .markdown-body a { color: #087d45; text-decoration: underline; text-underline-offset: 2px; }
+    .markdown-body img { display: block; max-width: 100%; height: auto; margin: 0.75em 0; border-radius: 6px; }
+    .markdown-body hr { margin: 1em 0; border: 0; border-top: 1px solid rgba(0, 0, 0, 0.12); }
+    .markdown-table-wrap { max-width: 100%; margin: 0.75em 0; overflow-x: auto; }
+    .markdown-body table { width: 100%; border-collapse: collapse; font-size: 12px; }
+    .markdown-body th,
+    .markdown-body td { padding: 7px 8px; border: 1px solid rgba(0, 0, 0, 0.13); text-align: left; }
+    .markdown-body th { background: rgba(0, 0, 0, 0.045); font-weight: 650; }
+    .bubble.user .markdown-body blockquote { background: rgba(255, 255, 255, 0.28); }
+    .feature-test-panel { min-height: 0; overflow: auto; background: #f7f7f7; }
+    .feature-test-toolbar {
+      position: sticky;
+      top: 0;
+      z-index: 2;
+      min-height: 52px;
+      padding: 8px 14px;
+      border-bottom: 1px solid var(--line);
+      background: rgba(250, 250, 250, 0.97);
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      flex-wrap: wrap;
+    }
+    .feature-test-toolbar select { min-width: 180px; }
+    .feature-test-list,
+    .feature-test-results { padding: 0 14px; }
+    .feature-test-case {
+      min-width: 0;
+      padding: 12px 0;
+      border-bottom: 1px solid var(--line);
+      display: grid;
+      grid-template-columns: auto minmax(0, 1fr);
+      gap: 10px;
+      align-items: start;
+    }
+    .feature-test-case input { width: 16px; height: 16px; margin-top: 2px; }
+    .feature-test-case strong { font-size: 13px; }
+    .feature-test-case p { margin: 4px 0; color: var(--muted); font-size: 12px; line-height: 1.45; }
+    .feature-test-input { display: block; padding: 5px 7px; background: #eeeeee; font-size: 11px; white-space: pre-wrap; overflow-wrap: anywhere; }
+    .feature-test-result { padding: 14px 0; border-top: 1px solid var(--line); }
+    .feature-test-result-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+    .feature-test-result-head strong { font-size: 13px; }
+    .feature-test-status.pass { color: #087d45; }
+    .feature-test-status.fail { color: var(--danger); }
+    .feature-test-rules { margin: 8px 0 0; padding: 0; list-style: none; display: grid; gap: 5px; }
+    .feature-test-rules li { font-size: 11px; line-height: 1.45; }
+    .feature-test-reply { max-height: 180px; margin-top: 9px; padding: 8px; overflow: auto; background: #ffffff; font-size: 12px; }
+
+    .settings-page { padding: 22px clamp(16px, 3vw, 34px) 36px; background: #f5f5f5; }
+    .settings-shell,
+    .schedule-shell,
+    .character-shell,
+    .management-shell { max-width: 1040px; }
+    .settings-shell {
+      padding: 22px;
+      border-color: #e1e1e1;
+      box-shadow: var(--shadow);
+    }
+    .schedule-head h2,
+    .character-head h2,
+    .management-head h2,
+    .settings-shell h2 { font-weight: 650; }
+    .schedule-editor,
+    .schedule-list,
+    .workspace-section,
+    .management-panel { border-color: #e0e0e0; }
+    .management-panel { border-radius: 6px; box-shadow: var(--shadow); }
+    .module-row,
+    .permission-row,
+    .memory-row,
+    .schedule-row { border-bottom-color: #ededed; }
+    .toggle input:checked { border-color: var(--primary); background: var(--primary); }
+    .segmented button.active { background: var(--primary); }
+    .nav-segmented button.active { background: rgba(255, 255, 255, 0.1); }
+
+    /* Shared dimensions keep page actions visually aligned across workspaces. */
+    .primary,
+    .secondary {
+      width: auto;
+      height: var(--control-height);
+      min-height: var(--control-height);
+      padding: 0 13px;
+      border-radius: var(--control-radius);
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 6px;
+      line-height: 1;
+      white-space: nowrap;
+      vertical-align: middle;
+    }
+    .primary svg,
+    .secondary svg {
+      flex: 0 0 var(--control-icon-size);
+      width: var(--control-icon-size);
+      height: var(--control-icon-size);
+      margin: 0;
+    }
+    .primary.icon-button,
+    .secondary.icon-button {
+      width: var(--control-height);
+      min-width: var(--control-height);
+      padding: 0;
+      display: inline-grid;
+      place-items: center;
+    }
+    .segmented:not(.nav-segmented) button {
+      height: var(--control-height);
+      min-height: var(--control-height);
+      padding-block: 0;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      line-height: 1;
+    }
+    .header-right input,
+    .header-right select { height: var(--control-height); }
+    .session-picker > .icon-button,
+    .session-actions-desktop .icon-button,
+    .schedule-month-nav button,
+    .schedule-toolbar .primary,
+    .schedule-actions button,
+    .avatar-actions button,
+    .module-detail-button { height: var(--control-height); }
+    .schedule-month-nav button,
+    .module-detail-button { width: var(--control-height); }
+    .conversation-list-head .icon-button {
+      width: 32px;
+      min-width: 32px;
+      height: 32px;
+    }
+    .header-right .conversation-list-toggle { display: none; }
+    .settings-actions {
+      gap: 8px;
+      align-items: center;
+      margin-top: 14px;
+    }
+    .settings-actions > .muted {
+      min-height: var(--control-height);
+      display: inline-flex;
+      align-items: center;
+    }
+    .workspace-section {
+      padding: 18px clamp(16px, 2vw, 22px) 20px;
+      border-bottom: 1px solid var(--line);
+    }
+    .management-panel { padding: 20px clamp(18px, 2vw, 24px); }
+    .character-editor-head,
+    .character-picker,
+    .management-head,
+    .schedule-head,
+    .avatar-actions { align-items: center; }
+
+    @media (min-width: 901px) and (max-width: 1240px) {
+      .app { grid-template-rows: 110px minmax(0, 1fr) 28px; }
+      .header-right {
+        height: 110px;
+        padding: 8px 16px;
+        display: grid;
+        grid-template-columns: minmax(150px, 0.8fr) minmax(210px, 1fr) minmax(210px, 1fr);
+        grid-template-rows: 42px 42px;
+        gap: 8px 12px;
+        align-content: center;
+        justify-content: stretch;
+      }
+      .conversation-heading {
+        grid-column: 1;
+        grid-row: 1 / 3;
+        min-width: 0;
+        max-width: none;
+        margin-right: 0;
+        align-self: center;
+      }
+      .session-picker {
+        grid-column: 2 / 4;
+        grid-row: 1;
+        width: 100%;
+      }
+      .session-picker .controls { flex: 1 1 auto; }
+      #sessionSelect {
+        width: 100%;
+        min-width: 150px;
+      }
+      #modeControl {
+        grid-column: 2;
+        grid-row: 2;
+      }
+      #chatCharacterControl {
+        grid-column: 3;
+        grid-row: 2;
+      }
+      #modeControl,
+      #chatCharacterControl { width: 100%; }
+      .header-right .controls > .muted { display: none; }
+      .header-right input,
+      .header-right select {
+        width: 100%;
+        max-width: none;
+      }
+    }
+
+    @media (max-width: 900px) {
+      .app {
+        grid-template-columns: minmax(0, 1fr);
+        grid-template-rows: 138px minmax(0, 1fr) 60px;
+      }
+      .header-left {
+        grid-column: 1;
+        grid-row: 3;
+        width: 100%;
+        height: 60px;
+        padding: 0;
+        border-top: 1px solid #dddddd;
+        background: rgba(250, 250, 250, 0.98);
+        flex-direction: row;
+        gap: 0;
+        overflow: hidden;
+      }
+      .header-left h1 { display: none; }
+      .nav-segmented {
+        width: 100%;
+        height: 60px;
+        flex-direction: row;
+        gap: 0;
+      }
+      .nav-segmented button {
+        flex: 1 1 0;
+        width: auto;
+        height: 60px;
+        padding: 5px 1px 4px;
+        border-radius: 0;
+        color: #737373;
+        font-size: 9px;
+      }
+      .nav-segmented button svg { width: 20px; height: 20px; }
+      .nav-segmented button:hover,
+      .nav-segmented button.active { background: transparent; color: #07a852; }
+      .nav-segmented button.active svg { color: #07a852; }
+      .header-right {
+        grid-column: 1;
+        grid-row: 1;
+        position: relative;
+        z-index: 20;
+        width: 100%;
+        min-width: 0;
+        height: 138px;
+        padding: 4px 10px;
+        gap: 7px;
+        display: grid;
+        grid-template-columns: minmax(105px, 2fr) minmax(155px, 3fr);
+        grid-template-rows: 42px 40px 40px;
+        justify-content: stretch;
+        overflow: visible;
+      }
+      .conversation-heading {
+        grid-column: 1 / -1;
+        grid-row: 1;
+        min-width: 0;
+        max-width: none;
+        margin-right: 0;
+        overflow: hidden;
+        position: relative;
+        padding-left: 36px;
+      }
+      .header-right .conversation-list-toggle {
+        position: absolute;
+        left: 0;
+        top: 4px;
+        width: 30px;
+        height: 30px;
+        display: inline-grid;
+      }
+      .conversation-heading strong {
+        overflow: hidden;
+        font-size: 14px;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+      .conversation-heading span { display: block; font-size: 10px; }
+      .conversation-heading .conversation-scene:not([hidden]) { display: block; }
+      .session-picker { grid-column: 1 / -1; grid-row: 3; width: 100%; }
+      .session-picker .controls { flex: 1 1 auto; }
+      .session-picker > .icon-button { flex-basis: 30px; width: 30px; height: 30px; }
+      .session-actions-desktop { display: none; }
+      .mobile-session-actions { display: block; flex: 0 0 30px; }
+      .mobile-session-actions > .icon-button { width: 30px; height: 30px; }
+      .header-right .controls { min-width: 0; }
+      .header-right .controls > .muted { display: none; }
+      .header-right input,
+      .header-right select { width: 100%; max-width: none; height: 34px; padding-inline: 8px; }
+      #sessionSelect { width: 100%; }
+      #modeControl { grid-column: 1; grid-row: 2; }
+      #chatCharacterControl { grid-column: 2; grid-row: 2; }
+      main { grid-column: 1; grid-row: 2; }
+      footer { display: none; }
+      .chat-workspace { position: relative; grid-template-columns: minmax(0, 1fr); }
+      .conversation-sidebar { display: none; border-right: 0; }
+      .chat-workspace.list-open .conversation-sidebar { display: flex; }
+      .chat-workspace.list-open .chat-thread { display: none; }
+      .conversation-item { min-height: 60px; height: auto; }
+      .messages { padding: 16px 10px 22px; gap: 16px; }
+      .message-row { gap: 8px; }
+      .message-row.tool { padding-inline: 0; }
+      .message-row.system { padding-inline: 8px; }
+      .message-avatar { flex-basis: 34px; width: 34px; height: 34px; font-size: 10px; }
+      .message-stack { max-width: calc(100% - 42px); }
+      .message-row.tool .message-stack { max-width: calc(100% - 42px); }
+      .message-actions { opacity: 1; }
+      .bubble { padding: 8px 10px; font-size: 14px; }
+      .bubble.assistant::before,
+      .bubble.user::before { top: 10px; }
+      .composer {
+        padding: 8px 10px 9px;
+        grid-template-columns: minmax(0, 1fr) 36px 36px auto;
+      }
+      .composer textarea { min-height: 52px; max-height: 132px; font-size: 15px; }
+      .send-button { padding-inline: 11px; }
+      .settings-page { padding: 14px 12px 28px; }
+      .settings-shell { padding: 16px 12px; }
+      .settings-shell,
+      .schedule-shell,
+      .character-shell,
+      .management-shell { width: 100%; }
+      .schedule-owner-head { align-items: stretch; gap: 12px; }
+      .schedule-title-group { width: 100%; align-items: flex-start; gap: 12px; }
+      .schedule-title-group h2 { width: 100%; }
+      .schedule-owner-tabs { width: 100%; }
+      .schedule-owner-tabs button { min-width: 0; }
+      .schedule-character-field { width: 100%; grid-template-columns: 42px minmax(0, 1fr); }
+      .schedule-view-tabs { display: grid; width: 100%; }
+      .schedule-head { align-items: flex-start; }
+      .schedule-navigation { align-items: center; }
+      .schedule-scope-summary { display: none; }
+      .schedule-toolbar { width: 100%; }
+      .schedule-month-nav { flex: 1 1 auto; grid-template-columns: 34px minmax(100px, 1fr) 34px; }
+      #schedulePage:not([data-mobile-view="calendar"]) .schedule-month-nav { display: none; }
+      .schedule-dashboard { display: block; }
+      .schedule-side { display: block; }
+      .schedule-side > section + section { margin-top: 12px; }
+      #schedulePage[data-mobile-view="agenda"] .calendar-panel,
+      #schedulePage[data-mobile-view="agenda"] .task-panel,
+      #schedulePage[data-mobile-view="calendar"] .schedule-side,
+      #schedulePage[data-mobile-view="tasks"] .calendar-panel,
+      #schedulePage[data-mobile-view="tasks"] .schedule-agenda { display: none; }
+      .calendar-day { min-height: 62px; padding: 4px; }
+      .calendar-events { gap: 2px; margin-top: 2px; }
+      .calendar-event { padding-inline: 2px; font-size: 8px; }
+      .schedule-agenda .schedule-row { padding-inline: 12px; }
+      .schedule-side .schedule-list,
+      .task-list { max-height: none; }
+      .character-card-grid { grid-template-columns: repeat(auto-fit, minmax(158px, 1fr)); gap: 8px; }
+      .character-card { min-height: 92px; padding: 9px; grid-template-columns: 44px minmax(0, 1fr); gap: 8px; }
+      .character-card-avatar { width: 44px; height: 44px; font-size: 16px; }
+      .character-head #newCharacterBtn { width: auto; }
+      .character-detail-head { min-height: 0; padding: 12px 14px; align-items: stretch; flex-direction: column; }
+      .character-tabs { width: 100%; }
+      .character-panel { padding: 16px 14px 18px; }
+      .character-memory-head .primary { width: auto; }
+      .character-save-actions .primary { width: 100%; }
+      .avatar-editor { grid-template-columns: 60px minmax(0, 1fr); }
+      .avatar-preview { width: 60px; height: 60px; }
+      .avatar-hint { grid-column: 1 / -1; }
+      .management-panel { padding: 14px 12px; }
+      .workspace-section { padding: 16px 14px 18px; }
+      .profile-markdown,
+      .character-soul-markdown { min-height: 260px; height: 42vh; }
+      .debug-workspace { grid-template-rows: 112px minmax(0, 1fr); }
+      .trace-index { max-height: 112px; }
+      .trace-detail-head { padding: 9px 10px; }
+      .trace-content { padding: 10px 10px 24px; }
+      .scene-editor-form .character-grid,
+      .memory-editor-form .character-grid { grid-template-columns: minmax(0, 1fr); }
+      .scene-editor-form .character-grid .full,
+      .memory-editor-form .character-grid .full { grid-column: auto; }
+      .scene-info-actions > button { width: auto; }
+    }
+
+    .management-tabs { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+    .settings-tabs { grid-template-columns: repeat(5, minmax(0, 1fr)); }
+    .settings-shell {
+      max-width: 1040px;
+      padding: 0;
+      border: 0;
+      background: transparent;
+      box-shadow: none;
+      display: grid;
+      gap: 14px;
+    }
+    .settings-head h2 { margin: 0; }
+    .settings-panel { min-width: 0; }
+    .settings-data-section {
+      margin-top: 20px;
+      padding-top: 18px;
+      border-top: 1px solid var(--line);
+    }
+    .settings-data-section h3 { margin-bottom: 12px; }
+    .okf-section-head {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      margin-bottom: 12px;
+    }
+    .okf-section-head h3 { margin: 0; }
+    .okf-version {
+      flex: 0 0 auto;
+      padding: 3px 7px;
+      border: 1px solid #d8dde3;
+      border-radius: 5px;
+      color: #59636d;
+      background: #f5f6f7;
+      font: 10px/1.2 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    }
+    .okf-export-options {
+      grid-column: 1 / -1;
+      display: flex;
+      align-items: center;
+      gap: 10px 18px;
+      flex-wrap: wrap;
+      min-height: var(--control-height);
+    }
+    .okf-export-options .checkbox-row { color: #59636d; }
+    .okf-import-preview {
+      margin-top: 14px;
+      border-block: 1px solid var(--line);
+    }
+    .okf-import-preview[hidden] { display: none; }
+    .okf-preview-summary {
+      min-height: 38px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      color: #4d5761;
+      font-size: 12px;
+    }
+    .okf-preview-summary strong { color: var(--ink); }
+    .okf-document-list {
+      max-height: 224px;
+      overflow: auto;
+      border-top: 1px solid var(--line);
+    }
+    .okf-document-row {
+      min-width: 0;
+      display: grid;
+      grid-template-columns: 18px minmax(0, 1fr) auto;
+      gap: 9px;
+      align-items: start;
+      padding: 9px 2px;
+      border-bottom: 1px solid var(--line);
+      font-size: 11px;
+    }
+    .okf-document-row:last-child { border-bottom: 0; }
+    .okf-document-row > svg { width: 15px; height: 15px; margin-top: 1px; }
+    .okf-document-row.ready > svg { color: var(--primary); }
+    .okf-document-row.unsupported > svg { color: #9a6a18; }
+    .okf-document-row.invalid > svg { color: var(--danger); }
+    .okf-document-row.reserved > svg { color: #7a848e; }
+    .okf-document-copy { min-width: 0; display: grid; gap: 2px; }
+    .okf-document-copy strong,
+    .okf-document-copy span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .okf-document-copy span { color: var(--muted); }
+    .okf-document-status { color: var(--muted); white-space: nowrap; }
+    .settings-field select,
+    .settings-field input,
+    .settings-field textarea { width: 100%; min-width: 0; }
+    .prompt-mode-tabs { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    .prompt-editor-field { margin-top: 14px; }
+    .system-prompt-editor {
+      min-height: 300px;
+      height: min(44vh, 480px);
+      max-height: none;
+      resize: vertical;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+      line-height: 1.55;
+    }
+    .system-prompt-details {
+      margin-top: 14px;
+      border-top: 1px solid var(--line);
+    }
+    .system-prompt-details summary {
+      padding: 12px 0;
+      color: #465468;
+      cursor: pointer;
+      font-size: 12px;
+      font-weight: 650;
+    }
+    .system-prompt-details pre {
+      max-height: 320px;
+      margin: 0 0 10px;
+      padding: 12px;
+      overflow: auto;
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      background: #f7f8f9;
+      white-space: pre-wrap;
+      overflow-wrap: anywhere;
+      font-size: 11px;
+      line-height: 1.55;
+    }
+    .composer {
+      grid-template-columns: minmax(0, 1fr) 38px 38px 38px auto;
+    }
+    .attachment-queue {
+      grid-column: 1 / -1;
+      min-width: 0;
+      display: flex;
+      gap: 7px;
+      overflow-x: auto;
+      padding-bottom: 2px;
+    }
+    .attachment-queue[hidden] { display: none; }
+    .attachment-chip {
+      flex: 0 0 auto;
+      max-width: 240px;
+      min-height: 34px;
+      padding: 4px 5px 4px 8px;
+      border: 1px solid #d9d9d9;
+      border-radius: 6px;
+      background: #ffffff;
+      display: grid;
+      grid-template-columns: 18px minmax(0, 1fr) 26px;
+      gap: 6px;
+      align-items: center;
+      box-shadow: var(--shadow);
+    }
+    .attachment-chip svg { width: 16px; height: 16px; color: #5c6670; }
+    .attachment-chip-copy { min-width: 0; display: grid; gap: 1px; }
+    .attachment-chip-copy strong,
+    .attachment-chip-copy small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .attachment-chip-copy strong { font-size: 11px; }
+    .attachment-chip-copy small { color: var(--muted); font-size: 9px; }
+    .attachment-remove {
+      width: 26px;
+      height: 26px;
+      padding: 0;
+      border: 0;
+      border-radius: 5px;
+      background: transparent;
+      color: #7a7a7a;
+      cursor: pointer;
+      display: grid;
+      place-items: center;
+    }
+    .attachment-remove:hover { background: #eeeeee; color: var(--danger); }
+    .composer #attachFileBtn { grid-column: 2; }
+    .composer #cancelMessageBtn { grid-column: 3; }
+    .composer #retryMessageBtn { grid-column: 4; }
+    .composer #sendBtn { grid-column: 5; }
+    .workspace-file-head {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      flex-wrap: wrap;
+    }
+    .workspace-file-location { min-width: 0; display: grid; gap: 4px; }
+    .workspace-file-location h3 { margin: 0; }
+    .workspace-file-location code { color: var(--muted); font-size: 11px; overflow-wrap: anywhere; }
+    .workspace-file-actions { display: flex; align-items: center; gap: 7px; }
+    .workspace-file-state { min-height: 18px; margin: 8px 0; }
+    .workspace-file-list { border-top: 1px solid var(--line); }
+    .workspace-file-row {
+      min-width: 0;
+      display: grid;
+      grid-template-columns: 30px minmax(0, 1fr) minmax(110px, auto) minmax(120px, auto);
+      gap: 10px;
+      align-items: center;
+      min-height: 50px;
+      padding: 7px 0;
+      border-bottom: 1px solid #ededed;
+    }
+    .workspace-file-icon { width: 30px; height: 30px; display: grid; place-items: center; color: #53616f; }
+    .workspace-file-icon svg { width: 18px; height: 18px; }
+    .workspace-file-name {
+      min-width: 0;
+      padding: 0;
+      border: 0;
+      background: transparent;
+      color: var(--text);
+      text-align: left;
+      cursor: pointer;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .workspace-file-name:hover { color: #087d45; }
+    .workspace-file-meta { color: var(--muted); font-size: 10px; white-space: nowrap; }
+    .workspace-file-row-actions { display: flex; justify-content: flex-end; gap: 3px; }
+    .workspace-file-row-actions button { width: 30px; height: 30px; }
+    .workspace-file-empty { padding: 36px 12px; color: var(--muted); text-align: center; font-size: 12px; }
+    .workspace-file-preview-content {
+      min-height: 180px;
+      max-height: min(660px, calc(100vh - 112px));
+      padding: 16px;
+      overflow: auto;
+      background: #f7f7f7;
+    }
+    .workspace-file-preview-content pre {
+      margin: 0;
+      padding: 14px;
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      background: #ffffff;
+      white-space: pre-wrap;
+      overflow-wrap: anywhere;
+      font: 12px/1.6 ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+    }
+    .workspace-file-preview-content img { display: block; max-width: 100%; max-height: 70vh; margin: auto; object-fit: contain; }
+    .workspace-file-preview-content iframe { width: 100%; height: min(66vh, 640px); border: 0; background: #ffffff; }
+    .chat-image-dialog {
+      width: min(1080px, calc(100vw - 28px));
+      max-height: calc(100vh - 28px);
+      padding: 0;
+      border: 1px solid #d8d8d8;
+      border-radius: 8px;
+      background: #ffffff;
+      color: var(--text);
+      box-shadow: 0 14px 38px rgba(0, 0, 0, 0.24);
+    }
+    .chat-image-dialog::backdrop { background: rgba(0, 0, 0, 0.56); }
+    .chat-image-head { min-height: 52px; padding: 7px 9px 7px 16px; border-bottom: 1px solid var(--line); display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+    .chat-image-head h2 { min-width: 0; margin: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 14px; }
+    .chat-image-actions { display: flex; gap: 6px; }
+    .chat-image-actions .icon-button { width: 34px; height: 34px; }
+    .chat-image-stage { min-height: 240px; height: min(78vh, 760px); padding: 12px; display: grid; place-items: center; overflow: auto; background: #1c1c1c; }
+    .chat-image-stage img { display: block; max-width: 100%; max-height: 100%; object-fit: contain; }
+
+    @media (max-width: 900px) {
+      .settings-shell { padding: 0; }
+      .management-head,
+      .settings-head { align-items: flex-start; }
+      .management-tabs,
+      .settings-tabs { width: 100%; }
+      .composer { grid-template-columns: minmax(0, 1fr) 36px 36px 36px auto; }
+      .workspace-file-row { grid-template-columns: 30px minmax(0, 1fr) auto; }
+      .workspace-file-meta { display: none; }
+      .message-image-thumb,
+      .message-inline-image { width: min(220px, 62vw); }
+      .message-image-grid.multiple { grid-template-columns: repeat(2, minmax(0, 112px)); }
+      .message-image-grid.multiple .message-image-thumb { width: 112px; }
+      .chat-image-dialog { width: calc(100vw - 16px); max-height: calc(100vh - 16px); }
+      .chat-image-stage { height: calc(100vh - 84px); padding: 8px; }
+      .workspace-file-row-actions { grid-column: 2 / -1; justify-content: flex-start; }
+      .workspace-file-head { align-items: flex-start; }
+      .workspace-file-actions { width: 100%; }
+      .workspace-file-actions #workspaceFileUploadBtn { margin-left: auto; }
+      .system-prompt-editor { min-height: 250px; height: 38vh; }
+    }
+
+    /* Chat chrome: navigation belongs to the sidebar; the top bar only identifies the active conversation. */
+    .app { grid-template-rows: 64px minmax(0, 1fr) 28px; }
+    .header-right {
+      height: 64px;
+      padding: 0 18px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+    }
+    .conversation-heading {
+      min-width: 0;
+      max-width: min(720px, calc(100% - 92px));
+      margin-right: auto;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      overflow: hidden;
+    }
+    .conversation-header-avatar {
+      flex: 0 0 38px;
+      width: 38px;
+      height: 38px;
+      border-radius: 7px;
+      overflow: hidden;
+      display: grid;
+      place-items: center;
+      background: hsl(var(--avatar-hue, 145) 52% 46%);
+      color: #ffffff;
+      font-size: 13px;
+      font-weight: 700;
+    }
+    .conversation-header-avatar img { width: 100%; height: 100%; object-fit: cover; display: block; }
+    .conversation-heading-copy { min-width: 0; display: grid; gap: 3px; }
+    .conversation-title-line { min-width: 0; display: flex; align-items: center; gap: 8px; }
+    .conversation-title-line strong { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 15px; font-weight: 650; }
+    .conversation-mode-badge {
+      flex: 0 0 auto;
+      color: #687078;
+      font-size: 11px;
+      white-space: nowrap;
+    }
+    .conversation-mode-badge::before { content: ""; display: inline-block; width: 5px; height: 5px; margin: 0 5px 1px 0; border-radius: 50%; background: #26a967; }
+    .conversation-heading .conversation-scene {
+      min-width: 0;
+      display: block;
+      color: #607066;
+      font-size: 11px;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .conversation-header-actions { flex: 0 0 auto; display: flex; align-items: center; gap: 6px; }
+    .conversation-header-actions > .icon-button,
+    .mobile-session-actions > .icon-button { width: 34px; height: 34px; }
+    .mobile-session-actions { position: relative; display: block; }
+    .session-actions-desktop { display: none; }
+    .conversation-list-head-actions { display: flex; align-items: center; gap: 5px; }
+    .new-conversation-form { padding: 18px; display: grid; gap: 16px; }
+    .new-conversation-mode { min-width: 0; margin: 0; padding: 0; border: 0; }
+    .new-conversation-mode legend { margin-bottom: 7px; color: var(--muted); font-size: 13px; }
+    .new-conversation-mode .segmented { width: 100%; grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    .new-conversation-mode .segmented button { min-width: 0; }
+    .scene-info-dialog { width: min(700px, calc(100vw - 28px)); }
+    .scene-info-content { max-height: min(480px, calc(100vh - 176px)); padding: 8px 18px; overflow: auto; }
+    .scene-info-row { padding: 11px 0; border-bottom: 1px solid #ededed; display: grid; grid-template-columns: 86px minmax(0, 1fr); gap: 12px; font-size: 12px; line-height: 1.55; }
+    .scene-info-row:last-child { border-bottom: 0; }
+    .scene-info-row dt { color: var(--muted); }
+    .scene-info-row dd { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; }
+    .scene-info-actions { padding: 12px 18px 16px; border-top: 1px solid #ededed; display: flex; justify-content: flex-end; gap: 8px; }
+    .scene-editor-form { max-height: min(560px, calc(100vh - 176px)); padding: 16px 18px; overflow: auto; }
+    .scene-editor-form label { display: grid; gap: 6px; color: var(--muted); font-size: 13px; }
+    .scene-editor-form textarea { min-height: 92px; }
+
+    @media (max-width: 900px) {
+      .app { grid-template-rows: 58px minmax(0, 1fr) 60px; }
+      .header-right {
+        grid-column: 1;
+        grid-row: 1;
+        width: 100%;
+        height: 58px;
+        padding: 0 10px;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 7px;
+        overflow: visible;
+      }
+      .conversation-heading {
+        flex: 1 1 auto;
+        min-width: 0;
+        max-width: none;
+        margin: 0;
+        padding: 0;
+        gap: 8px;
+      }
+      .header-right .conversation-list-toggle {
+        position: static;
+        flex: 0 0 32px;
+        width: 32px;
+        height: 32px;
+        display: inline-grid;
+      }
+      .conversation-header-avatar { flex-basis: 34px; width: 34px; height: 34px; border-radius: 6px; }
+      .conversation-heading-copy { gap: 2px; }
+      .conversation-title-line strong { font-size: 14px; }
+      .conversation-mode-badge,
+      .conversation-heading .conversation-scene { font-size: 10px; }
+      .conversation-title-line { gap: 6px; }
+      .conversation-header-actions { gap: 4px; }
+      .conversation-header-actions > .icon-button,
+      .mobile-session-actions > .icon-button { width: 32px; height: 32px; }
+      main { grid-column: 1; grid-row: 2; }
+      .scene-info-row { grid-template-columns: 72px minmax(0, 1fr); }
     }
   </style>
 </head>
@@ -329,222 +2664,5219 @@ export function renderAppHtml(): string {
   <div class="app">
     <header>
       <div class="header-left">
-        <h1>RP Agent</h1>
-        <div class="segmented" aria-label="UI mode">
-          <button id="normalBtn" class="active" type="button">聊天</button>
-          <button id="settingsBtn" type="button">设置</button>
-          <button id="debugBtn" type="button">Debug</button>
+        <h1><span id="brandUserAvatar" class="brand-mark">我</span><span class="brand-name">RP Agent</span></h1>
+        <div class="segmented nav-segmented" aria-label="UI mode">
+          <button id="normalBtn" class="active" type="button"><i data-lucide="message-circle" aria-hidden="true"></i><span>聊天</span></button>
+          <button id="scheduleBtn" type="button"><i data-lucide="calendar-days" aria-hidden="true"></i><span>日程</span></button>
+          <button id="charactersBtn" type="button"><i data-lucide="drama" aria-hidden="true"></i><span>角色</span></button>
+          <button id="managementBtn" type="button"><i data-lucide="blocks" aria-hidden="true"></i><span>管理</span></button>
+          <button id="settingsBtn" type="button"><i data-lucide="settings" aria-hidden="true"></i><span>设置</span></button>
+          <button id="debugBtn" type="button"><i data-lucide="activity" aria-hidden="true"></i><span>Debug</span></button>
         </div>
       </div>
       <div class="header-right">
-        <label class="controls">
-          <span class="muted">会话</span>
-          <input id="sessionInput" value="default" autocomplete="off" />
-        </label>
-        <label class="controls">
-          <span class="muted">视角</span>
-          <select id="modeSelect">
-            <option value="sms">消息</option>
-            <option value="rp">叙事</option>
-          </select>
-        </label>
+        <div class="conversation-heading">
+          <button id="conversationListToggle" class="secondary icon-button conversation-list-toggle" type="button" title="会话列表" aria-label="会话列表"><i data-lucide="chevron-left" aria-hidden="true"></i></button>
+          <span id="conversationHeaderAvatar" class="conversation-header-avatar" aria-hidden="true">角</span>
+          <span class="conversation-heading-copy">
+            <span class="conversation-title-line"><strong id="conversationCharacter">未选择角色</strong><span id="conversationMode" class="conversation-mode-badge">角色私聊</span></span>
+            <span id="conversationScene" class="conversation-scene" hidden></span>
+          </span>
+        </div>
+        <div class="conversation-header-actions">
+          <button id="sceneInfoBtn" class="secondary icon-button" type="button" title="场景信息" aria-label="场景信息" hidden><i data-lucide="map-pin" aria-hidden="true"></i></button>
+          <div class="mobile-session-actions">
+            <button id="sessionActionsMenuBtn" class="secondary icon-button" type="button" title="会话操作" aria-label="会话操作" aria-expanded="false" aria-controls="sessionActionsMenu"><i data-lucide="ellipsis" aria-hidden="true"></i></button>
+            <div id="sessionActionsMenu" class="session-actions-menu" role="menu" hidden>
+              <button id="mobileRenameSessionBtn" type="button" role="menuitem" disabled><i data-lucide="pencil" aria-hidden="true"></i><span>重命名会话</span></button>
+              <button id="mobileArchiveSessionBtn" type="button" role="menuitem" disabled><i data-lucide="archive" aria-hidden="true"></i><span>归档会话</span></button>
+              <button id="mobileDeleteSessionBtn" type="button" role="menuitem" disabled><i data-lucide="trash-2" aria-hidden="true"></i><span>永久删除会话</span></button>
+            </div>
+          </div>
+        </div>
+        <div class="session-state-controls" hidden>
+          <select id="sessionSelect" aria-label="会话"><option value="">新会话</option></select>
+          <button id="newSessionBtn" type="button">新建会话</button>
+          <button id="renameSessionBtn" type="button" disabled>重命名会话</button>
+          <button id="archiveSessionBtn" type="button" disabled>归档会话</button>
+          <button id="deleteSessionBtn" type="button" disabled>永久删除会话</button>
+          <button id="archivedSessionsBtn" type="button">查看归档会话</button>
+          <button id="mobileArchivedSessionsBtn" type="button">查看归档会话</button>
+          <label id="modeControl"><select id="modeSelect"><option value="sms">角色私聊</option><option value="rp">剧情演绎</option></select></label>
+          <label id="chatCharacterControl"><select id="chatCharacterSelect"><option value="">请创建或选择角色</option></select></label>
+        </div>
       </div>
     </header>
-    <main>
+    <main id="mainPane">
       <section id="chatPane" class="chat">
-        <div id="messages" class="messages" aria-live="polite"></div>
-        <form id="composer" class="composer">
-          <textarea id="textInput" placeholder="输入消息，例如：5分钟后提醒我喝水"></textarea>
-          <button id="sendBtn" class="primary" type="submit">发送</button>
-        </form>
+        <div id="chatWorkspace" class="chat-workspace">
+          <aside class="conversation-sidebar" aria-label="角色会话列表">
+            <div class="conversation-list-head"><strong id="conversationListTitle">会话</strong><span class="conversation-list-head-actions"><button id="sidebarBatchManageBtn" class="secondary icon-button" type="button" title="批量管理" aria-label="批量管理会话"><i data-lucide="list-checks" aria-hidden="true"></i></button><button id="sidebarArchivedSessionsBtn" class="secondary icon-button" type="button" title="归档会话" aria-label="查看归档会话"><i data-lucide="archive-restore" aria-hidden="true"></i></button><button id="sidebarNewSessionBtn" class="secondary icon-button" type="button" title="新建对话" aria-label="新建对话"><i data-lucide="message-square-plus" aria-hidden="true"></i></button></span></div>
+            <div id="conversationList" class="conversation-list"></div>
+            <div id="conversationBatchBar" class="conversation-batch-bar" hidden>
+              <div class="conversation-batch-summary"><strong id="conversationBatchCount">已选 0 项</strong><button id="conversationBatchSelectAllBtn" class="text-button" type="button">全选</button></div>
+              <div class="conversation-batch-actions"><button id="conversationBatchArchiveBtn" class="secondary" type="button" disabled><i data-lucide="archive" aria-hidden="true"></i><span>归档</span></button><button id="conversationBatchDeleteBtn" class="danger-button" type="button" disabled><i data-lucide="trash-2" aria-hidden="true"></i><span>删除</span></button></div>
+            </div>
+          </aside>
+          <div class="chat-thread">
+            <div id="messages" class="messages" aria-live="polite"></div>
+            <form id="composer" class="composer">
+              <div id="attachmentQueue" class="attachment-queue" hidden></div>
+              <textarea id="textInput" placeholder="输入消息，例如：5分钟后提醒我喝水"></textarea>
+              <input id="chatAttachmentInput" type="file" multiple hidden />
+              <button id="attachFileBtn" class="secondary icon-button" type="button" title="上传附件" aria-label="上传附件"><i data-lucide="paperclip" aria-hidden="true"></i></button>
+              <button id="cancelMessageBtn" class="secondary icon-button" type="button" title="停止生成" aria-label="停止" disabled><i data-lucide="square" aria-hidden="true"></i></button>
+              <button id="retryMessageBtn" class="secondary icon-button" type="button" title="重试失败消息" aria-label="重试" disabled><i data-lucide="rotate-ccw" aria-hidden="true"></i></button>
+              <button id="sendBtn" class="primary send-button" type="submit"><i data-lucide="send-horizontal" aria-hidden="true"></i><span>发送</span></button>
+            </form>
+          </div>
+        </div>
+      </section>
+      <section id="schedulePage" class="settings-page" hidden>
+        <div class="schedule-shell">
+          <div class="schedule-owner-head">
+            <div class="schedule-title-group">
+              <h2>日程</h2>
+              <div class="segmented schedule-owner-tabs" role="tablist" aria-label="日程归属">
+                <button id="userScheduleTabBtn" class="active" type="button" role="tab" aria-selected="true"><i data-lucide="user" aria-hidden="true"></i><span>用户日程</span></button>
+                <button id="characterScheduleTabBtn" type="button" role="tab" aria-selected="false"><i data-lucide="bot" aria-hidden="true"></i><span>角色日程</span></button>
+              </div>
+            </div>
+            <label id="scheduleCharacterField" class="schedule-character-field" hidden><span>角色</span><select id="scheduleCharacterSelect" aria-label="角色日程角色"></select></label>
+          </div>
+          <div class="schedule-view-tabs segmented" role="tablist" aria-label="日程视图">
+            <button id="scheduleAgendaViewBtn" class="active" type="button" role="tab" aria-selected="true">日程</button>
+            <button id="scheduleCalendarViewBtn" type="button" role="tab" aria-selected="false">月历</button>
+            <button id="scheduleTasksViewBtn" type="button" role="tab" aria-selected="false">任务</button>
+          </div>
+          <div class="schedule-head schedule-navigation">
+            <div id="scheduleScopeSummary" class="schedule-scope-summary">我的现实日程与提醒</div>
+            <div class="schedule-toolbar">
+              <button id="scheduleTodayBtn" class="secondary" type="button">今天</button>
+              <div class="schedule-month-nav" aria-label="月份切换">
+                <button id="schedulePreviousMonthBtn" class="secondary icon-button" type="button" title="上个月" aria-label="上个月"><i data-lucide="chevron-left" aria-hidden="true"></i></button>
+                <span id="scheduleMonthLabel" class="schedule-month-label"></span>
+                <button id="scheduleNextMonthBtn" class="secondary icon-button" type="button" title="下个月" aria-label="下个月"><i data-lucide="chevron-right" aria-hidden="true"></i></button>
+              </div>
+              <button id="scheduleCreateBtn" class="primary" type="button"><i data-lucide="plus" aria-hidden="true"></i><span>新建</span></button>
+            </div>
+          </div>
+          <div class="schedule-dashboard">
+            <section class="calendar-panel" aria-label="月历">
+              <div class="calendar-weekdays" aria-hidden="true"><span>一</span><span>二</span><span>三</span><span>四</span><span>五</span><span>六</span><span>日</span></div>
+              <div id="scheduleCalendar" class="calendar-grid"></div>
+            </section>
+            <div class="schedule-side">
+              <section class="schedule-agenda" aria-labelledby="scheduleAgendaTitle">
+                <div class="schedule-agenda-head"><div class="schedule-head"><h3 id="scheduleAgendaTitle">当日日程</h3><span id="scheduleState" class="muted"></span></div></div>
+                <div id="scheduleList" class="schedule-list"></div>
+              </section>
+              <section class="task-panel" aria-labelledby="taskListTitle">
+                <div class="task-panel-head">
+                  <div class="schedule-head"><h3 id="taskListTitle">任务清单</h3><span id="taskCount" class="muted"></span></div>
+                  <div class="segmented task-filters" aria-label="任务筛选">
+                    <button id="taskPendingBtn" class="active" type="button">待办</button>
+                    <button id="taskAllBtn" type="button">全部</button>
+                    <button id="taskCompletedBtn" type="button">已完成</button>
+                  </div>
+                </div>
+                <div id="taskList" class="task-list"></div>
+              </section>
+            </div>
+          </div>
+        </div>
+        <dialog id="scheduleEditorDialog" class="schedule-editor-dialog" aria-labelledby="scheduleEditorTitle">
+          <div class="schedule-editor-head"><div><h3 id="scheduleEditorTitle">新建日程</h3><span id="scheduleEditorScope" class="schedule-editor-scope">用户日程</span></div><button id="closeScheduleEditorBtn" class="secondary icon-button" type="button" title="关闭" aria-label="关闭日程编辑"><i data-lucide="x" aria-hidden="true"></i></button></div>
+          <form id="scheduleForm" class="schedule-editor">
+            <div class="schedule-form">
+              <label class="schedule-title-field">标题<input id="scheduleTitle" required /></label>
+              <label class="schedule-kind-field">类型
+                <select id="scheduleKind">
+                  <option value="reminder">提醒</option>
+                  <option value="event">事件</option>
+                  <option value="task">任务</option>
+                </select>
+              </label>
+              <label class="schedule-recurrence-field">重复
+                <select id="scheduleRecurrence">
+                  <option value="">不重复</option>
+                  <option value="FREQ=DAILY">每天</option>
+                  <option value="FREQ=WEEKLY">每周</option>
+                </select>
+              </label>
+              <label class="checkbox-row schedule-all-day"><input id="scheduleAllDay" type="checkbox" /><span>全天</span></label>
+              <label class="schedule-start-field">开始时间<input id="scheduleStart" type="datetime-local" /></label>
+              <label id="scheduleEndField" class="schedule-end-field">结束时间<input id="scheduleEnd" type="datetime-local" /></label>
+              <label class="full">备注<textarea id="scheduleNotes"></textarea></label>
+            </div>
+            <div class="settings-actions">
+              <button id="saveScheduleBtn" class="primary" type="submit">创建日程</button>
+              <button id="resetScheduleBtn" class="secondary" type="button">取消</button>
+              <span id="scheduleEditorState" class="muted"></span>
+            </div>
+          </form>
+        </dialog>
+      </section>
+      <section id="charactersPage" class="settings-page" hidden>
+        <div class="character-shell">
+          <div class="character-head">
+            <h2>角色</h2>
+            <button id="newCharacterBtn" class="primary" type="button"><i data-lucide="user-plus" aria-hidden="true"></i><span>新建角色</span></button>
+          </div>
+          <div id="characterCardGrid" class="character-card-grid" aria-label="角色列表"></div>
+          <div id="characterListEmpty" class="character-list-empty" hidden>
+            <i data-lucide="users-round" aria-hidden="true"></i>
+            <strong>还没有角色</strong>
+          </div>
+          <section id="characterDetail" class="character-detail" hidden>
+            <div class="character-detail-head">
+              <div class="character-detail-title"><span>角色资料</span><h3 id="characterDetailTitle">新角色</h3></div>
+              <div class="segmented character-tabs" role="tablist" aria-label="角色管理视图">
+                <button id="characterSettingsTabBtn" class="active" type="button" role="tab" aria-selected="true" aria-controls="characterSettingsPanel">角色设定</button>
+                <button id="characterMemoryTabBtn" type="button" role="tab" aria-selected="false" aria-controls="characterMemoryPanel">长期记忆</button>
+              </div>
+            </div>
+            <div id="characterSettingsPanel" class="character-panel" role="tabpanel">
+              <form id="characterForm" class="character-editor-form">
+                <div class="character-editor-head"><h4>身份与 SOUL.md</h4><span id="characterState" class="muted"></span></div>
+                <div class="character-grid">
+                  <div class="full avatar-editor">
+                    <span id="characterAvatarPreview" class="avatar-preview" style="--avatar-hue:145">角</span>
+                    <div class="avatar-actions">
+                      <input id="characterAvatarInput" type="file" accept="image/png,image/jpeg,image/webp" hidden />
+                      <button id="changeCharacterAvatarBtn" class="secondary" type="button"><i data-lucide="image-plus" aria-hidden="true"></i><span>更换头像</span></button>
+                      <button id="removeCharacterAvatarBtn" class="secondary" type="button"><i data-lucide="trash-2" aria-hidden="true"></i><span>移除</span></button>
+                    </div>
+                    <span class="avatar-hint">自动裁剪为正方形，仅保存在本机。</span>
+                  </div>
+                  <label class="full">名称<input id="characterName" required /></label>
+                  <div class="full character-soul-head">
+                    <h4>SOUL.md</h4>
+                    <span id="characterSoulCount" class="muted character-soul-count">0 / 8000</span>
+                  </div>
+                  <textarea id="characterSoulMarkdown" class="full character-soul-markdown" aria-label="角色 SOUL.md" spellcheck="false"></textarea>
+                </div>
+                <div class="settings-actions character-save-actions">
+                  <button id="saveCharacterBtn" class="primary" type="submit">创建角色</button>
+                </div>
+              </form>
+            </div>
+            <div id="characterMemoryPanel" class="character-panel" role="tabpanel" hidden>
+              <div class="character-memory-head">
+                <div><h4>长期记忆</h4><span id="memoryState" class="muted"></span></div>
+                <button id="addMemoryBtn" class="primary" type="button"><i data-lucide="plus" aria-hidden="true"></i><span>添加记忆</span></button>
+              </div>
+              <div class="memory-toolbar">
+                <input id="memorySearch" placeholder="搜索内容或标签" aria-label="搜索长期记忆" />
+                <button id="searchMemoryBtn" class="secondary" type="button"><i data-lucide="search" aria-hidden="true"></i><span>搜索</span></button>
+              </div>
+              <div id="memoryList" class="memory-list"></div>
+            </div>
+          </section>
+        </div>
+      </section>
+      <section id="managementPage" class="settings-page" hidden>
+        <div class="management-shell">
+          <div class="management-head">
+            <h2>Agent 管理</h2>
+            <div class="segmented management-tabs" aria-label="管理视图">
+              <button id="modulesTabBtn" class="active" type="button">能力模块</button>
+              <button id="profileTabBtn" type="button">用户画像</button>
+              <button id="memoryManagementTabBtn" type="button">记忆</button>
+              <button id="workspaceFilesTabBtn" type="button">文件</button>
+            </div>
+          </div>
+          <section id="modulesPanel" class="management-panel">
+            <div class="schedule-head">
+              <h3>MCP 与 Skills</h3>
+              <button id="refreshModulesBtn" class="secondary" type="button">重新扫描</button>
+            </div>
+            <div id="moduleList" class="module-list"></div>
+            <div class="permission-section">
+              <div class="schedule-head">
+                <h3>权限与工作区</h3>
+                <code id="workspacePath" class="permission-path"></code>
+              </div>
+              <div id="permissionControls" class="permission-list">
+                <div class="permission-row">
+                  <div>
+                    <div class="module-name">文件访问</div>
+                    <div class="module-description">Agent 对专用 workspace 的访问级别</div>
+                  </div>
+                  <div id="workspaceAccessControls" class="segmented permission-access" aria-label="Workspace 文件访问权限">
+                    <button type="button" data-workspace-access="off">关闭</button>
+                    <button type="button" data-workspace-access="read_only">只读</button>
+                    <button type="button" data-workspace-access="read_write">读写</button>
+                  </div>
+                </div>
+                <div class="permission-row">
+                  <div>
+                    <div class="module-name">终端执行</div>
+                    <div class="module-description">在 Bubblewrap 沙箱中执行命令</div>
+                  </div>
+                  <label class="toggle"><span id="shellPermissionLabel">已关闭</span><input id="shellPermissionInput" type="checkbox" data-permission="shellEnabled" /></label>
+                </div>
+                <div class="permission-row">
+                  <div>
+                    <div class="module-name">终端网络</div>
+                    <div class="module-description">允许沙箱命令访问网络</div>
+                  </div>
+                  <label class="toggle"><span id="networkPermissionLabel">已关闭</span><input id="networkPermissionInput" type="checkbox" data-permission="networkEnabled" /></label>
+                </div>
+                <div class="permission-row">
+                  <div>
+                    <div class="module-name">用户画像自动编辑</div>
+                    <div class="module-description">允许 User Profile MCP 更新画像 Markdown</div>
+                  </div>
+                  <label class="toggle"><span id="profileWritePermissionLabel">已关闭</span><input id="profileWritePermissionInput" type="checkbox" data-permission="userProfileWriteEnabled" /></label>
+                </div>
+                <div class="permission-row">
+                  <div>
+                    <div class="module-name">角色 SOUL 自动编辑</div>
+                    <div class="module-description">允许当前角色专用 MCP 更新 SOUL.md</div>
+                  </div>
+                  <label class="toggle"><span id="soulWritePermissionLabel">已关闭</span><input id="soulWritePermissionInput" type="checkbox" data-permission="characterSoulWriteEnabled" /></label>
+                </div>
+                <div class="permission-row">
+                  <div>
+                    <div class="module-name">现实记忆提议</div>
+                    <div class="module-description">允许 Agent MCP 在 reality/global 创建 pending 候选</div>
+                  </div>
+                  <label class="toggle"><span id="realityMemoryWritePermissionLabel">已关闭</span><input id="realityMemoryWritePermissionInput" type="checkbox" data-permission="realityMemoryWriteEnabled" /></label>
+                </div>
+                <div class="permission-row">
+                  <div>
+                    <div class="module-name">角色记忆提议</div>
+                    <div class="module-description">允许 Agent MCP 为当前角色创建 pending RP 候选</div>
+                  </div>
+                  <label class="toggle"><span id="characterMemoryWritePermissionLabel">已关闭</span><input id="characterMemoryWritePermissionInput" type="checkbox" data-permission="characterMemoryWriteEnabled" /></label>
+                </div>
+              </div>
+              <div id="permissionRuntime" class="muted permission-runtime"></div>
+            </div>
+          </section>
+          <section id="profilePanel" class="management-panel" hidden>
+            <div class="schedule-head">
+              <h3>用户画像 Markdown</h3>
+              <span id="profileCharacterCount" class="muted profile-character-count">0 / 2000</span>
+            </div>
+            <form id="profileDocumentForm" class="profile-document-form">
+              <div class="avatar-editor">
+                <span id="userAvatarPreview" class="avatar-preview" style="--avatar-hue:145">我</span>
+                <div class="avatar-actions">
+                  <input id="userAvatarInput" type="file" accept="image/png,image/jpeg,image/webp" hidden />
+                  <button id="changeUserAvatarBtn" class="secondary" type="button"><i data-lucide="image-plus" aria-hidden="true"></i><span>更换头像</span></button>
+                  <button id="removeUserAvatarBtn" class="secondary" type="button"><i data-lucide="trash-2" aria-hidden="true"></i><span>移除</span></button>
+                </div>
+                <span class="avatar-hint">用于聊天中的用户消息头像。</span>
+              </div>
+              <textarea id="profileMarkdown" class="profile-markdown" aria-label="用户画像 Markdown" spellcheck="false"></textarea>
+              <div class="settings-actions">
+                <button id="saveProfileBtn" class="primary" type="submit">保存画像</button>
+                <span id="profileState" class="muted"></span>
+              </div>
+            </form>
+          </section>
+          <section id="memoryManagementPanel" class="management-panel" hidden>
+            <div class="schedule-head">
+              <div>
+                <h3>长期记忆</h3>
+                <div id="memoryCoordinatorState" class="muted"></div>
+              </div>
+              <button id="refreshManagedMemoriesBtn" class="secondary icon-button" type="button" title="刷新记忆" aria-label="刷新记忆"><i data-lucide="refresh-cw" aria-hidden="true"></i></button>
+            </div>
+            <div class="memory-manager-toolbar">
+              <select id="managedMemoryRealm" aria-label="记忆领域"><option value="">全部领域</option><option value="reality">现实</option><option value="roleplay">角色</option><option value="legacy">隔离</option></select>
+              <select id="managedMemoryCharacter" aria-label="筛选角色"><option value="">全部角色</option></select>
+              <select id="managedMemoryTypeFilter" aria-label="记忆类型"><option value="">全部类型</option><option value="user_fact">用户事实</option><option value="preference">偏好</option><option value="goal">目标</option><option value="person">人物</option><option value="project">项目</option><option value="relationship_event">关系事件</option><option value="world_fact">世界事实</option><option value="plot_event">剧情事件</option><option value="boundary">边界</option></select>
+              <select id="managedMemoryValidity" aria-label="记忆状态"><option value="">全部状态</option><option value="pending">待确认</option><option value="active">已确认</option><option value="rejected">已拒绝</option><option value="archived">已归档</option><option value="superseded">已替换</option><option value="deleted">已遗忘</option></select>
+              <input id="managedMemoryQuery" type="search" placeholder="搜索正文或标签" aria-label="搜索记忆" />
+              <button id="searchManagedMemoriesBtn" class="secondary icon-button" type="button" title="搜索" aria-label="搜索记忆"><i data-lucide="search" aria-hidden="true"></i></button>
+            </div>
+            <form id="managedMemoryForm" class="memory-manager-form">
+              <label>领域<select id="managedMemoryCreateRealm"><option value="reality">现实</option><option value="roleplay">角色</option></select></label>
+              <label>类型<select id="managedMemoryCreateType"></select></label>
+              <label>角色<select id="managedMemoryCreateCharacter"><option value="">不绑定角色</option></select></label>
+              <label>键<input id="managedMemoryCreateKey" placeholder="例如 user.location" /></label>
+              <label class="full">正文<textarea id="managedMemoryCreateContent" required></textarea></label>
+              <div class="settings-actions full"><button class="primary" type="submit">固定记忆</button><span id="managedMemoryActionState" class="muted"></span></div>
+            </form>
+            <section class="retrieval-preview" aria-labelledby="retrievalPreviewTitle">
+              <div class="schedule-head"><h3 id="retrievalPreviewTitle">检索预览</h3><span class="muted">只读，不更新命中状态</span></div>
+              <form id="retrievalPreviewForm" class="retrieval-preview-toolbar">
+                <select id="retrievalPreviewMode" aria-label="预览模式"><option value="sms">角色私聊</option><option value="rp">剧情演绎</option></select>
+                <input id="retrievalPreviewQuery" type="search" placeholder="输入查询，空查询仅预览 bootstrap" aria-label="检索预览查询" />
+                <input id="retrievalPreviewBudget" type="number" min="32" max="2000" value="360" aria-label="记忆 token 预算" />
+                <button class="secondary" type="submit">运行预览</button>
+              </form>
+              <div id="retrievalPreviewState" class="muted" style="margin-top:8px;"></div>
+              <div id="retrievalPreviewResults" class="retrieval-preview-results" hidden></div>
+            </section>
+            <div id="managedMemoryList" class="memory-list"></div>
+            <div class="schedule-head" style="margin-top:18px;"><h3>最近捕获任务</h3><span id="memoryJobCount" class="muted"></span></div>
+            <div id="memoryJobList" class="memory-job-list"></div>
+          </section>
+          <section id="workspaceFilesPanel" class="management-panel" hidden>
+            <div class="workspace-file-head">
+              <div class="workspace-file-location">
+                <h3>Workspace 文件</h3>
+                <code id="workspaceFilePath">/</code>
+              </div>
+              <div class="workspace-file-actions">
+                <input id="workspaceFileUploadInput" type="file" multiple hidden />
+                <button id="workspaceFileUpBtn" class="secondary icon-button" type="button" title="上一级" aria-label="上一级"><i data-lucide="corner-left-up" aria-hidden="true"></i></button>
+                <button id="workspaceFileRefreshBtn" class="secondary icon-button" type="button" title="刷新文件" aria-label="刷新文件"><i data-lucide="refresh-cw" aria-hidden="true"></i></button>
+                <button id="workspaceFileUploadBtn" class="primary" type="button"><i data-lucide="upload" aria-hidden="true"></i><span>上传</span></button>
+              </div>
+            </div>
+            <div id="workspaceFileState" class="muted workspace-file-state"></div>
+            <div id="workspaceFileList" class="workspace-file-list"></div>
+          </section>
+        </div>
       </section>
       <aside id="debugPane" hidden>
         <div class="side-head">
-          <h2>最近上下文日志</h2>
-          <button id="refreshLogsBtn" type="button">刷新</button>
+          <div>
+            <h2>上下文调试</h2>
+            <div class="trace-legend">
+              <span class="trace-key"><span class="trace-swatch system"></span>System</span>
+              <span class="trace-key"><span class="trace-swatch user"></span>User</span>
+              <span class="trace-key"><span class="trace-swatch assistant"></span>Assistant</span>
+              <span class="trace-key"><span class="trace-swatch tool"></span>Tool</span>
+              <span class="trace-key"><span class="trace-swatch schema"></span>Tools schema</span>
+            </div>
+          </div>
+          <div class="trace-actions">
+            <div class="trace-view-tabs" role="tablist" aria-label="调试数据类型">
+              <button id="debugTracesBtn" class="active" type="button" role="tab" aria-selected="true">Provider Trace</button>
+              <button id="debugEconomicsBtn" type="button" role="tab" aria-selected="false">Context Economics</button>
+              <button id="debugFeatureTestsBtn" type="button" role="tab" aria-selected="false">功能测试</button>
+            </div>
+            <button id="refreshLogsBtn" class="secondary" type="button">刷新</button>
+          </div>
         </div>
-        <div id="debugList" class="debug-list"></div>
+        <div id="debugWorkspace" class="debug-workspace">
+          <nav id="traceIndex" class="trace-index" aria-label="模型调用记录"></nav>
+          <section class="trace-inspector">
+            <div id="traceEmpty" class="trace-empty">选择一条记录查看上下文。</div>
+            <div id="traceDetail" class="trace-detail" hidden>
+              <div class="trace-detail-head">
+                <div>
+                  <h3 id="traceDetailTitle" class="trace-detail-title"></h3>
+                  <div id="traceDetailMeta" class="trace-detail-meta"></div>
+                </div>
+                <div class="trace-actions">
+                  <div class="trace-view-tabs" role="tablist" aria-label="Trace 查看方式">
+                    <button id="traceSemanticBtn" class="active" type="button" role="tab" aria-selected="true">语义上下文</button>
+                    <button id="traceRawBtn" type="button" role="tab" aria-selected="false">原始 JSON</button>
+                  </div>
+                  <button id="traceExpandBtn" class="secondary" type="button">全部展开</button>
+                  <button id="traceWrapBtn" class="secondary" type="button" aria-pressed="true">不换行</button>
+                  <button id="traceCopyBtn" class="secondary" type="button">复制 Payload</button>
+                </div>
+              </div>
+              <div id="traceContent" class="trace-content"></div>
+            </div>
+          </section>
+        </div>
+        <section id="featureTestPanel" class="feature-test-panel" hidden>
+          <div class="feature-test-toolbar">
+            <select id="featureTestCharacter" aria-label="测试角色"><option value="">选择测试角色</option></select>
+            <button id="selectAllFeatureTestsBtn" class="secondary" type="button">全选</button>
+            <button id="runFeatureTestsBtn" class="primary" type="button">运行所选测试</button>
+            <span id="featureTestState" class="muted"></span>
+          </div>
+          <div id="featureTestList" class="feature-test-list"></div>
+          <div id="featureTestResults" class="feature-test-results"></div>
+        </section>
       </aside>
       <section id="settingsPage" class="settings-page" hidden>
         <div class="settings-shell">
-          <h2>模型 API 设置</h2>
-          <div class="settings-grid">
-            <label class="checkbox-row full">
-              <input id="apiEnabled" type="checkbox" />
-              <span>启用 OpenAI-compatible API</span>
+          <div class="management-head settings-head">
+            <h2>设置</h2>
+            <div class="segmented settings-tabs" aria-label="设置视图">
+              <button id="modelSettingsTabBtn" class="active" type="button">模型</button>
+              <button id="visionSettingsTabBtn" type="button">视觉</button>
+              <button id="searchSettingsTabBtn" type="button">搜索</button>
+              <button id="promptSettingsTabBtn" type="button">提示词</button>
+              <button id="dataSettingsTabBtn" type="button">数据</button>
+            </div>
+          </div>
+          <section id="modelSettingsPanel" class="management-panel settings-panel">
+            <h3>模型 API</h3>
+            <div class="settings-grid">
+              <label class="checkbox-row full">
+                <input id="apiEnabled" type="checkbox" />
+                <span>启用 OpenAI-compatible API</span>
+              </label>
+              <label class="checkbox-row full">
+                <input id="apiVisionInputEnabled" type="checkbox" />
+                <span>该主模型支持图片输入</span>
+              </label>
+              <div class="settings-field full">
+                <label for="apiBaseUrl">Base URL</label>
+                <input id="apiBaseUrl" placeholder="http://127.0.0.1:8317/v1" />
+              </div>
+              <div class="settings-field">
+                <label for="apiModel">模型名</label>
+                <select id="apiModel"><option value="">读取模型后选择</option><option value="__custom__">手动输入...</option></select>
+                <input id="apiModelCustom" placeholder="输入模型名" hidden />
+              </div>
+              <div class="settings-field">
+                <label for="apiKey">API Key</label>
+                <input id="apiKey" type="password" placeholder="留空表示不修改" autocomplete="off" />
+              </div>
+              <div class="settings-field">
+                <label for="apiTemperature">Temperature</label>
+                <input id="apiTemperature" type="number" step="0.1" min="0" max="2" placeholder="可选" />
+              </div>
+              <div class="settings-field">
+                <label for="apiMaxTokens">Max Tokens</label>
+                <input id="apiMaxTokens" type="number" min="1" step="1" placeholder="可选" />
+              </div>
+            </div>
+            <div class="settings-actions">
+              <button id="saveApiSettingsBtn" class="primary" type="button">保存设置</button>
+              <button id="testModelBtn" class="secondary" type="button">测试连接</button>
+              <button id="discoverModelsBtn" class="secondary" type="button">读取模型</button>
+              <button id="clearApiKeyBtn" class="secondary" type="button">清除 Key</button>
+              <span id="apiSettingsState" class="muted"></span>
+            </div>
+          </section>
+          <section id="visionSettingsPanel" class="management-panel settings-panel" hidden>
+            <h3>图片理解</h3>
+            <div class="settings-grid">
+              <div class="settings-field">
+                <label for="visionMode">处理模式</label>
+                <select id="visionMode">
+                  <option value="auto">自动</option>
+                  <option value="direct">主模型直读</option>
+                  <option value="mcp">Vision MCP</option>
+                  <option value="off">关闭</option>
+                </select>
+              </div>
+              <div class="settings-field">
+                <label for="visionDetail">图片精度</label>
+                <select id="visionDetail">
+                  <option value="auto">自动</option>
+                  <option value="low">低</option>
+                  <option value="high">高</option>
+                </select>
+              </div>
+              <div class="settings-field full">
+                <label for="visionBaseUrl">Base URL</label>
+                <input id="visionBaseUrl" placeholder="https://api.openai.com/v1" />
+              </div>
+              <div class="settings-field">
+                <label for="visionModel">视觉模型</label>
+                <select id="visionModel"><option value="">读取模型后选择</option><option value="__custom__">手动输入...</option></select>
+                <input id="visionModelCustom" placeholder="输入视觉模型名" hidden />
+              </div>
+              <div class="settings-field">
+                <label for="visionApiKey">API Key</label>
+                <input id="visionApiKey" type="password" placeholder="留空表示不修改" autocomplete="off" />
+              </div>
+              <div class="settings-field">
+                <label for="visionMaxImages">单轮图片上限</label>
+                <input id="visionMaxImages" type="number" min="1" max="8" step="1" value="4" />
+              </div>
+            </div>
+            <div class="settings-actions">
+              <button id="saveVisionSettingsBtn" class="primary" type="button">保存设置</button>
+              <button id="testVisionBtn" class="secondary" type="button">测试连接</button>
+              <button id="discoverVisionModelsBtn" class="secondary" type="button">读取模型</button>
+              <button id="clearVisionApiKeyBtn" class="secondary" type="button">清除 Key</button>
+              <span id="visionSettingsState" class="muted"></span>
+            </div>
+          </section>
+          <section id="searchSettingsPanel" class="management-panel settings-panel" hidden>
+            <h3>Tavily 网页搜索</h3>
+            <div class="settings-grid">
+              <div class="settings-field full">
+                <label for="tavilyApiKey">Tavily API Key</label>
+                <input id="tavilyApiKey" type="password" placeholder="tvly-...（留空表示不修改）" autocomplete="off" />
+              </div>
+              <div class="settings-field full">
+                <label for="tavilyProxyUrl">HTTPS 代理（可选）</label>
+                <input id="tavilyProxyUrl" type="password" placeholder="例如 http://192.168.31.125:7890（留空表示不修改）" autocomplete="off" />
+              </div>
+            </div>
+            <div class="settings-actions">
+              <button id="saveTavilyBtn" class="primary" type="button">保存 Tavily 设置</button>
+              <button id="testTavilyBtn" class="secondary" type="button">测试 Tavily</button>
+              <button id="clearTavilyBtn" class="secondary" type="button">清除 Key</button>
+              <button id="clearTavilyProxyBtn" class="secondary" type="button">清除代理</button>
+              <span id="tavilySettingsState" class="muted"></span>
+            </div>
+          </section>
+          <section id="promptSettingsPanel" class="management-panel settings-panel" hidden>
+            <div class="schedule-head">
+              <h3>系统提示词</h3>
+              <div class="segmented prompt-mode-tabs" aria-label="提示词模式">
+                <button id="smsPromptModeBtn" class="active" type="button">角色私聊</button>
+                <button id="rpPromptModeBtn" type="button">剧情演绎</button>
+              </div>
+            </div>
+            <label class="settings-field prompt-editor-field">
+              <span>自定义行为指令（Markdown）</span>
+              <textarea id="systemPromptCustom" class="system-prompt-editor" maxlength="6000" spellcheck="false"></textarea>
             </label>
-            <div class="settings-field full">
-              <label for="apiBaseUrl">Base URL</label>
-              <input id="apiBaseUrl" placeholder="http://127.0.0.1:8317/v1" />
+            <div class="settings-actions">
+              <button id="saveSystemPromptBtn" class="primary" type="button">保存提示词</button>
+              <span id="systemPromptCharacterCount" class="muted">0 / 6000</span>
+              <span id="systemPromptState" class="muted"></span>
             </div>
-            <div class="settings-field">
-              <label for="apiModel">模型名</label>
-              <input id="apiModel" placeholder="例如 qwen3、gpt-4.1、local-model" />
+            <details class="system-prompt-details">
+              <summary>内置提示词（只读）</summary>
+              <pre id="systemPromptBuiltIn"></pre>
+            </details>
+            <details class="system-prompt-details">
+              <summary>最终提示词（只读）</summary>
+              <pre id="systemPromptEffective"></pre>
+            </details>
+          </section>
+          <section id="dataSettingsPanel" class="management-panel settings-panel" hidden>
+            <h3>Memory Vault</h3>
+            <div class="settings-grid">
+              <div class="settings-field full">
+                <label for="memoryVaultPath">Obsidian Vault 路径</label>
+                <input id="memoryVaultPath" readonly />
+              </div>
             </div>
-            <div class="settings-field">
-              <label for="apiKey">API Key</label>
-              <input id="apiKey" type="password" placeholder="留空表示不修改" autocomplete="off" />
+            <div class="settings-actions">
+              <button id="syncMemoryVaultBtn" class="primary" type="button" title="外部编辑会在下一次安全读取时自动同步；点击可立即校验"><i data-lucide="refresh-cw" aria-hidden="true"></i><span>同步</span></button>
+              <button id="rebuildMemoryVaultBtn" class="secondary" type="button"><i data-lucide="database" aria-hidden="true"></i><span>重建索引</span></button>
+              <span id="memoryVaultState" class="muted"></span>
             </div>
-            <div class="settings-field">
-              <label for="apiTemperature">Temperature</label>
-              <input id="apiTemperature" type="number" step="0.1" min="0" max="2" placeholder="可选" />
+            <div id="memoryVaultHealth" class="vault-health-panel" aria-live="polite">
+              <div class="vault-health-row"><span>Writer</span><strong id="memoryVaultWriter">unknown</strong></div>
+              <div class="vault-health-row"><span>Journal</span><span id="memoryVaultJournal">unknown</span></div>
+              <div class="vault-health-row"><span>Recovery</span><span id="memoryVaultRecovery">unknown</span></div>
+              <div class="vault-health-row"><span>Projection</span><span id="memoryVaultProjection">unknown</span></div>
+              <div class="vault-health-row"><span>Backup</span><span id="memoryVaultBackup">unknown</span></div>
             </div>
-            <div class="settings-field">
-              <label for="apiMaxTokens">Max Tokens</label>
-              <input id="apiMaxTokens" type="number" min="1" step="1" placeholder="可选" />
+            <div class="settings-data-section">
+              <div class="okf-section-head"><h3>Open Knowledge Format</h3><span class="okf-version">OKF v0.1</span></div>
+              <div class="settings-grid">
+                <label class="settings-field">
+                  <span>导入目标</span>
+                  <select id="okfImportRealm">
+                    <option value="auto">自动识别</option>
+                    <option value="reality">现实记忆</option>
+                    <option value="roleplay">角色记忆</option>
+                  </select>
+                </label>
+                <label id="okfImportCharacterField" class="settings-field" hidden>
+                  <span>目标角色</span>
+                  <select id="okfImportCharacter" disabled><option value="">选择角色</option></select>
+                </label>
+                <div class="okf-export-options" aria-label="OKF 导出范围">
+                  <label class="checkbox-row"><input id="okfIncludeProfile" type="checkbox" /><span>用户画像</span></label>
+                  <label class="checkbox-row"><input id="okfIncludeSouls" type="checkbox" /><span>角色 SOUL</span></label>
+                  <label class="checkbox-row"><input id="okfIncludeScenes" type="checkbox" /><span>角色场景</span></label>
+                </div>
+              </div>
+              <input id="okfImportInput" type="file" accept=".zip,application/zip" hidden />
+              <div class="settings-actions">
+                <button id="exportOkfBtn" class="secondary" type="button"><i data-lucide="archive" aria-hidden="true"></i><span>导出 OKF</span></button>
+                <button id="selectOkfImportBtn" class="secondary" type="button"><i data-lucide="upload" aria-hidden="true"></i><span>选择 OKF</span></button>
+                <button id="stageOkfImportBtn" class="primary" type="button" disabled><i data-lucide="list-plus" aria-hidden="true"></i><span>加入待审核</span></button>
+                <span id="okfImportState" class="muted" aria-live="polite"></span>
+              </div>
+              <div id="okfImportPreview" class="okf-import-preview" hidden>
+                <div id="okfPreviewSummary" class="okf-preview-summary"></div>
+                <div id="okfDocumentList" class="okf-document-list"></div>
+              </div>
             </div>
-          </div>
-          <div class="settings-actions">
-            <button id="saveApiSettingsBtn" class="primary" type="button">保存设置</button>
-            <button id="clearApiKeyBtn" class="secondary" type="button">清除 Key</button>
-            <span id="apiSettingsState" class="muted"></span>
-          </div>
+            <div class="settings-data-section">
+              <h3>数据管理</h3>
+              <div class="settings-actions">
+                <button id="exportDataBtn" class="secondary" type="button">导出数据</button>
+                <button id="deleteDataBtn" class="secondary" type="button">删除全部数据</button>
+                <span id="runtimeState" class="muted"></span>
+              </div>
+            </div>
+          </section>
         </div>
       </section>
     </main>
+    <dialog id="archivedSessionsDialog" class="archived-dialog" aria-labelledby="archivedSessionsTitle">
+      <div class="archived-dialog-head">
+        <h2 id="archivedSessionsTitle">已归档会话</h2>
+        <button id="closeArchivedSessionsBtn" class="secondary icon-button" type="button" title="关闭" aria-label="关闭归档会话"><i data-lucide="x" aria-hidden="true"></i></button>
+      </div>
+      <div id="archivedSessionList" class="archived-list"></div>
+    </dialog>
+    <dialog id="newConversationDialog" class="session-action-dialog new-conversation-dialog" aria-labelledby="newConversationTitle">
+      <div class="archived-dialog-head">
+        <h2 id="newConversationTitle">新建对话</h2>
+        <button id="closeNewConversationBtn" class="secondary icon-button" type="button" title="关闭" aria-label="关闭新建对话"><i data-lucide="x" aria-hidden="true"></i></button>
+      </div>
+      <form id="newConversationForm" class="new-conversation-form">
+        <label class="settings-field"><span>角色</span><select id="newConversationCharacter"><option value="">请选择角色</option></select></label>
+        <fieldset class="new-conversation-mode">
+          <legend>模式</legend>
+          <div class="segmented" aria-label="新会话模式">
+            <button id="newConversationSmsBtn" class="active" type="button">角色私聊</button>
+            <button id="newConversationRpBtn" type="button">剧情演绎</button>
+          </div>
+        </fieldset>
+        <div id="newConversationError" class="dialog-error" role="alert"></div>
+        <div class="dialog-actions"><button id="cancelNewConversationBtn" class="secondary" type="button">取消</button><button id="createConversationBtn" class="primary" type="submit">开始对话</button></div>
+      </form>
+    </dialog>
+    <dialog id="sceneInfoDialog" class="session-action-dialog scene-info-dialog" aria-labelledby="sceneInfoTitle">
+      <div class="archived-dialog-head">
+        <h2 id="sceneInfoTitle">场景信息</h2>
+        <button id="closeSceneInfoBtn" class="secondary icon-button" type="button" title="关闭" aria-label="关闭场景信息"><i data-lucide="x" aria-hidden="true"></i></button>
+      </div>
+      <div id="sceneInfoContent" class="scene-info-content"></div>
+      <form id="sceneForm" class="scene-editor-form" hidden>
+        <div class="character-grid">
+          <label>地点<input id="sceneLocation" /></label>
+          <label>场景时间<input id="sceneTime" /></label>
+          <label>当前目标<input id="sceneObjective" /></label>
+          <label>参与者（逗号分隔）<input id="sceneParticipants" /></label>
+          <label class="full">场景摘要<textarea id="sceneSummary"></textarea></label>
+          <label class="full">未完线索（每行一项）<textarea id="sceneThreads"></textarea></label>
+        </div>
+        <div id="sceneState" class="dialog-error" role="status"></div>
+      </form>
+      <div class="scene-info-actions">
+        <button id="editSceneInfoBtn" class="secondary" type="button"><i data-lucide="pencil" aria-hidden="true"></i><span>编辑场景</span></button>
+        <button id="saveSceneBtn" class="primary" type="submit" form="sceneForm" hidden><i data-lucide="save" aria-hidden="true"></i><span>保存</span></button>
+        <button id="dismissSceneInfoBtn" class="secondary" type="button">关闭</button>
+      </div>
+    </dialog>
+    <dialog id="memoryEditorDialog" class="schedule-editor-dialog memory-editor-dialog" aria-labelledby="memoryEditorTitle">
+      <div class="schedule-editor-head">
+        <h3 id="memoryEditorTitle">添加长期记忆</h3>
+        <button id="closeMemoryEditorBtn" class="secondary icon-button" type="button" title="关闭" aria-label="关闭记忆编辑"><i data-lucide="x" aria-hidden="true"></i></button>
+      </div>
+      <form id="memoryForm" class="memory-editor-form">
+        <div class="character-grid">
+          <label>类型
+            <select id="memoryType">
+              <option value="relationship_event">关系事件</option>
+              <option value="world_fact">世界事实</option>
+              <option value="plot_event">剧情事件</option>
+              <option value="boundary">边界</option>
+            </select>
+          </label>
+          <label>连续性键<input id="memoryKey" placeholder="例如 relationship.first_meeting" /></label>
+          <label class="full">内容<textarea id="memoryContent" required></textarea></label>
+          <label class="full">标签（逗号分隔）<input id="memoryTags" /></label>
+        </div>
+        <div id="memoryEditorState" class="dialog-error" role="status"></div>
+        <div class="dialog-actions">
+          <button id="cancelMemoryEditorBtn" class="secondary" type="button">取消</button>
+          <button class="primary" type="submit"><i data-lucide="pin" aria-hidden="true"></i><span>固定记忆</span></button>
+        </div>
+      </form>
+    </dialog>
+    <dialog id="sessionActionDialog" class="session-action-dialog" aria-labelledby="sessionActionTitle" aria-describedby="sessionActionDescription">
+      <div class="archived-dialog-head">
+        <h2 id="sessionActionTitle">确认操作</h2>
+        <button id="closeSessionActionBtn" class="secondary icon-button" type="button" title="关闭" aria-label="关闭操作对话框"><i data-lucide="x" aria-hidden="true"></i></button>
+      </div>
+      <form id="sessionActionForm" class="session-action-form">
+        <p id="sessionActionDescription" class="session-action-copy"></p>
+        <label id="sessionActionField" class="session-action-field"><span id="sessionActionFieldLabel">确认内容</span><input id="sessionActionInput" autocomplete="off" /></label>
+        <div id="sessionActionError" class="dialog-error" role="alert" aria-live="polite"></div>
+        <div class="dialog-actions">
+          <button id="cancelSessionActionBtn" class="secondary" type="button">取消</button>
+          <button id="confirmSessionActionBtn" class="primary" type="submit">确认</button>
+        </div>
+      </form>
+    </dialog>
+    <dialog id="messageEditDialog" class="message-edit-dialog" aria-labelledby="messageEditTitle">
+      <div class="archived-dialog-head">
+        <h2 id="messageEditTitle">编辑消息</h2>
+        <button id="closeMessageEditBtn" class="secondary icon-button" type="button" title="关闭" aria-label="关闭编辑"><i data-lucide="x" aria-hidden="true"></i></button>
+      </div>
+      <form id="messageEditForm" class="message-edit-form">
+        <textarea id="messageEditText" required aria-label="编辑后的消息"></textarea>
+        <div id="messageEditError" class="dialog-error" role="alert"></div>
+        <div class="dialog-actions"><button id="cancelMessageEditBtn" class="secondary" type="button">取消</button><button id="submitMessageEditBtn" class="primary" type="submit">保存并重新发送</button></div>
+      </form>
+    </dialog>
+    <dialog id="moduleDetailDialog" class="module-detail-dialog" aria-labelledby="moduleDetailTitle">
+      <div class="archived-dialog-head">
+        <h2 id="moduleDetailTitle">模块详情</h2>
+        <button id="closeModuleDetailBtn" class="secondary icon-button" type="button" title="关闭" aria-label="关闭模块详情"><i data-lucide="x" aria-hidden="true"></i></button>
+      </div>
+      <div id="moduleDetailContent" class="module-detail-content"></div>
+    </dialog>
+    <dialog id="workspaceFilePreviewDialog" class="module-detail-dialog workspace-file-preview-dialog" aria-labelledby="workspaceFilePreviewTitle">
+      <div class="archived-dialog-head">
+        <h2 id="workspaceFilePreviewTitle">文件预览</h2>
+        <button id="closeWorkspaceFilePreviewBtn" class="secondary icon-button" type="button" title="关闭" aria-label="关闭文件预览"><i data-lucide="x" aria-hidden="true"></i></button>
+      </div>
+      <div id="workspaceFilePreviewContent" class="workspace-file-preview-content"></div>
+    </dialog>
+    <dialog id="chatImageDialog" class="chat-image-dialog" aria-labelledby="chatImageTitle">
+      <div class="chat-image-head">
+        <h2 id="chatImageTitle">图片预览</h2>
+        <div class="chat-image-actions">
+          <a id="chatImageDownloadBtn" class="secondary icon-button" title="下载图片" aria-label="下载图片"><i data-lucide="download" aria-hidden="true"></i></a>
+          <button id="closeChatImageBtn" class="secondary icon-button" type="button" title="关闭" aria-label="关闭图片预览"><i data-lucide="x" aria-hidden="true"></i></button>
+        </div>
+      </div>
+      <div class="chat-image-stage"><img id="chatImagePreview" alt="" /></div>
+    </dialog>
     <footer style="padding: 8px 14px; background: var(--panel); border-top: 1px solid var(--line);">
       <div id="status" class="status">就绪</div>
     </footer>
   </div>
+  <script src="/assets/marked.umd.js"></script>
+  <script src="/assets/purify.min.js"></script>
+  <script src="/assets/lucide.min.js"></script>
   <script>
     const state = {
       uiMode: "normal",
       messages: [],
-      busy: false
+      busy: false,
+      sessions: [],
+      archivedSessions: [],
+      activeSessionId: "",
+      sessionDraft: true,
+      calendarCursor: new Date(new Date().getFullYear(), new Date().getMonth(), 1),
+      selectedScheduleDate: localDateKey(new Date()),
+      taskFilter: "pending",
+      scheduleOwnerType: "user",
+      scheduleCharacterId: "",
+      scheduleMobileView: "agenda",
+      scheduleItems: [],
+      editingScheduleId: null,
+      characters: [],
+      selectedCharacterId: "",
+      workspaceCharacterId: "",
+      characterTab: "settings",
+      newConversationMode: "sms",
+      currentScene: null,
+      sceneEditing: false,
+      pendingCharacterAvatarDataUrl: "",
+      userAvatarUrl: "",
+      memories: [],
+      managementTab: "modules",
+      settingsTab: "model",
+      promptMode: "sms",
+      systemPrompts: null,
+      discoveredModels: [],
+      discoveredVisionModels: [],
+      pendingAttachments: [],
+      attachmentUploadQueue: [],
+      uploadingAttachments: false,
+      okfImportFile: null,
+      okfImportPreview: null,
+      workspaceFileDirectory: "",
+      workspaceFiles: [],
+      agentModules: [],
+      agentPermissions: null,
+      managedMemories: [],
+      memoryJobs: [],
+      retrievalPreview: null,
+      lastTurnStatus: null,
+      lastTurnCanRetry: false,
+      debugTraces: [],
+      debugEconomics: [],
+      debugDataset: "traces",
+      featureTestCases: [],
+      featureTestResults: [],
+      featureTestsRunning: false,
+      conversationListOpen: false,
+      conversationBatchMode: false,
+      selectedSessionIds: new Set(),
+      collapsedConversationGroups: new Set(),
+      composingMessage: false,
+      compositionEndedAt: 0,
+      selectedTraceIndex: 0,
+      selectedEconomicsIndex: 0,
+      traceView: "semantic",
+      traceWrap: true
     };
     const nodes = {
       normalBtn: document.getElementById("normalBtn"),
+      scheduleBtn: document.getElementById("scheduleBtn"),
+      charactersBtn: document.getElementById("charactersBtn"),
+      managementBtn: document.getElementById("managementBtn"),
       settingsBtn: document.getElementById("settingsBtn"),
       debugBtn: document.getElementById("debugBtn"),
+      brandUserAvatar: document.getElementById("brandUserAvatar"),
       chatPane: document.getElementById("chatPane"),
+      mainPane: document.getElementById("mainPane"),
+      schedulePage: document.getElementById("schedulePage"),
+      charactersPage: document.getElementById("charactersPage"),
+      managementPage: document.getElementById("managementPage"),
       settingsPage: document.getElementById("settingsPage"),
+      modulesTabBtn: document.getElementById("modulesTabBtn"),
+      profileTabBtn: document.getElementById("profileTabBtn"),
+      memoryManagementTabBtn: document.getElementById("memoryManagementTabBtn"),
+      workspaceFilesTabBtn: document.getElementById("workspaceFilesTabBtn"),
+      modulesPanel: document.getElementById("modulesPanel"),
+      profilePanel: document.getElementById("profilePanel"),
+      memoryManagementPanel: document.getElementById("memoryManagementPanel"),
+      workspaceFilesPanel: document.getElementById("workspaceFilesPanel"),
+      workspaceFilePath: document.getElementById("workspaceFilePath"),
+      workspaceFileState: document.getElementById("workspaceFileState"),
+      workspaceFileList: document.getElementById("workspaceFileList"),
+      workspaceFileUpBtn: document.getElementById("workspaceFileUpBtn"),
+      workspaceFileRefreshBtn: document.getElementById("workspaceFileRefreshBtn"),
+      workspaceFileUploadBtn: document.getElementById("workspaceFileUploadBtn"),
+      workspaceFileUploadInput: document.getElementById("workspaceFileUploadInput"),
+      refreshModulesBtn: document.getElementById("refreshModulesBtn"),
+      moduleList: document.getElementById("moduleList"),
+      workspacePath: document.getElementById("workspacePath"),
+      permissionControls: document.getElementById("permissionControls"),
+      workspaceAccessControls: document.getElementById("workspaceAccessControls"),
+      shellPermissionInput: document.getElementById("shellPermissionInput"),
+      shellPermissionLabel: document.getElementById("shellPermissionLabel"),
+      networkPermissionInput: document.getElementById("networkPermissionInput"),
+      networkPermissionLabel: document.getElementById("networkPermissionLabel"),
+      profileWritePermissionInput: document.getElementById("profileWritePermissionInput"),
+      profileWritePermissionLabel: document.getElementById("profileWritePermissionLabel"),
+      soulWritePermissionInput: document.getElementById("soulWritePermissionInput"),
+      soulWritePermissionLabel: document.getElementById("soulWritePermissionLabel"),
+      realityMemoryWritePermissionInput: document.getElementById("realityMemoryWritePermissionInput"),
+      realityMemoryWritePermissionLabel: document.getElementById("realityMemoryWritePermissionLabel"),
+      characterMemoryWritePermissionInput: document.getElementById("characterMemoryWritePermissionInput"),
+      characterMemoryWritePermissionLabel: document.getElementById("characterMemoryWritePermissionLabel"),
+      permissionRuntime: document.getElementById("permissionRuntime"),
+      profileDocumentForm: document.getElementById("profileDocumentForm"),
+      profileMarkdown: document.getElementById("profileMarkdown"),
+      profileCharacterCount: document.getElementById("profileCharacterCount"),
+      saveProfileBtn: document.getElementById("saveProfileBtn"),
+      profileState: document.getElementById("profileState"),
+      userAvatarPreview: document.getElementById("userAvatarPreview"),
+      userAvatarInput: document.getElementById("userAvatarInput"),
+      changeUserAvatarBtn: document.getElementById("changeUserAvatarBtn"),
+      removeUserAvatarBtn: document.getElementById("removeUserAvatarBtn"),
+      memoryCoordinatorState: document.getElementById("memoryCoordinatorState"),
+      refreshManagedMemoriesBtn: document.getElementById("refreshManagedMemoriesBtn"),
+      managedMemoryRealm: document.getElementById("managedMemoryRealm"),
+      managedMemoryCharacter: document.getElementById("managedMemoryCharacter"),
+      managedMemoryTypeFilter: document.getElementById("managedMemoryTypeFilter"),
+      managedMemoryValidity: document.getElementById("managedMemoryValidity"),
+      managedMemoryQuery: document.getElementById("managedMemoryQuery"),
+      searchManagedMemoriesBtn: document.getElementById("searchManagedMemoriesBtn"),
+      managedMemoryForm: document.getElementById("managedMemoryForm"),
+      managedMemoryCreateRealm: document.getElementById("managedMemoryCreateRealm"),
+      managedMemoryCreateType: document.getElementById("managedMemoryCreateType"),
+      managedMemoryCreateCharacter: document.getElementById("managedMemoryCreateCharacter"),
+      managedMemoryCreateKey: document.getElementById("managedMemoryCreateKey"),
+      managedMemoryCreateContent: document.getElementById("managedMemoryCreateContent"),
+      managedMemoryActionState: document.getElementById("managedMemoryActionState"),
+      retrievalPreviewForm: document.getElementById("retrievalPreviewForm"),
+      retrievalPreviewMode: document.getElementById("retrievalPreviewMode"),
+      retrievalPreviewQuery: document.getElementById("retrievalPreviewQuery"),
+      retrievalPreviewBudget: document.getElementById("retrievalPreviewBudget"),
+      retrievalPreviewState: document.getElementById("retrievalPreviewState"),
+      retrievalPreviewResults: document.getElementById("retrievalPreviewResults"),
+      managedMemoryList: document.getElementById("managedMemoryList"),
+      memoryJobCount: document.getElementById("memoryJobCount"),
+      memoryJobList: document.getElementById("memoryJobList"),
       debugPane: document.getElementById("debugPane"),
-      debugList: document.getElementById("debugList"),
+      debugWorkspace: document.getElementById("debugWorkspace"),
+      featureTestPanel: document.getElementById("featureTestPanel"),
+      debugFeatureTestsBtn: document.getElementById("debugFeatureTestsBtn"),
+      featureTestCharacter: document.getElementById("featureTestCharacter"),
+      selectAllFeatureTestsBtn: document.getElementById("selectAllFeatureTestsBtn"),
+      runFeatureTestsBtn: document.getElementById("runFeatureTestsBtn"),
+      featureTestState: document.getElementById("featureTestState"),
+      featureTestList: document.getElementById("featureTestList"),
+      featureTestResults: document.getElementById("featureTestResults"),
+      traceIndex: document.getElementById("traceIndex"),
+      traceEmpty: document.getElementById("traceEmpty"),
+      traceDetail: document.getElementById("traceDetail"),
+      traceDetailTitle: document.getElementById("traceDetailTitle"),
+      traceDetailMeta: document.getElementById("traceDetailMeta"),
+      traceContent: document.getElementById("traceContent"),
+      traceSemanticBtn: document.getElementById("traceSemanticBtn"),
+      traceRawBtn: document.getElementById("traceRawBtn"),
+      traceExpandBtn: document.getElementById("traceExpandBtn"),
+      traceWrapBtn: document.getElementById("traceWrapBtn"),
+      traceCopyBtn: document.getElementById("traceCopyBtn"),
+      debugTracesBtn: document.getElementById("debugTracesBtn"),
+      debugEconomicsBtn: document.getElementById("debugEconomicsBtn"),
       refreshLogsBtn: document.getElementById("refreshLogsBtn"),
       messages: document.getElementById("messages"),
       composer: document.getElementById("composer"),
       textInput: document.getElementById("textInput"),
+      attachmentQueue: document.getElementById("attachmentQueue"),
+      chatAttachmentInput: document.getElementById("chatAttachmentInput"),
+      attachFileBtn: document.getElementById("attachFileBtn"),
       sendBtn: document.getElementById("sendBtn"),
+      cancelMessageBtn: document.getElementById("cancelMessageBtn"),
+      retryMessageBtn: document.getElementById("retryMessageBtn"),
       status: document.getElementById("status"),
-      sessionInput: document.getElementById("sessionInput"),
+      conversationCharacter: document.getElementById("conversationCharacter"),
+      conversationMode: document.getElementById("conversationMode"),
+      conversationScene: document.getElementById("conversationScene"),
+      conversationHeaderAvatar: document.getElementById("conversationHeaderAvatar"),
+      sceneInfoBtn: document.getElementById("sceneInfoBtn"),
+      conversationListToggle: document.getElementById("conversationListToggle"),
+      chatWorkspace: document.getElementById("chatWorkspace"),
+      conversationList: document.getElementById("conversationList"),
+      conversationListTitle: document.getElementById("conversationListTitle"),
+      sidebarNewSessionBtn: document.getElementById("sidebarNewSessionBtn"),
+      sidebarArchivedSessionsBtn: document.getElementById("sidebarArchivedSessionsBtn"),
+      sidebarBatchManageBtn: document.getElementById("sidebarBatchManageBtn"),
+      conversationBatchBar: document.getElementById("conversationBatchBar"),
+      conversationBatchCount: document.getElementById("conversationBatchCount"),
+      conversationBatchSelectAllBtn: document.getElementById("conversationBatchSelectAllBtn"),
+      conversationBatchArchiveBtn: document.getElementById("conversationBatchArchiveBtn"),
+      conversationBatchDeleteBtn: document.getElementById("conversationBatchDeleteBtn"),
+      sessionSelect: document.getElementById("sessionSelect"),
+      newSessionBtn: document.getElementById("newSessionBtn"),
+      renameSessionBtn: document.getElementById("renameSessionBtn"),
+      archiveSessionBtn: document.getElementById("archiveSessionBtn"),
+      deleteSessionBtn: document.getElementById("deleteSessionBtn"),
+      archivedSessionsBtn: document.getElementById("archivedSessionsBtn"),
+      sessionActionsMenuBtn: document.getElementById("sessionActionsMenuBtn"),
+      sessionActionsMenu: document.getElementById("sessionActionsMenu"),
+      mobileRenameSessionBtn: document.getElementById("mobileRenameSessionBtn"),
+      mobileArchiveSessionBtn: document.getElementById("mobileArchiveSessionBtn"),
+      mobileDeleteSessionBtn: document.getElementById("mobileDeleteSessionBtn"),
+      mobileArchivedSessionsBtn: document.getElementById("mobileArchivedSessionsBtn"),
+      archivedSessionsDialog: document.getElementById("archivedSessionsDialog"),
+      archivedSessionList: document.getElementById("archivedSessionList"),
+      closeArchivedSessionsBtn: document.getElementById("closeArchivedSessionsBtn"),
+      newConversationDialog: document.getElementById("newConversationDialog"),
+      newConversationForm: document.getElementById("newConversationForm"),
+      newConversationCharacter: document.getElementById("newConversationCharacter"),
+      newConversationSmsBtn: document.getElementById("newConversationSmsBtn"),
+      newConversationRpBtn: document.getElementById("newConversationRpBtn"),
+      newConversationError: document.getElementById("newConversationError"),
+      closeNewConversationBtn: document.getElementById("closeNewConversationBtn"),
+      cancelNewConversationBtn: document.getElementById("cancelNewConversationBtn"),
+      createConversationBtn: document.getElementById("createConversationBtn"),
+      sceneInfoDialog: document.getElementById("sceneInfoDialog"),
+      sceneInfoContent: document.getElementById("sceneInfoContent"),
+      closeSceneInfoBtn: document.getElementById("closeSceneInfoBtn"),
+      dismissSceneInfoBtn: document.getElementById("dismissSceneInfoBtn"),
+      editSceneInfoBtn: document.getElementById("editSceneInfoBtn"),
+      sessionActionDialog: document.getElementById("sessionActionDialog"),
+      sessionActionForm: document.getElementById("sessionActionForm"),
+      sessionActionTitle: document.getElementById("sessionActionTitle"),
+      sessionActionDescription: document.getElementById("sessionActionDescription"),
+      sessionActionField: document.getElementById("sessionActionField"),
+      sessionActionFieldLabel: document.getElementById("sessionActionFieldLabel"),
+      sessionActionInput: document.getElementById("sessionActionInput"),
+      sessionActionError: document.getElementById("sessionActionError"),
+      closeSessionActionBtn: document.getElementById("closeSessionActionBtn"),
+      cancelSessionActionBtn: document.getElementById("cancelSessionActionBtn"),
+      confirmSessionActionBtn: document.getElementById("confirmSessionActionBtn"),
+      messageEditDialog: document.getElementById("messageEditDialog"),
+      messageEditForm: document.getElementById("messageEditForm"),
+      messageEditText: document.getElementById("messageEditText"),
+      messageEditError: document.getElementById("messageEditError"),
+      closeMessageEditBtn: document.getElementById("closeMessageEditBtn"),
+      cancelMessageEditBtn: document.getElementById("cancelMessageEditBtn"),
+      submitMessageEditBtn: document.getElementById("submitMessageEditBtn"),
+      moduleDetailDialog: document.getElementById("moduleDetailDialog"),
+      moduleDetailTitle: document.getElementById("moduleDetailTitle"),
+      moduleDetailContent: document.getElementById("moduleDetailContent"),
+      closeModuleDetailBtn: document.getElementById("closeModuleDetailBtn"),
+      workspaceFilePreviewDialog: document.getElementById("workspaceFilePreviewDialog"),
+      workspaceFilePreviewTitle: document.getElementById("workspaceFilePreviewTitle"),
+      workspaceFilePreviewContent: document.getElementById("workspaceFilePreviewContent"),
+      closeWorkspaceFilePreviewBtn: document.getElementById("closeWorkspaceFilePreviewBtn"),
+      chatImageDialog: document.getElementById("chatImageDialog"),
+      chatImageTitle: document.getElementById("chatImageTitle"),
+      chatImagePreview: document.getElementById("chatImagePreview"),
+      chatImageDownloadBtn: document.getElementById("chatImageDownloadBtn"),
+      closeChatImageBtn: document.getElementById("closeChatImageBtn"),
       modeSelect: document.getElementById("modeSelect"),
+      chatCharacterControl: document.getElementById("chatCharacterControl"),
+      chatCharacterSelect: document.getElementById("chatCharacterSelect"),
+      scheduleTodayBtn: document.getElementById("scheduleTodayBtn"),
+      userScheduleTabBtn: document.getElementById("userScheduleTabBtn"),
+      characterScheduleTabBtn: document.getElementById("characterScheduleTabBtn"),
+      scheduleCharacterField: document.getElementById("scheduleCharacterField"),
+      scheduleCharacterSelect: document.getElementById("scheduleCharacterSelect"),
+      scheduleScopeSummary: document.getElementById("scheduleScopeSummary"),
+      scheduleAgendaViewBtn: document.getElementById("scheduleAgendaViewBtn"),
+      scheduleCalendarViewBtn: document.getElementById("scheduleCalendarViewBtn"),
+      scheduleTasksViewBtn: document.getElementById("scheduleTasksViewBtn"),
+      schedulePreviousMonthBtn: document.getElementById("schedulePreviousMonthBtn"),
+      scheduleNextMonthBtn: document.getElementById("scheduleNextMonthBtn"),
+      scheduleMonthLabel: document.getElementById("scheduleMonthLabel"),
+      scheduleCreateBtn: document.getElementById("scheduleCreateBtn"),
+      scheduleCalendar: document.getElementById("scheduleCalendar"),
+      taskPendingBtn: document.getElementById("taskPendingBtn"),
+      taskAllBtn: document.getElementById("taskAllBtn"),
+      taskCompletedBtn: document.getElementById("taskCompletedBtn"),
+      taskCount: document.getElementById("taskCount"),
+      taskList: document.getElementById("taskList"),
+      scheduleAgendaTitle: document.getElementById("scheduleAgendaTitle"),
+      scheduleEditorDialog: document.getElementById("scheduleEditorDialog"),
+      scheduleEditorTitle: document.getElementById("scheduleEditorTitle"),
+      closeScheduleEditorBtn: document.getElementById("closeScheduleEditorBtn"),
+      scheduleForm: document.getElementById("scheduleForm"),
+      scheduleTitle: document.getElementById("scheduleTitle"),
+      scheduleKind: document.getElementById("scheduleKind"),
+      scheduleStart: document.getElementById("scheduleStart"),
+      scheduleEnd: document.getElementById("scheduleEnd"),
+      scheduleRecurrence: document.getElementById("scheduleRecurrence"),
+      scheduleNotes: document.getElementById("scheduleNotes"),
+      scheduleAllDay: document.getElementById("scheduleAllDay"),
+      scheduleEndField: document.getElementById("scheduleEndField"),
+      scheduleEditorScope: document.getElementById("scheduleEditorScope"),
+      saveScheduleBtn: document.getElementById("saveScheduleBtn"),
+      resetScheduleBtn: document.getElementById("resetScheduleBtn"),
+      scheduleState: document.getElementById("scheduleState"),
+      scheduleEditorState: document.getElementById("scheduleEditorState"),
+      scheduleList: document.getElementById("scheduleList"),
+      newCharacterBtn: document.getElementById("newCharacterBtn"),
+      characterCardGrid: document.getElementById("characterCardGrid"),
+      characterListEmpty: document.getElementById("characterListEmpty"),
+      characterDetail: document.getElementById("characterDetail"),
+      characterDetailTitle: document.getElementById("characterDetailTitle"),
+      characterSettingsTabBtn: document.getElementById("characterSettingsTabBtn"),
+      characterMemoryTabBtn: document.getElementById("characterMemoryTabBtn"),
+      characterSettingsPanel: document.getElementById("characterSettingsPanel"),
+      characterMemoryPanel: document.getElementById("characterMemoryPanel"),
+      characterForm: document.getElementById("characterForm"),
+      characterName: document.getElementById("characterName"),
+      characterAvatarPreview: document.getElementById("characterAvatarPreview"),
+      characterAvatarInput: document.getElementById("characterAvatarInput"),
+      changeCharacterAvatarBtn: document.getElementById("changeCharacterAvatarBtn"),
+      removeCharacterAvatarBtn: document.getElementById("removeCharacterAvatarBtn"),
+      characterSoulMarkdown: document.getElementById("characterSoulMarkdown"),
+      characterSoulCount: document.getElementById("characterSoulCount"),
+      saveCharacterBtn: document.getElementById("saveCharacterBtn"),
+      characterState: document.getElementById("characterState"),
+      sceneForm: document.getElementById("sceneForm"),
+      sceneLocation: document.getElementById("sceneLocation"),
+      sceneTime: document.getElementById("sceneTime"),
+      sceneObjective: document.getElementById("sceneObjective"),
+      sceneParticipants: document.getElementById("sceneParticipants"),
+      sceneSummary: document.getElementById("sceneSummary"),
+      sceneThreads: document.getElementById("sceneThreads"),
+      saveSceneBtn: document.getElementById("saveSceneBtn"),
+      sceneState: document.getElementById("sceneState"),
+      memorySearch: document.getElementById("memorySearch"),
+      searchMemoryBtn: document.getElementById("searchMemoryBtn"),
+      addMemoryBtn: document.getElementById("addMemoryBtn"),
+      memoryEditorDialog: document.getElementById("memoryEditorDialog"),
+      closeMemoryEditorBtn: document.getElementById("closeMemoryEditorBtn"),
+      cancelMemoryEditorBtn: document.getElementById("cancelMemoryEditorBtn"),
+      memoryForm: document.getElementById("memoryForm"),
+      memoryType: document.getElementById("memoryType"),
+      memoryKey: document.getElementById("memoryKey"),
+      memoryContent: document.getElementById("memoryContent"),
+      memoryTags: document.getElementById("memoryTags"),
+      memoryEditorState: document.getElementById("memoryEditorState"),
+      memoryState: document.getElementById("memoryState"),
+      memoryList: document.getElementById("memoryList"),
       apiEnabled: document.getElementById("apiEnabled"),
+      apiVisionInputEnabled: document.getElementById("apiVisionInputEnabled"),
       apiBaseUrl: document.getElementById("apiBaseUrl"),
       apiModel: document.getElementById("apiModel"),
+      apiModelCustom: document.getElementById("apiModelCustom"),
       apiKey: document.getElementById("apiKey"),
       apiTemperature: document.getElementById("apiTemperature"),
       apiMaxTokens: document.getElementById("apiMaxTokens"),
       saveApiSettingsBtn: document.getElementById("saveApiSettingsBtn"),
+      testModelBtn: document.getElementById("testModelBtn"),
+      discoverModelsBtn: document.getElementById("discoverModelsBtn"),
       clearApiKeyBtn: document.getElementById("clearApiKeyBtn"),
-      apiSettingsState: document.getElementById("apiSettingsState")
+      apiSettingsState: document.getElementById("apiSettingsState"),
+      modelSettingsTabBtn: document.getElementById("modelSettingsTabBtn"),
+      visionSettingsTabBtn: document.getElementById("visionSettingsTabBtn"),
+      searchSettingsTabBtn: document.getElementById("searchSettingsTabBtn"),
+      promptSettingsTabBtn: document.getElementById("promptSettingsTabBtn"),
+      dataSettingsTabBtn: document.getElementById("dataSettingsTabBtn"),
+      modelSettingsPanel: document.getElementById("modelSettingsPanel"),
+      visionSettingsPanel: document.getElementById("visionSettingsPanel"),
+      searchSettingsPanel: document.getElementById("searchSettingsPanel"),
+      promptSettingsPanel: document.getElementById("promptSettingsPanel"),
+      dataSettingsPanel: document.getElementById("dataSettingsPanel"),
+      smsPromptModeBtn: document.getElementById("smsPromptModeBtn"),
+      rpPromptModeBtn: document.getElementById("rpPromptModeBtn"),
+      systemPromptCustom: document.getElementById("systemPromptCustom"),
+      systemPromptCharacterCount: document.getElementById("systemPromptCharacterCount"),
+      systemPromptState: document.getElementById("systemPromptState"),
+      systemPromptBuiltIn: document.getElementById("systemPromptBuiltIn"),
+      systemPromptEffective: document.getElementById("systemPromptEffective"),
+      saveSystemPromptBtn: document.getElementById("saveSystemPromptBtn"),
+      tavilyApiKey: document.getElementById("tavilyApiKey"),
+      tavilyProxyUrl: document.getElementById("tavilyProxyUrl"),
+      saveTavilyBtn: document.getElementById("saveTavilyBtn"),
+      testTavilyBtn: document.getElementById("testTavilyBtn"),
+      clearTavilyBtn: document.getElementById("clearTavilyBtn"),
+      clearTavilyProxyBtn: document.getElementById("clearTavilyProxyBtn"),
+      tavilySettingsState: document.getElementById("tavilySettingsState"),
+      visionMode: document.getElementById("visionMode"),
+      visionDetail: document.getElementById("visionDetail"),
+      visionBaseUrl: document.getElementById("visionBaseUrl"),
+      visionModel: document.getElementById("visionModel"),
+      visionModelCustom: document.getElementById("visionModelCustom"),
+      visionApiKey: document.getElementById("visionApiKey"),
+      visionMaxImages: document.getElementById("visionMaxImages"),
+      saveVisionSettingsBtn: document.getElementById("saveVisionSettingsBtn"),
+      testVisionBtn: document.getElementById("testVisionBtn"),
+      discoverVisionModelsBtn: document.getElementById("discoverVisionModelsBtn"),
+      clearVisionApiKeyBtn: document.getElementById("clearVisionApiKeyBtn"),
+      visionSettingsState: document.getElementById("visionSettingsState"),
+      memoryVaultPath: document.getElementById("memoryVaultPath"),
+      syncMemoryVaultBtn: document.getElementById("syncMemoryVaultBtn"),
+      rebuildMemoryVaultBtn: document.getElementById("rebuildMemoryVaultBtn"),
+      memoryVaultState: document.getElementById("memoryVaultState"),
+      memoryVaultWriter: document.getElementById("memoryVaultWriter"),
+      memoryVaultJournal: document.getElementById("memoryVaultJournal"),
+      memoryVaultRecovery: document.getElementById("memoryVaultRecovery"),
+      memoryVaultProjection: document.getElementById("memoryVaultProjection"),
+      memoryVaultBackup: document.getElementById("memoryVaultBackup"),
+      okfImportRealm: document.getElementById("okfImportRealm"),
+      okfImportCharacterField: document.getElementById("okfImportCharacterField"),
+      okfImportCharacter: document.getElementById("okfImportCharacter"),
+      okfIncludeProfile: document.getElementById("okfIncludeProfile"),
+      okfIncludeSouls: document.getElementById("okfIncludeSouls"),
+      okfIncludeScenes: document.getElementById("okfIncludeScenes"),
+      okfImportInput: document.getElementById("okfImportInput"),
+      exportOkfBtn: document.getElementById("exportOkfBtn"),
+      selectOkfImportBtn: document.getElementById("selectOkfImportBtn"),
+      stageOkfImportBtn: document.getElementById("stageOkfImportBtn"),
+      okfImportState: document.getElementById("okfImportState"),
+      okfImportPreview: document.getElementById("okfImportPreview"),
+      okfPreviewSummary: document.getElementById("okfPreviewSummary"),
+      okfDocumentList: document.getElementById("okfDocumentList"),
+      exportDataBtn: document.getElementById("exportDataBtn"),
+      deleteDataBtn: document.getElementById("deleteDataBtn"),
+      runtimeState: document.getElementById("runtimeState")
     };
 
     nodes.normalBtn.addEventListener("click", () => setUiMode("normal"));
+    nodes.scheduleBtn.addEventListener("click", () => setUiMode("schedule"));
+    nodes.charactersBtn.addEventListener("click", () => setUiMode("characters"));
+    nodes.managementBtn.addEventListener("click", () => setUiMode("management"));
     nodes.settingsBtn.addEventListener("click", () => setUiMode("settings"));
     nodes.debugBtn.addEventListener("click", () => setUiMode("debug"));
     nodes.refreshLogsBtn.addEventListener("click", loadDebugLogs);
-    nodes.saveApiSettingsBtn.addEventListener("click", saveApiSettings);
+    nodes.modulesTabBtn.addEventListener("click", () => setManagementTab("modules"));
+    nodes.profileTabBtn.addEventListener("click", () => setManagementTab("profile"));
+    nodes.memoryManagementTabBtn.addEventListener("click", () => setManagementTab("memory"));
+    nodes.workspaceFilesTabBtn.addEventListener("click", () => setManagementTab("files"));
+    nodes.refreshModulesBtn.addEventListener("click", loadCapabilityManagement);
+    nodes.moduleList.addEventListener("change", toggleAgentModule);
+    nodes.moduleList.addEventListener("click", openModuleDetailFromList);
+    nodes.permissionControls.addEventListener("change", toggleAgentPermission);
+    nodes.workspaceAccessControls.addEventListener("click", setWorkspaceAccess);
+    nodes.profileDocumentForm.addEventListener("submit", saveUserProfile);
+    nodes.profileMarkdown.addEventListener("input", updateProfileCharacterCount);
+    nodes.changeUserAvatarBtn.addEventListener("click", () => nodes.userAvatarInput.click());
+    nodes.userAvatarInput.addEventListener("change", changeUserAvatar);
+    nodes.removeUserAvatarBtn.addEventListener("click", removeUserAvatar);
+    nodes.refreshManagedMemoriesBtn.addEventListener("click", loadManagedMemories);
+    nodes.searchManagedMemoriesBtn.addEventListener("click", renderManagedMemories);
+    nodes.managedMemoryRealm.addEventListener("change", renderManagedMemories);
+    nodes.managedMemoryCharacter.addEventListener("change", renderManagedMemories);
+    nodes.managedMemoryTypeFilter.addEventListener("change", renderManagedMemories);
+    nodes.managedMemoryValidity.addEventListener("change", renderManagedMemories);
+    nodes.managedMemoryQuery.addEventListener("input", renderManagedMemories);
+    nodes.managedMemoryCreateRealm.addEventListener("change", updateManagedMemoryCreateControls);
+    nodes.managedMemoryForm.addEventListener("submit", createManagedMemory);
+    nodes.retrievalPreviewForm.addEventListener("submit", runRetrievalPreview);
+    nodes.retrievalPreviewResults.addEventListener("click", jumpFromMemoryDiagnostic);
+    nodes.managedMemoryList.addEventListener("click", handleManagedMemoryAction);
+    nodes.memoryJobList.addEventListener("click", retryMemoryJob);
+    nodes.debugTracesBtn.addEventListener("click", () => setDebugDataset("traces"));
+    nodes.debugEconomicsBtn.addEventListener("click", () => setDebugDataset("economics"));
+    nodes.debugFeatureTestsBtn.addEventListener("click", () => setDebugDataset("feature-tests"));
+    nodes.selectAllFeatureTestsBtn.addEventListener("click", toggleAllFeatureTests);
+    nodes.runFeatureTestsBtn.addEventListener("click", runSelectedFeatureTests);
+    nodes.traceIndex.addEventListener("click", selectTraceFromIndex);
+    nodes.traceSemanticBtn.addEventListener("click", () => setTraceView("semantic"));
+    nodes.traceRawBtn.addEventListener("click", () => setTraceView("raw"));
+    nodes.traceExpandBtn.addEventListener("click", toggleAllTraceBlocks);
+    nodes.traceWrapBtn.addEventListener("click", toggleTraceWrap);
+    nodes.traceCopyBtn.addEventListener("click", copySelectedTrace);
+    nodes.traceContent.addEventListener("toggle", updateTraceExpandButton, true);
+    nodes.traceContent.addEventListener("click", jumpFromMemoryDiagnostic);
+    nodes.saveApiSettingsBtn.addEventListener("click", () => saveApiSettings());
+    nodes.testModelBtn.addEventListener("click", testModelConnection);
+    nodes.discoverModelsBtn.addEventListener("click", discoverModels);
     nodes.clearApiKeyBtn.addEventListener("click", clearApiKey);
+    nodes.saveTavilyBtn.addEventListener("click", () => saveTavilySettings());
+    nodes.testTavilyBtn.addEventListener("click", testTavilyConnection);
+    nodes.clearTavilyBtn.addEventListener("click", clearTavilyKey);
+    nodes.clearTavilyProxyBtn.addEventListener("click", clearTavilyProxy);
+    nodes.saveVisionSettingsBtn.addEventListener("click", () => saveVisionSettings());
+    nodes.testVisionBtn.addEventListener("click", testVisionConnection);
+    nodes.discoverVisionModelsBtn.addEventListener("click", discoverVisionModels);
+    nodes.clearVisionApiKeyBtn.addEventListener("click", clearVisionApiKey);
+    nodes.syncMemoryVaultBtn.addEventListener("click", () => runMemoryVaultAction("sync"));
+    nodes.rebuildMemoryVaultBtn.addEventListener("click", () => runMemoryVaultAction("rebuild"));
+    nodes.exportOkfBtn.addEventListener("click", exportOkfBundle);
+    nodes.selectOkfImportBtn.addEventListener("click", () => nodes.okfImportInput.click());
+    nodes.okfImportInput.addEventListener("change", selectOkfImportBundle);
+    nodes.okfImportRealm.addEventListener("change", changeOkfImportTarget);
+    nodes.okfImportCharacter.addEventListener("change", () => { if (state.okfImportFile) previewOkfImport(); });
+    nodes.stageOkfImportBtn.addEventListener("click", stageOkfImport);
+    nodes.exportDataBtn.addEventListener("click", exportData);
+    nodes.deleteDataBtn.addEventListener("click", deleteAllData);
+    nodes.sessionSelect.addEventListener("change", selectSession);
+    nodes.newSessionBtn.addEventListener("click", openNewConversationDialog);
+    nodes.sidebarNewSessionBtn.addEventListener("click", openNewConversationDialog);
+    nodes.sidebarArchivedSessionsBtn.addEventListener("click", openArchivedSessions);
+    nodes.sidebarBatchManageBtn.addEventListener("click", toggleConversationBatchMode);
+    nodes.conversationBatchSelectAllBtn.addEventListener("click", toggleAllConversationSelections);
+    nodes.conversationBatchArchiveBtn.addEventListener("click", () => runConversationBatchAction("archive"));
+    nodes.conversationBatchDeleteBtn.addEventListener("click", () => runConversationBatchAction("delete"));
+    nodes.conversationListToggle.addEventListener("click", toggleConversationList);
+    nodes.conversationList.addEventListener("click", selectConversationFromList);
+    nodes.conversationList.addEventListener("change", updateConversationBatchSelection);
+    nodes.renameSessionBtn.addEventListener("click", renameCurrentSession);
+    nodes.archiveSessionBtn.addEventListener("click", archiveCurrentSession);
+    nodes.deleteSessionBtn.addEventListener("click", deleteCurrentSession);
+    nodes.archivedSessionsBtn.addEventListener("click", openArchivedSessions);
+    nodes.sessionActionsMenuBtn.addEventListener("click", toggleSessionActionsMenu);
+    nodes.mobileRenameSessionBtn.addEventListener("click", () => runMobileSessionAction(renameCurrentSession));
+    nodes.mobileArchiveSessionBtn.addEventListener("click", () => runMobileSessionAction(archiveCurrentSession));
+    nodes.mobileDeleteSessionBtn.addEventListener("click", () => runMobileSessionAction(deleteCurrentSession));
+    nodes.mobileArchivedSessionsBtn.addEventListener("click", () => runMobileSessionAction(openArchivedSessions));
+    nodes.newConversationForm.addEventListener("submit", createNewConversation);
+    nodes.newConversationSmsBtn.addEventListener("click", () => setNewConversationMode("sms"));
+    nodes.newConversationRpBtn.addEventListener("click", () => setNewConversationMode("rp"));
+    nodes.closeNewConversationBtn.addEventListener("click", closeNewConversationDialog);
+    nodes.cancelNewConversationBtn.addEventListener("click", closeNewConversationDialog);
+    nodes.newConversationDialog.addEventListener("cancel", (event) => { event.preventDefault(); closeNewConversationDialog(); });
+    nodes.sceneInfoBtn.addEventListener("click", openSceneInfoDialog);
+    nodes.closeSceneInfoBtn.addEventListener("click", closeSceneInfoDialog);
+    nodes.dismissSceneInfoBtn.addEventListener("click", dismissSceneInfoDialog);
+    nodes.sceneInfoDialog.addEventListener("cancel", (event) => { event.preventDefault(); dismissSceneInfoDialog(); });
+    nodes.editSceneInfoBtn.addEventListener("click", beginSceneEditing);
+    nodes.closeArchivedSessionsBtn.addEventListener("click", () => nodes.archivedSessionsDialog.close());
+    nodes.archivedSessionList.addEventListener("click", handleArchivedSessionAction);
+    nodes.sessionActionForm.addEventListener("submit", submitSessionActionDialog);
+    nodes.closeSessionActionBtn.addEventListener("click", () => finishSessionActionDialog(false));
+    nodes.cancelSessionActionBtn.addEventListener("click", () => finishSessionActionDialog(false));
+    nodes.sessionActionDialog.addEventListener("cancel", cancelSessionActionDialog);
+    nodes.sessionActionDialog.addEventListener("keydown", trapSessionActionFocus);
+    nodes.messageEditForm.addEventListener("submit", submitMessageEdit);
+    nodes.closeMessageEditBtn.addEventListener("click", closeMessageEditDialog);
+    nodes.cancelMessageEditBtn.addEventListener("click", closeMessageEditDialog);
+    nodes.messageEditDialog.addEventListener("cancel", (event) => { event.preventDefault(); closeMessageEditDialog(); });
+    nodes.closeModuleDetailBtn.addEventListener("click", () => nodes.moduleDetailDialog.close());
+    nodes.closeWorkspaceFilePreviewBtn.addEventListener("click", () => nodes.workspaceFilePreviewDialog.close());
+    nodes.workspaceFilePreviewDialog.addEventListener("cancel", (event) => { event.preventDefault(); nodes.workspaceFilePreviewDialog.close(); });
+    nodes.closeChatImageBtn.addEventListener("click", closeChatImagePreview);
+    nodes.chatImageDialog.addEventListener("cancel", (event) => { event.preventDefault(); closeChatImagePreview(); });
+    nodes.chatImageDialog.addEventListener("click", (event) => { if (event.target === nodes.chatImageDialog) closeChatImagePreview(); });
+    nodes.workspaceFileUpBtn.addEventListener("click", openWorkspaceParentDirectory);
+    nodes.workspaceFileRefreshBtn.addEventListener("click", loadWorkspaceFiles);
+    nodes.workspaceFileUploadBtn.addEventListener("click", () => nodes.workspaceFileUploadInput.click());
+    nodes.workspaceFileUploadInput.addEventListener("change", uploadWorkspaceManagerFiles);
+    nodes.workspaceFileList.addEventListener("click", handleWorkspaceFileAction);
+    document.addEventListener("click", closeSessionActionsMenuFromOutside);
+    document.addEventListener("keydown", closeSessionActionsMenuOnEscape);
+    nodes.modeSelect.addEventListener("change", () => {
+      updateRpControls();
+      void loadConversationScene();
+    });
+    nodes.chatCharacterSelect.addEventListener("change", () => {
+      state.selectedCharacterId = nodes.chatCharacterSelect.value;
+      updateChatIdentity();
+      renderConversationList();
+      void loadConversationScene();
+    });
+    nodes.scheduleTodayBtn.addEventListener("click", showTodayInCalendar);
+    nodes.userScheduleTabBtn.addEventListener("click", () => setScheduleOwner("user"));
+    nodes.characterScheduleTabBtn.addEventListener("click", () => setScheduleOwner("character"));
+    nodes.scheduleCharacterSelect.addEventListener("change", changeScheduleCharacter);
+    nodes.scheduleAgendaViewBtn.addEventListener("click", () => setScheduleMobileView("agenda"));
+    nodes.scheduleCalendarViewBtn.addEventListener("click", () => setScheduleMobileView("calendar"));
+    nodes.scheduleTasksViewBtn.addEventListener("click", () => setScheduleMobileView("tasks"));
+    nodes.schedulePreviousMonthBtn.addEventListener("click", () => moveScheduleMonth(-1));
+    nodes.scheduleNextMonthBtn.addEventListener("click", () => moveScheduleMonth(1));
+    nodes.scheduleCreateBtn.addEventListener("click", openNewScheduleEditor);
+    nodes.closeScheduleEditorBtn.addEventListener("click", resetScheduleEditor);
+    nodes.scheduleEditorDialog.addEventListener("cancel", (event) => { event.preventDefault(); resetScheduleEditor(); });
+    nodes.scheduleCalendar.addEventListener("click", selectCalendarDate);
+    nodes.scheduleKind.addEventListener("change", updateScheduleEditorFields);
+    nodes.scheduleAllDay.addEventListener("change", updateScheduleEditorFields);
+    nodes.taskPendingBtn.addEventListener("click", () => setTaskFilter("pending"));
+    nodes.taskAllBtn.addEventListener("click", () => setTaskFilter("all"));
+    nodes.taskCompletedBtn.addEventListener("click", () => setTaskFilter("completed"));
+    nodes.taskList.addEventListener("click", handleScheduleAction);
+    nodes.scheduleForm.addEventListener("submit", saveScheduleItem);
+    nodes.resetScheduleBtn.addEventListener("click", resetScheduleEditor);
+    nodes.scheduleList.addEventListener("click", handleScheduleAction);
+    nodes.newCharacterBtn.addEventListener("click", resetCharacterForm);
+    nodes.characterCardGrid.addEventListener("click", selectCharacterCard);
+    nodes.characterSettingsTabBtn.addEventListener("click", () => setCharacterTab("settings"));
+    nodes.characterMemoryTabBtn.addEventListener("click", () => setCharacterTab("memory"));
+    nodes.characterForm.addEventListener("submit", saveCharacter);
+    nodes.characterName.addEventListener("input", renderCharacterAvatarPreview);
+    nodes.characterSoulMarkdown.addEventListener("input", updateCharacterSoulCount);
+    nodes.changeCharacterAvatarBtn.addEventListener("click", () => nodes.characterAvatarInput.click());
+    nodes.characterAvatarInput.addEventListener("change", changeCharacterAvatar);
+    nodes.removeCharacterAvatarBtn.addEventListener("click", removeCharacterAvatar);
+    nodes.sceneForm.addEventListener("submit", saveScene);
+    nodes.searchMemoryBtn.addEventListener("click", loadMemories);
+    nodes.addMemoryBtn.addEventListener("click", openMemoryEditor);
+    nodes.closeMemoryEditorBtn.addEventListener("click", closeMemoryEditor);
+    nodes.cancelMemoryEditorBtn.addEventListener("click", closeMemoryEditor);
+    nodes.memoryEditorDialog.addEventListener("cancel", (event) => { event.preventDefault(); closeMemoryEditor(); });
+    nodes.memoryForm.addEventListener("submit", pinMemory);
+    nodes.memoryList.addEventListener("click", handleMemoryAction);
+    nodes.cancelMessageBtn.addEventListener("click", cancelMessage);
+    nodes.retryMessageBtn.addEventListener("click", retryMessage);
+    nodes.attachFileBtn.addEventListener("click", () => nodes.chatAttachmentInput.click());
+    nodes.chatAttachmentInput.addEventListener("change", uploadChatAttachments);
+    nodes.attachmentQueue.addEventListener("click", removeQueuedAttachment);
     nodes.composer.addEventListener("submit", async (event) => {
       event.preventDefault();
       await sendMessage();
     });
+    nodes.messages.addEventListener("toggle", rememberMessageDisclosure, true);
+    nodes.messages.addEventListener("click", handleSystemEventAction);
+    nodes.messages.addEventListener("click", handleMessageAction);
+    nodes.messages.addEventListener("click", handleMessageMediaClick);
+    nodes.textInput.addEventListener("compositionstart", () => {
+      state.composingMessage = true;
+    });
+    nodes.textInput.addEventListener("compositionend", () => {
+      state.composingMessage = false;
+      state.compositionEndedAt = performance.now();
+    });
+    nodes.textInput.addEventListener("paste", pasteChatAttachments);
     nodes.textInput.addEventListener("keydown", async (event) => {
       if (event.key === "Enter" && !event.shiftKey) {
+        const justCommittedComposition = performance.now() - state.compositionEndedAt < 100;
+        if (event.isComposing || state.composingMessage || event.keyCode === 229 || justCommittedComposition) return;
         event.preventDefault();
         await sendMessage();
       }
     });
+    nodes.modelSettingsTabBtn.addEventListener("click", () => setSettingsTab("model"));
+    nodes.visionSettingsTabBtn.addEventListener("click", () => setSettingsTab("vision"));
+    nodes.searchSettingsTabBtn.addEventListener("click", () => setSettingsTab("search"));
+    nodes.promptSettingsTabBtn.addEventListener("click", () => setSettingsTab("prompt"));
+    nodes.dataSettingsTabBtn.addEventListener("click", () => setSettingsTab("data"));
+    nodes.smsPromptModeBtn.addEventListener("click", () => setPromptMode("sms"));
+    nodes.rpPromptModeBtn.addEventListener("click", () => setPromptMode("rp"));
+    nodes.systemPromptCustom.addEventListener("input", updateSystemPromptCharacterCount);
+    nodes.saveSystemPromptBtn.addEventListener("click", saveSystemPrompt);
+    nodes.apiModel.addEventListener("change", syncCustomModelVisibility);
+    nodes.visionModel.addEventListener("change", syncCustomVisionModelVisibility);
 
+    if (window.marked) {
+      window.marked.setOptions({ gfm: true, breaks: true });
+    }
     renderMessages();
+    refreshIcons();
+    updateRpControls();
+    void initializeChat();
+    window.setInterval(() => {
+      if (!state.busy && !state.sessionDraft && state.activeSessionId && state.uiMode === "normal") {
+        void refreshSessionMessages(true);
+      }
+    }, 3000);
 
     function setUiMode(mode) {
       state.uiMode = mode;
       nodes.normalBtn.classList.toggle("active", mode === "normal");
+      nodes.scheduleBtn.classList.toggle("active", mode === "schedule");
+      nodes.charactersBtn.classList.toggle("active", mode === "characters");
+      nodes.managementBtn.classList.toggle("active", mode === "management");
       nodes.settingsBtn.classList.toggle("active", mode === "settings");
       nodes.debugBtn.classList.toggle("active", mode === "debug");
-      nodes.chatPane.hidden = mode === "settings";
+      nodes.mainPane.dataset.mode = mode;
+      nodes.chatPane.hidden = mode !== "normal";
+      nodes.schedulePage.hidden = mode !== "schedule";
+      nodes.charactersPage.hidden = mode !== "characters";
+      nodes.managementPage.hidden = mode !== "management";
       nodes.settingsPage.hidden = mode !== "settings";
       nodes.debugPane.hidden = mode !== "debug";
       if (mode === "debug") {
         loadDebugLogs();
+        loadFeatureTestCases();
       }
       if (mode === "settings") {
-        loadApiSettings();
+        setSettingsTab(state.settingsTab);
+      }
+      if (mode === "schedule") {
+        setScheduleMobileView(state.scheduleMobileView);
+        renderScheduleScope();
+        loadScheduleItems();
+      }
+      if (mode === "normal") {
+        nodes.conversationListToggle.hidden = false;
+        updateChatIdentity();
+        updateSessionActionState();
+        void loadConversationScene();
+      }
+      if (mode === "characters") {
+        loadCharacters();
+      }
+      if (mode === "management") {
+        loadManagement();
       }
     }
 
-    async function sendMessage() {
-      const text = nodes.textInput.value.trim();
-      if (!text || state.busy) return;
-      state.busy = true;
+    function setManagementTab(tab) {
+      state.managementTab = tab;
+      nodes.modulesTabBtn.classList.toggle("active", tab === "modules");
+      nodes.profileTabBtn.classList.toggle("active", tab === "profile");
+      nodes.memoryManagementTabBtn.classList.toggle("active", tab === "memory");
+      nodes.workspaceFilesTabBtn.classList.toggle("active", tab === "files");
+      nodes.modulesPanel.hidden = tab !== "modules";
+      nodes.profilePanel.hidden = tab !== "profile";
+      nodes.memoryManagementPanel.hidden = tab !== "memory";
+      nodes.workspaceFilesPanel.hidden = tab !== "files";
+      nodes.managementPage.scrollTop = 0;
+      if (tab === "modules") loadCapabilityManagement();
+      if (tab === "profile") loadUserProfile();
+      if (tab === "memory") loadManagedMemories();
+      if (tab === "files") loadWorkspaceFiles();
+    }
+
+    function loadManagement() {
+      setManagementTab(state.managementTab);
+    }
+
+    function setSettingsTab(tab) {
+      state.settingsTab = tab;
+      nodes.modelSettingsTabBtn.classList.toggle("active", tab === "model");
+      nodes.visionSettingsTabBtn.classList.toggle("active", tab === "vision");
+      nodes.searchSettingsTabBtn.classList.toggle("active", tab === "search");
+      nodes.promptSettingsTabBtn.classList.toggle("active", tab === "prompt");
+      nodes.dataSettingsTabBtn.classList.toggle("active", tab === "data");
+      nodes.modelSettingsPanel.hidden = tab !== "model";
+      nodes.visionSettingsPanel.hidden = tab !== "vision";
+      nodes.searchSettingsPanel.hidden = tab !== "search";
+      nodes.promptSettingsPanel.hidden = tab !== "prompt";
+      nodes.dataSettingsPanel.hidden = tab !== "data";
+      nodes.settingsPage.scrollTop = 0;
+      if (tab === "model") loadApiSettings();
+      if (tab === "vision") loadVisionSettings();
+      if (tab === "search") loadTavilySettings();
+      if (tab === "prompt") loadSystemPrompts();
+      if (tab === "data") {
+        loadReadiness();
+        loadMemoryVaultStatus();
+      }
+    }
+
+    function setPromptMode(mode) {
+      state.promptMode = mode;
+      nodes.smsPromptModeBtn.classList.toggle("active", mode === "sms");
+      nodes.rpPromptModeBtn.classList.toggle("active", mode === "rp");
+      renderSystemPromptEditor();
+    }
+
+    async function loadSystemPrompts() {
+      nodes.systemPromptState.textContent = "加载中...";
+      nodes.systemPromptCustom.disabled = true;
+      nodes.saveSystemPromptBtn.disabled = true;
+      try {
+        const response = await fetch("/api/v1/system-prompts");
+        const body = await response.json();
+        if (!response.ok) throw new Error(body.error || "提示词加载失败");
+        state.systemPrompts = body.prompts || null;
+        renderSystemPromptEditor();
+        nodes.systemPromptState.textContent = "已加载";
+      } catch (error) {
+        nodes.systemPromptState.textContent = error.message || String(error);
+      } finally {
+        nodes.systemPromptCustom.disabled = false;
+        nodes.saveSystemPromptBtn.disabled = false;
+      }
+    }
+
+    function renderSystemPromptEditor() {
+      const prompt = state.systemPrompts?.[state.promptMode];
+      nodes.systemPromptCustom.value = prompt?.custom || "";
+      nodes.systemPromptBuiltIn.textContent = prompt?.builtIn || "";
+      nodes.systemPromptEffective.textContent = prompt?.effective || "";
+      updateSystemPromptCharacterCount();
+    }
+
+    function updateSystemPromptCharacterCount() {
+      const count = Array.from(nodes.systemPromptCustom.value).length;
+      nodes.systemPromptCharacterCount.textContent = count.toLocaleString() + " / 6000";
+      nodes.systemPromptCharacterCount.classList.toggle("error", count > 6000);
+    }
+
+    async function saveSystemPrompt() {
+      nodes.saveSystemPromptBtn.disabled = true;
+      nodes.systemPromptState.textContent = "保存中...";
+      try {
+        const response = await fetch("/api/v1/system-prompts", {
+          method: "PATCH",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ mode: state.promptMode, custom: nodes.systemPromptCustom.value })
+        });
+        const body = await response.json();
+        if (!response.ok) throw new Error(body.error || "提示词保存失败");
+        state.systemPrompts = { ...(state.systemPrompts || {}), [state.promptMode]: body.prompt };
+        renderSystemPromptEditor();
+        nodes.systemPromptState.textContent = "已保存";
+        setStatus("系统提示词已保存");
+      } catch (error) {
+        nodes.systemPromptState.textContent = error.message || String(error);
+        setStatus(error.message || String(error), true);
+      } finally {
+        nodes.saveSystemPromptBtn.disabled = false;
+      }
+    }
+
+    async function loadWorkspaceFiles() {
+      nodes.workspaceFileState.textContent = "加载中...";
+      try {
+        const query = encodeURIComponent(state.workspaceFileDirectory || ".");
+        const response = await fetch("/api/v1/workspace/files?path=" + query);
+        const body = await response.json();
+        if (!response.ok) throw new Error(body.error || "文件列表加载失败");
+        state.workspaceFileDirectory = body.path === "." ? "" : body.path;
+        state.workspaceFiles = Array.isArray(body.entries) ? body.entries : [];
+        nodes.workspaceFilePath.textContent = "/" + state.workspaceFileDirectory;
+        nodes.workspaceFileUpBtn.disabled = !state.workspaceFileDirectory;
+        nodes.workspaceFileState.textContent = state.workspaceFiles.length + " 项";
+        renderWorkspaceFiles();
+      } catch (error) {
+        nodes.workspaceFileState.textContent = error.message || String(error);
+        nodes.workspaceFileList.innerHTML = '<div class="workspace-file-empty error">' + escapeHtml(error.message || String(error)) + '</div>';
+      }
+    }
+
+    function renderWorkspaceFiles() {
+      if (!state.workspaceFiles.length) {
+        nodes.workspaceFileList.innerHTML = '<div class="workspace-file-empty">文件夹为空</div>';
+        return;
+      }
+      nodes.workspaceFileList.innerHTML = state.workspaceFiles.map((entry) => {
+        const directory = entry.kind === "directory";
+        const icon = directory ? "folder" : workspaceFileIcon(entry);
+        const primaryAction = directory ? "open" : "preview";
+        const actions = directory ? "" :
+          '<button class="secondary icon-button" type="button" data-file-action="preview" data-file-path="' + escapeHtml(entry.path) + '" title="预览" aria-label="预览 ' + escapeHtml(entry.name) + '"><i data-lucide="eye" aria-hidden="true"></i></button>' +
+          '<button class="secondary icon-button" type="button" data-file-action="download" data-file-path="' + escapeHtml(entry.path) + '" title="下载" aria-label="下载 ' + escapeHtml(entry.name) + '"><i data-lucide="download" aria-hidden="true"></i></button>';
+        return '<div class="workspace-file-row">' +
+          '<span class="workspace-file-icon"><i data-lucide="' + icon + '" aria-hidden="true"></i></span>' +
+          '<button class="workspace-file-name" type="button" data-file-action="' + primaryAction + '" data-file-path="' + escapeHtml(entry.path) + '">' + escapeHtml(entry.name) + '</button>' +
+          '<span class="workspace-file-meta">' + escapeHtml(directory ? "文件夹" : formatFileSize(entry.size)) + ' · ' + escapeHtml(formatTraceTime(entry.updatedAt)) + '</span>' +
+          '<span class="workspace-file-row-actions">' + actions +
+            '<button class="secondary icon-button" type="button" data-file-action="move" data-file-path="' + escapeHtml(entry.path) + '" title="移动或重命名" aria-label="移动 ' + escapeHtml(entry.name) + '"><i data-lucide="folder-input" aria-hidden="true"></i></button>' +
+            '<button class="secondary icon-button" type="button" data-file-action="delete" data-file-path="' + escapeHtml(entry.path) + '" title="删除" aria-label="删除 ' + escapeHtml(entry.name) + '"><i data-lucide="trash-2" aria-hidden="true"></i></button>' +
+          '</span></div>';
+      }).join("");
+      refreshIcons();
+    }
+
+    function workspaceFileIcon(entry) {
+      if (entry.previewKind === "image") return "image";
+      if (entry.previewKind === "pdf") return "file-text";
+      if (entry.previewKind === "text") return "file-code-2";
+      return "file";
+    }
+
+    function openWorkspaceParentDirectory() {
+      const parts = state.workspaceFileDirectory.split("/").filter(Boolean);
+      parts.pop();
+      state.workspaceFileDirectory = parts.join("/");
+      void loadWorkspaceFiles();
+    }
+
+    async function uploadWorkspaceManagerFiles() {
+      const files = Array.from(nodes.workspaceFileUploadInput.files || []);
+      nodes.workspaceFileUploadInput.value = "";
+      if (!files.length) return;
+      nodes.workspaceFileUploadBtn.disabled = true;
+      nodes.workspaceFileState.textContent = "上传中...";
+      try {
+        await uploadWorkspaceFiles(files, state.workspaceFileDirectory || ".");
+        await loadWorkspaceFiles();
+        setStatus(files.length + " 个文件已上传");
+      } catch (error) {
+        nodes.workspaceFileState.textContent = error.message || String(error);
+        setStatus(error.message || String(error), true);
+      } finally {
+        nodes.workspaceFileUploadBtn.disabled = false;
+      }
+    }
+
+    async function handleWorkspaceFileAction(event) {
+      const button = event.target.closest("button[data-file-action]");
+      if (!button) return;
+      const path = button.dataset.filePath || "";
+      const action = button.dataset.fileAction;
+      if (action === "open") {
+        state.workspaceFileDirectory = path;
+        await loadWorkspaceFiles();
+        return;
+      }
+      if (action === "preview") {
+        await previewWorkspaceFile(path);
+        return;
+      }
+      if (action === "download") {
+        const link = document.createElement("a");
+        link.href = workspaceFileContentUrl(path, "attachment");
+        link.click();
+        return;
+      }
+      if (action === "move") {
+        const moved = await openActionDialog({
+          title: "移动或重命名",
+          description: "输入 Workspace 内的目标相对路径。",
+          fieldLabel: "目标路径",
+          value: path,
+          selectInput: true,
+          confirmLabel: "移动",
+          validate: (value) => !value.trim() ? "目标路径不能为空。" : "",
+          onConfirm: async (value) => {
+            const response = await fetch("/api/v1/workspace/files", {
+              method: "PATCH",
+              headers: { "content-type": "application/json" },
+              body: JSON.stringify({ from: path, to: value.trim() })
+            });
+            const body = await response.json();
+            if (!response.ok) throw new Error(body.error || "文件移动失败");
+          }
+        });
+        if (moved) await loadWorkspaceFiles();
+        return;
+      }
+      if (action === "delete") {
+        const deleted = await openActionDialog({
+          title: "删除文件",
+          description: "将从 Workspace 永久删除 “" + path + "”。",
+          confirmLabel: "删除",
+          onConfirm: async () => {
+            const response = await fetch("/api/v1/workspace/files", {
+              method: "DELETE",
+              headers: { "content-type": "application/json" },
+              body: JSON.stringify({ path })
+            });
+            const body = await response.json();
+            if (!response.ok) throw new Error(body.error || "文件删除失败");
+          }
+        });
+        if (deleted) await loadWorkspaceFiles();
+      }
+    }
+
+    async function previewWorkspaceFile(path) {
+      nodes.workspaceFilePreviewTitle.textContent = path.split("/").pop() || path;
+      nodes.workspaceFilePreviewContent.innerHTML = '<div class="workspace-file-empty">加载中...</div>';
+      nodes.workspaceFilePreviewDialog.showModal();
+      try {
+        const response = await fetch("/api/v1/workspace/files/preview?path=" + encodeURIComponent(path));
+        const body = await response.json();
+        if (!response.ok) throw new Error(body.error || "文件预览失败");
+        const preview = body.preview || {};
+        nodes.workspaceFilePreviewContent.innerHTML = "";
+        if (preview.kind === "text") {
+          const pre = document.createElement("pre");
+          pre.textContent = (preview.content || "") + (preview.truncated ? "\\n\\n[预览已截断]" : "");
+          nodes.workspaceFilePreviewContent.append(pre);
+        } else if (preview.kind === "image") {
+          const image = document.createElement("img");
+          image.src = workspaceFileContentUrl(path, "inline");
+          image.alt = preview.entry?.name || "文件预览";
+          nodes.workspaceFilePreviewContent.append(image);
+        } else if (preview.kind === "pdf") {
+          const frame = document.createElement("iframe");
+          frame.src = workspaceFileContentUrl(path, "inline");
+          frame.title = preview.entry?.name || "PDF 预览";
+          nodes.workspaceFilePreviewContent.append(frame);
+        } else {
+          nodes.workspaceFilePreviewContent.innerHTML = '<div class="workspace-file-empty">此文件类型不支持预览，可下载后查看。</div>';
+        }
+      } catch (error) {
+        nodes.workspaceFilePreviewContent.innerHTML = '<div class="workspace-file-empty error">' + escapeHtml(error.message || String(error)) + '</div>';
+      }
+    }
+
+    function workspaceFileContentUrl(path, disposition) {
+      return "/api/v1/workspace/files/content?path=" + encodeURIComponent(path) + "&disposition=" + disposition;
+    }
+
+    function isSafeWorkspacePath(value) {
+      const path = String(value || "").trim().replaceAll("\\\\", "/");
+      if (!path || path.startsWith("/") || path.includes("\\0")) return false;
+      const segments = path.split("/");
+      return segments.every((segment) => segment && segment !== "." && segment !== "..");
+    }
+
+    function workspaceImagePath(source) {
+      const value = String(source || "").trim();
+      if (!value.toLowerCase().startsWith("workspace:")) return null;
+      let path = value.slice("workspace:".length).replace(/^\\/+/, "");
+      try { path = decodeURIComponent(path); } catch {}
+      return isSafeWorkspacePath(path) ? path : "";
+    }
+
+    function handleMessageMediaClick(event) {
+      const trigger = event.target.closest("[data-message-image]");
+      if (!trigger) return;
+      event.preventDefault();
+      const path = trigger.dataset.imagePath || "";
+      const source = path ? workspaceFileContentUrl(path, "inline") : trigger.dataset.imageSrc || "";
+      if (!source) return;
+      const name = trigger.dataset.imageName || "图片预览";
+      nodes.chatImageTitle.textContent = name;
+      nodes.chatImagePreview.alt = name;
+      nodes.chatImagePreview.src = source;
+      nodes.chatImageDownloadBtn.href = path ? workspaceFileContentUrl(path, "attachment") : source;
+      nodes.chatImageDownloadBtn.target = path ? "" : "_blank";
+      nodes.chatImageDownloadBtn.rel = path ? "" : "noopener noreferrer";
+      if (path) nodes.chatImageDownloadBtn.setAttribute("download", "");
+      else nodes.chatImageDownloadBtn.removeAttribute("download");
+      nodes.chatImageDialog.showModal();
+      refreshIcons();
+    }
+
+    function closeChatImagePreview() {
+      if (nodes.chatImageDialog.open) nodes.chatImageDialog.close();
+      nodes.chatImagePreview.removeAttribute("src");
+      nodes.chatImagePreview.alt = "";
+      nodes.chatImageDownloadBtn.removeAttribute("href");
+    }
+
+    async function uploadWorkspaceFiles(files, directory) {
+      const entries = [];
+      for (const file of files) {
+        if (file.size > 20 * 1024 * 1024) throw new Error(file.name + " 超过 20 MiB 上传限制");
+        const query = new URLSearchParams({ directory, name: file.name });
+        const response = await fetch("/api/v1/workspace/files/upload?" + query.toString(), {
+          method: "POST",
+          headers: { "content-type": file.type || "application/octet-stream" },
+          body: file
+        });
+        const body = await response.json();
+        if (!response.ok) throw new Error(body.error || (file.name + " 上传失败"));
+        entries.push(body.entry);
+      }
+      return entries;
+    }
+
+    function formatFileSize(value) {
+      const size = Number(value || 0);
+      if (size < 1024) return size + " B";
+      if (size < 1024 * 1024) return (size / 1024).toFixed(size < 10 * 1024 ? 1 : 0) + " KiB";
+      return (size / 1024 / 1024).toFixed(size < 10 * 1024 * 1024 ? 1 : 0) + " MiB";
+    }
+
+    async function loadScheduleItems() {
+      nodes.scheduleState.textContent = "加载中...";
+      if (state.scheduleOwnerType === "character" && !state.scheduleCharacterId) {
+        state.scheduleItems = [];
+        renderScheduleWorkspace();
+        nodes.scheduleState.textContent = "请先选择角色";
+        return;
+      }
+      try {
+        const query = new URLSearchParams({ ownerType: state.scheduleOwnerType });
+        if (state.scheduleOwnerType === "character") query.set("characterId", state.scheduleCharacterId);
+        const response = await fetch("/api/v1/schedule-items?" + query.toString());
+        const body = await response.json();
+        if (!response.ok) throw new Error(body.error || "日程加载失败");
+        state.scheduleItems = Array.isArray(body.items) ? body.items : [];
+        renderScheduleWorkspace();
+      } catch (error) {
+        nodes.scheduleState.textContent = error.message || String(error);
+        nodes.scheduleList.innerHTML = '<div class="error">' + escapeHtml(error.message || String(error)) + '</div>';
+      }
+    }
+
+    function setScheduleOwner(ownerType) {
+      if (ownerType !== "user" && ownerType !== "character") return;
+      state.scheduleOwnerType = ownerType;
+      if (ownerType === "character" && !state.scheduleCharacterId) {
+        state.scheduleCharacterId = state.selectedCharacterId || state.characters[0]?.id || "";
+      }
+      renderScheduleScope();
+      state.scheduleItems = [];
+      renderScheduleWorkspace();
+      nodes.scheduleState.textContent = "加载中...";
+      void loadScheduleItems();
+    }
+
+    function changeScheduleCharacter() {
+      state.scheduleCharacterId = nodes.scheduleCharacterSelect.value;
+      renderScheduleScope();
+      state.scheduleItems = [];
+      renderScheduleWorkspace();
+      nodes.scheduleState.textContent = "加载中...";
+      void loadScheduleItems();
+    }
+
+    function renderScheduleCharacterOptions() {
+      if (!nodes.scheduleCharacterSelect) return;
+      if (state.scheduleCharacterId && !state.characters.some((entry) => entry.id === state.scheduleCharacterId)) {
+        state.scheduleCharacterId = "";
+      }
+      if (!state.scheduleCharacterId) state.scheduleCharacterId = state.selectedCharacterId || state.characters[0]?.id || "";
+      nodes.scheduleCharacterSelect.innerHTML = state.characters.length
+        ? state.characters.map((character) => '<option value="' + escapeHtml(character.id) + '">' + escapeHtml(character.name) + '</option>').join("")
+        : '<option value="">暂无角色</option>';
+      nodes.scheduleCharacterSelect.value = state.scheduleCharacterId;
+      nodes.scheduleCharacterSelect.disabled = !state.characters.length;
+    }
+
+    function renderScheduleScope() {
+      renderScheduleCharacterOptions();
+      const characterMode = state.scheduleOwnerType === "character";
+      const character = state.characters.find((entry) => entry.id === state.scheduleCharacterId);
+      nodes.userScheduleTabBtn.classList.toggle("active", !characterMode);
+      nodes.characterScheduleTabBtn.classList.toggle("active", characterMode);
+      nodes.userScheduleTabBtn.setAttribute("aria-selected", String(!characterMode));
+      nodes.characterScheduleTabBtn.setAttribute("aria-selected", String(characterMode));
+      nodes.scheduleCharacterField.hidden = !characterMode;
+      nodes.scheduleCreateBtn.disabled = characterMode && !character;
+      nodes.scheduleScopeSummary.textContent = characterMode
+        ? (character ? character.name + "自己的安排，不触发现实通知" : "请先创建并选择角色")
+        : "我的现实日程与提醒";
+      updateScheduleHeaderContext();
+      refreshIcons();
+    }
+
+    function setScheduleMobileView(view) {
+      if (!["agenda", "calendar", "tasks"].includes(view)) return;
+      state.scheduleMobileView = view;
+      nodes.schedulePage.dataset.mobileView = view;
+      const buttons = [
+        [nodes.scheduleAgendaViewBtn, "agenda"],
+        [nodes.scheduleCalendarViewBtn, "calendar"],
+        [nodes.scheduleTasksViewBtn, "tasks"]
+      ];
+      buttons.forEach(([button, value]) => {
+        button.classList.toggle("active", value === view);
+        button.setAttribute("aria-selected", String(value === view));
+      });
+    }
+
+    function renderScheduleWorkspace() {
+      renderScheduleCalendar();
+      renderTaskList();
+      renderScheduleItems();
+      refreshIcons();
+    }
+
+    function renderScheduleCalendar() {
+      const cursor = new Date(state.calendarCursor.getFullYear(), state.calendarCursor.getMonth(), 1);
+      state.calendarCursor = cursor;
+      nodes.scheduleMonthLabel.textContent = cursor.toLocaleDateString("zh-CN", { year: "numeric", month: "long" });
+      const offset = (cursor.getDay() + 6) % 7;
+      const gridStart = new Date(cursor);
+      gridStart.setDate(cursor.getDate() - offset);
+      const today = localDateKey(new Date());
+      const cells = [];
+      for (let index = 0; index < 42; index += 1) {
+        const date = new Date(gridStart);
+        date.setDate(gridStart.getDate() + index);
+        const key = localDateKey(date);
+        const items = scheduleItemsOnDate(key);
+        const labels = items.slice(0, 3).map((item) =>
+          '<span class="calendar-event ' + escapeHtml(item.kind) + ' ' + escapeHtml(scheduleItemDisplayState(item)) + '" title="' + escapeHtml(formatCalendarEvent(item)) + '">' + escapeHtml(formatCalendarEvent(item)) + '</span>'
+        ).join("");
+        const more = items.length > 3 ? '<span class="calendar-more">+' + (items.length - 3) + ' 项</span>' : "";
+        const classes = [
+          "calendar-day",
+          date.getMonth() === cursor.getMonth() ? "" : "outside",
+          key === today ? "today" : "",
+          key === state.selectedScheduleDate ? "selected" : ""
+        ].filter(Boolean).join(" ");
+        cells.push('<button class="' + classes + '" type="button" data-date="' + key + '" aria-label="' +
+          escapeHtml(date.toLocaleDateString("zh-CN")) + '"><span class="calendar-day-number">' + date.getDate() + '</span>' +
+          '<span class="calendar-events">' + labels + more + '</span></button>');
+      }
+      nodes.scheduleCalendar.innerHTML = cells.join("");
+    }
+
+    function renderTaskList() {
+      const tasks = state.scheduleItems
+        .filter((item) => item.kind === "task" && item.status !== "cancelled")
+        .filter((item) => state.taskFilter === "all" || (state.taskFilter === "completed" ? item.status === "completed" : item.status === "scheduled"))
+        .sort((left, right) => {
+          if (left.status !== right.status) return left.status === "scheduled" ? -1 : 1;
+          return String(left.startAt || left.createdAt).localeCompare(String(right.startAt || right.createdAt));
+        });
+      const pending = state.scheduleItems.filter((item) => item.kind === "task" && item.status === "scheduled").length;
+      nodes.taskCount.textContent = pending + " 待办";
+      if (!tasks.length) {
+        nodes.taskList.innerHTML = '<div class="schedule-empty">当前没有任务</div>';
+        return;
+      }
+      nodes.taskList.innerHTML = tasks.map((item) => {
+        const completed = item.status === "completed";
+        const time = item.startAt ? formatScheduleTime(item.startAt, item.timezone) : "未设置时间";
+        return '<div class="task-item' + (completed ? ' completed' : '') + '">' +
+          '<button class="task-check" type="button" data-action="' + (completed ? 'noop' : 'complete') + '" data-id="' + escapeHtml(item.id) + '" title="' + (completed ? '已完成' : '标记完成') + '" aria-label="' + (completed ? '已完成' : '完成任务') + '"><i data-lucide="' + (completed ? 'circle-check-big' : 'circle') + '" aria-hidden="true"></i></button>' +
+          '<span class="task-copy"><strong>' + escapeHtml(item.title) + '</strong><span>' + escapeHtml(time) + '</span></span>' +
+          '<button class="task-edit" type="button" data-action="edit" data-id="' + escapeHtml(item.id) + '" title="编辑任务" aria-label="编辑任务"><i data-lucide="pencil" aria-hidden="true"></i></button>' +
+        '</div>';
+      }).join("");
+    }
+
+    function renderScheduleItems() {
+      const selected = parseLocalDateKey(state.selectedScheduleDate);
+      nodes.scheduleAgendaTitle.textContent = selected.toLocaleDateString("zh-CN", { month: "long", day: "numeric", weekday: "long" });
+      const selectedItems = scheduleItemsOnDate(state.selectedScheduleDate);
+      nodes.scheduleState.textContent = selectedItems.length + " 项";
+      if (!selectedItems.length) {
+        nodes.scheduleList.innerHTML = '<div class="schedule-empty">这一天没有日程</div>';
+        return;
+      }
+      nodes.scheduleList.innerHTML = selectedItems.map((item) => {
+        const occurrences = Array.isArray(item.occurrences) ? item.occurrences : [];
+        const occurrence = occurrences.find((entry) => ["scheduled", "processing"].includes(entry.status));
+        const notifications = Array.isArray(item.notifications) ? item.notifications : [];
+        const notification = notifications.at(-1);
+        const displayState = scheduleItemDisplayState(item);
+        const time = item.startAt ? formatScheduleTime(item.startAt, item.timezone) : "未设置时间";
+        const recurrence = item.recurrenceRule ? " · " + recurrenceLabel(item.recurrenceRule) : "";
+        const notes = item.notes ? '<div class="schedule-meta">' + escapeHtml(item.notes) + '</div>' : "";
+        const delivery = notification
+          ? '<div class="schedule-meta">通知：' + escapeHtml(notificationStatusLabel(notification.status)) +
+            (notification.lastError ? ' · ' + escapeHtml(notification.lastError) : '') + '</div>'
+          : "";
+        const snooze = item.ownerType === "user" && item.kind === "reminder" && occurrence
+          ? '<button class="secondary" type="button" data-action="snooze" data-occurrence-id="' + escapeHtml(occurrence.id) + '">稍后 10 分钟</button>'
+          : "";
+        const retry = notification && notification.status === "failed"
+          ? '<button class="secondary" type="button" data-action="retry-notification" data-notification-id="' + escapeHtml(notification.id) + '">重试通知</button>'
+          : "";
+        const mutable = displayState === "scheduled" || displayState === "failed";
+        return '<section class="schedule-row ' + escapeHtml(displayState) + '">' +
+          '<div><h3 class="schedule-title">' + escapeHtml(item.title) + '<span class="schedule-status-badge ' + escapeHtml(displayState) + '">' + escapeHtml(scheduleStatusLabel(displayState)) + '</span></h3>' +
+          '<div class="schedule-meta">' + escapeHtml(kindLabel(item.kind)) + ' · ' + escapeHtml(time) + escapeHtml(recurrence) + '</div>' +
+          notes + delivery + '</div>' +
+          '<div class="schedule-actions">' +
+          '<button class="secondary" type="button" data-action="edit" data-id="' + escapeHtml(item.id) + '">编辑</button>' +
+          (mutable && item.kind !== "reminder" ? '<button class="secondary" type="button" data-action="complete" data-id="' + escapeHtml(item.id) + '">完成</button>' : "") +
+          snooze +
+          retry +
+          (mutable ? '<button class="secondary" type="button" data-action="cancel" data-id="' + escapeHtml(item.id) + '">取消</button>' : "") +
+          '</div></section>';
+      }).join("");
+    }
+
+    function scheduleItemsOnDate(key) {
+      return state.scheduleItems.filter((item) => {
+        if (item.status === "cancelled") return false;
+        if (item.startAt && localDateKey(new Date(item.startAt)) === key) return true;
+        return Array.isArray(item.occurrences) && item.occurrences.some((entry) => entry.dueAt && localDateKey(new Date(entry.dueAt)) === key);
+      }).sort((left, right) => String(left.startAt || left.createdAt).localeCompare(String(right.startAt || right.createdAt)));
+    }
+
+    function scheduleItemDisplayState(item) {
+      if (item.status === "cancelled" || item.status === "completed") return item.status;
+      const occurrences = Array.isArray(item.occurrences) ? item.occurrences : [];
+      const notifications = Array.isArray(item.notifications) ? item.notifications : [];
+      if (occurrences.some((entry) => ["scheduled", "processing"].includes(entry.status))) return "scheduled";
+      if (notifications.some((entry) => entry.status === "failed") || occurrences.some((entry) => entry.status === "failed")) return "failed";
+      if (notifications.some((entry) => entry.status === "delivered") || occurrences.some((entry) => entry.status === "delivered")) return "delivered";
+      return "scheduled";
+    }
+
+    function scheduleStatusLabel(status) {
+      return ({ scheduled: "待进行", delivered: "已送达", completed: "已完成", failed: "通知失败", cancelled: "已取消" })[status] || status;
+    }
+
+    function formatCalendarEvent(item) {
+      if (!item.startAt || item.allDay) return item.title;
+      try {
+        const time = new Intl.DateTimeFormat("zh-CN", {
+          timeZone: item.timezone,
+          hour: "2-digit",
+          minute: "2-digit",
+          hour12: false
+        }).format(new Date(item.startAt));
+        return time + " " + item.title;
+      } catch {
+        return item.title;
+      }
+    }
+
+    function showTodayInCalendar() {
+      const today = new Date();
+      state.calendarCursor = new Date(today.getFullYear(), today.getMonth(), 1);
+      state.selectedScheduleDate = localDateKey(today);
+      renderScheduleWorkspace();
+    }
+
+    function moveScheduleMonth(offset) {
+      state.calendarCursor = new Date(state.calendarCursor.getFullYear(), state.calendarCursor.getMonth() + offset, 1);
+      state.selectedScheduleDate = localDateKey(state.calendarCursor);
+      renderScheduleWorkspace();
+    }
+
+    function selectCalendarDate(event) {
+      const button = event.target.closest("button[data-date]");
+      if (!button) return;
+      state.selectedScheduleDate = button.dataset.date;
+      const selected = parseLocalDateKey(state.selectedScheduleDate);
+      state.calendarCursor = new Date(selected.getFullYear(), selected.getMonth(), 1);
+      renderScheduleWorkspace();
+      if (window.matchMedia("(max-width: 900px)").matches) setScheduleMobileView("agenda");
+    }
+
+    function setTaskFilter(filter) {
+      state.taskFilter = filter;
+      nodes.taskPendingBtn.classList.toggle("active", filter === "pending");
+      nodes.taskAllBtn.classList.toggle("active", filter === "all");
+      nodes.taskCompletedBtn.classList.toggle("active", filter === "completed");
+      renderTaskList();
+      refreshIcons();
+    }
+
+    function openNewScheduleEditor() {
+      if (state.scheduleOwnerType === "character" && !state.scheduleCharacterId) return;
+      clearScheduleEditor();
+      const selected = parseLocalDateKey(state.selectedScheduleDate);
+      const now = new Date();
+      selected.setHours(localDateKey(now) === state.selectedScheduleDate ? Math.min(now.getHours() + 1, 23) : 9, 0, 0, 0);
+      nodes.scheduleStart.value = isoToLocalInput(selected.toISOString(), false);
+      nodes.scheduleEditorDialog.showModal();
+      nodes.scheduleTitle.focus();
+    }
+
+    async function saveScheduleItem(event) {
+      event.preventDefault();
+      const payload = {
+        kind: nodes.scheduleKind.value,
+        title: nodes.scheduleTitle.value.trim(),
+        notes: nodes.scheduleNotes.value.trim() || undefined,
+        startAt: localInputToIso(nodes.scheduleStart.value, nodes.scheduleAllDay.checked),
+        endAt: localInputToIso(nodes.scheduleEnd.value, nodes.scheduleAllDay.checked),
+        timezone: Intl.DateTimeFormat().resolvedOptions().timeZone || "Asia/Shanghai",
+        allDay: nodes.scheduleAllDay.checked,
+        recurrenceRule: nodes.scheduleRecurrence.value || undefined
+      };
+      if (!state.editingScheduleId) {
+        payload.ownerType = state.scheduleOwnerType;
+        if (state.scheduleOwnerType === "character") payload.characterId = state.scheduleCharacterId;
+      }
+      if (!payload.title) return;
+      nodes.saveScheduleBtn.disabled = true;
+      nodes.scheduleEditorState.textContent = "保存中...";
+      try {
+        const editing = state.editingScheduleId;
+        const response = await fetch(
+          editing ? "/api/v1/schedule-items/" + encodeURIComponent(editing) : "/api/v1/schedule-items",
+          {
+            method: editing ? "PATCH" : "POST",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify(payload)
+          }
+        );
+        const body = await response.json();
+        if (!response.ok) throw new Error(body.error || "日程保存失败");
+        const saved = body.item;
+        if (saved?.startAt) {
+          const date = new Date(saved.startAt);
+          state.selectedScheduleDate = localDateKey(date);
+          state.calendarCursor = new Date(date.getFullYear(), date.getMonth(), 1);
+        }
+        resetScheduleEditor();
+        await loadScheduleItems();
+        setStatus(editing ? "日程已更新" : "日程已创建");
+      } catch (error) {
+        nodes.scheduleEditorState.textContent = error.message || String(error);
+        setStatus(error.message || String(error), true);
+      } finally {
+        nodes.saveScheduleBtn.disabled = false;
+      }
+    }
+
+    async function handleScheduleAction(event) {
+      const button = event.target.closest("button[data-action]");
+      if (!button) return;
+      const action = button.dataset.action;
+      const id = button.dataset.id;
+      if (action === "edit" && id) {
+        beginScheduleEdit(id);
+        return;
+      }
+      if (action === "cancel" && id) {
+        const item = state.scheduleItems.find((entry) => entry.id === id);
+        const confirmed = await openActionDialog({
+          title: "取消日程",
+          description: "确定取消“" + (item?.title || "这项日程") + "”？取消后将不再触发后续提醒。",
+          confirmLabel: "取消日程"
+        });
+        if (!confirmed) return;
+      }
+      let url = "";
+      let method = "POST";
+      let body;
+      if (action === "complete" && id) url = "/api/v1/schedule-items/" + encodeURIComponent(id) + "/complete";
+      if (action === "cancel" && id) {
+        url = "/api/v1/schedule-items/" + encodeURIComponent(id);
+        method = "DELETE";
+      }
+      if (action === "snooze" && button.dataset.occurrenceId) {
+        url = "/api/v1/reminder-occurrences/" + encodeURIComponent(button.dataset.occurrenceId) + "/snooze";
+        body = JSON.stringify({ minutes: 10 });
+      }
+      if (action === "retry-notification" && button.dataset.notificationId) {
+        url = "/api/v1/notifications/" + encodeURIComponent(button.dataset.notificationId) + "/retry";
+      }
+      if (!url) return;
+      try {
+        const response = await fetch(url, {
+          method,
+          headers: body ? { "content-type": "application/json" } : undefined,
+          body
+        });
+        const result = await response.json();
+        if (!response.ok) throw new Error(result.error || "操作失败");
+        await loadScheduleItems();
+        setStatus("日程已更新");
+      } catch (error) {
+        setStatus(error.message || String(error), true);
+      }
+    }
+
+    function beginScheduleEdit(id) {
+      const item = state.scheduleItems.find((entry) => entry.id === id);
+      if (!item) return;
+      state.editingScheduleId = id;
+      nodes.scheduleTitle.value = item.title || "";
+      nodes.scheduleKind.value = item.kind;
+      nodes.scheduleKind.disabled = true;
+      nodes.scheduleAllDay.checked = Boolean(item.allDay);
+      updateScheduleEditorFields();
+      nodes.scheduleStart.value = isoToLocalInput(item.startAt, item.allDay);
+      nodes.scheduleEnd.value = isoToLocalInput(item.endAt, item.allDay);
+      nodes.scheduleRecurrence.value = item.recurrenceRule || "";
+      nodes.scheduleNotes.value = item.notes || "";
+      nodes.saveScheduleBtn.textContent = "保存修改";
+      nodes.scheduleEditorTitle.textContent = "编辑日程";
+      nodes.scheduleEditorScope.textContent = state.scheduleOwnerType === "character" ? "角色日程 · 不触发现实通知" : "用户日程 · 可触发现实通知";
+      nodes.scheduleEditorState.textContent = "";
+      nodes.scheduleEditorDialog.showModal();
+      nodes.scheduleTitle.focus();
+    }
+
+    function resetScheduleEditor() {
+      clearScheduleEditor();
+      if (nodes.scheduleEditorDialog.open) nodes.scheduleEditorDialog.close();
+    }
+
+    function clearScheduleEditor() {
+      state.editingScheduleId = null;
+      nodes.scheduleForm.reset();
+      nodes.scheduleKind.disabled = false;
+      const characterMode = state.scheduleOwnerType === "character";
+      const reminderOption = nodes.scheduleKind.querySelector('option[value="reminder"]');
+      reminderOption.disabled = characterMode;
+      nodes.scheduleKind.value = characterMode ? "event" : "reminder";
+      nodes.saveScheduleBtn.textContent = "创建日程";
+      nodes.scheduleEditorTitle.textContent = "新建日程";
+      const character = state.characters.find((entry) => entry.id === state.scheduleCharacterId);
+      nodes.scheduleEditorScope.textContent = characterMode
+        ? (character?.name || "角色") + "的日程 · 不触发现实通知"
+        : "用户日程 · 可触发现实通知";
+      nodes.scheduleEditorState.textContent = "";
+      updateScheduleEditorFields();
+    }
+
+    function updateScheduleEditorFields() {
+      const allDay = nodes.scheduleAllDay.checked;
+      for (const input of [nodes.scheduleStart, nodes.scheduleEnd]) {
+        const value = input.value;
+        input.type = allDay ? "date" : "datetime-local";
+        if (allDay && value) input.value = value.slice(0, 10);
+        if (!allDay && value && value.length === 10) input.value = value + "T09:00";
+      }
+      nodes.scheduleEndField.hidden = nodes.scheduleKind.value !== "event";
+      nodes.scheduleForm.classList.toggle("without-end", nodes.scheduleEndField.hidden);
+      if (nodes.scheduleEndField.hidden) nodes.scheduleEnd.value = "";
+    }
+
+    async function initializeChat() {
+      await Promise.all([loadCharacters(), loadUserAvatarState()]);
+      await loadSessions();
+    }
+
+    async function loadSessions() {
+      try {
+        const response = await fetch("/api/v1/sessions");
+        const body = await response.json();
+        if (!response.ok) throw new Error(body.error || "会话加载失败");
+        state.sessions = Array.isArray(body.sessions)
+          ? body.sessions.slice().sort((left, right) => String(right.updatedAt || "").localeCompare(String(left.updatedAt || "")))
+          : [];
+        renderConversationList();
+        renderCharacterCards();
+        const current = state.sessions.find((entry) => entry.id === state.activeSessionId);
+        if (current) {
+          await applySession(current);
+          return;
+        }
+        const recentBound = state.sessions.find((entry) => entry.characterId);
+        if (recentBound) {
+          await applySession(recentBound);
+          return;
+        }
+        startNewSession();
+      } catch (error) {
+        setStatus(error.message || String(error), true);
+        if (!state.activeSessionId) startNewSession();
+      }
+    }
+
+    function startNewSession() {
+      if (state.busy) return;
+      state.activeSessionId = generateSessionId();
+      state.sessionDraft = true;
+      state.messages = [];
+      state.lastTurnStatus = null;
+      state.lastTurnCanRetry = false;
+      updateRetryState();
+      setSessionControlsLocked(false);
+      renderSessionOptions();
+      setConversationListOpen(false);
+      renderConversationList();
+      updateSessionActionState();
+      updateChatIdentity();
+      clearConversationScene();
+      setStatus(state.selectedCharacterId ? "新会话已准备" : "点击会话列表中的 + 开始新对话");
+    }
+
+    let newConversationOpener = null;
+
+    function openNewConversationDialog() {
+      if (state.busy || nodes.newConversationDialog.open) return;
+      newConversationOpener = document.activeElement;
+      const options = state.characters.map((character) =>
+        '<option value="' + escapeHtml(character.id) + '">' + escapeHtml(character.name) + '</option>'
+      ).join("");
+      nodes.newConversationCharacter.innerHTML = '<option value="">请选择角色</option>' + options;
+      const preferredCharacter = state.selectedCharacterId && state.characters.some((entry) => entry.id === state.selectedCharacterId)
+        ? state.selectedCharacterId
+        : state.characters[0]?.id || "";
+      nodes.newConversationCharacter.value = preferredCharacter;
+      nodes.newConversationError.textContent = state.characters.length ? "" : "请先在角色页创建角色。";
+      nodes.createConversationBtn.disabled = !state.characters.length;
+      setNewConversationMode(nodes.modeSelect.value === "rp" ? "rp" : "sms");
+      nodes.newConversationDialog.showModal();
+      refreshIcons();
+      requestAnimationFrame(() => nodes.newConversationCharacter.focus());
+    }
+
+    function closeNewConversationDialog() {
+      if (nodes.newConversationDialog.open) nodes.newConversationDialog.close();
+      const opener = newConversationOpener;
+      newConversationOpener = null;
+      opener?.focus?.();
+    }
+
+    function setNewConversationMode(mode) {
+      state.newConversationMode = mode;
+      nodes.newConversationSmsBtn.classList.toggle("active", mode === "sms");
+      nodes.newConversationRpBtn.classList.toggle("active", mode === "rp");
+    }
+
+    function createNewConversation(event) {
+      event.preventDefault();
+      const characterId = nodes.newConversationCharacter.value;
+      if (!characterId) {
+        nodes.newConversationError.textContent = "请选择角色。";
+        return;
+      }
+      state.selectedCharacterId = characterId;
+      nodes.chatCharacterSelect.value = characterId;
+      nodes.modeSelect.value = state.newConversationMode;
+      startNewSession();
+      closeNewConversationDialog();
+      requestAnimationFrame(() => nodes.textInput.focus());
+    }
+
+    async function selectSession() {
+      const session = state.sessions.find((entry) => entry.id === nodes.sessionSelect.value);
+      if (!session) return;
+      await applySession(session);
+    }
+
+    async function applySession(session) {
+      state.activeSessionId = session.id;
+      state.sessionDraft = false;
+      state.lastTurnStatus = session.lastTurnStatus || null;
+      state.lastTurnCanRetry = Boolean(session.lastTurnCanRetry);
+      updateRetryState();
+      nodes.modeSelect.value = session.mode === "rp" ? "rp" : "sms";
+      state.selectedCharacterId = session.characterId || "";
+      nodes.chatCharacterSelect.value = state.selectedCharacterId;
+      setSessionControlsLocked(true);
+      renderSessionOptions();
+      updateSessionActionState();
+      updateChatIdentity();
+      setConversationListOpen(false);
+      renderConversationList();
+      await refreshSessionMessages(false);
+      await loadConversationScene();
+      if (!session.characterId) {
+        setStatus("这是未绑定角色的旧会话，仅供查看；请新建会话后继续。", true);
+      }
+    }
+
+    function renderSessionOptions() {
+      const draft = state.sessionDraft
+        ? '<option value="' + escapeHtml(state.activeSessionId) + '">新会话（未保存）</option>'
+        : "";
+      const options = state.sessions.map((session) =>
+        '<option value="' + escapeHtml(session.id) + '">' + escapeHtml(sessionLabel(session)) + '</option>'
+      ).join("");
+      nodes.sessionSelect.innerHTML = draft + options || '<option value="">暂无会话</option>';
+      nodes.sessionSelect.value = state.activeSessionId;
+    }
+
+    function sessionLabel(session) {
+      const character = state.characters.find((entry) => entry.id === session.characterId);
+      const identity = character?.name || "未绑定角色";
+      const mode = session.mode === "rp" ? "剧情演绎" : "角色私聊";
+      const date = new Date(session.updatedAt || session.createdAt || 0);
+      const time = Number.isNaN(date.getTime()) ? "" : date.toLocaleString("zh-CN", {
+        month: "2-digit",
+        day: "2-digit",
+        hour: "2-digit",
+        minute: "2-digit"
+      });
+      return [session.title || "旧会话", identity, mode, time].filter(Boolean).join(" · ");
+    }
+
+    function renderConversationList() {
+      if (!nodes.conversationList) return;
+      const availableSessionIds = new Set(state.sessions.map((session) => session.id));
+      state.selectedSessionIds = new Set([...state.selectedSessionIds].filter((sessionId) => availableSessionIds.has(sessionId)));
+      const draft = state.sessionDraft && state.selectedCharacterId
+        ? [{
+            id: state.activeSessionId,
+            characterId: state.selectedCharacterId,
+            mode: nodes.modeSelect.value,
+            title: "新会话",
+            preview: "尚未发送消息",
+            updatedAt: new Date().toISOString(),
+            draft: true
+          }]
+        : [];
+      const conversations = [...draft, ...state.sessions];
+      if (!conversations.length) {
+        nodes.conversationList.innerHTML = '<div class="conversation-list-empty">点击右上角 + 开始新对话</div>';
+        updateConversationBatchControls();
+        return;
+      }
+      const groups = new Map();
+      for (const session of conversations) {
+        const key = conversationGroupKey(session);
+        if (!groups.has(key)) groups.set(key, []);
+        groups.get(key).push(session);
+      }
+      nodes.conversationList.innerHTML = [...groups.entries()].map(([groupKey, sessions]) => {
+        const character = state.characters.find((entry) => entry.id === sessions[0]?.characterId);
+        const identity = character?.name || "未绑定角色";
+        const collapsed = state.collapsedConversationGroups.has(groupKey);
+        const selectable = sessions.filter((session) => !session.draft);
+        const allSelected = selectable.length > 0 && selectable.every((session) => state.selectedSessionIds.has(session.id));
+        const draftCount = sessions.length - selectable.length;
+        const summary = selectable.length + " 个会话" + (draftCount ? " · 1 个草稿" : "");
+        const head = state.conversationBatchMode
+          ? '<label class="conversation-group-head batch"><input type="checkbox" data-conversation-group-select="' + escapeHtml(groupKey) + '" aria-label="选择 ' + escapeHtml(identity) + ' 的全部会话"' + (allSelected ? ' checked' : '') + (selectable.length ? '' : ' disabled') + ' />' +
+              '<span class="conversation-group-avatar" style="--avatar-hue:' + avatarHue(identity) + '">' + avatarImageOrInitial(character?.avatarUrl, identity) + '</span>' +
+              '<span class="conversation-group-copy"><strong>' + escapeHtml(identity) + '</strong><span>' + escapeHtml(summary) + '</span></span></label>'
+          : '<button class="conversation-group-head" type="button" data-conversation-group-toggle="' + escapeHtml(groupKey) + '" aria-expanded="' + String(!collapsed) + '">' +
+              '<span class="conversation-group-avatar" style="--avatar-hue:' + avatarHue(identity) + '">' + avatarImageOrInitial(character?.avatarUrl, identity) + '</span>' +
+              '<span class="conversation-group-copy"><strong>' + escapeHtml(identity) + '</strong><span>' + escapeHtml(summary) + '</span></span>' +
+              '<i class="conversation-group-chevron" data-lucide="chevron-down" aria-hidden="true"></i></button>';
+        const items = sessions.map((session) => renderConversationItem(session)).join("");
+        return '<section class="conversation-group' + (collapsed ? ' collapsed' : '') + '" data-conversation-group="' + escapeHtml(groupKey) + '">' + head +
+          '<div class="conversation-group-sessions"' + (collapsed && !state.conversationBatchMode ? ' hidden' : '') + '>' + items + '</div></section>';
+      }).join("");
+      updateConversationBatchControls();
+      refreshIcons();
+    }
+
+    function conversationGroupKey(session) {
+      return session.characterId || "__unbound__";
+    }
+
+    function renderConversationItem(session) {
+      const active = session.id === state.activeSessionId;
+      const date = new Date(session.updatedAt || session.createdAt || 0);
+      const time = date && !Number.isNaN(date.getTime())
+        ? date.toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit" })
+        : "";
+      const rp = session.mode === "rp";
+      const mode = rp ? "剧情演绎" : "角色私聊";
+      const title = session.title || (session.draft ? "新会话" : mode);
+      const preview = session.preview && session.preview !== title ? mode + " · " + session.preview : mode;
+      const content = '<span class="conversation-mode-icon' + (rp ? ' rp' : '') + '"><i data-lucide="' + (rp ? 'drama' : 'message-circle') + '" aria-hidden="true"></i></span>' +
+        '<span class="conversation-copy"><span class="conversation-line"><strong>' + escapeHtml(title) + '</strong><span class="conversation-time">' + escapeHtml(time) + '</span></span>' +
+        '<span class="conversation-preview">' + escapeHtml(preview) + '</span></span>';
+      if (!state.conversationBatchMode) {
+        return '<button class="conversation-item' + (active ? ' active' : '') + '" type="button" data-session-id="' + escapeHtml(session.id) + '"' +
+          (session.draft ? ' data-session-draft="true"' : '') + '>' + content + '</button>';
+      }
+      if (session.draft) {
+        return '<div class="conversation-item batch-disabled active" data-session-draft="true">' + content + '</div>';
+      }
+      return '<label class="conversation-item batch' + (active ? ' active' : '') + '"><input type="checkbox" data-conversation-session-select="' + escapeHtml(session.id) + '" aria-label="选择会话 ' + escapeHtml(title) + '"' +
+        (state.selectedSessionIds.has(session.id) ? ' checked' : '') + ' />' + content + '</label>';
+    }
+
+    function updateConversationBatchControls() {
+      const selectedCount = state.selectedSessionIds.size;
+      const selectableCount = state.sessions.length;
+      nodes.conversationListTitle.textContent = state.conversationBatchMode ? "批量管理" : "会话";
+      nodes.conversationBatchBar.hidden = !state.conversationBatchMode;
+      nodes.sidebarArchivedSessionsBtn.hidden = state.conversationBatchMode;
+      nodes.sidebarNewSessionBtn.hidden = state.conversationBatchMode;
+      nodes.sidebarBatchManageBtn.disabled = !state.conversationBatchMode && !selectableCount;
+      nodes.sidebarBatchManageBtn.innerHTML = '<i data-lucide="' + (state.conversationBatchMode ? "check" : "list-checks") + '" aria-hidden="true"></i>';
+      nodes.sidebarBatchManageBtn.title = state.conversationBatchMode ? "完成批量管理" : "批量管理";
+      nodes.sidebarBatchManageBtn.setAttribute("aria-label", state.conversationBatchMode ? "完成批量管理" : "批量管理会话");
+      nodes.conversationBatchCount.textContent = "已选 " + selectedCount + " 项";
+      nodes.conversationBatchSelectAllBtn.textContent = selectableCount > 0 && selectedCount === selectableCount ? "取消全选" : "全选";
+      nodes.conversationBatchSelectAllBtn.disabled = !selectableCount;
+      nodes.conversationBatchArchiveBtn.disabled = !selectedCount || state.busy;
+      nodes.conversationBatchDeleteBtn.disabled = !selectedCount || state.busy;
+    }
+
+    function toggleConversationBatchMode() {
+      if (state.busy) return;
+      state.conversationBatchMode = !state.conversationBatchMode;
+      state.selectedSessionIds.clear();
+      renderConversationList();
+    }
+
+    function toggleAllConversationSelections() {
+      if (!state.conversationBatchMode) return;
+      if (state.selectedSessionIds.size === state.sessions.length) state.selectedSessionIds.clear();
+      else state.selectedSessionIds = new Set(state.sessions.map((session) => session.id));
+      renderConversationList();
+    }
+
+    function updateConversationBatchSelection(event) {
+      if (!state.conversationBatchMode) return;
+      const groupInput = event.target.closest("input[data-conversation-group-select]");
+      if (groupInput) {
+        const groupKey = groupInput.dataset.conversationGroupSelect;
+        state.sessions.filter((session) => conversationGroupKey(session) === groupKey).forEach((session) => {
+          if (groupInput.checked) state.selectedSessionIds.add(session.id);
+          else state.selectedSessionIds.delete(session.id);
+        });
+        renderConversationList();
+        return;
+      }
+      const sessionInput = event.target.closest("input[data-conversation-session-select]");
+      if (!sessionInput) return;
+      const sessionId = sessionInput.dataset.conversationSessionSelect;
+      if (sessionInput.checked) state.selectedSessionIds.add(sessionId);
+      else state.selectedSessionIds.delete(sessionId);
+      renderConversationList();
+    }
+
+    async function runConversationBatchAction(action) {
+      if (state.busy || !state.conversationBatchMode || !state.selectedSessionIds.size) return;
+      const sessionIds = [...state.selectedSessionIds];
+      const deleting = action === "delete";
+      const confirmation = "永久删除 " + sessionIds.length + " 个会话";
+      const completed = await openActionDialog({
+        title: deleting ? "批量永久删除" : "批量归档",
+        description: deleting
+          ? "将永久删除选中的 " + sessionIds.length + " 个会话及其消息、场景和待确认操作。请输入“" + confirmation + "”确认。"
+          : "将选中的 " + sessionIds.length + " 个会话移入归档，之后仍可逐个恢复。",
+        fieldLabel: deleting ? "输入确认短语" : undefined,
+        value: "",
+        confirmLabel: deleting ? "永久删除" : "归档",
+        validate: deleting ? (value) => value === confirmation ? "" : "确认短语不匹配，未删除。" : undefined,
+        onConfirm: async (value) => {
+          const response = await fetch("/api/v1/sessions/batch", {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify({ action, sessionIds, confirmation: deleting ? value : undefined })
+          });
+          const body = await response.json();
+          if (!response.ok) throw new Error(body.error || (deleting ? "批量删除失败" : "批量归档失败"));
+        }
+      });
+      if (!completed) return;
+      const activeWasSelected = state.selectedSessionIds.has(state.activeSessionId);
+      state.conversationBatchMode = false;
+      state.selectedSessionIds.clear();
+      if (activeWasSelected) {
+        state.activeSessionId = "";
+        state.sessionDraft = false;
+      }
+      await loadSessions();
+      setStatus(sessionIds.length + " 个会话已" + (deleting ? "永久删除" : "归档"));
+    }
+
+    function avatarHue(value) {
+      let hash = 0;
+      for (const character of String(value || "角色")) hash = (hash * 31 + character.codePointAt(0)) % 360;
+      return [145, 202, 18, 338, 265, 48][hash % 6];
+    }
+
+    async function selectConversationFromList(event) {
+      const groupToggle = event.target.closest("button[data-conversation-group-toggle]");
+      if (groupToggle) {
+        const groupKey = groupToggle.dataset.conversationGroupToggle;
+        if (state.collapsedConversationGroups.has(groupKey)) state.collapsedConversationGroups.delete(groupKey);
+        else state.collapsedConversationGroups.add(groupKey);
+        renderConversationList();
+        return;
+      }
+      if (state.conversationBatchMode) return;
+      const item = event.target.closest("button[data-session-id]");
+      if (!item || state.busy) return;
+      if (item.dataset.sessionDraft) {
+        setConversationListOpen(false);
+        nodes.textInput.focus();
+        return;
+      }
+      const session = state.sessions.find((entry) => entry.id === item.dataset.sessionId);
+      if (session) {
+        await applySession(session);
+      }
+    }
+
+    function toggleConversationList() {
+      setConversationListOpen(!state.conversationListOpen);
+    }
+
+    function setConversationListOpen(open) {
+      state.conversationListOpen = Boolean(open);
+      nodes.chatWorkspace.classList.toggle("list-open", state.conversationListOpen);
+      nodes.conversationListToggle.innerHTML = '<i data-lucide="' + (state.conversationListOpen ? "arrow-left" : "chevron-left") + '" aria-hidden="true"></i>';
+      nodes.conversationListToggle.setAttribute("aria-label", state.conversationListOpen ? "返回对话" : "会话列表");
+      refreshIcons();
+    }
+
+    let actionDialogState = null;
+
+    function toggleSessionActionsMenu() {
+      const opening = nodes.sessionActionsMenu.hidden;
+      nodes.sessionActionsMenu.hidden = !opening;
+      nodes.sessionActionsMenuBtn.setAttribute("aria-expanded", String(opening));
+      if (opening) {
+        const firstEnabled = nodes.sessionActionsMenu.querySelector("button:not(:disabled)");
+        firstEnabled?.focus();
+      }
+    }
+
+    function closeSessionActionsMenu() {
+      nodes.sessionActionsMenu.hidden = true;
+      nodes.sessionActionsMenuBtn.setAttribute("aria-expanded", "false");
+    }
+
+    function closeSessionActionsMenuFromOutside(event) {
+      if (!event.target.closest(".mobile-session-actions")) closeSessionActionsMenu();
+    }
+
+    function closeSessionActionsMenuOnEscape(event) {
+      if (event.key !== "Escape" || nodes.sessionActionsMenu.hidden) return;
+      event.preventDefault();
+      closeSessionActionsMenu();
+      nodes.sessionActionsMenuBtn.focus();
+    }
+
+    function runMobileSessionAction(action) {
+      closeSessionActionsMenu();
+      nodes.sessionActionsMenuBtn.focus();
+      void action();
+    }
+
+    function updateSessionActionState() {
+      const disabled = state.sessionDraft || !state.activeSessionId;
+      nodes.renameSessionBtn.disabled = disabled;
+      nodes.archiveSessionBtn.disabled = disabled;
+      nodes.deleteSessionBtn.disabled = disabled;
+      nodes.mobileRenameSessionBtn.disabled = disabled;
+      nodes.mobileArchiveSessionBtn.disabled = disabled;
+      nodes.mobileDeleteSessionBtn.disabled = disabled;
+      nodes.sessionActionsMenuBtn.hidden = disabled;
+      if (disabled) closeSessionActionsMenu();
+    }
+
+    async function renameCurrentSession() {
+      if (state.busy || state.sessionDraft || !state.activeSessionId) return;
+      const current = state.sessions.find((entry) => entry.id === state.activeSessionId);
+      if (!current || !await openSessionActionDialog("rename", current)) return;
+      await loadSessions();
+      setStatus("会话已重命名");
+    }
+
+    async function archiveCurrentSession() {
+      if (state.busy || state.sessionDraft || !state.activeSessionId) return;
+      const archivedId = state.activeSessionId;
+      const current = state.sessions.find((entry) => entry.id === archivedId);
+      const archived = await openActionDialog({
+        title: "归档会话",
+        description: "归档“" + (current?.title || "当前会话") + "”后，将切换到最近的可用会话。",
+        confirmLabel: "归档",
+        onConfirm: async () => {
+          const response = await fetch("/api/v1/sessions/" + encodeURIComponent(archivedId) + "/archive", {
+            method: "POST"
+          });
+          const body = await response.json();
+          if (!response.ok) throw new Error(body.error || "归档失败");
+        }
+      });
+      if (archived) {
+        state.sessions = state.sessions.filter((entry) => entry.id !== archivedId);
+        state.activeSessionId = "";
+        state.sessionDraft = false;
+        await loadSessions();
+        setStatus("会话已归档");
+      }
+    }
+
+    async function openArchivedSessions() {
+      nodes.archivedSessionList.innerHTML = '<div class="archived-empty">加载中...</div>';
+      nodes.archivedSessionsDialog.showModal();
+      refreshIcons();
+      await loadArchivedSessions();
+    }
+
+    async function loadArchivedSessions() {
+      try {
+        const response = await fetch("/api/v1/sessions?includeArchived=1");
+        const body = await response.json();
+        if (!response.ok) throw new Error(body.error || "归档会话加载失败");
+        state.archivedSessions = (Array.isArray(body.sessions) ? body.sessions : [])
+          .filter((session) => session.archivedAt)
+          .sort((left, right) => String(right.updatedAt || "").localeCompare(String(left.updatedAt || "")));
+        renderArchivedSessions();
+      } catch (error) {
+        nodes.archivedSessionList.innerHTML = '<div class="archived-empty error">' + escapeHtml(error.message || String(error)) + '</div>';
+      }
+    }
+
+    function renderArchivedSessions() {
+      if (!state.archivedSessions.length) {
+        nodes.archivedSessionList.innerHTML = '<div class="archived-empty">暂无归档会话</div>';
+        refreshIcons();
+        return;
+      }
+      nodes.archivedSessionList.innerHTML = state.archivedSessions.map((session) =>
+        '<div class="archived-row" data-session-id="' + escapeHtml(session.id) + '">' +
+          '<div><strong title="' + escapeHtml(session.title || session.id) + '">' + escapeHtml(session.title || "旧会话") + '</strong>' +
+          '<span title="' + escapeHtml(sessionLabel(session)) + '">' + escapeHtml(sessionLabel(session)) + '</span></div>' +
+          '<div class="archived-row-actions">' +
+            '<button class="secondary icon-button" type="button" data-archived-action="restore" title="恢复会话" aria-label="恢复会话"><i data-lucide="archive-restore" aria-hidden="true"></i></button>' +
+            '<button class="secondary icon-button" type="button" data-archived-action="delete" title="永久删除会话" aria-label="永久删除归档会话"><i data-lucide="trash-2" aria-hidden="true"></i></button>' +
+          '</div></div>'
+      ).join("");
+      refreshIcons();
+    }
+
+    async function handleArchivedSessionAction(event) {
+      const button = event.target.closest("button[data-archived-action]");
+      if (!button) return;
+      const row = button.closest("[data-session-id]");
+      const session = state.archivedSessions.find((entry) => entry.id === row?.dataset.sessionId);
+      if (!session) return;
+      if (button.dataset.archivedAction === "restore") {
+        try {
+          const response = await fetch("/api/v1/sessions/" + encodeURIComponent(session.id) + "/restore", { method: "POST" });
+          const body = await response.json();
+          if (!response.ok) throw new Error(body.error || "恢复失败");
+          nodes.archivedSessionsDialog.close();
+          state.activeSessionId = session.id;
+          await loadSessions();
+          setStatus("会话已恢复");
+        } catch (error) {
+          setStatus(error.message || String(error), true);
+        }
+        return;
+      }
+      if (button.dataset.archivedAction === "delete" && await permanentlyDeleteSession(session)) {
+        state.archivedSessions = state.archivedSessions.filter((entry) => entry.id !== session.id);
+        renderArchivedSessions();
+      }
+    }
+
+    async function deleteCurrentSession() {
+      if (state.busy || state.sessionDraft || !state.activeSessionId) return;
+      const session = state.sessions.find((entry) => entry.id === state.activeSessionId);
+      if (!session || !await permanentlyDeleteSession(session)) return;
+      state.sessions = state.sessions.filter((entry) => entry.id !== session.id);
+      state.activeSessionId = "";
+      state.sessionDraft = false;
+      await loadSessions();
+      setStatus("会话已永久删除");
+    }
+
+    async function permanentlyDeleteSession(session) {
+      return openSessionActionDialog("delete", session);
+    }
+
+    function openSessionActionDialog(kind, session) {
+      const expected = session.title || session.id;
+      const deleting = kind === "delete";
+      return openActionDialog({
+        title: deleting ? "永久删除会话" : "重命名会话",
+        description: deleting
+          ? "消息、场景和待确认操作将无法恢复。请输入会话名称“" + expected + "”确认删除。"
+          : "输入一个便于识别的会话名称。",
+        fieldLabel: deleting ? "输入会话名称确认" : "会话名称",
+        value: deleting ? "" : expected,
+        selectInput: !deleting,
+        confirmLabel: deleting ? "永久删除" : "保存",
+        validate: (value) => {
+          if (!deleting && !value.trim()) return "会话名称不能为空。";
+          if (deleting && value !== expected) return "会话名称不匹配，未删除。";
+          return "";
+        },
+        onConfirm: async (value) => {
+          const response = await fetch("/api/v1/sessions/" + encodeURIComponent(session.id), {
+            method: deleting ? "DELETE" : "PATCH",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify(deleting ? { confirmation: value } : { title: value.trim() })
+          });
+          const body = await response.json();
+          if (!response.ok) throw new Error(body.error || (deleting ? "永久删除失败" : "重命名失败"));
+        }
+      });
+    }
+
+    function openActionDialog(options) {
+      if (actionDialogState || nodes.sessionActionDialog.open) return Promise.resolve(false);
+      const usesInput = typeof options.fieldLabel === "string";
+      nodes.sessionActionTitle.textContent = options.title || "确认操作";
+      nodes.sessionActionDescription.textContent = options.description || "";
+      nodes.sessionActionField.hidden = !usesInput;
+      nodes.sessionActionFieldLabel.textContent = options.fieldLabel || "确认内容";
+      nodes.sessionActionInput.value = options.value || "";
+      nodes.sessionActionInput.removeAttribute("aria-invalid");
+      nodes.sessionActionError.textContent = "";
+      nodes.confirmSessionActionBtn.textContent = options.confirmLabel || "确认";
+      nodes.confirmSessionActionBtn.disabled = false;
+      const opener = options.opener || document.activeElement;
+      return new Promise((resolvePromise) => {
+        actionDialogState = { ...options, usesInput, opener, resolve: resolvePromise };
+        nodes.sessionActionDialog.showModal();
+        refreshIcons();
+        requestAnimationFrame(() => {
+          if (usesInput) {
+            nodes.sessionActionInput.focus();
+            if (options.selectInput) nodes.sessionActionInput.select();
+          } else {
+            nodes.confirmSessionActionBtn.focus();
+          }
+        });
+      });
+    }
+
+    async function submitSessionActionDialog(event) {
+      event.preventDefault();
+      const dialogState = actionDialogState;
+      if (!dialogState) return;
+      const value = nodes.sessionActionInput.value;
+      const validationError = dialogState.validate?.(value) || "";
+      if (validationError) {
+        showSessionActionError(validationError);
+        return;
+      }
+      nodes.confirmSessionActionBtn.disabled = true;
+      nodes.sessionActionError.textContent = "";
+      try {
+        await dialogState.onConfirm?.(value);
+        finishSessionActionDialog(true);
+      } catch (error) {
+        nodes.confirmSessionActionBtn.disabled = false;
+        showSessionActionError(error.message || String(error));
+      }
+    }
+
+    function showSessionActionError(message) {
+      nodes.sessionActionError.textContent = message;
+      if (actionDialogState?.usesInput) {
+        nodes.sessionActionInput.setAttribute("aria-invalid", "true");
+        nodes.sessionActionInput.focus();
+      } else {
+        nodes.confirmSessionActionBtn.focus();
+      }
+    }
+
+    function cancelSessionActionDialog(event) {
+      event.preventDefault();
+      finishSessionActionDialog(false);
+    }
+
+    function finishSessionActionDialog(result) {
+      const dialogState = actionDialogState;
+      if (!dialogState) return;
+      actionDialogState = null;
+      nodes.sessionActionDialog.close();
+      dialogState.resolve(result);
+      requestAnimationFrame(() => {
+        if (dialogState.opener?.isConnected) dialogState.opener.focus();
+      });
+    }
+
+    function trapSessionActionFocus(event) {
+      if (event.key !== "Tab") return;
+      const focusable = [...nodes.sessionActionDialog.querySelectorAll("button:not(:disabled), input:not(:disabled)")]
+        .filter((element) => element.getClientRects().length > 0);
+      if (!focusable.length) return;
+      const current = focusable.indexOf(document.activeElement);
+      const offset = event.shiftKey ? -1 : 1;
+      const next = current < 0
+        ? (event.shiftKey ? focusable.length - 1 : 0)
+        : (current + offset + focusable.length) % focusable.length;
+      event.preventDefault();
+      focusable[next].focus();
+    }
+
+    function setSessionControlsLocked(locked) {
+      nodes.modeSelect.disabled = locked;
+      nodes.chatCharacterSelect.disabled = locked;
+      const hint = locked ? "已有会话的模式和角色固定；请新建会话进行更改" : "";
+      nodes.modeSelect.title = hint;
+      nodes.chatCharacterSelect.title = hint;
+    }
+
+    function generateSessionId() {
+      const random = globalThis.crypto?.randomUUID
+        ? globalThis.crypto.randomUUID().replace(/-/g, "").slice(0, 12)
+        : Math.random().toString(36).slice(2, 14);
+      return "conversation-" + Date.now().toString(36) + "-" + random;
+    }
+
+    function updateRpControls() {
+      nodes.chatCharacterControl.hidden = false;
+      updateChatIdentity();
+    }
+
+    function updateChatIdentity() {
+      if (state.uiMode === "schedule") {
+        updateScheduleHeaderContext();
+        renderConversationList();
+        renderMessages();
+        return;
+      }
+      const character = state.characters.find((entry) => entry.id === state.selectedCharacterId);
+      nodes.conversationCharacter.textContent = character?.name || "未选择角色";
+      nodes.conversationMode.textContent = nodes.modeSelect.value === "rp" ? "剧情演绎" : "角色私聊";
+      nodes.conversationHeaderAvatar.style.setProperty("--avatar-hue", avatarHue(character?.name || "角色"));
+      nodes.conversationHeaderAvatar.innerHTML = avatarImageOrInitial(character?.avatarUrl, character?.name, "角");
+      renderConversationList();
+      renderMessages();
+    }
+
+    function updateScheduleHeaderContext() {
+      if (state.uiMode !== "schedule") return;
+      const characterMode = state.scheduleOwnerType === "character";
+      const character = state.characters.find((entry) => entry.id === state.scheduleCharacterId);
+      nodes.conversationCharacter.textContent = characterMode ? (character?.name || "未选择角色") : "我的日程";
+      nodes.conversationMode.textContent = characterMode ? "角色日程" : "现实日程";
+      nodes.conversationHeaderAvatar.style.setProperty("--avatar-hue", avatarHue(characterMode ? character?.name || "角色" : "我"));
+      nodes.conversationHeaderAvatar.innerHTML = characterMode
+        ? avatarImageOrInitial(character?.avatarUrl, character?.name, "角")
+        : avatarImageOrInitial(state.userAvatarUrl, "我", "我");
+      nodes.conversationScene.hidden = true;
+      nodes.sceneInfoBtn.hidden = true;
+      nodes.conversationListToggle.hidden = true;
+      nodes.sessionActionsMenuBtn.hidden = true;
+      closeSessionActionsMenu();
+    }
+
+    async function loadConversationScene(preserveDialog = false) {
+      clearConversationScene(!preserveDialog);
+      if (
+        state.sessionDraft ||
+        nodes.modeSelect.value !== "rp" ||
+        !state.activeSessionId ||
+        !state.selectedCharacterId
+      ) return;
+      try {
+        const response = await fetch(
+          "/api/v1/sessions/" + encodeURIComponent(state.activeSessionId) +
+          "/scene?characterId=" + encodeURIComponent(state.selectedCharacterId)
+        );
+        const body = await response.json();
+        if (!response.ok) return;
+        const scene = body.scene || {};
+        state.currentScene = scene;
+        nodes.sceneInfoBtn.hidden = false;
+        const summary = [
+          scene.location ? "地点 " + scene.location : "",
+          scene.currentObjective ? "目标 " + scene.currentObjective : "",
+          scene.summary || ""
+        ].filter(Boolean).join(" · ").slice(0, 100);
+        if (!summary) {
+          nodes.conversationScene.textContent = "查看当前场景";
+          nodes.conversationScene.title = "查看当前场景";
+          nodes.conversationScene.hidden = false;
+          return;
+        }
+        nodes.conversationScene.textContent = summary;
+        nodes.conversationScene.title = summary;
+        nodes.conversationScene.hidden = false;
+      } catch {
+        clearConversationScene();
+      }
+    }
+
+    function clearConversationScene(closeDialog = true) {
+      state.currentScene = null;
+      nodes.conversationScene.textContent = "";
+      nodes.conversationScene.title = "";
+      nodes.conversationScene.hidden = true;
+      nodes.sceneInfoBtn.hidden = true;
+      if (closeDialog && nodes.sceneInfoDialog.open) nodes.sceneInfoDialog.close();
+    }
+
+    function openSceneInfoDialog() {
+      const scene = state.currentScene;
+      if (!scene) return;
+      renderSceneInfo(scene);
+      setSceneInfoEditing(false);
+      nodes.sceneInfoDialog.showModal();
+      refreshIcons();
+    }
+
+    function renderSceneInfo(scene) {
+      const rows = [
+        ["地点", scene.location],
+        ["场景时间", scene.inWorldTime],
+        ["当前目标", scene.currentObjective],
+        ["参与者", (scene.participants || []).join("、")],
+        ["场景摘要", scene.summary],
+        ["未完线索", (scene.openThreads || []).join("\\n")]
+      ].filter((entry) => entry[1]);
+      nodes.sceneInfoContent.innerHTML = rows.length
+        ? '<dl>' + rows.map((entry) => '<div class="scene-info-row"><dt>' + escapeHtml(entry[0]) + '</dt><dd>' + escapeHtml(entry[1]) + '</dd></div>').join("") + '</dl>'
+        : '<div class="archived-empty">当前场景尚无详细信息</div>';
+    }
+
+    function closeSceneInfoDialog() {
+      setSceneInfoEditing(false);
+      if (nodes.sceneInfoDialog.open) nodes.sceneInfoDialog.close();
+      nodes.sceneInfoBtn.focus();
+    }
+
+    function dismissSceneInfoDialog() {
+      if (state.sceneEditing) {
+        setSceneInfoEditing(false);
+        return;
+      }
+      closeSceneInfoDialog();
+    }
+
+    function beginSceneEditing() {
+      if (!state.selectedCharacterId || !state.activeSessionId) return;
+      const scene = state.currentScene || {};
+      nodes.sceneLocation.value = scene.location || "";
+      nodes.sceneTime.value = scene.inWorldTime || "";
+      nodes.sceneObjective.value = scene.currentObjective || "";
+      nodes.sceneParticipants.value = (scene.participants || []).join(", ");
+      nodes.sceneSummary.value = scene.summary || "";
+      nodes.sceneThreads.value = (scene.openThreads || []).join("\\n");
+      nodes.sceneState.textContent = "";
+      setSceneInfoEditing(true);
+      nodes.sceneLocation.focus();
+    }
+
+    function setSceneInfoEditing(editing) {
+      state.sceneEditing = editing;
+      nodes.sceneInfoContent.hidden = editing;
+      nodes.sceneForm.hidden = !editing;
+      nodes.editSceneInfoBtn.hidden = editing;
+      nodes.saveSceneBtn.hidden = !editing;
+      nodes.dismissSceneInfoBtn.textContent = editing ? "取消" : "关闭";
+      nodes.dismissSceneInfoBtn.className = editing ? "secondary" : "secondary";
+    }
+
+    async function loadCharacters() {
+      try {
+        const response = await fetch("/api/v1/characters");
+        const body = await response.json();
+        if (!response.ok) throw new Error(body.error || "角色加载失败");
+        state.characters = Array.isArray(body.characters) ? body.characters : [];
+        if (state.selectedCharacterId && !state.characters.some((entry) => entry.id === state.selectedCharacterId)) {
+          state.selectedCharacterId = "";
+        }
+        if (state.workspaceCharacterId && !state.characters.some((entry) => entry.id === state.workspaceCharacterId)) {
+          state.workspaceCharacterId = "";
+        }
+        renderCharacterOptions();
+        if (state.workspaceCharacterId) await loadCharacterWorkspace();
+        else hideCharacterDetail();
+      } catch (error) {
+        nodes.characterState.textContent = error.message || String(error);
+      }
+    }
+
+    function renderCharacterOptions() {
+      const options = state.characters.map((character) =>
+        '<option value="' + escapeHtml(character.id) + '">' + escapeHtml(character.name) + '</option>'
+      ).join("");
+      nodes.chatCharacterSelect.innerHTML = '<option value="">请创建或选择角色</option>' + options;
+      nodes.chatCharacterSelect.value = state.selectedCharacterId;
+      nodes.featureTestCharacter.innerHTML = '<option value="">选择测试角色</option>' + options;
+      nodes.featureTestCharacter.value = state.selectedCharacterId || state.characters[0]?.id || "";
+      const okfCharacterBefore = nodes.okfImportCharacter.value;
+      nodes.okfImportCharacter.innerHTML = '<option value="">选择角色</option>' + options;
+      nodes.okfImportCharacter.value = state.characters.some((character) => character.id === okfCharacterBefore)
+        ? okfCharacterBefore
+        : "";
+      renderScheduleCharacterOptions();
+      renderCharacterCards();
+      updateChatIdentity();
+    }
+
+    function renderCharacterCards() {
+      const cards = state.characters.map((character) => {
+        const sessions = state.sessions.filter((session) => session.characterId === character.id).length;
+        const active = character.id === state.workspaceCharacterId;
+        return '<button class="character-card' + (active ? ' active' : '') + '" type="button" data-character-card-id="' + escapeHtml(character.id) + '">' +
+          '<span class="character-card-avatar" style="--avatar-hue:' + avatarHue(character.name) + '">' + avatarImageOrInitial(character.avatarUrl, character.name) + '</span>' +
+          '<span class="character-card-copy"><strong>' + escapeHtml(character.name) + '</strong><span>' + sessions + ' 个会话 · ' + Number(character.soulCharacterCount || 0).toLocaleString() + ' 字设定</span></span>' +
+        '</button>';
+      }).join("");
+      nodes.characterCardGrid.innerHTML = cards;
+      nodes.characterListEmpty.hidden = state.characters.length > 0;
+      refreshIcons();
+    }
+
+    function revealCharacterDetailWhenNeeded() {
+      requestAnimationFrame(() => {
+        const detailHead = nodes.characterDetail.querySelector(".character-detail-head");
+        if (!detailHead) return;
+        const pageBounds = nodes.charactersPage.getBoundingClientRect();
+        const headBounds = detailHead.getBoundingClientRect();
+        const margin = 16;
+        if (headBounds.top >= pageBounds.top + margin && headBounds.bottom <= pageBounds.bottom - margin) return;
+        const top = nodes.charactersPage.scrollTop + headBounds.top - pageBounds.top - margin;
+        nodes.charactersPage.scrollTo({ top: Math.max(0, top), behavior: "smooth" });
+      });
+    }
+
+    async function selectCharacterCard(event) {
+      const card = event.target.closest("button[data-character-card-id]");
+      if (!card) return;
+      state.workspaceCharacterId = card.dataset.characterCardId || "";
+      renderCharacterCards();
+      await loadCharacterWorkspace();
+      revealCharacterDetailWhenNeeded();
+    }
+
+    async function loadCharacterWorkspace() {
+      const character = state.characters.find((entry) => entry.id === state.workspaceCharacterId);
+      if (!character) return;
+      nodes.characterDetail.hidden = false;
+      nodes.characterDetailTitle.textContent = character.name || "未命名角色";
+      nodes.characterName.value = character.name || "";
+      nodes.characterSoulMarkdown.value = character.soulMarkdown || "";
+      state.pendingCharacterAvatarDataUrl = "";
+      renderCharacterAvatarPreview();
+      updateCharacterSoulCount();
+      nodes.saveCharacterBtn.textContent = "保存角色";
+      nodes.characterMemoryTabBtn.disabled = false;
+      setCharacterTab("settings");
+    }
+
+    function resetCharacterForm() {
+      state.workspaceCharacterId = "";
+      nodes.characterForm.reset();
+      nodes.memoryForm.reset();
+      nodes.memoryList.innerHTML = "";
+      state.pendingCharacterAvatarDataUrl = "";
+      nodes.characterDetail.hidden = false;
+      nodes.characterDetailTitle.textContent = "新角色";
+      nodes.saveCharacterBtn.textContent = "创建角色";
+      nodes.characterState.textContent = "";
+      nodes.memoryState.textContent = "";
+      nodes.characterMemoryTabBtn.disabled = true;
+      renderCharacterCards();
+      renderCharacterAvatarPreview();
+      updateCharacterSoulCount();
+      setCharacterTab("settings");
+      revealCharacterDetailWhenNeeded();
+      nodes.characterName.focus({ preventScroll: true });
+    }
+
+    function hideCharacterDetail() {
+      nodes.characterDetail.hidden = true;
+      nodes.characterMemoryTabBtn.disabled = true;
+      state.characterTab = "settings";
+    }
+
+    function setCharacterTab(tab) {
+      if (tab === "memory" && !state.workspaceCharacterId) return;
+      state.characterTab = tab;
+      const settings = tab === "settings";
+      nodes.characterSettingsTabBtn.classList.toggle("active", settings);
+      nodes.characterMemoryTabBtn.classList.toggle("active", !settings);
+      nodes.characterSettingsTabBtn.setAttribute("aria-selected", String(settings));
+      nodes.characterMemoryTabBtn.setAttribute("aria-selected", String(!settings));
+      nodes.characterSettingsPanel.hidden = !settings;
+      nodes.characterMemoryPanel.hidden = settings;
+      if (!settings) void loadMemories();
+    }
+
+    function updateCharacterSoulCount() {
+      const count = [...nodes.characterSoulMarkdown.value].length;
+      const overLimit = count > 8000;
+      nodes.characterSoulCount.textContent = count + " / 8000";
+      nodes.characterSoulCount.classList.toggle("error", overLimit);
+      nodes.saveCharacterBtn.disabled = overLimit;
+    }
+
+    async function saveCharacter(event) {
+      event.preventDefault();
+      const editing = state.workspaceCharacterId;
+      if ([...nodes.characterSoulMarkdown.value].length > 8000) return;
+      const payload = {
+        name: nodes.characterName.value.trim(),
+        soulMarkdown: editing || nodes.characterSoulMarkdown.value
+          ? nodes.characterSoulMarkdown.value
+          : undefined
+      };
+      if (!payload.name) return;
+      nodes.saveCharacterBtn.disabled = true;
+      try {
+        const response = await fetch(
+          editing ? "/api/v1/characters/" + encodeURIComponent(editing) : "/api/v1/characters",
+          {
+            method: editing ? "PATCH" : "POST",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify(payload)
+          }
+        );
+        const body = await response.json();
+        if (!response.ok) throw new Error(body.error || "角色保存失败");
+        state.workspaceCharacterId = body.character.id;
+        if (state.pendingCharacterAvatarDataUrl) {
+          const avatarResponse = await fetch("/api/v1/avatars/characters/" + encodeURIComponent(body.character.id), {
+            method: "PUT",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify({ dataUrl: state.pendingCharacterAvatarDataUrl })
+          });
+          const avatarBody = await avatarResponse.json();
+          if (!avatarResponse.ok) throw new Error(avatarBody.error || "头像保存失败");
+          state.pendingCharacterAvatarDataUrl = "";
+        }
+        await loadCharacters();
+        nodes.characterState.textContent = editing ? "已保存" : "已创建";
+      } catch (error) {
+        nodes.characterState.textContent = error.message || String(error);
+      } finally {
+        nodes.saveCharacterBtn.disabled = false;
+        updateCharacterSoulCount();
+      }
+    }
+
+    async function changeCharacterAvatar() {
+      const file = nodes.characterAvatarInput.files?.[0];
+      nodes.characterAvatarInput.value = "";
+      if (!file) return;
+      try {
+        const dataUrl = await imageFileToAvatarDataUrl(file);
+        if (!state.workspaceCharacterId) {
+          state.pendingCharacterAvatarDataUrl = dataUrl;
+          renderCharacterAvatarPreview();
+          nodes.characterState.textContent = "头像将在创建角色时保存";
+          return;
+        }
+        nodes.characterState.textContent = "头像保存中...";
+        const response = await fetch("/api/v1/avatars/characters/" + encodeURIComponent(state.workspaceCharacterId), {
+          method: "PUT",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ dataUrl })
+        });
+        const body = await response.json();
+        if (!response.ok) throw new Error(body.error || "头像保存失败");
+        await loadCharacters();
+        nodes.characterState.textContent = "头像已更新";
+      } catch (error) {
+        nodes.characterState.textContent = error.message || String(error);
+      }
+    }
+
+    async function removeCharacterAvatar() {
+      if (!state.workspaceCharacterId) {
+        state.pendingCharacterAvatarDataUrl = "";
+        renderCharacterAvatarPreview();
+        return;
+      }
+      try {
+        const response = await fetch("/api/v1/avatars/characters/" + encodeURIComponent(state.workspaceCharacterId), { method: "DELETE" });
+        const body = await response.json();
+        if (!response.ok) throw new Error(body.error || "头像移除失败");
+        await loadCharacters();
+        nodes.characterState.textContent = "头像已移除";
+      } catch (error) {
+        nodes.characterState.textContent = error.message || String(error);
+      }
+    }
+
+    function renderCharacterAvatarPreview() {
+      const character = state.characters.find((entry) => entry.id === state.workspaceCharacterId);
+      const source = state.pendingCharacterAvatarDataUrl || character?.avatarUrl;
+      const name = nodes.characterName.value.trim() || character?.name || "角色";
+      nodes.characterAvatarPreview.style.setProperty("--avatar-hue", avatarHue(name));
+      nodes.characterAvatarPreview.innerHTML = avatarImageOrInitial(source, name);
+      nodes.removeCharacterAvatarBtn.disabled = !source;
+    }
+
+    async function saveScene(event) {
+      event.preventDefault();
+      if (!state.selectedCharacterId || !state.activeSessionId) {
+        nodes.sceneState.textContent = "当前会话不可编辑场景";
+        return;
+      }
+      const sessionId = encodeURIComponent(state.activeSessionId);
+      const payload = {
+        characterId: state.selectedCharacterId,
+        location: nodes.sceneLocation.value.trim() || undefined,
+        inWorldTime: nodes.sceneTime.value.trim() || undefined,
+        currentObjective: nodes.sceneObjective.value.trim() || undefined,
+        participants: splitComma(nodes.sceneParticipants.value),
+        summary: nodes.sceneSummary.value.trim(),
+        openThreads: splitLines(nodes.sceneThreads.value)
+      };
+      nodes.saveSceneBtn.disabled = true;
+      try {
+        const response = await fetch("/api/v1/sessions/" + sessionId + "/scene", {
+          method: "PATCH",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify(payload)
+        });
+        const body = await response.json();
+        if (!response.ok) throw new Error(body.error || "场景保存失败");
+        await loadConversationScene(true);
+        renderSceneInfo(state.currentScene || body.scene || {});
+        setSceneInfoEditing(false);
+      } catch (error) {
+        nodes.sceneState.textContent = error.message || String(error);
+      } finally {
+        nodes.saveSceneBtn.disabled = false;
+      }
+    }
+
+    async function loadMemories() {
+      if (!state.workspaceCharacterId) {
+        state.memories = [];
+        renderMemories();
+        return;
+      }
+      const common = "characterId=" + encodeURIComponent(state.workspaceCharacterId) +
+        "&query=" + encodeURIComponent(nodes.memorySearch.value.trim());
+      try {
+        const [activeResponse, pendingResponse] = await Promise.all([
+          fetch("/api/v1/memories?" + common + "&validity=active"),
+          fetch("/api/v1/memories?" + common + "&validity=pending")
+        ]);
+        const active = await activeResponse.json();
+        const pending = await pendingResponse.json();
+        if (!activeResponse.ok) throw new Error(active.error || "记忆加载失败");
+        if (!pendingResponse.ok) throw new Error(pending.error || "记忆加载失败");
+        state.memories = [...(pending.memories || []), ...(active.memories || [])];
+        renderMemories();
+        nodes.memoryState.textContent = state.memories.length + " 条";
+      } catch (error) {
+        nodes.memoryState.textContent = error.message || String(error);
+      }
+    }
+
+    function renderMemories() {
+      if (!state.memories.length) {
+        nodes.memoryList.innerHTML = '<div class="memory-empty">暂无长期记忆</div>';
+        return;
+      }
+      nodes.memoryList.innerHTML = state.memories.map((memory) => {
+        const status = memory.validity === "pending" ? "待确认" : memory.validity === "active" ? "已确认" : memory.validity;
+        return '<div class="memory-row"><div>' +
+          '<div class="memory-content">' + escapeHtml(memory.content) + '</div>' +
+          '<div class="schedule-meta">' + escapeHtml(memoryTypeLabel(memory.type)) + ' · ' + escapeHtml(status) +
+          (memory.key ? ' · ' + escapeHtml(memory.key) : '') +
+          (memory.tags?.length ? ' · ' + escapeHtml(memory.tags.join(" · ")) : '') + '</div></div>' +
+          '<div class="memory-actions">' +
+          (memory.validity === "pending" ? '<button class="secondary icon-button" type="button" data-memory-action="confirm" data-id="' + escapeHtml(memory.id) + '" title="确认" aria-label="确认"><i data-lucide="check" aria-hidden="true"></i></button>' : '') +
+          '<button class="secondary icon-button" type="button" data-memory-action="correct" data-id="' + escapeHtml(memory.id) + '" title="纠正" aria-label="纠正"><i data-lucide="pencil" aria-hidden="true"></i></button>' +
+          '<button class="secondary icon-button" type="button" data-memory-action="delete" data-id="' + escapeHtml(memory.id) + '" title="删除" aria-label="删除"><i data-lucide="trash-2" aria-hidden="true"></i></button>' +
+          '</div></div>';
+      }).join("");
+      refreshIcons();
+    }
+
+    function openMemoryEditor() {
+      if (!state.workspaceCharacterId) return;
+      nodes.memoryForm.reset();
+      nodes.memoryEditorState.textContent = "";
+      nodes.memoryEditorDialog.showModal();
+      nodes.memoryType.focus();
+    }
+
+    function closeMemoryEditor() {
+      if (nodes.memoryEditorDialog.open) nodes.memoryEditorDialog.close();
+      nodes.addMemoryBtn.focus();
+    }
+
+    async function pinMemory(event) {
+      event.preventDefault();
+      if (!state.workspaceCharacterId) {
+        nodes.memoryEditorState.textContent = "请先选择角色";
+        return;
+      }
+      const payload = {
+        realm: "roleplay",
+        scope: "character",
+        type: nodes.memoryType.value,
+        key: nodes.memoryKey.value.trim() || undefined,
+        content: nodes.memoryContent.value.trim(),
+        characterId: state.workspaceCharacterId,
+        confirmed: true,
+        tags: splitComma(nodes.memoryTags.value)
+      };
+      if (!payload.content) return;
+      try {
+        const response = await fetch("/api/v1/memories", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify(payload)
+        });
+        const body = await response.json();
+        if (!response.ok) throw new Error(body.error || "记忆保存失败");
+        nodes.memoryForm.reset();
+        closeMemoryEditor();
+        await loadMemories();
+        nodes.memoryState.textContent = "已固定";
+      } catch (error) {
+        nodes.memoryEditorState.textContent = error.message || String(error);
+      }
+    }
+
+    async function handleMemoryAction(event) {
+      const button = event.target.closest("button[data-memory-action]");
+      if (!button) return;
+      const id = button.dataset.id;
+      const action = button.dataset.memoryAction;
+      const memory = state.memories.find((entry) => entry.id === id);
+      if (!memory) return;
+      let method = "PATCH";
+      let body;
+      if (action === "confirm") body = JSON.stringify({ confirmed: true, validity: "active" });
+      if (action === "correct") {
+        let content = "";
+        const corrected = await openActionDialog({
+          title: "纠正长期记忆",
+          description: "修正后的内容会替换当前记忆，并重新标记为已确认。",
+          fieldLabel: "记忆内容",
+          value: memory.content,
+          selectInput: true,
+          confirmLabel: "保存纠正",
+          validate: (value) => !value.trim()
+            ? "记忆内容不能为空。"
+            : value.trim() === memory.content ? "内容没有变化。" : "",
+          onConfirm: (value) => { content = value.trim(); }
+        });
+        if (!corrected) return;
+        body = JSON.stringify({ content: content.trim(), confirmed: true, validity: "active" });
+      }
+      if (action === "delete") {
+        const confirmed = await openActionDialog({
+          title: "删除长期记忆",
+          description: "确定删除“" + memory.content.slice(0, 80) + (memory.content.length > 80 ? "…" : "") + "”？此操作无法恢复。",
+          confirmLabel: "删除"
+        });
+        if (!confirmed) return;
+        method = "DELETE";
+      }
+      try {
+        const response = await fetch("/api/v1/memories/" + encodeURIComponent(id), {
+          method,
+          headers: body ? { "content-type": "application/json" } : undefined,
+          body
+        });
+        const result = await response.json();
+        if (!response.ok) throw new Error(result.error || "记忆操作失败");
+        await loadMemories();
+      } catch (error) {
+        nodes.memoryState.textContent = error.message || String(error);
+      }
+    }
+
+    function splitLines(value) {
+      return value.split(/\\n+/).map((entry) => entry.trim()).filter(Boolean);
+    }
+
+    function splitComma(value) {
+      return value.split(/[,，]+/).map((entry) => entry.trim()).filter(Boolean);
+    }
+
+    function memoryTypeLabel(type) {
+      return ({
+        user_fact: "用户事实",
+        preference: "偏好",
+        goal: "目标",
+        person: "人物",
+        project: "项目",
+        relationship_event: "关系事件",
+        world_fact: "世界事实",
+        plot_event: "剧情事件",
+        boundary: "边界"
+      })[type] || type;
+    }
+
+    async function loadManagedMemories() {
+      nodes.memoryCoordinatorState.textContent = "加载中...";
+      try {
+        const [statusResponse, memoriesResponse, charactersResponse] = await Promise.all([
+          fetch("/api/v1/memory-coordinator/status"),
+          fetch("/api/v1/memory-coordinator/memories?limit=100"),
+          fetch("/api/v1/characters")
+        ]);
+        const statusBody = await statusResponse.json();
+        const memoriesBody = await memoriesResponse.json();
+        const charactersBody = await charactersResponse.json();
+        if (!statusResponse.ok) throw new Error(statusBody.error || "捕获状态加载失败");
+        if (!memoriesResponse.ok) throw new Error(memoriesBody.error || "记忆加载失败");
+        state.managedMemories = Array.isArray(memoriesBody.memories) ? memoriesBody.memories : [];
+        state.memoryJobs = Array.isArray(statusBody.coordinator?.recentJobs) ? statusBody.coordinator.recentJobs : [];
+        state.characters = Array.isArray(charactersBody.characters) ? charactersBody.characters : state.characters;
+        const characterOptions = state.characters.map((character) =>
+          '<option value="' + escapeHtml(character.id) + '">' + escapeHtml(character.name) + '</option>'
+        ).join("");
+        const selectedFilter = nodes.managedMemoryCharacter.value;
+        const selectedCreate = nodes.managedMemoryCreateCharacter.value;
+        nodes.managedMemoryCharacter.innerHTML = '<option value="">全部角色</option>' + characterOptions;
+        nodes.managedMemoryCreateCharacter.innerHTML = '<option value="">不绑定角色</option>' + characterOptions;
+        nodes.managedMemoryCharacter.value = selectedFilter;
+        nodes.managedMemoryCreateCharacter.value = selectedCreate;
+        const coordinator = statusBody.coordinator || {};
+        nodes.memoryCoordinatorState.textContent = (coordinator.enabled ? "自动捕获已启用" : "自动捕获已关闭") +
+          " · " + Number(coordinator.pendingCandidateCount || 0) + " 个待确认 · " +
+          Number(coordinator.pendingCount || 0) + " 个队列中 · 24h 约 " +
+          Number(coordinator.estimatedTokensLast24Hours || 0).toLocaleString() + " tokens";
+        updateManagedMemoryCreateControls();
+        renderManagedMemories();
+        renderMemoryJobs();
+      } catch (error) {
+        nodes.memoryCoordinatorState.textContent = error.message || String(error);
+      }
+    }
+
+    function renderManagedMemories() {
+      const query = nodes.managedMemoryQuery.value.trim().toLocaleLowerCase();
+      const realm = nodes.managedMemoryRealm.value;
+      const characterId = nodes.managedMemoryCharacter.value;
+      const type = nodes.managedMemoryTypeFilter.value;
+      const validity = nodes.managedMemoryValidity.value;
+      const memories = state.managedMemories.filter((memory) => {
+        if (realm && memory.realm !== realm) return false;
+        if (characterId && memory.characterId !== characterId) return false;
+        if (type && memory.type !== type) return false;
+        if (validity && memory.validity !== validity) return false;
+        if (query && !(memory.id + " " + memory.content + " " + (memory.key || "") + " " + (memory.tags || []).join(" ")).toLocaleLowerCase().includes(query)) return false;
+        return true;
+      });
+      if (!memories.length) {
+        nodes.managedMemoryList.innerHTML = '<div class="muted" style="padding:14px 0;">没有符合条件的记忆</div>';
+        return;
+      }
+      nodes.managedMemoryList.innerHTML = memories.map((memory) => {
+        const character = state.characters.find((entry) => entry.id === memory.characterId);
+        const source = [memory.realm, memory.validity, character?.name, memory.sourceSessionId, memory.sourceMessageId].filter(Boolean).join(" · ");
+        const usage = [
+          memory.core ? '<span class="memory-badge core">核心</span>' : '',
+          '<span class="memory-badge">命中 ' + Number(memory.hitCount || 0) + ' 次</span>',
+          memory.lastHitAt ? '<span class="memory-badge">最近命中 ' + escapeHtml(formatTraceTime(memory.lastHitAt)) + '</span>' : '',
+          memory.lastUsedAt ? '<span class="memory-badge">最近使用 ' + escapeHtml(formatTraceTime(memory.lastUsedAt)) + '</span>' : ''
+        ].filter(Boolean).join("");
+        const actions = memory.realm === "legacy" ?
+          '<button class="secondary" type="button" data-managed-memory-action="forget" data-id="' + escapeHtml(memory.id) + '">删除隔离项</button>' :
+          memory.validity === "pending" ?
+            '<button class="secondary" type="button" data-managed-memory-action="confirm" data-id="' + escapeHtml(memory.id) + '">确认</button>' +
+            '<button class="secondary" type="button" data-managed-memory-action="correct" data-id="' + escapeHtml(memory.id) + '">编辑后确认</button>' +
+            '<button class="secondary" type="button" data-managed-memory-action="reject" data-id="' + escapeHtml(memory.id) + '">拒绝</button>' :
+          memory.validity === "active" ?
+            '<button class="secondary" type="button" data-managed-memory-action="correct" data-id="' + escapeHtml(memory.id) + '">纠正</button>' +
+            '<button class="secondary" type="button" data-managed-memory-action="archive" data-id="' + escapeHtml(memory.id) + '">归档</button>' +
+            '<button class="secondary" type="button" data-managed-memory-action="forget" data-id="' + escapeHtml(memory.id) + '">遗忘</button>' : "";
+        return '<div class="memory-row"><div><div class="memory-content">' + escapeHtml(memory.content) + '</div>' +
+          '<div class="schedule-meta">' + escapeHtml(memoryTypeLabel(memory.type)) + (memory.key ? ' · ' + escapeHtml(memory.key) : '') + '</div>' +
+          '<div class="memory-source">' + escapeHtml(source) + '</div><div class="memory-badges">' + usage + '</div></div><div class="memory-actions">' + actions + '</div></div>';
+      }).join("");
+    }
+
+    async function runRetrievalPreview(event) {
+      event.preventDefault();
+      nodes.retrievalPreviewState.textContent = "检索中...";
+      nodes.retrievalPreviewResults.hidden = true;
+      const params = new URLSearchParams({
+        mode: nodes.retrievalPreviewMode.value,
+        sessionId: state.activeSessionId || "ui-retrieval-preview",
+        query: nodes.retrievalPreviewQuery.value.trim(),
+        memoryTokens: String(Number(nodes.retrievalPreviewBudget.value) || 360),
+        timezone: Intl.DateTimeFormat().resolvedOptions().timeZone || "Asia/Shanghai",
+      });
+      const characterId = nodes.managedMemoryCharacter.value || state.selectedCharacterId;
+      if (characterId) params.set("characterId", characterId);
+      try {
+        const response = await fetch("/api/v1/memory-retrieval/preview?" + params.toString());
+        const body = await response.json();
+        if (!response.ok) throw new Error(body.error || "检索预览失败");
+        state.retrievalPreview = body;
+        renderRetrievalPreview();
+      } catch (error) {
+        nodes.retrievalPreviewState.textContent = error.message || String(error);
+      }
+    }
+
+    function renderRetrievalPreview() {
+      const plans = Array.isArray(state.retrievalPreview?.retrieval) ? state.retrievalPreview.retrieval : [];
+      const candidates = plans.flatMap((plan) => (plan.candidates || []).map((candidate) => ({ ...candidate, plan })));
+      const selected = candidates.filter((entry) => entry.selected);
+      nodes.retrievalPreviewState.textContent = candidates.length + " 个候选 · " + selected.length + " 个入选 · 预算 " +
+        Number(state.retrievalPreview?.budgets?.memoryTokens || 0) + " tokens";
+      nodes.retrievalPreviewResults.hidden = false;
+      nodes.retrievalPreviewResults.innerHTML = candidates.length ? candidates.map((entry) =>
+        '<div class="retrieval-preview-row"><div><strong>' + escapeHtml(entry.memoryId) + '</strong> · ' +
+          escapeHtml(entry.plan.realm + (entry.plan.characterId ? " / " + entry.plan.characterId : "")) +
+          '<div class="memory-source">' + escapeHtml((entry.selected ? "入选" : "排除") + " · score " + Number(entry.score || 0).toFixed(4) +
+            " · " + (entry.selected ? entry.reason : entry.exclusionReason || entry.reason) + " · " + Number(entry.estimatedTokens || 0) + " tokens") + '</div></div>' +
+          '<button class="secondary" type="button" data-memory-jump="' + escapeHtml(entry.memoryId) + '">查看</button></div>'
+      ).join("") : '<div class="muted" style="padding:12px 0;">无相关候选；普通 turn 不会回退注入任意记忆。</div>';
+    }
+
+    async function jumpFromMemoryDiagnostic(event) {
+      const button = event.target.closest("[data-memory-jump]");
+      if (!button) return;
+      setUiMode("management");
+      setManagementTab("memory");
+      await loadManagedMemories();
+      nodes.managedMemoryRealm.value = "";
+      nodes.managedMemoryCharacter.value = "";
+      nodes.managedMemoryValidity.value = "";
+      nodes.managedMemoryQuery.value = button.dataset.memoryJump;
+      renderManagedMemories();
+      nodes.managedMemoryList.scrollIntoView({ block: "start" });
+    }
+
+    function updateManagedMemoryCreateControls() {
+      const reality = nodes.managedMemoryCreateRealm.value === "reality";
+      const types = reality
+        ? [["user_fact", "用户事实"], ["preference", "偏好"], ["goal", "目标"], ["person", "人物"], ["project", "项目"], ["boundary", "边界"]]
+        : [["relationship_event", "关系事件"], ["world_fact", "世界事实"], ["plot_event", "剧情事件"], ["boundary", "边界"]];
+      nodes.managedMemoryCreateType.innerHTML = types.map((entry) => '<option value="' + entry[0] + '">' + entry[1] + '</option>').join("");
+      nodes.managedMemoryCreateCharacter.disabled = reality;
+      if (reality) nodes.managedMemoryCreateCharacter.value = "";
+    }
+
+    async function createManagedMemory(event) {
+      event.preventDefault();
+      const realm = nodes.managedMemoryCreateRealm.value;
+      const characterId = nodes.managedMemoryCreateCharacter.value;
+      if (realm === "roleplay" && !characterId) {
+        nodes.managedMemoryActionState.textContent = "角色记忆必须选择角色";
+        return;
+      }
+      nodes.managedMemoryActionState.textContent = "保存中...";
+      try {
+        const response = await fetch(realm === "reality" ? "/api/v1/reality-memories" : "/api/v1/memories", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({
+            realm,
+            scope: realm === "reality" ? "global" : "character",
+            type: nodes.managedMemoryCreateType.value,
+            key: nodes.managedMemoryCreateKey.value.trim() || undefined,
+            content: nodes.managedMemoryCreateContent.value.trim(),
+            characterId: realm === "roleplay" ? characterId : undefined,
+            confirmed: true,
+            tags: ["manual-control-plane"]
+          })
+        });
+        const body = await response.json();
+        if (!response.ok) throw new Error(body.error || "记忆保存失败");
+        nodes.managedMemoryCreateKey.value = "";
+        nodes.managedMemoryCreateContent.value = "";
+        nodes.managedMemoryActionState.textContent = "已固定";
+        await loadManagedMemories();
+      } catch (error) {
+        nodes.managedMemoryActionState.textContent = error.message || String(error);
+      }
+    }
+
+    async function handleManagedMemoryAction(event) {
+      const button = event.target.closest("button[data-managed-memory-action]");
+      if (!button) return;
+      const memory = state.managedMemories.find((entry) => entry.id === button.dataset.id);
+      if (!memory) return;
+      const action = button.dataset.managedMemoryAction;
+      let content = memory.content;
+      if (action === "correct") {
+        const edited = await openActionDialog({
+          title: memory.validity === "pending" ? "编辑后确认" : "纠正长期记忆",
+          description: memory.validity === "active" ? "原记忆将保留为已替换审计项。" : "候选将在保存后确认。",
+          fieldLabel: "记忆正文",
+          value: memory.content,
+          selectInput: true,
+          confirmLabel: "保存",
+          validate: (value) => !value.trim() ? "记忆正文不能为空。" : "",
+          onConfirm: (value) => { content = value.trim(); }
+        });
+        if (!edited) return;
+      } else if (action !== "confirm") {
+        const accepted = await openActionDialog({
+          title: action === "reject" ? "拒绝候选" : action === "archive" ? "归档记忆" : "遗忘记忆",
+          description: action === "forget" ? "该记忆会立即退出检索和模型上下文，但保留审计状态。" : memory.content.slice(0, 120),
+          confirmLabel: action === "reject" ? "拒绝" : action === "archive" ? "归档" : "遗忘"
+        });
+        if (!accepted) return;
+      }
+      try {
+        const endpoint = memory.realm === "legacy" && action === "forget"
+          ? "/api/v1/memories/" + encodeURIComponent(memory.id)
+          : "/api/v1/memories/" + encodeURIComponent(memory.id) + "/" + action;
+        const response = await fetch(endpoint, {
+          method: memory.realm === "legacy" && action === "forget" ? "DELETE" : "POST",
+          headers: { "content-type": "application/json" },
+          body: memory.realm === "legacy" && action === "forget" ? undefined : JSON.stringify(action === "correct" ? { content } : {})
+        });
+        const body = await response.json();
+        if (!response.ok) throw new Error(body.error || "记忆操作失败");
+        if (body.diff) {
+          nodes.managedMemoryActionState.textContent = "已替换旧记忆";
+          await openActionDialog({
+            title: "记忆冲突已替换",
+            description: "旧内容：" + body.diff.previous + "\\n\\n新内容：" + body.diff.next,
+            confirmLabel: "关闭"
+          });
+        }
+        await loadManagedMemories();
+      } catch (error) {
+        nodes.managedMemoryActionState.textContent = error.message || String(error);
+      }
+    }
+
+    function renderMemoryJobs() {
+      nodes.memoryJobCount.textContent = state.memoryJobs.length + " 条";
+      nodes.memoryJobList.innerHTML = state.memoryJobs.length ? state.memoryJobs.map((job) =>
+        '<div class="memory-job-row"><div><strong>' + escapeHtml(job.status) + '</strong> · ' + escapeHtml(job.triggerReason) + '</div>' +
+        '<div class="memory-source">' + escapeHtml(job.realm + " · " + job.sessionId + " · " + job.inputTokenEstimate + " tokens · " + (job.durationMs || 0) + " ms · " + job.resultCount + " results") + '</div>' +
+        (job.lastError ? '<div class="error">' + escapeHtml(job.lastError) + '</div>' : '') +
+        (job.status === "failed" && job.triggerReason === "explicit_forget_authorization" ? '<div><button class="secondary" type="button" data-memory-job-filter="' + escapeHtml(job.id) + '">筛选遗忘候选</button></div>' : '') +
+        (job.status === "failed" && job.attempts < job.maxAttempts ? '<div><button class="secondary" type="button" data-memory-job-retry="' + escapeHtml(job.id) + '">重试</button></div>' : '') + '</div>'
+      ).join("") : '<div class="muted" style="padding:12px 0;">暂无捕获任务</div>';
+    }
+
+    async function retryMemoryJob(event) {
+      const filterButton = event.target.closest("button[data-memory-job-filter]");
+      if (filterButton) {
+        const job = state.memoryJobs.find((entry) => entry.id === filterButton.dataset.memoryJobFilter);
+        if (!job) return;
+        nodes.managedMemoryRealm.value = job.realm || "";
+        nodes.managedMemoryCharacter.value = job.characterId || "";
+        nodes.managedMemoryValidity.value = "active";
+        nodes.managedMemoryQuery.value = "";
+        renderManagedMemories();
+        nodes.managedMemoryList.scrollIntoView({ block: "start" });
+        return;
+      }
+      const button = event.target.closest("button[data-memory-job-retry]");
+      if (!button) return;
+      button.disabled = true;
+      try {
+        const response = await fetch("/api/v1/memory-coordinator/jobs/" + encodeURIComponent(button.dataset.memoryJobRetry) + "/retry", { method: "POST" });
+        const body = await response.json();
+        if (!response.ok) throw new Error(body.error || "重试失败");
+        await loadManagedMemories();
+      } catch (error) {
+        nodes.managedMemoryActionState.textContent = error.message || String(error);
+        button.disabled = false;
+      }
+    }
+
+    async function loadAgentModules() {
+      nodes.moduleList.innerHTML = '<div class="muted" style="padding: 14px 0;">扫描中...</div>';
+      try {
+        const response = await fetch("/api/v1/agent-modules");
+        const body = await response.json();
+        if (!response.ok) throw new Error(body.error || "模块加载失败");
+        state.agentModules = Array.isArray(body.modules) ? body.modules : [];
+        renderAgentModules();
+      } catch (error) {
+        nodes.moduleList.innerHTML = '<div class="error" style="padding: 14px 0;">' + escapeHtml(error.message || String(error)) + '</div>';
+      }
+    }
+
+    async function loadCapabilityManagement() {
+      await Promise.all([loadAgentModules(), loadAgentPermissions()]);
+    }
+
+    async function loadAgentPermissions() {
+      setPermissionControlsDisabled(true);
+      nodes.permissionRuntime.textContent = "加载中...";
+      try {
+        const response = await fetch("/api/v1/agent-permissions");
+        const body = await response.json();
+        if (!response.ok) throw new Error(body.error || "权限加载失败");
+        state.agentPermissions = body.permissions || null;
+        renderAgentPermissions();
+      } catch (error) {
+        nodes.permissionRuntime.textContent = error.message || String(error);
+        setPermissionControlsDisabled(false);
+      }
+    }
+
+    function renderAgentPermissions() {
+      const permissions = state.agentPermissions;
+      if (!permissions) return;
+      nodes.workspacePath.textContent = permissions.workspaceDir || "";
+      nodes.workspaceAccessControls.querySelectorAll("button[data-workspace-access]").forEach((button) => {
+        button.classList.toggle("active", button.dataset.workspaceAccess === permissions.workspaceAccess);
+      });
+      setPermissionToggle(nodes.shellPermissionInput, nodes.shellPermissionLabel, permissions.shellEnabled);
+      setPermissionToggle(nodes.networkPermissionInput, nodes.networkPermissionLabel, permissions.networkEnabled);
+      setPermissionToggle(nodes.profileWritePermissionInput, nodes.profileWritePermissionLabel, permissions.userProfileWriteEnabled);
+      setPermissionToggle(nodes.soulWritePermissionInput, nodes.soulWritePermissionLabel, permissions.characterSoulWriteEnabled);
+      setPermissionToggle(nodes.realityMemoryWritePermissionInput, nodes.realityMemoryWritePermissionLabel, permissions.realityMemoryWriteEnabled);
+      setPermissionToggle(nodes.characterMemoryWritePermissionInput, nodes.characterMemoryWritePermissionLabel, permissions.characterMemoryWriteEnabled);
+      setPermissionControlsDisabled(false);
+      nodes.shellPermissionInput.disabled = !permissions.shellAvailable;
+      nodes.networkPermissionInput.disabled = !permissions.shellEnabled;
+      const networkPermissionHint = permissions.shellEnabled ? "" : "请先启用终端执行";
+      nodes.networkPermissionInput.title = networkPermissionHint;
+      nodes.networkPermissionInput.closest(".toggle").title = networkPermissionHint;
+      nodes.permissionRuntime.textContent = permissions.shellAvailable
+        ? "Bubblewrap 可用"
+        : "Bubblewrap 不可用，终端执行无法启用";
+    }
+
+    function setPermissionToggle(input, label, enabled) {
+      input.checked = Boolean(enabled);
+      label.textContent = enabled ? "已启用" : "已关闭";
+    }
+
+    function setPermissionControlsDisabled(disabled) {
+      nodes.permissionControls.querySelectorAll("input, button").forEach((control) => {
+        control.disabled = disabled;
+      });
+    }
+
+    async function setWorkspaceAccess(event) {
+      const button = event.target.closest("button[data-workspace-access]");
+      if (!button || button.disabled) return;
+      if (state.agentPermissions && button.dataset.workspaceAccess === state.agentPermissions.workspaceAccess) return;
+      await patchAgentPermissions({ workspaceAccess: button.dataset.workspaceAccess });
+    }
+
+    async function toggleAgentPermission(event) {
+      const input = event.target.closest("input[data-permission]");
+      if (!input) return;
+      await patchAgentPermissions({ [input.dataset.permission]: input.checked });
+    }
+
+    async function patchAgentPermissions(patch) {
+      setPermissionControlsDisabled(true);
+      try {
+        const response = await fetch("/api/v1/agent-permissions", {
+          method: "PATCH",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify(patch)
+        });
+        const body = await response.json();
+        if (!response.ok) throw new Error(body.error || "权限更新失败");
+        state.agentPermissions = body.permissions || null;
+        renderAgentPermissions();
+        setStatus("Agent 权限已更新");
+      } catch (error) {
+        renderAgentPermissions();
+        setStatus(error.message || String(error), true);
+      }
+    }
+
+    function renderAgentModules() {
+      if (!state.agentModules.length) {
+        nodes.moduleList.innerHTML = '<div class="muted" style="padding: 14px 0;">未发现模块</div>';
+        return;
+      }
+      nodes.moduleList.innerHTML = state.agentModules.map((module) =>
+        '<div class="module-row">' +
+          '<span class="module-type ' + escapeHtml(module.type) + '">' + escapeHtml(module.type === "mcp" ? "MCP" : "SKILL") + '</span>' +
+          '<div><div class="module-name">' + escapeHtml(module.name) + '</div>' +
+            '<div class="module-description">' + escapeHtml(module.description || "") + '</div>' +
+            '<div class="module-metadata"><span class="module-source">' + escapeHtml(module.source || "") + '</span>' +
+              '<span class="module-token" title="基于当前提示词和 schema 的近似值；实际值取决于模型 tokenizer">' +
+                escapeHtml(module.type === "mcp"
+                  ? "约 " + Number(module.estimatedTokens || 0).toLocaleString() + " tokens/轮"
+                  : "索引约 " + Number(module.estimatedTokens || 0).toLocaleString() + " tokens/轮 · 全文约 " + Number(module.fullContentEstimatedTokens || 0).toLocaleString() + " tokens/调用") +
+              '</span></div></div>' +
+          '<button class="secondary icon-button module-detail-button" type="button" data-module-detail="' + escapeHtml(module.id) + '" title="查看模块详情" aria-label="查看 ' + escapeHtml(module.name) + ' 详情"><i data-lucide="file-text" aria-hidden="true"></i></button>' +
+          '<label class="toggle"><span>' + (module.enabled ? "已启用" : "已关闭") + '</span>' +
+            '<input type="checkbox" data-module-id="' + escapeHtml(module.id) + '" aria-label="切换 ' + escapeHtml(module.name) + '"' + (module.enabled ? ' checked' : '') + ' /></label>' +
+        '</div>'
+      ).join("");
+      refreshIcons();
+    }
+
+    async function openModuleDetailFromList(event) {
+      const button = event.target.closest("button[data-module-detail]");
+      if (!button) return;
+      button.disabled = true;
+      try {
+        const response = await fetch("/api/v1/agent-modules/" + encodeURIComponent(button.dataset.moduleDetail));
+        const body = await response.json();
+        if (!response.ok) throw new Error(body.error || "模块详情加载失败");
+        const detail = body.detail || {};
+        nodes.moduleDetailTitle.textContent = detail.module?.name || "模块详情";
+        nodes.moduleDetailContent.innerHTML = '<div class="module-detail-meta">' +
+          escapeHtml([detail.module?.type?.toUpperCase(), detail.module?.source, detail.module?.enabled ? "已启用" : "已关闭"].filter(Boolean).join(" · ")) +
+          '</div><div class="markdown-body">' + renderMarkdown(detail.content || "暂无详情") + '</div>';
+        nodes.moduleDetailDialog.showModal();
+        refreshIcons();
+      } catch (error) {
+        setStatus(error.message || String(error), true);
+      } finally {
+        button.disabled = false;
+      }
+    }
+
+    async function toggleAgentModule(event) {
+      const input = event.target.closest("input[data-module-id]");
+      if (!input) return;
+      input.disabled = true;
+      try {
+        const response = await fetch("/api/v1/agent-modules/" + encodeURIComponent(input.dataset.moduleId), {
+          method: "PATCH",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ enabled: input.checked })
+        });
+        const body = await response.json();
+        if (!response.ok) throw new Error(body.error || "模块更新失败");
+        setStatus(body.module.name + (body.module.enabled ? " 已启用" : " 已关闭"));
+        await loadAgentModules();
+      } catch (error) {
+        input.checked = !input.checked;
+        input.disabled = false;
+        setStatus(error.message || String(error), true);
+      }
+    }
+
+    async function loadUserProfile() {
+      nodes.profileState.textContent = "加载中...";
+      setProfileControlsDisabled(true);
+      try {
+        const response = await fetch("/api/v1/user-profile");
+        const body = await response.json();
+        if (!response.ok) throw new Error(body.error || "画像加载失败");
+        const profile = body.profile || {};
+        nodes.profileMarkdown.value = profile.markdown || "";
+        state.userAvatarUrl = body.avatarUrl || "";
+        renderUserAvatarPreview();
+        updateProfileCharacterCount();
+        nodes.profileState.textContent = profile.updatedAt ? "更新于 " + formatTraceTime(profile.updatedAt) : "";
+      } catch (error) {
+        nodes.profileState.textContent = error.message || String(error);
+      } finally {
+        setProfileControlsDisabled(false);
+      }
+    }
+
+    async function loadUserAvatarState() {
+      try {
+        const response = await fetch("/api/v1/user-profile");
+        const body = await response.json();
+        if (!response.ok) return;
+        state.userAvatarUrl = body.avatarUrl || "";
+        renderUserAvatarPreview();
+        renderMessages();
+      } catch {
+        state.userAvatarUrl = "";
+      }
+    }
+
+    async function changeUserAvatar() {
+      const file = nodes.userAvatarInput.files?.[0];
+      nodes.userAvatarInput.value = "";
+      if (!file) return;
+      nodes.profileState.textContent = "头像保存中...";
+      try {
+        const dataUrl = await imageFileToAvatarDataUrl(file);
+        const response = await fetch("/api/v1/avatars/user", {
+          method: "PUT",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ dataUrl })
+        });
+        const body = await response.json();
+        if (!response.ok) throw new Error(body.error || "头像保存失败");
+        state.userAvatarUrl = body.avatarUrl || "";
+        renderUserAvatarPreview();
+        renderMessages();
+        nodes.profileState.textContent = "头像已更新";
+      } catch (error) {
+        nodes.profileState.textContent = error.message || String(error);
+      }
+    }
+
+    async function removeUserAvatar() {
+      try {
+        const response = await fetch("/api/v1/avatars/user", { method: "DELETE" });
+        const body = await response.json();
+        if (!response.ok) throw new Error(body.error || "头像移除失败");
+        state.userAvatarUrl = "";
+        renderUserAvatarPreview();
+        renderMessages();
+        nodes.profileState.textContent = "头像已移除";
+      } catch (error) {
+        nodes.profileState.textContent = error.message || String(error);
+      }
+    }
+
+    function renderUserAvatarPreview() {
+      const avatar = avatarImageOrInitial(state.userAvatarUrl, "我", "我");
+      if (nodes.userAvatarPreview) nodes.userAvatarPreview.innerHTML = avatar;
+      if (nodes.brandUserAvatar) nodes.brandUserAvatar.innerHTML = avatar;
+      if (nodes.removeUserAvatarBtn) nodes.removeUserAvatarBtn.disabled = !state.userAvatarUrl;
+      updateScheduleHeaderContext();
+    }
+
+    async function imageFileToAvatarDataUrl(file) {
+      if (!file.type.match(/^image\\/(?:png|jpeg|webp)$/)) throw new Error("请选择 JPEG、PNG 或 WebP 图片");
+      if (file.size > 10 * 1024 * 1024) throw new Error("原始图片不能超过 10 MiB");
+      const objectUrl = URL.createObjectURL(file);
+      try {
+        const image = await new Promise((resolve, reject) => {
+          const element = new Image();
+          element.onload = () => resolve(element);
+          element.onerror = () => reject(new Error("图片无法读取"));
+          element.src = objectUrl;
+        });
+        const size = Math.min(image.naturalWidth, image.naturalHeight);
+        const sourceX = (image.naturalWidth - size) / 2;
+        const sourceY = (image.naturalHeight - size) / 2;
+        const canvas = document.createElement("canvas");
+        canvas.width = 256;
+        canvas.height = 256;
+        const context = canvas.getContext("2d");
+        if (!context) throw new Error("浏览器不支持头像处理");
+        context.fillStyle = "#ffffff";
+        context.fillRect(0, 0, 256, 256);
+        context.drawImage(image, sourceX, sourceY, size, size, 0, 0, 256, 256);
+        return canvas.toDataURL("image/jpeg", 0.88);
+      } finally {
+        URL.revokeObjectURL(objectUrl);
+      }
+    }
+
+    function setProfileControlsDisabled(disabled) {
+      nodes.profileDocumentForm.querySelectorAll("textarea, button").forEach((control) => {
+        control.disabled = disabled;
+      });
+      if (!disabled) updateProfileCharacterCount();
+    }
+
+    function updateProfileCharacterCount() {
+      const count = [...nodes.profileMarkdown.value].length;
+      const overLimit = count > 2000;
+      nodes.profileCharacterCount.textContent = count + " / 2000";
+      nodes.profileCharacterCount.classList.toggle("error", overLimit);
+      nodes.saveProfileBtn.disabled = overLimit;
+    }
+
+    async function saveUserProfile(event) {
+      event.preventDefault();
+      if ([...nodes.profileMarkdown.value].length > 2000) return;
+      nodes.profileState.textContent = "保存中...";
+      try {
+        const response = await fetch("/api/v1/user-profile", {
+          method: "PATCH",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ markdown: nodes.profileMarkdown.value })
+        });
+        const body = await response.json();
+        if (!response.ok) throw new Error(body.error || "画像保存失败");
+        nodes.profileMarkdown.value = body.profile.markdown;
+        updateProfileCharacterCount();
+        nodes.profileState.textContent = "已保存";
+        setStatus("用户画像已更新");
+      } catch (error) {
+        nodes.profileState.textContent = error.message || String(error);
+      }
+    }
+
+    function localInputToIso(value, allDay = false) {
+      if (!value) return undefined;
+      const date = allDay && /^\\d{4}-\\d{2}-\\d{2}$/.test(value)
+        ? parseLocalDateKey(value)
+        : new Date(value);
+      return Number.isNaN(date.getTime()) ? undefined : date.toISOString();
+    }
+
+    function localDateKey(value) {
+      const date = value instanceof Date ? value : new Date(value);
+      const year = date.getFullYear();
+      const month = String(date.getMonth() + 1).padStart(2, "0");
+      const day = String(date.getDate()).padStart(2, "0");
+      return year + "-" + month + "-" + day;
+    }
+
+    function parseLocalDateKey(value) {
+      const [year, month, day] = String(value).split("-").map(Number);
+      return new Date(year, month - 1, day);
+    }
+
+    function isoToLocalInput(value, allDay = false) {
+      if (!value) return "";
+      const date = new Date(value);
+      if (allDay) return localDateKey(date);
+      const local = new Date(date.getTime() - date.getTimezoneOffset() * 60_000);
+      return local.toISOString().slice(0, 16);
+    }
+
+    function formatScheduleTime(value, timezone) {
+      try {
+        return new Intl.DateTimeFormat("zh-CN", {
+          timeZone: timezone,
+          month: "2-digit",
+          day: "2-digit",
+          weekday: "short",
+          hour: "2-digit",
+          minute: "2-digit"
+        }).format(new Date(value));
+      } catch {
+        return value;
+      }
+    }
+
+    function kindLabel(kind) {
+      if (kind === "event") return "事件";
+      if (kind === "task") return "任务";
+      return "提醒";
+    }
+
+    function notificationStatusLabel(status) {
+      return ({ pending: "等待投递", processing: "投递中", delivered: "已送达", failed: "投递失败" })[status] || status;
+    }
+
+    function recurrenceLabel(rule) {
+      if (rule === "FREQ=DAILY") return "每天";
+      if (rule === "FREQ=WEEKLY") return "每周";
+      return rule;
+    }
+
+    async function loadSessionMessages() {
+      return refreshSessionMessages(false);
+    }
+
+    async function refreshSessionMessages(silent) {
+      if (!state.activeSessionId || state.sessionDraft) return;
+      const sessionId = encodeURIComponent(state.activeSessionId);
+      if (!silent) setStatus("加载会话...");
+      try {
+        const response = await fetch("/api/v1/sessions/" + sessionId + "/messages");
+        const body = await response.json();
+        if (!response.ok) {
+          throw new Error(body.error || "加载会话失败");
+        }
+        const messages = Array.isArray(body)
+          ? mergeToolResultsIntoMessages(dedupeSystemEvents(body.map(normalizeStoredMessage).filter(Boolean)))
+          : [];
+        const latestOutcome = [...messages].reverse().find((message) => message.status);
+        if (latestOutcome) {
+          state.lastTurnStatus = latestOutcome.status;
+          state.lastTurnCanRetry = Boolean(latestOutcome.canRetry);
+          updateRetryState();
+        }
+        preserveLocalMessageProgress(messages);
+        if (JSON.stringify(messages) !== JSON.stringify(state.messages)) {
+          state.messages = messages;
+          renderMessages();
+        }
+        if (!silent) setStatus("就绪");
+      } catch (error) {
+        if (!silent) setStatus(error.message || String(error), true);
+      }
+    }
+
+    async function uploadChatAttachments() {
+      const files = Array.from(nodes.chatAttachmentInput.files || []);
+      nodes.chatAttachmentInput.value = "";
+      await queueChatAttachments(files);
+    }
+
+    async function pasteChatAttachments(event) {
+      const clipboard = event.clipboardData;
+      if (!clipboard) return;
+      let files = Array.from(clipboard.files || []);
+      if (!files.length) {
+        files = Array.from(clipboard.items || [])
+          .filter((item) => item.kind === "file")
+          .map((item) => item.getAsFile())
+          .filter(Boolean);
+      }
+      if (!files.length) return;
+      event.preventDefault();
+      const pastedAt = Date.now();
+      const normalizedFiles = files.map((file, index) => {
+        if (String(file.name || "").trim()) return file;
+        const extension = clipboardFileExtension(file.type);
+        return new File([file], "clipboard-" + pastedAt + "-" + (index + 1) + extension, {
+          type: file.type || "application/octet-stream",
+          lastModified: file.lastModified || pastedAt
+        });
+      });
+      await queueChatAttachments(normalizedFiles);
+    }
+
+    function clipboardFileExtension(contentType) {
+      const extensions = {
+        "image/png": ".png",
+        "image/jpeg": ".jpg",
+        "image/gif": ".gif",
+        "image/webp": ".webp",
+        "application/pdf": ".pdf",
+        "text/plain": ".txt"
+      };
+      return extensions[String(contentType || "").toLowerCase()] || ".bin";
+    }
+
+    async function queueChatAttachments(files) {
+      if (!files.length) return;
+      state.attachmentUploadQueue.push(...files);
+      if (state.uploadingAttachments) {
+        setStatus(state.attachmentUploadQueue.length + " 个附件等待上传...");
+        return;
+      }
+      state.uploadingAttachments = true;
+      nodes.attachFileBtn.disabled = true;
       nodes.sendBtn.disabled = true;
+      setStatus("上传附件中...");
+      let uploadedCount = 0;
+      const failures = [];
+      try {
+        while (state.attachmentUploadQueue.length) {
+          const file = state.attachmentUploadQueue.shift();
+          try {
+            const entries = await uploadWorkspaceFiles([file], "uploads");
+            state.pendingAttachments.push(...entries);
+            uploadedCount += entries.length;
+            renderAttachmentQueue();
+          } catch (error) {
+            failures.push(error.message || String(error));
+          }
+        }
+        if (failures.length) {
+          const prefix = uploadedCount ? uploadedCount + " 个附件已上传；" : "";
+          setStatus(prefix + failures[0] + (failures.length > 1 ? "，另有 " + (failures.length - 1) + " 个失败" : ""), true);
+        } else {
+          setStatus(uploadedCount + " 个附件已上传");
+        }
+      } finally {
+        state.uploadingAttachments = false;
+        nodes.attachFileBtn.disabled = false;
+        nodes.sendBtn.disabled = state.busy;
+      }
+    }
+
+    function renderAttachmentQueue() {
+      nodes.attachmentQueue.hidden = state.pendingAttachments.length === 0;
+      nodes.attachmentQueue.innerHTML = state.pendingAttachments.map((entry, index) =>
+        '<div class="attachment-chip">' +
+          '<i data-lucide="' + workspaceFileIcon(entry) + '" aria-hidden="true"></i>' +
+          '<span class="attachment-chip-copy"><strong>' + escapeHtml(entry.name) + '</strong><small>' + escapeHtml(formatFileSize(entry.size)) + '</small></span>' +
+          '<button class="attachment-remove" type="button" data-attachment-index="' + index + '" title="移除附件" aria-label="移除 ' + escapeHtml(entry.name) + '"><i data-lucide="x" aria-hidden="true"></i></button>' +
+        '</div>'
+      ).join("");
+      refreshIcons();
+    }
+
+    function removeQueuedAttachment(event) {
+      const button = event.target.closest("button[data-attachment-index]");
+      if (!button || state.busy) return;
+      state.pendingAttachments.splice(Number(button.dataset.attachmentIndex), 1);
+      renderAttachmentQueue();
+    }
+
+    function messageWithAttachments(text, attachments) {
+      if (!attachments.length) return text;
+      const lines = attachments.map((entry) =>
+        "- " + entry.name + " | workspace: " + entry.path + " | " + (entry.contentType || "application/octet-stream") + " | " + (entry.sizeLabel || formatFileSize(entry.size))
+      );
+      return (text ? text + "\\n\\n" : "") + "[附件已上传到 Workspace]\\n" + lines.join("\\n");
+    }
+
+    async function sendMessage() {
+      const rawText = nodes.textInput.value.trim();
+      if ((!rawText && !state.pendingAttachments.length) || state.busy || state.uploadingAttachments) return;
+      const attachments = [...state.pendingAttachments];
+      const text = messageWithAttachments(rawText, attachments);
+      if (!state.activeSessionId) startNewSession();
+      if (!nodes.chatCharacterSelect.value) {
+        setStatus("请先选择角色；如果还没有角色，请前往“角色”页创建。", true);
+        nodes.chatCharacterSelect.focus();
+        return;
+      }
+      state.busy = true;
+      state.lastTurnStatus = null;
+      state.lastTurnCanRetry = false;
+      nodes.sendBtn.disabled = true;
+      nodes.cancelMessageBtn.disabled = false;
+      nodes.retryMessageBtn.disabled = true;
       setStatus("发送中...");
       nodes.textInput.value = "";
-      pushMessage("user", text);
+      state.pendingAttachments = [];
+      renderAttachmentQueue();
+      pushMessage("user", rawText, { attachments });
+      const assistantIndex = pushMessage("assistant", "", {
+        working: true,
+        progressOpen: false,
+        progress: [
+          { key: "request", label: "请求已发送", status: "completed" },
+          { key: "context", label: "准备模型上下文", status: "active" }
+        ]
+      });
       try {
-        const sessionId = encodeURIComponent(nodes.sessionInput.value.trim() || "default");
-        const response = await fetch("/api/sessions/" + sessionId + "/messages", {
+        const sessionId = encodeURIComponent(state.activeSessionId);
+        const response = await fetch("/api/v1/sessions/" + sessionId + "/messages/stream", {
           method: "POST",
           headers: { "content-type": "application/json" },
           body: JSON.stringify({
             mode: nodes.modeSelect.value,
             text,
-            now: new Date().toISOString()
+            characterId: nodes.chatCharacterSelect.value,
+            attachments: attachments.map((entry) => ({
+              path: entry.path,
+              name: entry.name,
+              contentType: entry.contentType,
+              size: entry.size
+            }))
           })
         });
-        const body = await response.json();
         if (!response.ok) {
-          throw new Error(body.error || "请求失败");
+          const errorBody = await response.json().catch(() => ({}));
+          throw new Error(errorBody.error || "流式请求失败");
         }
-        pushMessage("assistant", body.reply || "");
-        if (Array.isArray(body.actions) && body.actions.length) {
-          pushMessage("tool", formatActions(body.actions));
+        if (!response.body) throw new Error("流式请求失败");
+        let finalResponse;
+        await consumeEventStream(response.body, (event) => {
+          if (event.type === "delta") {
+            updateMessageProgress(assistantIndex, "generation", "生成回复", "active", true);
+            state.messages[assistantIndex].text += event.delta || "";
+            renderMessages();
+          }
+          if (event.type === "reasoning_status") {
+            updateMessageProgress(
+              assistantIndex,
+              "reasoning",
+              "模型推理",
+              event.phase === "end" ? "completed" : "active",
+              event.phase === "end"
+            );
+          }
+          if (event.type === "tool_start") {
+            updateMessageProgress(
+              assistantIndex,
+              "tool:" + event.toolCallId,
+              "调用工具：" + toolDisplayName(event.toolName),
+              "active",
+              false,
+              { toolName: event.toolName, toolCallId: event.toolCallId }
+            );
+            setStatus("执行工具：" + toolDisplayName(event.toolName));
+          }
+          if (event.type === "tool_end") {
+            updateMessageProgress(
+              assistantIndex,
+              "tool:" + event.toolCallId,
+              "调用工具：" + toolDisplayName(event.toolName),
+              event.isError ? "failed" : "completed",
+              false,
+              {
+                toolName: event.toolName,
+                toolCallId: event.toolCallId,
+                resultText: formatToolResult(event.result)
+              }
+            );
+          }
+          if (event.type === "auto_retry_start") {
+            updateMessageProgress(
+              assistantIndex,
+              "retry:" + event.attempt,
+              "模型重试 " + event.attempt + "/" + event.maxAttempts,
+              "active"
+            );
+            setStatus("模型重试 " + event.attempt + "/" + event.maxAttempts);
+          }
+          if (event.type === "auto_retry_end") {
+            updateMessageProgress(
+              assistantIndex,
+              "retry:" + event.attempt,
+              "模型重试 " + event.attempt,
+              event.success ? "completed" : "failed"
+            );
+          }
+          if (event.type === "lifecycle") {
+            applyLifecycleProgress(assistantIndex, event.eventType);
+          }
+          if (event.type === "done") finalResponse = event.response;
+          if (event.type === "error") throw new Error(event.error || "流式请求失败");
+        });
+        if (!finalResponse) throw new Error("流式响应提前结束");
+        state.messages[assistantIndex].text = finalResponse.reply || state.messages[assistantIndex].text;
+        state.messages[assistantIndex].status = finalResponse.status;
+        state.messages[assistantIndex].eventType = finalResponse.eventType;
+        state.messages[assistantIndex].canRetry = Boolean(finalResponse.canRetry);
+        if (finalResponse.messageType === "system") {
+          state.messages[assistantIndex].role = "system";
+          state.messages[assistantIndex].progress = [];
+          state.messages[assistantIndex].progressOpen = false;
+          state.messages[assistantIndex].working = false;
+        } else {
+          completeMessageProgress(assistantIndex, finalResponse.status);
         }
-        setStatus("完成");
+        addActionProgress(assistantIndex, finalResponse.actions);
+        renderMessages();
+        if (state.sessionDraft) await loadSessions();
+        else await loadConversationScene();
+        applyTurnOutcome(finalResponse);
         if (state.uiMode === "debug") {
           await loadDebugLogs();
         }
       } catch (error) {
+        state.lastTurnStatus = "failed";
+        state.lastTurnCanRetry = false;
+        updateRetryState();
+        if (state.messages[assistantIndex]) {
+          state.messages[assistantIndex].role = "system";
+          state.messages[assistantIndex].text = error.message || String(error);
+          state.messages[assistantIndex].status = "failed";
+          state.messages[assistantIndex].eventType = "operation_failed";
+          state.messages[assistantIndex].canRetry = false;
+          state.messages[assistantIndex].progress = [];
+          state.messages[assistantIndex].working = false;
+          renderMessages();
+        }
+        if (
+          state.messages[assistantIndex] &&
+          !state.messages[assistantIndex].text &&
+          !state.messages[assistantIndex].progress?.length
+        ) {
+          state.messages.splice(assistantIndex, 1);
+          renderMessages();
+        }
         setStatus(error.message || String(error), true);
       } finally {
         state.busy = false;
         nodes.sendBtn.disabled = false;
+        nodes.cancelMessageBtn.disabled = true;
+        updateRetryState();
         nodes.textInput.focus();
       }
     }
 
-    function pushMessage(role, text) {
-      state.messages.push({ role, text, at: new Date().toLocaleTimeString() });
+    async function consumeEventStream(stream, onEvent) {
+      const reader = stream.getReader();
+      const decoder = new TextDecoder();
+      let buffer = "";
+      while (true) {
+        const result = await reader.read();
+        buffer += decoder.decode(result.value || new Uint8Array(), { stream: !result.done });
+        const frames = buffer.split("\\n\\n");
+        buffer = frames.pop() || "";
+        for (const frame of frames) {
+          const data = frame.split("\\n")
+            .filter((line) => line.startsWith("data: "))
+            .map((line) => line.slice(6))
+            .join("\\n");
+          if (data) onEvent(JSON.parse(data));
+        }
+        if (result.done) break;
+      }
+    }
+
+    async function cancelMessage() {
+      if (!state.busy) return;
+      const sessionId = encodeURIComponent(state.activeSessionId);
+      try {
+        await fetch("/api/v1/sessions/" + sessionId + "/messages/cancel", { method: "POST" });
+        setStatus("正在停止...");
+      } catch (error) {
+        setStatus(error.message || String(error), true);
+      }
+    }
+
+    async function retryMessage() {
+      if (state.busy || state.sessionDraft || !state.lastTurnCanRetry) return;
+      const sessionId = encodeURIComponent(state.activeSessionId);
+      nodes.retryMessageBtn.disabled = true;
+      setStatus("重试中...");
+      const assistantIndex = pushMessage("assistant", "", {
+        working: true,
+        progressOpen: false,
+        progress: [{ key: "retry", label: "重新调用模型", status: "active" }]
+      });
+      try {
+        const response = await fetch("/api/v1/sessions/" + sessionId + "/messages/retry", { method: "POST" });
+        const body = await response.json();
+        if (!response.ok) throw new Error(body.error || "重试失败");
+        state.messages[assistantIndex].text = body.reply || "";
+        state.messages[assistantIndex].status = body.status;
+        state.messages[assistantIndex].eventType = body.eventType;
+        state.messages[assistantIndex].canRetry = Boolean(body.canRetry);
+        if (body.messageType === "system") {
+          state.messages[assistantIndex].role = "system";
+          state.messages[assistantIndex].progress = [];
+          state.messages[assistantIndex].working = false;
+        } else {
+          completeMessageProgress(assistantIndex, body.status);
+        }
+        renderMessages();
+        applyTurnOutcome(body);
+      } catch (error) {
+        state.messages[assistantIndex].role = "system";
+        state.messages[assistantIndex].text = error.message || String(error);
+        state.messages[assistantIndex].status = "failed";
+        state.messages[assistantIndex].eventType = "operation_failed";
+        state.messages[assistantIndex].canRetry = state.lastTurnCanRetry;
+        state.messages[assistantIndex].progress = [];
+        state.messages[assistantIndex].working = false;
+        renderMessages();
+        updateRetryState();
+        setStatus(error.message || String(error), true);
+      }
+    }
+
+    function pushMessage(role, text, extra) {
+      state.messages.push({ role, text, at: new Date().toLocaleTimeString(), ...(extra || {}) });
       renderMessages();
+      return state.messages.length - 1;
+    }
+
+    function normalizeStoredMessage(message) {
+      if (!message || typeof message !== "object") return null;
+      if (message.role === "custom" && message.display === false) return null;
+      const content = typeof message.content === "string"
+        ? message.content
+        : Array.isArray(message.content)
+          ? message.content.filter((block) => block && block.type === "text").map((block) => block.text || "").join("")
+          : "";
+      const failedModelText = message.errorMessage ? "模型调用失败：" + message.errorMessage : "";
+      const presentation = extractMessagePresentation(message.errorMessage ? failedModelText : content);
+      if (!presentation.text && !presentation.attachments.length) return null;
+      const isSystemEvent = message.role === "custom" && message.customType === "rp-agent/system_event";
+      const isLegacySystemReply = message.role === "assistant" &&
+        (message.api === "rp-agent" || message.provider === "rp-agent" || message.model === "rp-agent");
+      const role = isSystemEvent || isLegacySystemReply || message.errorMessage
+        ? "system"
+        : message.role === "toolResult" ? "tool" : message.role;
+      const at = message.timestamp ? new Date(message.timestamp).toLocaleTimeString() : "";
+      const details = message.details && typeof message.details === "object" ? message.details : {};
+      return {
+        role,
+        text: presentation.text,
+        rawText: content,
+        attachments: presentation.attachments,
+        at,
+        entryId: typeof message.entryId === "string" ? message.entryId : "",
+        latestUser: Boolean(message.latestUser),
+        status: details.status || message.turnStatus,
+        eventType: details.eventType,
+        canRetry: Boolean(details.canRetry ?? message.canRetry),
+        toolCallId: typeof message.toolCallId === "string" ? message.toolCallId : "",
+        toolName: typeof message.toolName === "string" ? message.toolName : "",
+        isError: Boolean(message.isError)
+      };
+    }
+
+    function extractMessagePresentation(value) {
+      const source = String(value || "").trim();
+      const marker = "[附件已上传到 Workspace]";
+      const markerIndex = source.lastIndexOf(marker);
+      if (markerIndex < 0) return { text: source, attachments: [] };
+      const attachments = source.slice(markerIndex + marker.length).trim().split("\\n").flatMap((line) => {
+        const normalized = line.trim();
+        if (!normalized.startsWith("- ")) return [];
+        const workspaceSeparator = " | workspace: ";
+        const nameEnd = normalized.indexOf(workspaceSeparator);
+        if (nameEnd < 2) return [];
+        const fields = normalized.slice(nameEnd + workspaceSeparator.length).split(" | ");
+        if (fields.length < 3) return [];
+        const path = fields.shift().trim();
+        const contentType = fields.shift().trim();
+        const sizeLabel = fields.join(" | ").trim();
+        if (!isSafeWorkspacePath(path)) return [];
+        return [{
+          name: normalized.slice(2, nameEnd).trim() || path.split("/").pop() || "附件",
+          path,
+          contentType,
+          sizeLabel
+        }];
+      });
+      if (!attachments.length) return { text: source, attachments: [] };
+      return { text: source.slice(0, markerIndex).trim(), attachments };
+    }
+
+    function mergeToolResultsIntoMessages(messages) {
+      const merged = [];
+      let pendingTools = [];
+
+      const attachPending = (target) => {
+        if (!target || !pendingTools.length) return false;
+        target.progress = Array.isArray(target.progress) ? target.progress : [];
+        pendingTools.forEach((tool, toolIndex) => {
+          target.progress.push({
+            key: "tool:" + (tool.toolCallId || tool.toolName || toolIndex),
+            label: "调用工具：" + toolDisplayName(tool.toolName),
+            status: tool.isError ? "failed" : "completed",
+            toolName: tool.toolName,
+            toolCallId: tool.toolCallId,
+            resultText: tool.text
+          });
+        });
+        target.working = false;
+        pendingTools = [];
+        return true;
+      };
+
+      for (const message of messages) {
+        if (message.role === "tool") {
+          pendingTools.push(message);
+          continue;
+        }
+        if (pendingTools.length && message.role === "assistant") attachPending(message);
+        if (pendingTools.length && (message.role === "user" || message.role === "system")) {
+          attachPending([...merged].reverse().find((entry) => entry.role === "assistant"));
+        }
+        merged.push(message);
+      }
+      if (pendingTools.length) {
+        attachPending([...merged].reverse().find((entry) => entry.role === "assistant"));
+      }
+      return merged;
+    }
+
+    function dedupeSystemEvents(messages) {
+      return messages.filter((message, index) => !(
+        message.role === "system" &&
+        messages[index + 1]?.role === "system" &&
+        messages[index + 1]?.text === message.text
+      ));
+    }
+
+    function preserveLocalMessageProgress(messages) {
+      const previous = state.messages.filter((message) =>
+        message.role === "assistant" && Array.isArray(message.progress) && message.progress.length
+      );
+      const used = new Set();
+      for (let index = messages.length - 1; index >= 0; index -= 1) {
+        const message = messages[index];
+        if (message.role !== "assistant") continue;
+        for (let previousIndex = previous.length - 1; previousIndex >= 0; previousIndex -= 1) {
+          if (used.has(previousIndex) || previous[previousIndex].text !== message.text) continue;
+          message.progress = previous[previousIndex].progress;
+          message.progressOpen = previous[previousIndex].progressOpen;
+          message.working = previous[previousIndex].working;
+          used.add(previousIndex);
+          break;
+        }
+      }
     }
 
     function renderMessages() {
       if (!state.messages.length) {
-        nodes.messages.innerHTML = '<div class="muted">开始聊天。当前只保留基础聊天、提醒工具和 Debug 上下文日志。</div>';
+        const character = state.characters.find((entry) => entry.id === state.selectedCharacterId);
+        const identity = character ? character.name : "请先创建或选择角色";
+        nodes.messages.innerHTML = '<div class="chat-empty"><span class="brand-mark">' + avatarImageOrInitial(character?.avatarUrl, character?.name) + '</span><strong>' + escapeHtml(identity) + '</strong></div>';
+        refreshIcons();
         return;
       }
-      nodes.messages.innerHTML = state.messages.map((message) => {
-        return '<div class="bubble ' + escapeHtml(message.role) + '">' +
-          '<span class="meta">' + roleLabel(message.role) + ' · ' + escapeHtml(message.at) + '</span>' +
-          escapeHtml(message.text) +
-          '</div>';
+      nodes.messages.innerHTML = state.messages.map((message, index) => {
+        if (message.role === "system") {
+          return '<div class="message-row system" role="status">' +
+            '<div class="system-event"><i data-lucide="' + escapeHtml(systemEventIcon(message.eventType)) + '" aria-hidden="true"></i>' +
+            '<div class="markdown-body">' + renderMarkdown(message.text) + '</div>' +
+            renderSystemEventActions(message, index) + '</div></div>';
+        }
+        const progress = renderMessageProgress(message, index);
+        const media = renderMessageAttachments(message.attachments);
+        const hasText = Boolean(String(message.text || "").trim());
+        const content = media + (hasText ? '<div class="bubble-text markdown-body">' + renderMarkdown(message.text, true) + '</div>' : '');
+        const mediaOnly = media && !hasText ? " media-only" : "";
+        const meta = [roleLabel(message.role), message.at].filter(Boolean).join(" · ");
+        return '<div class="message-row ' + escapeHtml(message.role) + '">' +
+          '<div class="message-avatar" aria-hidden="true">' + messageAvatar(message.role) + '</div>' +
+          '<div class="message-stack">' +
+            '<span class="meta">' + escapeHtml(meta) + '</span>' +
+            '<div class="message-bubble-row"><div class="bubble ' + escapeHtml(message.role) + mediaOnly + '">' + progress + content + '</div>' +
+              renderMessageActions(message, index) + '</div>' +
+          '</div>' +
+        '</div>';
       }).join("");
+      refreshIcons();
       nodes.messages.scrollTop = nodes.messages.scrollHeight;
     }
 
-    async function loadDebugLogs() {
-      nodes.debugList.innerHTML = '<div class="muted">加载中...</div>';
-      try {
-        const response = await fetch("/api/debug/context-logs?limit=20");
-        const body = await response.json();
-        if (!response.ok) {
-          throw new Error(body.error || "加载失败");
-        }
-        renderLogs(body.logs || []);
-      } catch (error) {
-        nodes.debugList.innerHTML = '<div class="error">' + escapeHtml(error.message || String(error)) + '</div>';
+    function renderMessageAttachments(attachments) {
+      if (!Array.isArray(attachments) || !attachments.length) return "";
+      const images = attachments.filter(isImageAttachment);
+      const files = attachments.filter((entry) => !isImageAttachment(entry));
+      const imageGrid = images.length
+        ? '<div class="message-image-grid' + (images.length > 1 ? ' multiple' : '') + '">' + images.map((entry) => {
+            const name = entry.name || entry.path.split("/").pop() || "图片";
+            return '<button class="message-image-thumb" type="button" data-message-image="true" data-image-path="' + escapeHtml(entry.path) + '" data-image-name="' + escapeHtml(name) + '" aria-label="查看图片 ' + escapeHtml(name) + '">' +
+              '<img src="' + escapeHtml(workspaceFileContentUrl(entry.path, "inline")) + '" alt="' + escapeHtml(name) + '" loading="lazy" /></button>';
+          }).join("") + '</div>'
+        : "";
+      const fileList = files.map((entry) => {
+        const name = entry.name || entry.path.split("/").pop() || "附件";
+        return '<a class="message-file-attachment" href="' + escapeHtml(workspaceFileContentUrl(entry.path, "attachment")) + '" download>' +
+          '<i data-lucide="file" aria-hidden="true"></i><span class="message-file-copy"><strong>' + escapeHtml(name) + '</strong><small>' + escapeHtml(entry.sizeLabel || formatFileSize(entry.size)) + '</small></span>' +
+          '<i class="message-file-download" data-lucide="download" aria-hidden="true"></i></a>';
+      }).join("");
+      return '<div class="message-attachments">' + imageGrid + fileList + '</div>';
+    }
+
+    function isImageAttachment(entry) {
+      return entry?.previewKind === "image" || String(entry?.contentType || "").toLowerCase().startsWith("image/");
+    }
+
+    function systemEventIcon(eventType) {
+      if (eventType === "model_unavailable") return "settings";
+      if (eventType === "module_disabled") return "blocks";
+      if (eventType === "operation_failed") return "circle-alert";
+      if (eventType === "cancelled") return "circle-stop";
+      if (eventType === "operation_completed") return "circle-check";
+      return "info";
+    }
+
+    function renderSystemEventActions(message, index) {
+      const actions = [];
+      if (message.eventType === "model_unavailable") {
+        actions.push(systemActionButton("model-settings", "settings", "前往模型设置"));
       }
+      if (message.eventType === "module_disabled") {
+        actions.push(systemActionButton("module-management", "blocks", "前往模块管理"));
+      }
+      const latestOutcomeIndex = state.messages.findLastIndex((entry) => Boolean(entry.status));
+      if (message.canRetry && index === latestOutcomeIndex) {
+        actions.push(systemActionButton("retry", "rotate-ccw", "重试本轮"));
+      }
+      return actions.length ? '<span class="system-event-actions">' + actions.join("") + '</span>' : "";
+    }
+
+    function renderMessageActions(message, index) {
+      if (message.role !== "user" || !message.latestUser || !message.entryId || state.busy) return "";
+      return '<span class="message-actions">' +
+        (message.text ? '<button class="message-action" type="button" data-message-action="edit" data-message-index="' + index + '" title="编辑并重新发送" aria-label="编辑消息"><i data-lucide="pencil" aria-hidden="true"></i></button>' : '') +
+        '<button class="message-action" type="button" data-message-action="retract" data-message-index="' + index + '" title="撤回消息" aria-label="撤回消息"><i data-lucide="undo-2" aria-hidden="true"></i></button>' +
+        '</span>';
+    }
+
+    let editingMessage = null;
+
+    async function handleMessageAction(event) {
+      const button = event.target.closest("button[data-message-action]");
+      if (!button || state.busy) return;
+      const message = state.messages[Number(button.dataset.messageIndex)];
+      if (!message?.entryId || !message.latestUser) return;
+      if (button.dataset.messageAction === "edit") {
+        editingMessage = message;
+        nodes.messageEditText.value = message.text;
+        nodes.messageEditError.textContent = "";
+        nodes.messageEditDialog.showModal();
+        refreshIcons();
+        requestAnimationFrame(() => { nodes.messageEditText.focus(); nodes.messageEditText.select(); });
+        return;
+      }
+      const confirmed = await openActionDialog({
+        title: "撤回消息",
+        description: "撤回后，这条消息及其后的角色回复会从当前对话分支移除。已产生现实副作用的轮次不能撤回。",
+        confirmLabel: "撤回",
+      });
+      if (!confirmed) return;
+      await reviseMessage(message, "retract");
+    }
+
+    function closeMessageEditDialog() {
+      if (nodes.messageEditDialog.open) nodes.messageEditDialog.close();
+      editingMessage = null;
+      nodes.messageEditError.textContent = "";
+    }
+
+    async function submitMessageEdit(event) {
+      event.preventDefault();
+      if (!editingMessage || state.busy) return;
+      const text = nodes.messageEditText.value.trim();
+      if (!text) {
+        nodes.messageEditError.textContent = "消息不能为空。";
+        return;
+      }
+      await reviseMessage(editingMessage, "edit", messageWithAttachments(text, editingMessage.attachments || []));
+    }
+
+    async function reviseMessage(message, action, text) {
+      state.busy = true;
+      nodes.submitMessageEditBtn.disabled = true;
+      nodes.messageEditError.textContent = "";
+      setStatus(action === "edit" ? "正在重新生成回复..." : "正在撤回...");
+      try {
+        const response = await fetch(
+          "/api/v1/sessions/" + encodeURIComponent(state.activeSessionId) + "/messages/" + encodeURIComponent(message.entryId) + "/" + action,
+          {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify(action === "edit" ? { text } : {}),
+          },
+        );
+        const body = await response.json();
+        if (!response.ok) throw new Error(body.error || "消息操作失败");
+        closeMessageEditDialog();
+        await refreshSessionMessages(true);
+        await loadSessions();
+        setStatus(action === "edit" ? "消息已编辑并重新发送" : "消息已撤回");
+      } catch (error) {
+        const messageText = error.message || String(error);
+        if (nodes.messageEditDialog.open) nodes.messageEditError.textContent = messageText;
+        setStatus(messageText, true);
+      } finally {
+        state.busy = false;
+        nodes.submitMessageEditBtn.disabled = false;
+        nodes.sendBtn.disabled = false;
+        updateRetryState();
+        renderMessages();
+      }
+    }
+
+    function systemActionButton(action, icon, label) {
+      return '<button class="system-event-action" type="button" data-system-action="' + action +
+        '" title="' + escapeHtml(label) + '" aria-label="' + escapeHtml(label) + '">' +
+        '<i data-lucide="' + icon + '" aria-hidden="true"></i></button>';
+    }
+
+    function handleSystemEventAction(event) {
+      const button = event.target.closest("button[data-system-action]");
+      if (!button) return;
+      if (button.dataset.systemAction === "model-settings") {
+        state.settingsTab = "model";
+        setUiMode("settings");
+        return;
+      }
+      if (button.dataset.systemAction === "module-management") {
+        state.managementTab = "modules";
+        setUiMode("management");
+        return;
+      }
+      if (button.dataset.systemAction === "retry") void retryMessage();
+    }
+
+    function messageAvatar(role) {
+      if (role === "user") return avatarImageOrInitial(state.userAvatarUrl, "我", "我");
+      if (role === "tool") return '<i data-lucide="wrench" aria-hidden="true"></i>';
+      const character = state.characters.find((entry) => entry.id === state.selectedCharacterId);
+      return avatarImageOrInitial(character?.avatarUrl, character?.name);
+    }
+
+    function avatarImageOrInitial(url, name, fallback) {
+      return url
+        ? '<img src="' + escapeHtml(url) + '" alt="" loading="lazy" />'
+        : escapeHtml(fallback || characterInitial(name));
+    }
+
+    function characterInitial(name) {
+      return Array.from(String(name || "角").trim())[0] || "角";
+    }
+
+    function renderMarkdown(value, messageMedia) {
+      const source = String(value || "");
+      if (!window.marked || !window.DOMPurify) {
+        return escapeHtml(source).replace(/\\n/g, "<br>");
+      }
+      const rendered = window.marked.parse(source, { gfm: true, breaks: true });
+      const renderedTemplate = document.createElement("template");
+      renderedTemplate.innerHTML = rendered;
+      renderedTemplate.content.querySelectorAll("img[src]").forEach((image) => {
+        const path = workspaceImagePath(image.getAttribute("src"));
+        if (path === null) return;
+        if (!path) {
+          image.replaceWith(document.createTextNode("[图片路径不可用]"));
+          return;
+        }
+        image.setAttribute("src", workspaceFileContentUrl(path, "inline"));
+        image.dataset.workspacePath = path;
+      });
+      const sanitized = window.DOMPurify.sanitize(renderedTemplate.innerHTML, {
+        USE_PROFILES: { html: true },
+        FORBID_TAGS: ["style", "iframe", "form", "button", "video", "audio", "object", "embed"],
+        FORBID_ATTR: ["style", "srcdoc"]
+      });
+      const template = document.createElement("template");
+      template.innerHTML = sanitized;
+      template.content.querySelectorAll("a[href]").forEach((link) => {
+        link.setAttribute("target", "_blank");
+        link.setAttribute("rel", "noopener noreferrer nofollow");
+      });
+      template.content.querySelectorAll("img").forEach((image) => {
+        image.setAttribute("loading", "lazy");
+        image.setAttribute("referrerpolicy", "no-referrer");
+        if (!messageMedia) return;
+        const imageSource = image.getAttribute("src");
+        if (!imageSource) {
+          image.remove();
+          return;
+        }
+        const name = image.getAttribute("alt") || image.dataset.workspacePath?.split("/").pop() || "图片";
+        const button = document.createElement("button");
+        button.type = "button";
+        button.className = "message-inline-image";
+        button.dataset.messageImage = "true";
+        button.dataset.imageSrc = imageSource;
+        button.dataset.imageName = name;
+        if (image.dataset.workspacePath) button.dataset.imagePath = image.dataset.workspacePath;
+        button.setAttribute("aria-label", "查看图片 " + name);
+        const parentLink = image.parentElement?.tagName === "A" && image.parentElement.childElementCount === 1
+          ? image.parentElement
+          : null;
+        (parentLink || image).replaceWith(button);
+        button.append(image);
+      });
+      template.content.querySelectorAll("input").forEach((input) => {
+        if (input.getAttribute("type") === "checkbox") input.setAttribute("disabled", "");
+        else input.remove();
+      });
+      template.content.querySelectorAll("table").forEach((table) => {
+        const wrapper = document.createElement("div");
+        wrapper.className = "markdown-table-wrap";
+        table.replaceWith(wrapper);
+        wrapper.append(table);
+      });
+      return template.innerHTML;
+    }
+
+    function refreshIcons() {
+      if (!window.lucide) return;
+      window.lucide.createIcons({ attrs: { "stroke-width": 1.8 } });
+    }
+
+    function renderMessageProgress(message, index) {
+      if (message.role !== "assistant" || !Array.isArray(message.progress) || !message.progress.length) return "";
+      const hasFailure = message.progress.some((step) => step.status === "failed");
+      const progressFailed = ["failed", "cancelled", "blocked"].includes(message.status) || (!message.status && hasFailure);
+      const stateClass = message.working ? "active" : progressFailed ? "failed" : "";
+      const stateLabel = progressFailed ? "未完成" : "已完成";
+      const summary = message.working
+        ? '<span class="typing-indicator"><span>正在输入</span><span class="typing-dots" aria-hidden="true"><i class="typing-dot"></i><i class="typing-dot"></i><i class="typing-dot"></i></span></span>'
+        : '<span class="progress-state ' + stateClass + '">' + stateLabel + '</span>';
+      const steps = message.progress.map((step, stepIndex) => {
+        const mark = step.status === "completed" ? "✓" : step.status === "failed" ? "!" : "·";
+        const result = renderProgressToolResult(step, index, stepIndex);
+        return '<li class="progress-step ' + escapeHtml(step.status) + '">' +
+          '<span class="progress-mark">' + mark + '</span>' +
+          '<div class="progress-step-body"><span>' + escapeHtml(step.label) + '</span>' + result + '</div></li>';
+      }).join("");
+      return '<details class="message-progress' + (message.working ? ' working' : '') + '" data-message-index="' + index + '"' +
+        (message.progressOpen ? ' open' : '') + '>' +
+        '<summary title="展开执行详情"><i class="progress-chevron" data-lucide="chevron-right" aria-hidden="true"></i><span class="progress-summary">' + summary + '</span></summary>' +
+        '<ol class="progress-list">' + steps + '</ol></details>';
+    }
+
+    function renderProgressToolResult(step, messageIndex, stepIndex) {
+      const text = String(step.resultText || "");
+      if (!text) return "";
+      const lineCount = text.split("\\n").length;
+      return '<details class="progress-tool-result" data-message-index="' + messageIndex +
+        '" data-progress-step-index="' + stepIndex + '"' + (step.resultOpen ? ' open' : '') + '>' +
+        '<summary><span>查看结果</span><span class="progress-tool-size">' + lineCount + ' 行 · ' +
+        [...text].length.toLocaleString() + ' 字符</span></summary>' +
+        '<pre class="progress-tool-output">' + escapeHtml(text) + '</pre></details>';
+    }
+
+    function rememberMessageDisclosure(event) {
+      const details = event.target.closest?.("details[data-message-index]");
+      if (!details) return;
+      const message = state.messages[Number(details.dataset.messageIndex)];
+      if (!message) return;
+      if (details.classList.contains("message-progress")) message.progressOpen = details.open;
+      if (details.classList.contains("progress-tool-result")) {
+        const step = message.progress?.[Number(details.dataset.progressStepIndex)];
+        if (step) step.resultOpen = details.open;
+      }
+    }
+
+    function updateMessageProgress(index, key, label, status, keepActive, details) {
+      const message = state.messages[index];
+      if (!message) return;
+      message.progress = Array.isArray(message.progress) ? message.progress : [];
+      if (!keepActive) {
+        message.progress.forEach((step) => {
+          if (step.status === "active" && step.key !== key) step.status = "completed";
+        });
+      }
+      const existing = message.progress.find((step) => step.key === key);
+      if (existing) {
+        existing.label = label;
+        existing.status = status;
+        Object.assign(existing, details || {});
+      } else {
+        message.progress.push({ key, label, status, ...(details || {}) });
+      }
+      renderMessages();
+    }
+
+    function applyLifecycleProgress(index, eventType) {
+      if (eventType === "agent_start") {
+        updateMessageProgress(index, "analysis", "分析请求", "active");
+      } else if (eventType === "turn_start" || eventType === "message_start") {
+        updateMessageProgress(index, "generation", "生成回复", "active");
+      }
+    }
+
+    function completeMessageProgress(index, status) {
+      const message = state.messages[index];
+      if (!message) return;
+      const completed = status === "completed";
+      message.progress = Array.isArray(message.progress) ? message.progress : [];
+      message.progress.forEach((step) => {
+        if (step.status === "active") step.status = completed ? "completed" : "failed";
+      });
+      const finalStep = {
+        completed: { key: "complete", label: "回复完成", status: "completed" },
+        failed: { key: "failed", label: "请求失败", status: "failed" },
+        cancelled: { key: "cancelled", label: "生成已取消", status: "failed" },
+        blocked: { key: "blocked", label: "操作受阻", status: "failed" }
+      }[status] || { key: "failed", label: "请求未完成", status: "failed" };
+      message.progress.push({
+        ...finalStep
+      });
+      message.working = false;
+      message.progressOpen = Boolean(message.progressOpen);
+    }
+
+    function addActionProgress(index, actions) {
+      const message = state.messages[index];
+      if (!message || !Array.isArray(actions) || !actions.length) return;
+      message.progress = Array.isArray(message.progress) ? message.progress : [];
+      if (message.progress.some((step) => step.toolCallId || String(step.key || "").startsWith("tool:"))) return;
+      const finalStep = message.progress.pop();
+      actions.forEach((action, actionIndex) => {
+        const payload = action.payload && Object.keys(action.payload).length
+          ? JSON.stringify(action.payload, null, 2)
+          : "";
+        message.progress.push({
+          key: "action:" + (action.id || actionIndex),
+          label: "执行操作：" + toolDisplayName(action.actionType),
+          status: action.status === "completed" ? "completed" : "failed",
+          resultText: payload
+        });
+      });
+      if (finalStep) message.progress.push(finalStep);
+    }
+
+    function formatToolResult(result) {
+      if (result === undefined || result === null) return "";
+      if (typeof result === "string") return result;
+      if (Array.isArray(result?.content)) {
+        const text = result.content
+          .filter((block) => block && block.type === "text")
+          .map((block) => block.text || "")
+          .join("\\n")
+          .trim();
+        if (text) return text;
+      }
+      try {
+        return JSON.stringify(result, null, 2);
+      } catch {
+        return String(result);
+      }
+    }
+
+    function applyTurnOutcome(response) {
+      state.lastTurnStatus = response.status || null;
+      state.lastTurnCanRetry = Boolean(response.canRetry);
+      updateRetryState();
+      const label = {
+        completed: "完成",
+        failed: response.canRetry ? "生成失败，可重试" : "生成失败",
+        cancelled: response.canRetry ? "已取消，可重试" : "已取消",
+        blocked: "操作受阻"
+      }[response.status] || "完成";
+      setStatus(label, response.status === "failed");
+    }
+
+    function updateRetryState() {
+      nodes.retryMessageBtn.disabled = state.busy || state.sessionDraft || !state.lastTurnCanRetry;
+    }
+
+    function toolDisplayName(name) {
+      return ({
+        create_schedule_item: "创建日程",
+        list_schedule_items: "查询日程",
+        update_schedule_item: "更新日程",
+        complete_schedule_item: "完成日程",
+        cancel_schedule_item: "取消日程",
+        snooze_reminder: "稍后提醒",
+        get_user_profile: "读取用户画像",
+        update_user_profile: "更新用户画像",
+        get_current_character_soul: "读取角色 SOUL",
+        update_current_character_soul: "更新角色 SOUL",
+        update_scene: "更新场景",
+        propose_memory: "提议记忆",
+        list_workspace: "查看工作区",
+        read: "读取文件",
+        write: "写入文件",
+        edit: "编辑文件",
+        bash: "执行终端命令",
+        tavily_search: "Tavily 网页搜索",
+        analyze_image: "分析图片",
+        vision_auto_analyze: "分析图片",
+        vision_direct_input: "发送图片给主模型"
+      })[name] || name || "未知工具";
+    }
+
+    async function loadDebugLogs() {
+      nodes.traceIndex.innerHTML = '<div class="muted">加载中...</div>';
+      nodes.traceDetail.hidden = true;
+      nodes.traceEmpty.hidden = false;
+      nodes.traceEmpty.textContent = "正在加载上下文诊断...";
+      try {
+        const [tracesResponse, economicsResponse] = await Promise.all([
+          fetch("/api/debug/model-traces?limit=10"),
+          fetch("/api/debug/context-economics?limit=100")
+        ]);
+        const [tracesBody, economicsBody] = await Promise.all([tracesResponse.json(), economicsResponse.json()]);
+        if (!tracesResponse.ok) throw new Error(tracesBody.error || "Trace 加载失败");
+        if (!economicsResponse.ok) throw new Error(economicsBody.error || "Economics 加载失败");
+        state.debugEconomics = Array.isArray(economicsBody.economics) ? economicsBody.economics : [];
+        renderModelTraces(Array.isArray(tracesBody.traces) ? tracesBody.traces : []);
+        renderDebugDataset();
+      } catch (error) {
+        nodes.traceIndex.innerHTML = "";
+        nodes.traceEmpty.hidden = false;
+        nodes.traceEmpty.innerHTML = '<span class="error">' + escapeHtml(error.message || String(error)) + '</span>';
+      }
+    }
+
+    function setDebugDataset(dataset) {
+      state.debugDataset = dataset;
+      renderDebugDataset();
+    }
+
+    function renderDebugDataset() {
+      const featureTests = state.debugDataset === "feature-tests";
+      const economics = state.debugDataset === "economics";
+      const traces = !featureTests && !economics;
+      nodes.debugTracesBtn.classList.toggle("active", traces);
+      nodes.debugEconomicsBtn.classList.toggle("active", economics);
+      nodes.debugFeatureTestsBtn.classList.toggle("active", featureTests);
+      nodes.debugTracesBtn.setAttribute("aria-selected", String(traces));
+      nodes.debugEconomicsBtn.setAttribute("aria-selected", String(economics));
+      nodes.debugFeatureTestsBtn.setAttribute("aria-selected", String(featureTests));
+      nodes.debugWorkspace.hidden = featureTests;
+      nodes.featureTestPanel.hidden = !featureTests;
+      if (featureTests) {
+        renderFeatureTestCases();
+        renderFeatureTestResults();
+        return;
+      }
+      renderTraceIndex();
+      renderSelectedTrace();
+    }
+
+    async function loadFeatureTestCases() {
+      if (state.featureTestCases.length) {
+        renderFeatureTestCases();
+        return;
+      }
+      nodes.featureTestState.textContent = "加载测试集...";
+      try {
+        const response = await fetch("/api/v1/feature-tests");
+        const body = await response.json();
+        if (!response.ok) throw new Error(body.error || "测试集加载失败");
+        state.featureTestCases = Array.isArray(body.cases) ? body.cases : [];
+        renderFeatureTestCases();
+        nodes.featureTestState.textContent = state.featureTestCases.length + " 条内置测试";
+      } catch (error) {
+        nodes.featureTestState.textContent = error.message || String(error);
+      }
+    }
+
+    function renderFeatureTestCases() {
+      if (!state.featureTestCases.length) {
+        nodes.featureTestList.innerHTML = '<div class="conversation-list-empty">暂无测试用例</div>';
+        return;
+      }
+      const selected = new Set([...nodes.featureTestList.querySelectorAll("input[data-feature-test]:checked")].map((input) => input.value));
+      nodes.featureTestList.innerHTML = state.featureTestCases.map((testCase) =>
+        '<label class="feature-test-case"><input type="checkbox" data-feature-test value="' + escapeHtml(testCase.id) + '"' +
+          (selected.has(testCase.id) ? ' checked' : '') + (state.featureTestsRunning ? ' disabled' : '') + ' />' +
+          '<span><strong>' + escapeHtml(testCase.name) + '</strong> <span class="memory-badge">' + escapeHtml(featureCategoryLabel(testCase.category)) + '</span>' +
+          '<p>' + escapeHtml(testCase.description) + '</p><code class="feature-test-input">' + escapeHtml(testCase.input) + '</code></span></label>'
+      ).join("");
+    }
+
+    function featureCategoryLabel(category) {
+      return ({ conversation: "对话", schedule: "日程", memory: "记忆", search: "搜索", workspace: "文件", character: "角色" })[category] || category;
+    }
+
+    function toggleAllFeatureTests() {
+      const inputs = [...nodes.featureTestList.querySelectorAll("input[data-feature-test]")];
+      const checked = inputs.some((input) => !input.checked);
+      inputs.forEach((input) => { input.checked = checked; });
+      nodes.selectAllFeatureTestsBtn.textContent = checked ? "取消全选" : "全选";
+    }
+
+    async function runSelectedFeatureTests() {
+      if (state.featureTestsRunning) return;
+      const ids = [...nodes.featureTestList.querySelectorAll("input[data-feature-test]:checked")].map((input) => input.value);
+      const characterId = nodes.featureTestCharacter.value;
+      if (!ids.length) {
+        nodes.featureTestState.textContent = "请至少选择一条测试。";
+        return;
+      }
+      if (!characterId) {
+        nodes.featureTestState.textContent = "请选择测试角色。";
+        nodes.featureTestCharacter.focus();
+        return;
+      }
+      state.featureTestsRunning = true;
+      state.featureTestResults = [];
+      nodes.runFeatureTestsBtn.disabled = true;
+      nodes.featureTestCharacter.disabled = true;
+      renderFeatureTestCases();
+      renderFeatureTestResults();
+      try {
+        for (let index = 0; index < ids.length; index += 1) {
+          const testCase = state.featureTestCases.find((entry) => entry.id === ids[index]);
+          nodes.featureTestState.textContent = "运行 " + (index + 1) + "/" + ids.length + " · " + (testCase?.name || ids[index]);
+          try {
+            const response = await fetch("/api/v1/feature-tests/" + encodeURIComponent(ids[index]) + "/run", {
+              method: "POST",
+              headers: { "content-type": "application/json" },
+              body: JSON.stringify({ characterId }),
+            });
+            const body = await response.json();
+            if (!response.ok) throw new Error(body.error || "测试执行失败");
+            state.featureTestResults.push(body.result);
+          } catch (error) {
+            state.featureTestResults.push({
+              caseId: ids[index], name: testCase?.name || ids[index], passed: false, status: "failed",
+              durationMs: 0, modelRequests: 0, reply: "", rules: [{ label: "测试执行", passed: false, evidence: error.message || String(error) }],
+            });
+          }
+          renderFeatureTestResults();
+        }
+        const passed = state.featureTestResults.filter((entry) => entry.passed).length;
+        nodes.featureTestState.textContent = "完成 · " + passed + "/" + state.featureTestResults.length + " 通过";
+      } finally {
+        state.featureTestsRunning = false;
+        nodes.runFeatureTestsBtn.disabled = false;
+        nodes.featureTestCharacter.disabled = false;
+        renderFeatureTestCases();
+      }
+    }
+
+    function renderFeatureTestResults() {
+      nodes.featureTestResults.innerHTML = state.featureTestResults.map((result) =>
+        '<section class="feature-test-result"><div class="feature-test-result-head"><strong>' + escapeHtml(result.name) + '</strong>' +
+          '<span class="feature-test-status ' + (result.passed ? 'pass' : 'fail') + '">' + (result.passed ? 'PASS' : 'FAIL') + '</span></div>' +
+          '<div class="memory-source">' + escapeHtml((result.durationMs || 0) + " ms · " + (result.modelRequests || 0) + " model requests · " + (result.status || "unknown")) + '</div>' +
+          '<ul class="feature-test-rules">' + (result.rules || []).map((entry) => '<li class="' + (entry.passed ? 'feature-test-status pass' : 'feature-test-status fail') + '">' +
+            (entry.passed ? 'PASS · ' : 'FAIL · ') + escapeHtml(entry.label) + ' <span class="muted">' + escapeHtml(entry.evidence || "") + '</span></li>').join("") + '</ul>' +
+          (result.reply ? '<details class="feature-test-reply"><summary>模型回复</summary><div class="markdown-body">' + renderMarkdown(result.reply) + '</div></details>' : '') + '</section>'
+      ).join("");
     }
 
     async function loadApiSettings() {
@@ -554,8 +7886,9 @@ export function renderAppHtml(): string {
         const config = await response.json();
         if (!response.ok) throw new Error(config.error || "加载失败");
         nodes.apiEnabled.checked = Boolean(config.enabled);
+        nodes.apiVisionInputEnabled.checked = Boolean(config.visionInputEnabled);
         nodes.apiBaseUrl.value = config.baseUrl || "";
-        nodes.apiModel.value = config.model || "";
+        renderModelOptions(config.model || "");
         nodes.apiKey.value = "";
         nodes.apiTemperature.value = config.temperature ?? "";
         nodes.apiMaxTokens.value = config.maxTokens ?? "";
@@ -565,12 +7898,546 @@ export function renderAppHtml(): string {
       }
     }
 
-    async function saveApiSettings() {
+    function renderModelOptions(selectedModel) {
+      const models = [...new Set([selectedModel, ...state.discoveredModels].filter(Boolean))];
+      nodes.apiModel.innerHTML = '<option value="">读取模型后选择</option>' + models.map((model) =>
+        '<option value="' + escapeHtml(model) + '">' + escapeHtml(model) + '</option>'
+      ).join("") + '<option value="__custom__">手动输入...</option>';
+      if (selectedModel) {
+        nodes.apiModel.value = selectedModel;
+      } else if (state.discoveredModels.length) {
+        nodes.apiModel.value = state.discoveredModels[0];
+      }
+      syncCustomModelVisibility();
+    }
+
+    function syncCustomModelVisibility() {
+      const custom = nodes.apiModel.value === "__custom__";
+      nodes.apiModelCustom.hidden = !custom;
+      if (custom) nodes.apiModelCustom.focus();
+    }
+
+    function selectedModelName() {
+      return nodes.apiModel.value === "__custom__" ? nodes.apiModelCustom.value.trim() : nodes.apiModel.value.trim();
+    }
+
+    async function loadVisionSettings() {
+      nodes.visionSettingsState.textContent = "加载中...";
+      try {
+        const response = await fetch("/api/settings/vision");
+        const config = await response.json();
+        if (!response.ok) throw new Error(config.error || "视觉设置加载失败");
+        nodes.visionMode.value = config.mode || "auto";
+        nodes.visionDetail.value = config.detail || "auto";
+        nodes.visionBaseUrl.value = config.baseUrl || "";
+        nodes.visionApiKey.value = "";
+        nodes.visionMaxImages.value = config.maxImages || 4;
+        renderVisionModelOptions(config.model || "");
+        nodes.visionSettingsState.textContent = formatVisionSettingsState(config);
+      } catch (error) {
+        nodes.visionSettingsState.textContent = error.message || String(error);
+      }
+    }
+
+    function renderVisionModelOptions(selectedModel) {
+      const models = [...new Set([selectedModel, ...state.discoveredVisionModels].filter(Boolean))];
+      nodes.visionModel.innerHTML = '<option value="">读取模型后选择</option>' + models.map((model) =>
+        '<option value="' + escapeHtml(model) + '">' + escapeHtml(model) + '</option>'
+      ).join("") + '<option value="__custom__">手动输入...</option>';
+      if (selectedModel) nodes.visionModel.value = selectedModel;
+      else if (state.discoveredVisionModels.length) nodes.visionModel.value = state.discoveredVisionModels[0];
+      syncCustomVisionModelVisibility();
+    }
+
+    function syncCustomVisionModelVisibility() {
+      const custom = nodes.visionModel.value === "__custom__";
+      nodes.visionModelCustom.hidden = !custom;
+      if (custom) nodes.visionModelCustom.focus();
+    }
+
+    function selectedVisionModelName() {
+      return nodes.visionModel.value === "__custom__"
+        ? nodes.visionModelCustom.value.trim()
+        : nodes.visionModel.value.trim();
+    }
+
+    async function saveVisionSettings(rethrow) {
+      nodes.visionSettingsState.textContent = "保存中...";
+      nodes.saveVisionSettingsBtn.disabled = true;
+      const payload = {
+        mode: nodes.visionMode.value,
+        detail: nodes.visionDetail.value,
+        baseUrl: nodes.visionBaseUrl.value.trim(),
+        model: selectedVisionModelName(),
+        maxImages: Math.max(1, Math.min(8, optionalInteger(nodes.visionMaxImages.value) || 4))
+      };
+      if (nodes.visionApiKey.value) payload.apiKey = nodes.visionApiKey.value;
+      try {
+        const response = await fetch("/api/settings/vision", {
+          method: "PATCH",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify(payload)
+        });
+        const config = await response.json();
+        if (!response.ok) throw new Error(config.error || "视觉设置保存失败");
+        nodes.visionApiKey.value = "";
+        nodes.visionSettingsState.textContent = "已保存 · " + formatVisionSettingsState(config);
+        setStatus("视觉设置已保存");
+        return config;
+      } catch (error) {
+        nodes.visionSettingsState.textContent = error.message || String(error);
+        setStatus(error.message || String(error), true);
+        if (rethrow) throw error;
+        return undefined;
+      } finally {
+        nodes.saveVisionSettingsBtn.disabled = false;
+      }
+    }
+
+    async function testVisionConnection() {
+      nodes.visionSettingsState.textContent = "测试连接中...";
+      nodes.testVisionBtn.disabled = true;
+      try {
+        await saveVisionSettings(true);
+        const response = await fetch("/api/v1/diagnostics/vision/test", { method: "POST" });
+        const body = await response.json();
+        if (!response.ok) throw new Error(body.error || "视觉连接测试失败");
+        nodes.visionSettingsState.textContent = "连接正常 · " + body.latencyMs + " ms · " + body.model;
+      } catch (error) {
+        nodes.visionSettingsState.textContent = error.message || String(error);
+      } finally {
+        nodes.testVisionBtn.disabled = false;
+      }
+    }
+
+    async function discoverVisionModels() {
+      nodes.visionSettingsState.textContent = "读取模型中...";
+      nodes.discoverVisionModelsBtn.disabled = true;
+      try {
+        const selectedBefore = selectedVisionModelName();
+        await saveVisionSettings(true);
+        const response = await fetch("/api/v1/diagnostics/vision/models");
+        const body = await response.json();
+        if (!response.ok) throw new Error(body.error || "视觉模型读取失败");
+        state.discoveredVisionModels = Array.isArray(body.models) ? body.models : [];
+        renderVisionModelOptions(state.discoveredVisionModels.includes(selectedBefore) ? selectedBefore : "");
+        nodes.visionSettingsState.textContent = state.discoveredVisionModels.length + " 个模型";
+      } catch (error) {
+        nodes.visionSettingsState.textContent = error.message || String(error);
+      } finally {
+        nodes.discoverVisionModelsBtn.disabled = false;
+      }
+    }
+
+    async function clearVisionApiKey() {
+      nodes.visionSettingsState.textContent = "清除中...";
+      nodes.clearVisionApiKeyBtn.disabled = true;
+      try {
+        const response = await fetch("/api/settings/vision", {
+          method: "PATCH",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ clearApiKey: true })
+        });
+        const config = await response.json();
+        if (!response.ok) throw new Error(config.error || "Vision Key 清除失败");
+        nodes.visionApiKey.value = "";
+        nodes.visionSettingsState.textContent = formatVisionSettingsState(config);
+        setStatus("Vision Key 已清除");
+      } catch (error) {
+        nodes.visionSettingsState.textContent = error.message || String(error);
+        setStatus(error.message || String(error), true);
+      } finally {
+        nodes.clearVisionApiKeyBtn.disabled = false;
+      }
+    }
+
+    function formatVisionSettingsState(config) {
+      const labels = { auto: "自动", direct: "主模型直读", mcp: "Vision MCP", off: "关闭" };
+      return (labels[config.mode] || config.mode) + " · Key: " +
+        (config.apiKeySet ? config.apiKeyMasked : "未设置") + " · 上限 " + (config.maxImages || 4) + " 张";
+    }
+
+    async function loadReadiness() {
+      try {
+        const response = await fetch("/api/v1/readiness");
+        const body = await response.json();
+        if (!response.ok) throw new Error(body.error || "运行状态不可用");
+        nodes.runtimeState.textContent = "数据库 " + body.database + " · 通知 " + body.notificationChannel;
+      } catch (error) {
+        nodes.runtimeState.textContent = error.message || String(error);
+      }
+    }
+
+    async function loadTavilySettings() {
+      nodes.tavilySettingsState.textContent = "加载中...";
+      try {
+        const response = await fetch("/api/settings/tavily");
+        const config = await response.json();
+        if (!response.ok) throw new Error(config.error || "Tavily 设置加载失败");
+        nodes.tavilyApiKey.value = "";
+        nodes.tavilyProxyUrl.value = "";
+        nodes.tavilySettingsState.textContent = formatTavilySettingsState(config);
+      } catch (error) {
+        nodes.tavilySettingsState.textContent = error.message || String(error);
+      }
+    }
+
+    async function saveTavilySettings(rethrow) {
+      nodes.tavilySettingsState.textContent = "保存中...";
+      nodes.saveTavilyBtn.disabled = true;
+      const payload = {};
+      if (nodes.tavilyApiKey.value) payload.apiKey = nodes.tavilyApiKey.value;
+      if (nodes.tavilyProxyUrl.value) payload.proxyUrl = nodes.tavilyProxyUrl.value;
+      try {
+        const response = await fetch("/api/settings/tavily", {
+          method: "PATCH",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify(payload)
+        });
+        const config = await response.json();
+        if (!response.ok) throw new Error(config.error || "Tavily 设置保存失败");
+        nodes.tavilyApiKey.value = "";
+        nodes.tavilyProxyUrl.value = "";
+        nodes.tavilySettingsState.textContent = "已保存 · " + formatTavilySettingsState(config);
+        setStatus("Tavily 设置已保存");
+        return config;
+      } catch (error) {
+        nodes.tavilySettingsState.textContent = error.message || String(error);
+        setStatus(error.message || String(error), true);
+        if (rethrow) throw error;
+        return undefined;
+      } finally {
+        nodes.saveTavilyBtn.disabled = false;
+      }
+    }
+
+    async function testTavilyConnection() {
+      nodes.tavilySettingsState.textContent = "测试连接中...";
+      nodes.testTavilyBtn.disabled = true;
+      try {
+        if (nodes.tavilyApiKey.value || nodes.tavilyProxyUrl.value) await saveTavilySettings(true);
+        const response = await fetch("/api/v1/diagnostics/tavily/test", { method: "POST" });
+        const body = await response.json();
+        if (!response.ok) throw new Error(body.error || "Tavily 连接测试失败");
+        nodes.tavilySettingsState.textContent = "连接正常 · " + body.latencyMs + " ms";
+      } catch (error) {
+        nodes.tavilySettingsState.textContent = error.message || String(error);
+      } finally {
+        nodes.testTavilyBtn.disabled = false;
+      }
+    }
+
+    async function clearTavilyKey() {
+      nodes.tavilySettingsState.textContent = "清除中...";
+      nodes.clearTavilyBtn.disabled = true;
+      try {
+        const response = await fetch("/api/settings/tavily", {
+          method: "PATCH",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ clearApiKey: true })
+        });
+        const config = await response.json();
+        if (!response.ok) throw new Error(config.error || "Tavily Key 清除失败");
+        nodes.tavilyApiKey.value = "";
+        nodes.tavilySettingsState.textContent = formatTavilySettingsState(config);
+        setStatus("Tavily Key 已清除");
+      } catch (error) {
+        nodes.tavilySettingsState.textContent = error.message || String(error);
+        setStatus(error.message || String(error), true);
+      } finally {
+        nodes.clearTavilyBtn.disabled = false;
+      }
+    }
+
+    async function clearTavilyProxy() {
+      nodes.tavilySettingsState.textContent = "清除中...";
+      nodes.clearTavilyProxyBtn.disabled = true;
+      try {
+        const response = await fetch("/api/settings/tavily", {
+          method: "PATCH",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ clearProxyUrl: true })
+        });
+        const config = await response.json();
+        if (!response.ok) throw new Error(config.error || "Tavily 代理清除失败");
+        nodes.tavilyProxyUrl.value = "";
+        nodes.tavilySettingsState.textContent = formatTavilySettingsState(config);
+        setStatus("Tavily 代理已清除");
+      } catch (error) {
+        nodes.tavilySettingsState.textContent = error.message || String(error);
+        setStatus(error.message || String(error), true);
+      } finally {
+        nodes.clearTavilyProxyBtn.disabled = false;
+      }
+    }
+
+    function formatTavilySettingsState(config) {
+      const key = config.apiKeySet ? config.apiKeyMasked : "未设置";
+      const proxy = config.proxyUrlSet ? config.proxyUrlMasked : "直连";
+      return "Key: " + key + " · 代理: " + proxy;
+    }
+
+    async function testModelConnection() {
+      nodes.apiSettingsState.textContent = "测试连接中...";
+      nodes.testModelBtn.disabled = true;
+      try {
+        await saveApiSettings(true);
+        const response = await fetch("/api/v1/diagnostics/model/test", { method: "POST" });
+        const body = await response.json();
+        if (!response.ok) throw new Error(body.error || "连接测试失败");
+        nodes.apiSettingsState.textContent = "连接正常 · " + body.latencyMs + " ms";
+      } catch (error) {
+        nodes.apiSettingsState.textContent = error.message || String(error);
+      } finally {
+        nodes.testModelBtn.disabled = false;
+      }
+    }
+
+    async function discoverModels() {
+      nodes.apiSettingsState.textContent = "读取模型中...";
+      nodes.discoverModelsBtn.disabled = true;
+      try {
+        const selectedBefore = selectedModelName();
+        await saveApiSettings(true);
+        const response = await fetch("/api/v1/diagnostics/model/models");
+        const body = await response.json();
+        if (!response.ok) throw new Error(body.error || "模型读取失败");
+        state.discoveredModels = Array.isArray(body.models) ? body.models : [];
+        renderModelOptions(state.discoveredModels.includes(selectedBefore) ? selectedBefore : "");
+        nodes.apiSettingsState.textContent = state.discoveredModels.length + " 个模型";
+      } catch (error) {
+        nodes.apiSettingsState.textContent = error.message || String(error);
+      } finally {
+        nodes.discoverModelsBtn.disabled = false;
+      }
+    }
+
+    function exportOkfBundle() {
+      const query = new URLSearchParams();
+      if (nodes.okfIncludeProfile.checked) query.set("includeProfile", "1");
+      if (nodes.okfIncludeSouls.checked) query.set("includeSouls", "1");
+      if (nodes.okfIncludeScenes.checked) query.set("includeScenes", "1");
+      const link = document.createElement("a");
+      link.href = "/api/v1/memory-vault/okf/export" + (query.size ? "?" + query.toString() : "");
+      link.click();
+      nodes.okfImportState.textContent = "正在导出 OKF...";
+    }
+
+    async function selectOkfImportBundle() {
+      const file = nodes.okfImportInput.files?.[0] || null;
+      nodes.okfImportInput.value = "";
+      if (!file) return;
+      if (file.size > 5 * 1024 * 1024) {
+        state.okfImportFile = null;
+        state.okfImportPreview = null;
+        nodes.okfImportState.textContent = "OKF ZIP 超过 5 MiB";
+        renderOkfImportPreview();
+        return;
+      }
+      state.okfImportFile = file;
+      await previewOkfImport();
+    }
+
+    function changeOkfImportTarget() {
+      const roleplay = nodes.okfImportRealm.value === "roleplay";
+      nodes.okfImportCharacterField.hidden = !roleplay;
+      nodes.okfImportCharacter.disabled = !roleplay;
+      if (roleplay && !nodes.okfImportCharacter.value && state.characters.length) {
+        nodes.okfImportCharacter.value = state.selectedCharacterId || state.characters[0].id;
+      }
+      if (state.okfImportFile) previewOkfImport();
+    }
+
+    function okfImportUrl(action) {
+      const query = new URLSearchParams({ realm: nodes.okfImportRealm.value || "auto" });
+      if (nodes.okfImportRealm.value === "roleplay" && nodes.okfImportCharacter.value) {
+        query.set("characterId", nodes.okfImportCharacter.value);
+      }
+      return "/api/v1/memory-vault/okf/import/" + action + "?" + query.toString();
+    }
+
+    async function previewOkfImport() {
+      const file = state.okfImportFile;
+      if (!file) return;
+      state.okfImportPreview = null;
+      nodes.stageOkfImportBtn.disabled = true;
+      nodes.selectOkfImportBtn.disabled = true;
+      nodes.okfImportState.textContent = "校验 " + file.name + "...";
+      renderOkfImportPreview();
+      try {
+        const response = await fetch(okfImportUrl("preview"), {
+          method: "POST",
+          headers: { "content-type": "application/zip" },
+          body: file
+        });
+        const body = await response.json();
+        if (!response.ok) throw new Error(body.error || "OKF 校验失败");
+        state.okfImportPreview = body.preview || null;
+        renderOkfImportPreview();
+        nodes.okfImportState.textContent = state.okfImportPreview?.conforms
+          ? file.name + " · 校验通过"
+          : file.name + " · 存在格式错误";
+      } catch (error) {
+        nodes.okfImportState.textContent = error.message || String(error);
+        state.okfImportPreview = null;
+        renderOkfImportPreview();
+      } finally {
+        nodes.selectOkfImportBtn.disabled = false;
+      }
+    }
+
+    function renderOkfImportPreview() {
+      const preview = state.okfImportPreview;
+      nodes.okfImportPreview.hidden = !preview;
+      nodes.stageOkfImportBtn.disabled = !preview?.conforms || !Number(preview?.readyCount || 0);
+      if (!preview) {
+        nodes.okfPreviewSummary.innerHTML = "";
+        nodes.okfDocumentList.innerHTML = "";
+        return;
+      }
+      const issueCount = Array.isArray(preview.issues) ? preview.issues.length : 0;
+      nodes.okfPreviewSummary.innerHTML = '<strong>' + (preview.conforms ? '格式合规' : '格式错误') + '</strong>' +
+        '<span>' + Number(preview.readyCount || 0) + ' 条可导入 · ' + Number(preview.unsupportedCount || 0) + ' 条跳过' +
+        (issueCount ? ' · ' + issueCount + ' 个问题' : '') + '</span>';
+      const labels = {
+        ready: ["circle-check", "待审核"],
+        unsupported: ["triangle-alert", "跳过"],
+        reserved: ["book-open", "结构"],
+        invalid: ["circle-x", "错误"]
+      };
+      nodes.okfDocumentList.innerHTML = (preview.documents || []).map((document) => {
+        const status = labels[document.status] || labels.unsupported;
+        const detail = document.reason || (document.status === "reserved" ? document.path : document.excerpt) || document.path;
+        return '<div class="okf-document-row ' + escapeHtml(document.status || 'unsupported') + '">' +
+          '<i data-lucide="' + status[0] + '" aria-hidden="true"></i>' +
+          '<span class="okf-document-copy"><strong>' + escapeHtml(document.title || document.path) + '</strong>' +
+          '<span title="' + escapeHtml(detail) + '">' + escapeHtml(document.type || 'Unknown') + ' · ' + escapeHtml(detail) + '</span></span>' +
+          '<span class="okf-document-status">' + status[1] + '</span></div>';
+      }).join("");
+      refreshIcons();
+    }
+
+    async function stageOkfImport() {
+      const file = state.okfImportFile;
+      const preview = state.okfImportPreview;
+      if (!file || !preview?.conforms || !preview.readyCount) return;
+      nodes.stageOkfImportBtn.disabled = true;
+      nodes.selectOkfImportBtn.disabled = true;
+      nodes.okfImportState.textContent = "加入待审核队列...";
+      try {
+        const response = await fetch(okfImportUrl("stage"), {
+          method: "POST",
+          headers: { "content-type": "application/zip" },
+          body: file
+        });
+        const body = await response.json();
+        if (!response.ok) throw new Error(body.error || "OKF 导入失败");
+        nodes.okfImportState.textContent = Number(body.staged?.length || 0) + " 条记忆已加入待审核";
+        await Promise.all([loadMemoryVaultStatus(), loadManagedMemories()]);
+      } catch (error) {
+        nodes.okfImportState.textContent = error.message || String(error);
+      } finally {
+        nodes.selectOkfImportBtn.disabled = false;
+        nodes.stageOkfImportBtn.disabled = !state.okfImportPreview?.conforms || !state.okfImportPreview?.readyCount;
+      }
+    }
+
+    function exportData() {
+      const link = document.createElement("a");
+      link.href = "/api/v1/export";
+      link.click();
+    }
+
+    async function loadMemoryVaultStatus() {
+      nodes.memoryVaultState.textContent = "加载中...";
+      try {
+        const [response, healthResponse] = await Promise.all([
+          fetch("/api/v1/memory-vault/status"),
+          fetch("/api/v1/memory-vault/health")
+        ]);
+        const body = await response.json();
+        const healthBody = await healthResponse.json();
+        if (!response.ok) throw new Error(body.error || "Vault 状态读取失败");
+        if (!healthResponse.ok) throw new Error(healthBody.error || "Vault 健康状态读取失败");
+        const vault = body.vault || {};
+        const health = healthBody.health || {};
+        nodes.memoryVaultPath.value = vault.rootPath || "仅内存模式";
+        const quarantine = vault.counts?.memory ? " · " + vault.counts.memory + " 条记忆" : "";
+        const external = vault.externalModifiedCount ? " · " + vault.externalModifiedCount + " 个外部修改" : "";
+        nodes.memoryVaultState.textContent = (vault.inSync ? "已同步" : "待同步") + " · " + (vault.documentCount || 0) + " 个文档" + quarantine + external;
+        nodes.memoryVaultWriter.textContent = (health.writer?.mode || "unknown") +
+          (health.writer?.fenceToken != null ? " · fence " + health.writer.fenceToken : "") +
+          (health.writer?.leaseExpiresAt ? " · 至 " + formatTraceTime(health.writer.leaseExpiresAt) : "");
+        nodes.memoryVaultJournal.textContent = Number(health.journal?.pendingCount || 0) + " pending · " +
+          Number(health.journal?.operationsRetained || 0) + " retained";
+        nodes.memoryVaultRecovery.textContent = Number(health.startupRecoveryCount || 0) + " startup · " +
+          (health.journal?.lastRecoveryAt ? formatTraceTime(health.journal.lastRecoveryAt) + " · " + health.journal.lastRecoveryOutcome : "无回放");
+        nodes.memoryVaultProjection.textContent = (health.projectionConsistent ? "一致" : "不一致") + " · " +
+          String(health.vaultHash || "").slice(0, 12) + " / " + String(health.projectionHash || "none").slice(0, 12);
+        nodes.memoryVaultBackup.textContent = health.backup?.generatedAt ?
+          formatTraceTime(health.backup.generatedAt) + " · " +
+          (health.backup.valid === true ? "已验证" : health.backup.valid === false ? "验证失败" : "未验证") : "无备份记录";
+      } catch (error) {
+        nodes.memoryVaultState.textContent = error.message || String(error);
+      }
+    }
+
+    async function runMemoryVaultAction(action) {
+      nodes.syncMemoryVaultBtn.disabled = true;
+      nodes.rebuildMemoryVaultBtn.disabled = true;
+      nodes.memoryVaultState.textContent = action === "sync" ? "同步中..." : "重建中...";
+      try {
+        const response = await fetch("/api/v1/memory-vault/" + action, { method: "POST" });
+        const body = await response.json();
+        if (!response.ok) throw new Error(body.error || "Vault 操作失败");
+        await loadMemoryVaultStatus();
+      } catch (error) {
+        nodes.memoryVaultState.textContent = error.message || String(error);
+      } finally {
+        nodes.syncMemoryVaultBtn.disabled = false;
+        nodes.rebuildMemoryVaultBtn.disabled = false;
+      }
+    }
+
+    async function deleteAllData() {
+      const confirmation = "DELETE_ALL_DATA";
+      const deleted = await openActionDialog({
+        title: "删除全部数据",
+        description: "所有会话、日程、角色和记忆都将被永久删除。输入 DELETE_ALL_DATA 确认。",
+        fieldLabel: "输入确认短语",
+        confirmLabel: "删除全部数据",
+        validate: (value) => value !== confirmation ? "确认短语不匹配，未删除。" : "",
+        onConfirm: async (value) => {
+          const response = await fetch("/api/v1/data", {
+            method: "DELETE",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify({ confirm: value })
+          });
+          const body = await response.json();
+          if (!response.ok) throw new Error(body.error || "删除失败");
+        }
+      });
+      if (deleted) {
+        state.messages = [];
+        state.scheduleItems = [];
+        state.characters = [];
+        state.memories = [];
+        state.sessions = [];
+        state.selectedCharacterId = "";
+        state.workspaceCharacterId = "";
+        renderCharacterOptions();
+        startNewSession();
+        setStatus("全部用户数据已删除");
+      }
+    }
+
+    async function saveApiSettings(rethrow) {
       nodes.apiSettingsState.textContent = "保存中...";
       const payload = {
         enabled: nodes.apiEnabled.checked,
+        visionInputEnabled: nodes.apiVisionInputEnabled.checked,
         baseUrl: nodes.apiBaseUrl.value.trim(),
-        model: nodes.apiModel.value.trim(),
+        model: selectedModelName(),
         temperature: optionalNumber(nodes.apiTemperature.value),
         maxTokens: optionalInteger(nodes.apiMaxTokens.value)
       };
@@ -588,9 +8455,12 @@ export function renderAppHtml(): string {
         nodes.apiKey.value = "";
         nodes.apiSettingsState.textContent = config.apiKeySet ? "已保存，Key: " + config.apiKeyMasked : "已保存，Key: 未设置";
         setStatus("API 设置已保存");
+        return config;
       } catch (error) {
         nodes.apiSettingsState.textContent = error.message || String(error);
         setStatus(error.message || String(error), true);
+        if (rethrow) throw error;
+        return undefined;
       }
     }
 
@@ -613,40 +8483,278 @@ export function renderAppHtml(): string {
       }
     }
 
-    function renderLogs(logs) {
-      if (!logs.length) {
-        nodes.debugList.innerHTML = '<div class="muted">暂无上下文日志。发送一条消息后会显示最近运行记录。</div>';
+    function renderModelTraces(traces) {
+      const previous = state.debugTraces[state.selectedTraceIndex]?.id;
+      state.debugTraces = traces;
+      if (!traces.length) {
+        state.selectedTraceIndex = 0;
+        nodes.traceIndex.innerHTML = "";
+        nodes.traceDetail.hidden = true;
+        nodes.traceEmpty.hidden = false;
+        nodes.traceEmpty.textContent = "暂无模型请求 Trace。启用模型并发送消息后会显示记录。";
         return;
       }
-      nodes.debugList.innerHTML = logs.map((log) => {
-        const eventTypes = Array.isArray(log.events) ? log.events.map((event) => event.type) : [];
-        const actionTypes = Array.isArray(log.actions) ? log.actions.map((action) => action.actionType + ":" + action.status) : [];
-        const compact = {
-          sessionId: log.sessionId,
-          mode: log.mode,
-          requestText: log.requestText,
-          systemPrompt: log.systemPrompt,
-          messageCountBefore: log.messageCountBefore,
-          toolNames: log.toolNames,
-          reply: log.reply
-        };
-        return '<section class="log">' +
-          '<h3>' + escapeHtml(log.createdAt) + '</h3>' +
-          '<div class="muted">' + escapeHtml(log.requestText || "") + '</div>' +
-          '<div class="pills">' + eventTypes.slice(0, 10).map((type) => '<span class="pill">' + escapeHtml(type) + '</span>').join("") + '</div>' +
-          '<div class="pills">' + actionTypes.map((type) => '<span class="pill">' + escapeHtml(type) + '</span>').join("") + '</div>' +
-          '<pre>' + escapeHtml(JSON.stringify(compact, null, 2)) + '</pre>' +
-          '</section>';
-      }).join("");
+      const previousIndex = traces.findIndex((trace) => trace.id === previous);
+      state.selectedTraceIndex = previousIndex >= 0 ? previousIndex : 0;
+      renderTraceIndex();
+      renderSelectedTrace();
     }
 
-    function formatActions(actions) {
-      return actions.map((action) => action.actionType + " · " + action.status).join("\\n");
+    function renderTraceIndex() {
+      if (state.debugDataset === "economics") {
+        nodes.traceIndex.innerHTML = state.debugEconomics.map((entry, index) =>
+          '<button class="trace-index-item' + (index === state.selectedEconomicsIndex ? ' active' : '') + '" type="button" data-trace-index="' + index + '">' +
+            '<span class="trace-index-title">' + escapeHtml(entry.mode + " · " + entry.estimatedInputTokens + " tokens") + '</span>' +
+            '<span class="trace-index-meta">LCP ' + Number(entry.prefixReuseRatio || 0).toLocaleString(undefined, { style: "percent", maximumFractionDigits: 1 }) +
+              ' · ' + Number(entry.memoryIds?.length || 0) + ' memories<br>' + escapeHtml(formatTraceTime(entry.createdAt)) + '</span></button>'
+        ).join("");
+        if (!state.debugEconomics.length) showEmptyDebug("暂无 Context Economics。下一次 provider 请求后会生成记录。");
+        return;
+      }
+      nodes.traceIndex.innerHTML = state.debugTraces.map((trace, index) => {
+        const turnLabel = trace.turnKind === "reminder_due" ? "主动提醒" : "用户消息";
+        return '<button class="trace-index-item' + (index === state.selectedTraceIndex ? ' active' : '') + '"' +
+          ' type="button" data-trace-index="' + index + '" title="' + escapeHtml(trace.requestText || "") + '">' +
+          '<span class="trace-index-title">' + escapeHtml(trace.requestText || "（无请求摘要）") + '</span>' +
+          '<span class="trace-index-meta">#' + (index + 1) + ' · ' + escapeHtml(trace.mode || "") + ' · ' + turnLabel + '<br>' + escapeHtml(formatTraceTime(trace.createdAt)) + '</span>' +
+        '</button>';
+      }).join("");
+      if (!state.debugTraces.length) showEmptyDebug("暂无模型请求 Trace。启用模型并发送消息后会显示记录。");
+    }
+
+    function showEmptyDebug(message) {
+      nodes.traceDetail.hidden = true;
+      nodes.traceEmpty.hidden = false;
+      nodes.traceEmpty.textContent = message;
+    }
+
+    function selectTraceFromIndex(event) {
+      const item = event.target.closest("[data-trace-index]");
+      if (!item) return;
+      const index = Number(item.dataset.traceIndex);
+      const entries = state.debugDataset === "economics" ? state.debugEconomics : state.debugTraces;
+      if (!Number.isInteger(index) || !entries[index]) return;
+      if (state.debugDataset === "economics") state.selectedEconomicsIndex = index;
+      else state.selectedTraceIndex = index;
+      renderTraceIndex();
+      renderSelectedTrace();
+    }
+
+    function renderSelectedTrace() {
+      if (state.debugDataset === "economics") {
+        renderSelectedEconomics();
+        return;
+      }
+      const trace = state.debugTraces[state.selectedTraceIndex];
+      if (!trace) {
+        showEmptyDebug("暂无模型请求 Trace。启用模型并发送消息后会显示记录。");
+        return;
+      }
+      const payload = trace.payload && typeof trace.payload === "object" ? trace.payload : {};
+      const turnLabel = trace.turnKind === "reminder_due" ? "主动提醒" : "用户消息";
+      const model = typeof payload.model === "string" ? payload.model : "未标明模型";
+      nodes.traceEmpty.hidden = true;
+      nodes.traceDetail.hidden = false;
+      nodes.traceDetailTitle.textContent = trace.requestText || "（无请求摘要）";
+      nodes.traceDetailMeta.textContent = [trace.sessionId, trace.mode, turnLabel, model, formatTraceTime(trace.createdAt)].filter(Boolean).join(" · ");
+      nodes.traceSemanticBtn.classList.toggle("active", state.traceView === "semantic");
+      nodes.traceRawBtn.classList.toggle("active", state.traceView === "raw");
+      nodes.traceSemanticBtn.setAttribute("aria-selected", String(state.traceView === "semantic"));
+      nodes.traceRawBtn.setAttribute("aria-selected", String(state.traceView === "raw"));
+      nodes.traceContent.classList.toggle("nowrap", !state.traceWrap);
+      nodes.traceWrapBtn.textContent = state.traceWrap ? "不换行" : "自动换行";
+      nodes.traceWrapBtn.setAttribute("aria-pressed", String(state.traceWrap));
+      nodes.traceExpandBtn.hidden = state.traceView !== "semantic";
+      nodes.traceCopyBtn.textContent = "复制 Payload";
+      if (state.traceView === "raw") {
+        nodes.traceContent.innerHTML = '<pre class="trace-json">' + escapeHtml(formatTraceValue(payload)) + '</pre>';
+      } else {
+        nodes.traceContent.innerHTML = renderTraceBlocks(payload);
+      }
+      nodes.traceContent.scrollTop = 0;
+      updateTraceExpandButton();
+    }
+
+    function renderSelectedEconomics() {
+      const entry = state.debugEconomics[state.selectedEconomicsIndex];
+      if (!entry) {
+        showEmptyDebug("暂无 Context Economics。下一次 provider 请求后会生成记录。");
+        return;
+      }
+      nodes.traceEmpty.hidden = true;
+      nodes.traceDetail.hidden = false;
+      nodes.traceDetailTitle.textContent = "Context Economics · " + entry.estimatedInputTokens + " estimated tokens";
+      nodes.traceDetailMeta.textContent = [entry.sessionId, entry.mode, entry.turnKind, formatTraceTime(entry.createdAt)].filter(Boolean).join(" · ");
+      nodes.traceSemanticBtn.classList.toggle("active", state.traceView === "semantic");
+      nodes.traceRawBtn.classList.toggle("active", state.traceView === "raw");
+      nodes.traceSemanticBtn.setAttribute("aria-selected", String(state.traceView === "semantic"));
+      nodes.traceRawBtn.setAttribute("aria-selected", String(state.traceView === "raw"));
+      nodes.traceContent.classList.toggle("nowrap", !state.traceWrap);
+      nodes.traceWrapBtn.textContent = state.traceWrap ? "不换行" : "自动换行";
+      nodes.traceWrapBtn.setAttribute("aria-pressed", String(state.traceWrap));
+      nodes.traceExpandBtn.hidden = state.traceView !== "semantic";
+      nodes.traceCopyBtn.textContent = "复制指标";
+      nodes.traceContent.innerHTML = state.traceView === "raw"
+        ? '<pre class="trace-json">' + escapeHtml(formatTraceValue(entry)) + '</pre>'
+        : renderEconomicsBlocks(entry);
+      nodes.traceContent.scrollTop = 0;
+      updateTraceExpandButton();
+    }
+
+    function setTraceView(view) {
+      state.traceView = view;
+      renderSelectedTrace();
+    }
+
+    function toggleTraceWrap() {
+      state.traceWrap = !state.traceWrap;
+      nodes.traceContent.classList.toggle("nowrap", !state.traceWrap);
+      nodes.traceWrapBtn.textContent = state.traceWrap ? "不换行" : "自动换行";
+      nodes.traceWrapBtn.setAttribute("aria-pressed", String(state.traceWrap));
+    }
+
+    function toggleAllTraceBlocks() {
+      const blocks = [...nodes.traceContent.querySelectorAll("details.trace-block")];
+      const shouldOpen = blocks.some((block) => !block.open);
+      blocks.forEach((block) => { block.open = shouldOpen; });
+      updateTraceExpandButton();
+    }
+
+    function updateTraceExpandButton() {
+      const blocks = [...nodes.traceContent.querySelectorAll("details.trace-block")];
+      if (!blocks.length) return;
+      nodes.traceExpandBtn.textContent = blocks.every((block) => block.open) ? "全部折叠" : "全部展开";
+    }
+
+    async function copySelectedTrace() {
+      const entry = state.debugDataset === "economics"
+        ? state.debugEconomics[state.selectedEconomicsIndex]
+        : state.debugTraces[state.selectedTraceIndex];
+      if (!entry) return;
+      const text = formatTraceValue(state.debugDataset === "economics" ? entry : entry.payload || {});
+      try {
+        await navigator.clipboard.writeText(text);
+      } catch {
+        const textarea = document.createElement("textarea");
+        textarea.value = text;
+        textarea.style.position = "fixed";
+        textarea.style.opacity = "0";
+        document.body.append(textarea);
+        textarea.select();
+        document.execCommand("copy");
+        textarea.remove();
+      }
+      nodes.traceCopyBtn.textContent = "已复制";
+      window.setTimeout(() => { nodes.traceCopyBtn.textContent = state.debugDataset === "economics" ? "复制指标" : "复制 Payload"; }, 1200);
+    }
+
+    function formatTraceTime(value) {
+      const date = new Date(value);
+      return Number.isNaN(date.getTime()) ? String(value || "") : date.toLocaleString();
+    }
+
+    function renderEconomicsBlocks(entry) {
+      const actual = entry.actual || {};
+      const actualValue = (value) => value === null || value === undefined ? "unknown" : Number(value).toLocaleString();
+      const metrics = [
+        ["Input estimate", entry.estimatedInputTokens],
+        ["Stable", entry.stableEstimatedTokens],
+        ["Dynamic", entry.dynamicEstimatedTokens],
+        ["Memory", entry.memoryEstimatedTokens],
+        ["Tools", entry.toolEstimatedTokens],
+        ["LCP messages", entry.lcpMessageCount + " / " + entry.messageCount],
+        ["Prefix reuse", Number(entry.prefixReuseRatio || 0).toLocaleString(undefined, { style: "percent", maximumFractionDigits: 1 })],
+        ["Planner budget", entry.plannerBudgetTokens],
+        ["Actual input", actualValue(actual.inputTokens)],
+        ["Actual output", actualValue(actual.outputTokens)],
+        ["Cache read", actualValue(actual.cacheReadTokens)],
+        ["Cache write", actualValue(actual.cacheWriteTokens)]
+      ];
+      const summary = '<div class="economics-grid">' + metrics.map((metric) =>
+        '<div class="economics-metric"><span>' + escapeHtml(metric[0]) + '</span><strong>' + escapeHtml(String(metric[1])) + '</strong></div>'
+      ).join("") + '</div>';
+      const cache = '<details class="trace-block economics" open><summary><span>Cache contract</span><span class="trace-block-size">canonical provider payload</span></summary>' +
+        '<div style="padding:10px;font-size:12px;line-height:1.6;">System <code>' + escapeHtml(String(entry.systemHash || "")) + '</code><br>' +
+        'Tools <code>' + escapeHtml(String(entry.toolSchemaHash || "")) + '</code><br>' +
+        'LCP estimated ' + Number(entry.lcpEstimatedTokens || 0).toLocaleString() + ' tokens' +
+        (entry.cacheBreakReason ? '<br>Cache break: <strong>' + escapeHtml(entry.cacheBreakReason) + '</strong>' : '') +
+        (entry.plannerTruncated ? '<br><strong>预算已命中，内容经过整条裁剪</strong>' : '') + '</div></details>';
+      const sections = '<details class="trace-block economics"><summary><span>Context manifest</span><span class="trace-block-size">' +
+        Number(entry.plan?.sections?.length || 0) + ' sections</span></summary><div style="padding:10px;">' +
+        (entry.plan?.sections || []).map((section) => '<div class="retrieval-candidate"><strong>' + escapeHtml(section.id) + '</strong> · ' +
+          escapeHtml(section.placement + " · " + section.estimatedTokens + " tokens · " + (section.included ? "included" : section.exclusionReason || "excluded") +
+            (section.truncated ? " · truncated" : "")) + '</div>').join("") + '</div></details>';
+      const retrieval = (entry.plan?.retrieval || []).map((plan) =>
+        '<details class="trace-block economics"><summary><span>Memory Retrieval Plan · ' + escapeHtml(plan.realm + (plan.characterId ? " / " + plan.characterId : "")) + '</span>' +
+        '<span class="trace-block-size">' + Number(plan.selectedMemoryIds?.length || 0) + ' / ' + Number(plan.candidateCount || 0) + ' selected</span></summary><div style="padding:10px;">' +
+        (plan.candidates || []).map((candidate) => '<div class="retrieval-candidate"><strong>' + escapeHtml(candidate.memoryId) + '</strong> · score ' +
+          escapeHtml(Number(candidate.score || 0).toFixed(4)) + ' · ' + escapeHtml(candidate.selected ? candidate.reason : candidate.exclusionReason || candidate.reason) +
+          ' · ' + Number(candidate.estimatedTokens || 0) + ' tokens <button class="secondary" type="button" data-memory-jump="' + escapeHtml(candidate.memoryId) + '">查看记忆</button>' +
+          '<div class="memory-source">relevance ' + Number(candidate.breakdown?.relevance || 0).toFixed(3) + ' · salience ' + Number(candidate.breakdown?.salience || 0).toFixed(3) +
+          ' · recency ' + Number(candidate.breakdown?.recency || 0).toFixed(3) + ' · confidence ' + Number(candidate.breakdown?.confidence || 0).toFixed(3) + '</div></div>').join("") +
+        '</div></details>'
+      ).join("");
+      return summary + cache + sections + retrieval;
+    }
+
+    function renderTraceBlocks(payload) {
+      const blocks = [];
+      if (payload.system !== undefined) {
+        blocks.push(traceBlock("system", "System", payload.system));
+      }
+      if (Array.isArray(payload.messages)) {
+        payload.messages.forEach((message, index) => blocks.push(traceMessageBlock(message, index)));
+      }
+      if (payload.input !== undefined) {
+        if (Array.isArray(payload.input)) {
+          payload.input.forEach((message, index) => blocks.push(traceMessageBlock(message, index)));
+        } else {
+          blocks.push(traceBlock("user", "Input", payload.input));
+        }
+      }
+      if (payload.tools !== undefined) {
+        blocks.push(traceBlock("schema", "Tools schema", payload.tools, false));
+      }
+      const parameters = {};
+      Object.keys(payload).forEach((key) => {
+        if (!["system", "messages", "input", "tools"].includes(key)) parameters[key] = payload[key];
+      });
+      if (Object.keys(parameters).length) {
+        blocks.push(traceBlock("parameters", "Request parameters", parameters, false));
+      }
+      return blocks.join("");
+    }
+
+    function traceMessageBlock(message, index) {
+      if (!message || typeof message !== "object" || Array.isArray(message)) {
+        return traceBlock("parameters", "Message " + (index + 1), message);
+      }
+      const role = message.role === "developer" ? "system" : message.role === "function" ? "tool" :
+        ["system", "user", "assistant", "tool"].includes(message.role) ? message.role : "parameters";
+      const extraKeys = Object.keys(message).filter((key) => key !== "role" && key !== "content");
+      const value = extraKeys.length ? message : message.content;
+      return traceBlock(role, String(message.role || "message") + " " + (index + 1), value);
+    }
+
+    function traceBlock(role, label, value, open = true) {
+      const text = formatTraceValue(value);
+      return '<details class="trace-block ' + role + '"' + (open ? ' open' : '') + '>' +
+        '<summary><span>' + escapeHtml(label) + '</span><span class="trace-block-size">' + text.length.toLocaleString() + ' 字符</span></summary>' +
+        '<pre>' + escapeHtml(text) + '</pre>' +
+      '</details>';
+    }
+
+    function formatTraceValue(value) {
+      if (typeof value === "string") return value;
+      const json = JSON.stringify(value, null, 2);
+      return json === undefined ? String(value) : json;
     }
 
     function roleLabel(role) {
       if (role === "user") return "你";
-      if (role === "assistant") return "Agent";
+      if (role === "assistant") {
+        return state.characters.find((entry) => entry.id === state.selectedCharacterId)?.name || "角色";
+      }
       if (role === "tool") return "Tool";
       return role;
     }
