@@ -7,7 +7,7 @@ import type { MemoryTargetRealm } from "../memory-coordinator/types.js";
 
 export type FeatureTestCase = {
   id: string;
-  category: "conversation" | "schedule" | "memory" | "search" | "workspace" | "character" | "vision" | "subagent";
+  category: "conversation" | "schedule" | "memory" | "relationship" | "search" | "workspace" | "character" | "vision" | "subagent";
   name: string;
   description: string;
   mode: Mode;
@@ -120,6 +120,16 @@ const cases: FeatureTestCase[] = [
     requiredPermissions: [],
   },
   {
+    id: "relationship-affect-update",
+    category: "relationship",
+    name: "关系与情绪更新",
+    description: "验证明确的人际事件经后台分类后，以受控幅度更新当前角色的关系状态。",
+    mode: "sms",
+    input: "谢谢你这段时间一直陪着我，我现在真的很信任你。",
+    requiredModules: ["mcp:relationship-state"],
+    requiredPermissions: [],
+  },
+  {
     id: "tavily-search-trigger",
     category: "search",
     name: "Tavily 搜索触发",
@@ -214,6 +224,7 @@ export async function runFeatureTest(
       attachments,
     });
     await runtime.memoryCoordinator.drain();
+    await runtime.relationshipCoordinator.drain();
     const rules = [...preflight, ...evaluateCase(runtime, definition, response, character.id)];
     return resultFrom(definition, {
       status: response.status,
@@ -407,6 +418,13 @@ function evaluateCase(
   } else if (definition.id === "subagent-delegation") {
     rules.push(rule("subagent-tool", "调用 delegate_task", hasAction(completedActions, "delegate_subagent"), actionEvidence(completedActions)));
     rules.push(rule("subagent-model-calls", "发生独立子 Agent 模型调用", runtime.getModelRequestCount() >= 3, `${runtime.getModelRequestCount()} requests`));
+  } else if (definition.id === "relationship-affect-update") {
+    const snapshot = runtime.getCharacterRelationship(characterId);
+    const changed = snapshot.state.trust !== 35 || snapshot.state.closeness !== 20 ||
+      snapshot.state.affection !== 25 || snapshot.state.respect !== 50 || snapshot.state.tension !== 5;
+    rules.push(rule("relationship-event", "后台生成一条关系事件", snapshot.recentEvents.length === 1, `${snapshot.recentEvents.length} events`));
+    rules.push(rule("bounded-update", "关系状态发生受控变化", changed && snapshot.recentEvents.every((event) =>
+      Object.values(event.delta).every((value) => Math.abs(value) <= 6)), JSON.stringify(snapshot.recentEvents[0]?.delta ?? {})));
   } else if (definition.id === "tavily-search-trigger") {
     rules.push(rule("tavily-tool", "调用 tavily_search", hasAction(completedActions, "tavily_search"), actionEvidence(completedActions)));
     rules.push(rule("source-url", "回复包含来源 URL", /https?:\/\//u.test(reply), excerpt(reply)));

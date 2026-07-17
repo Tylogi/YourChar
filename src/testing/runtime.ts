@@ -13,6 +13,7 @@ import { CompanionKernel } from "../domain/kernel.js";
 import { CaptureNotificationSink } from "../notifications/sink.js";
 import type { PiModelResolver } from "../pi/session-runtime.js";
 import type { MemoryExtractor } from "../memory-coordinator/types.js";
+import type { RelationshipExtractor } from "../relationship/types.js";
 import type { VisionService } from "../vision/service.js";
 
 export type ScriptedModelResponse =
@@ -41,6 +42,7 @@ export type CreateTestRuntimeOptions = {
   workspaceDir?: string;
   tavilyBaseUrl?: string;
   memoryExtractor?: MemoryExtractor;
+  relationshipExtractor?: RelationshipExtractor;
   visionService?: VisionService;
 };
 
@@ -163,6 +165,7 @@ export class TestRuntime {
       tavilyBaseUrl: options.tavilyBaseUrl,
       visionService: options.visionService,
       memoryExtractor: options.memoryExtractor ?? (async () => ({ candidates: [] })),
+      relationshipExtractor: options.relationshipExtractor ?? (async () => ({ significant: false, confidence: 0 })),
     });
     this.kernel.patchModelApiConfig({
       enabled: true,

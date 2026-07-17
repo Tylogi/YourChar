@@ -882,6 +882,11 @@ async function route(input: {
     return;
   }
 
+  if (pathname === "/api/v1/relationship-coordinator/status" && method === "GET") {
+    sendJson(input.response, 200, { coordinator: kernel.getRelationshipCoordinatorStatus() });
+    return;
+  }
+
   if (pathname === "/api/v1/memory-coordinator/memories" && method === "GET") {
     const stats = new Map(kernel.memoryRetrievalStats().map((entry) => [entry.memoryId, entry]));
     sendJson(input.response, 200, {
@@ -925,6 +930,14 @@ async function route(input: {
   if (memoryJobRetryMatch && method === "POST") {
     sendJson(input.response, 200, {
       job: kernel.retryMemoryExtractionJob(decodeURIComponent(memoryJobRetryMatch[1])),
+    });
+    return;
+  }
+
+  const relationshipJobRetryMatch = pathname.match(/^\/api\/v1\/relationship-coordinator\/jobs\/([^/]+)\/retry$/);
+  if (relationshipJobRetryMatch && method === "POST") {
+    sendJson(input.response, 200, {
+      job: kernel.retryRelationshipExtractionJob(decodeURIComponent(relationshipJobRetryMatch[1])),
     });
     return;
   }
@@ -1074,6 +1087,27 @@ async function route(input: {
       sendJson(input.response, 201, { character: withCharacterAvatar(kernel, character) });
       return;
     }
+  }
+
+  const relationshipResetMatch = pathname.match(/^\/api\/v1\/characters\/([^/]+)\/relationship\/reset$/);
+  if (relationshipResetMatch && method === "POST") {
+    const id = decodeURIComponent(relationshipResetMatch[1]);
+    const character = kernel.getCharacter(id);
+    const body = asRecord(await readJson(input.request));
+    const confirmation = requiredString(body.confirmation, "confirmation");
+    if (confirmation !== character.id && confirmation !== character.name) {
+      throw new Error("relationship reset requires the exact character name or id");
+    }
+    sendJson(input.response, 200, { relationship: kernel.resetCharacterRelationship(id) });
+    return;
+  }
+
+  const relationshipMatch = pathname.match(/^\/api\/v1\/characters\/([^/]+)\/relationship$/);
+  if (relationshipMatch && method === "GET") {
+    sendJson(input.response, 200, {
+      relationship: kernel.getCharacterRelationship(decodeURIComponent(relationshipMatch[1])),
+    });
+    return;
   }
 
   const characterMatch = pathname.match(/^\/api\/v1\/characters\/([^/]+)$/);

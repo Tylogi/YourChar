@@ -13,6 +13,7 @@ export const tavilySearchMcpModuleId = "mcp:tavily-search";
 export const visionMcpModuleId = "mcp:vision";
 export const memoryCoordinatorMcpModuleId = "mcp:memory-coordinator";
 export const subagentMcpModuleId = "mcp:subagent";
+export const relationshipStateMcpModuleId = "mcp:relationship-state";
 
 // Rounded from the current provider-facing tool definitions; tests keep these visible estimates intentional.
 const mcpEstimatedTokens = {
@@ -22,9 +23,25 @@ const mcpEstimatedTokens = {
   [userProfileMcpModuleId]: 270,
   [memoryCoordinatorMcpModuleId]: 430,
   [subagentMcpModuleId]: 390,
+  [relationshipStateMcpModuleId]: 230,
 } as const;
 
 const mcpDetails: Record<string, string> = {
+  [relationshipStateMcpModuleId]: `# Relationship State MCP
+
+## Tools
+
+- \`get_relationship_state\`: read the current qualitative relationship and affect snapshot for the selected character.
+
+## Boundaries
+
+- State is isolated per character and shared across that character's private sessions.
+- A background Coordinator may classify completed private turns; group chat currently reads state but never changes it.
+- A locally detected relational private turn may use one additional default-model classifier call; ordinary turns use no classifier tokens.
+- The model cannot write scores or deltas. A trusted policy table maps validated event classes to bounded changes.
+- Short-term affect decays toward baseline; long-term relationship dimensions change only after significant events.
+- Disabling this module stops extraction, context injection, and the read tool while preserving stored state.
+`,
   [subagentMcpModuleId]: `# Subagent Delegation MCP
 
 ## Tools
@@ -133,6 +150,16 @@ export class AgentModuleCatalog {
         .map((row) => [row.module_id, Boolean(row.enabled)]),
     );
     const modules: AgentModule[] = [
+      {
+        id: relationshipStateMcpModuleId,
+        type: "mcp",
+        name: "Relationship State MCP",
+        description: "维护每个角色独立的关系与短期情绪状态；后台只接受受限事件分类，实际数值由可信策略限幅更新。",
+        source: "built-in",
+        enabled: settings.get(relationshipStateMcpModuleId) ?? false,
+        defaultEnabled: false,
+        estimatedTokens: mcpEstimatedTokens[relationshipStateMcpModuleId],
+      },
       {
         id: subagentMcpModuleId,
         type: "mcp",
@@ -265,6 +292,9 @@ export class AgentModuleCatalog {
       this.isEnabled(memoryCoordinatorMcpModuleId)
         ? "Capability status: Memory Coordinator is enabled. Agent memory proposals remain pending until trusted confirmation."
         : "Capability status: Memory Coordinator is disabled. Do not search, propose, or claim to store long-term memory.",
+      this.isEnabled(relationshipStateMcpModuleId)
+        ? "Capability status: Relationship State is enabled. Reflect the trusted qualitative snapshot implicitly; never expose or invent internal metrics."
+        : "Capability status: Relationship State is disabled. Do not claim to track relationship or affect metrics.",
       this.isEnabled(visionMcpModuleId)
         ? "Capability status: Vision MCP module is enabled."
         : "Capability status: Vision MCP module is disabled. Do not claim to inspect image pixels.",

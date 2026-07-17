@@ -57,7 +57,7 @@ export type MemoryRetrievalPlan = {
 
 export type ContextSectionManifest = {
   id: "stable_rules" | "profile" | "soul" | "skills" | "capabilities" | "tools" |
-    "latest_time" | "scene" | "reality_memory" | "rp_memory";
+    "latest_time" | "relationship" | "scene" | "reality_memory" | "rp_memory";
   placement: "stable" | "dynamic" | "provider";
   characters: number;
   estimatedTokens: number;

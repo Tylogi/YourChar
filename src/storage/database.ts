@@ -580,6 +580,97 @@ const migrations: Migration[] = [
         ON model_context_traces(session_id, sequence DESC);
     `,
   },
+  {
+    version: 17,
+    sql: `
+      CREATE TABLE character_relationship_states (
+        character_id TEXT PRIMARY KEY REFERENCES characters(id) ON DELETE CASCADE,
+        trust INTEGER NOT NULL DEFAULT 35 CHECK (trust BETWEEN 0 AND 100),
+        closeness INTEGER NOT NULL DEFAULT 20 CHECK (closeness BETWEEN 0 AND 100),
+        affection INTEGER NOT NULL DEFAULT 25 CHECK (affection BETWEEN 0 AND 100),
+        respect INTEGER NOT NULL DEFAULT 50 CHECK (respect BETWEEN 0 AND 100),
+        tension INTEGER NOT NULL DEFAULT 5 CHECK (tension BETWEEN 0 AND 100),
+        affect_valence REAL NOT NULL DEFAULT 0 CHECK (affect_valence BETWEEN -1 AND 1),
+        affect_arousal REAL NOT NULL DEFAULT 0.2 CHECK (affect_arousal BETWEEN 0 AND 1),
+        affect_control REAL NOT NULL DEFAULT 0.8 CHECK (affect_control BETWEEN 0 AND 1),
+        affect_labels_json TEXT NOT NULL DEFAULT '[]',
+        affect_updated_at TEXT NOT NULL,
+        version INTEGER NOT NULL DEFAULT 1 CHECK (version >= 1),
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      );
+
+      CREATE TABLE relationship_events (
+        id TEXT PRIMARY KEY,
+        character_id TEXT NOT NULL REFERENCES characters(id) ON DELETE CASCADE,
+        source_session_id TEXT NOT NULL,
+        source_context_log_id TEXT NOT NULL UNIQUE,
+        event_type TEXT NOT NULL CHECK (event_type IN (
+          'support', 'reliability', 'vulnerability', 'shared_success',
+          'conflict', 'boundary_violation', 'repair', 'affection'
+        )),
+        impact TEXT NOT NULL CHECK (impact IN ('minor', 'moderate', 'major')),
+        summary TEXT NOT NULL,
+        confidence REAL NOT NULL CHECK (confidence BETWEEN 0 AND 1),
+        delta_json TEXT NOT NULL,
+        created_at TEXT NOT NULL
+      );
+      CREATE INDEX relationship_events_character_idx
+        ON relationship_events(character_id, created_at DESC, id DESC);
+
+      CREATE TABLE relationship_extraction_jobs (
+        id TEXT PRIMARY KEY,
+        idempotency_key TEXT NOT NULL UNIQUE,
+        source_context_log_id TEXT NOT NULL UNIQUE,
+        session_id TEXT NOT NULL,
+        character_id TEXT NOT NULL REFERENCES characters(id) ON DELETE CASCADE,
+        mode TEXT NOT NULL CHECK (mode IN ('sms', 'rp')),
+        trigger_reason TEXT NOT NULL,
+        status TEXT NOT NULL CHECK (status IN ('pending', 'running', 'completed', 'skipped', 'failed')),
+        attempts INTEGER NOT NULL DEFAULT 0,
+        max_attempts INTEGER NOT NULL DEFAULT 3,
+        input_token_estimate INTEGER NOT NULL DEFAULT 0,
+        duration_ms INTEGER,
+        result_count INTEGER NOT NULL DEFAULT 0,
+        last_error TEXT,
+        owner_id TEXT,
+        claim_token TEXT,
+        lease_expires_at TEXT,
+        available_at TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      );
+      CREATE INDEX relationship_extraction_jobs_work_idx
+        ON relationship_extraction_jobs(status, available_at, created_at);
+      CREATE INDEX relationship_extraction_jobs_recent_idx
+        ON relationship_extraction_jobs(updated_at DESC, id DESC);
+      CREATE INDEX relationship_extraction_jobs_lease_idx
+        ON relationship_extraction_jobs(status, lease_expires_at, available_at);
+
+      DROP INDEX model_context_traces_session_idx;
+      ALTER TABLE model_context_traces RENAME TO model_context_traces_legacy;
+      CREATE TABLE model_context_traces (
+        sequence INTEGER PRIMARY KEY AUTOINCREMENT,
+        id TEXT NOT NULL UNIQUE,
+        session_id TEXT NOT NULL,
+        mode TEXT NOT NULL CHECK (mode IN ('sms', 'rp')),
+        turn_kind TEXT NOT NULL CHECK (turn_kind IN (
+          'user', 'reminder_due', 'group_gate', 'group_reply', 'subagent', 'relationship_extraction'
+        )),
+        request_text TEXT NOT NULL,
+        payload_json TEXT NOT NULL,
+        created_at TEXT NOT NULL
+      );
+      INSERT INTO model_context_traces(
+        sequence, id, session_id, mode, turn_kind, request_text, payload_json, created_at
+      )
+      SELECT sequence, id, session_id, mode, turn_kind, request_text, payload_json, created_at
+      FROM model_context_traces_legacy;
+      DROP TABLE model_context_traces_legacy;
+      CREATE INDEX model_context_traces_session_idx
+        ON model_context_traces(session_id, sequence DESC);
+    `,
+  },
 ];
 
 export class AppDatabase {

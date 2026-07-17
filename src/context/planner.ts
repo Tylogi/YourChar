@@ -53,6 +53,7 @@ export class ContextPlanner {
     skillContext: string;
     permissionContext: string;
     serviceContext: string;
+    relationshipContext?: string;
     budgets?: Partial<ContextPlannerBudgets>;
     allowBootstrap?: boolean;
     includeScene?: boolean;
@@ -98,6 +99,7 @@ export class ContextPlanner {
       "Snapshot rule: this is the latest authoritative runtime snapshot for time and scene. Earlier snapshots are point-in-time data; runtime excludes any snapshot carrying a memory ID/version that is no longer active. Unchanged resident memory text may remain in an older provider prefix and is not duplicated here.",
       `Conversation mode: ${input.mode}`,
       input.characterId ? `Selected character ID: ${input.characterId}` : "",
+      input.relationshipContext ?? "",
     ];
     let scene = input.includeScene !== false && input.mode === "rp" && input.characterId
       ? this.sceneSection(input.sessionId, input.characterId, budgets.sceneTokens)
@@ -148,6 +150,14 @@ export class ContextPlanner {
       section("skills", "stable", input.skillContext, Boolean(input.skillContext), undefined, input.skillContext ? undefined : "no_enabled_skills"),
       { id: "tools", placement: "provider", characters: 0, estimatedTokens: 0, included: true, truncated: false },
       section("latest_time", "dynamic", runtime.content, true, 180),
+      section(
+        "relationship",
+        "dynamic",
+        input.relationshipContext ?? "",
+        Boolean(input.relationshipContext),
+        undefined,
+        input.relationshipContext ? undefined : "module_disabled_or_no_character",
+      ),
       { id: "scene", placement: "dynamic", characters: scene.characters, estimatedTokens: scene.tokens, budgetTokens: budgets.sceneTokens, included: Boolean(scene.text), truncated: scene.truncated, ...(scene.text ? {} : { exclusionReason: sceneExcludedByDynamicBudget ? "budget_dynamic_total" : "no_scene" }) },
       memoryManifest("reality_memory", reality, budgets.realityMemoryTokens, input.includeMemory, retrieval),
       memoryManifest("rp_memory", roleplay, budgets.roleplayMemoryTokens, input.includeMemory && Boolean(input.characterId), retrieval),

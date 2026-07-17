@@ -20,6 +20,7 @@ and adds the RP companion domain on top:
 - optional Tavily live web search through a credential-isolated local MCP;
 - direct or independent Vision MCP image understanding for text-only primary models;
 - optional isolated private-chat subagents for bounded work, research, planning, and review;
+- optional per-character relationship and decaying affect state with trusted bounded updates;
 - a 2000-character profile summary plus durable reality/global memory;
 - persistent, retryable post-turn Memory Coordinator jobs with trusted review;
 - permission-gated workspace file tools and a Bubblewrap-isolated shell;
@@ -61,6 +62,9 @@ Vision routing, upload boundaries, caching, and test contracts are documented in
 [`docs/vision-mcp.md`](docs/vision-mcp.md).
 Private-chat delegation, child isolation, budgets, and test contracts are
 documented in [`docs/subagent-delegation.md`](docs/subagent-delegation.md).
+Per-character relationship dimensions, affect decay, trusted update policy, MCP
+boundaries, and test contracts are documented in
+[`docs/relationship-affect.md`](docs/relationship-affect.md).
 The current memory retrieval, context budget, resident snapshot, cache, and
 token-economics contracts are documented in
 [`docs/memory-architecture-r4.md`](docs/memory-architecture-r4.md). The capture
@@ -108,6 +112,9 @@ profile Markdown uses `/api/v1/user-profile`. Roleplay memory creation remains
 at `/api/v1/memories`; trusted reality-memory creation uses
 `/api/v1/reality-memories`, and review/observability uses
 `/api/v1/memory-coordinator/*`.
+Per-character relationship inspection/reset uses
+`/api/v1/characters/{id}/relationship`; background status and retries use
+`/api/v1/relationship-coordinator/*`.
 Read-only retrieval evaluation uses `/api/v1/context-plan/preview` and
 `/api/v1/memory-retrieval/preview`; lightweight provider metrics use
 `/api/debug/context-economics`. Metadata-only Vault durability status uses
@@ -142,6 +149,9 @@ The current feature branch also adds versioned model profiles, per-character
 model selection, and persistent SMS/RP group chats with serial participation
 gates and bounded speaker turns. It also adds an optional Subagent Delegation
 MCP for isolated private-chat work without changing group-chat scheduling.
+It also adds an optional Relationship State MCP: private turns can produce
+bounded, auditable relationship events; short-term affect decays over time; group
+actors read the snapshot but do not mutate it.
 M5 moves schedule operations behind an MCP server/client boundary and makes due
 reminders resume the originating Pi session before delivery. Debug also retains
 the latest 10 final provider request payloads, with role-colored messages and a

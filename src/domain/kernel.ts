@@ -63,6 +63,7 @@ import {
   tavilySearchMcpModuleId,
   userProfileMcpModuleId,
   memoryCoordinatorMcpModuleId,
+  relationshipStateMcpModuleId,
   visionMcpModuleId,
 } from "../modules/catalog.js";
 import { AgentPermissionCatalog } from "../modules/permissions.js";
@@ -97,6 +98,14 @@ import type { VisionApiConfigPatch } from "../vision/types.js";
 import { visionToolResult } from "../mcp/vision-server.js";
 import { WorkspaceFileService } from "../workspace/file-service.js";
 import {
+  RelationshipCoordinator,
+  RelationshipRepository,
+  RelationshipService,
+  relationshipExtractorUserPrompt,
+  stableRelationshipExtractorPrompt,
+  type RelationshipExtractor,
+} from "../relationship/index.js";
+import {
   GroupChatRepository,
   GroupChatService,
   type CreateGroupChatInput,
@@ -129,6 +138,7 @@ type RawModelApiConfig = ModelApiConfig & { apiKey?: string };
 
 const GROUP_PARTICIPATION_MAX_TOKENS = 768;
 const MAX_GROUP_MESSAGES_PER_CHARACTER = 10;
+const RELATIONSHIP_EXTRACTION_MAX_TOKENS = 1_200;
 
 type SystemExchangeOptions = {
   status: TurnStatus;
@@ -183,6 +193,7 @@ export type CompanionKernelOptions = CompanionStoreOptions & {
   visionService?: VisionService;
   tavilyBaseUrl?: string;
   memoryExtractor?: MemoryExtractor;
+  relationshipExtractor?: RelationshipExtractor;
   memoryVaultFailpoint?: MemoryVaultFailpoint;
 };
 
@@ -202,6 +213,8 @@ export class CompanionKernel {
   readonly memoryVault: MemoryVaultService;
   readonly memoryLifecycle: MemoryLifecycleService;
   readonly memoryCoordinator: MemoryCoordinator;
+  readonly relationshipService: RelationshipService;
+  readonly relationshipCoordinator: RelationshipCoordinator;
   readonly okfService: OkfService;
   readonly contextEconomics: ContextEconomicsRepository;
   readonly memoryRetriever: MemoryRetriever;
@@ -297,6 +310,20 @@ export class CompanionKernel {
       this.store.idGenerator,
       normalizedOptions.memoryExtractor ?? this.extractMemoryWithConfiguredModel.bind(this),
     );
+    const relationshipRepository = new RelationshipRepository(this.database);
+    this.relationshipService = new RelationshipService(
+      relationshipRepository,
+      this.clock,
+      this.store.idGenerator,
+    );
+    this.relationshipCoordinator = new RelationshipCoordinator(
+      relationshipRepository,
+      this.relationshipService,
+      this.moduleCatalog,
+      this.clock,
+      this.store.idGenerator,
+      normalizedOptions.relationshipExtractor ?? this.extractRelationshipWithConfiguredModel.bind(this),
+    );
     this.tavilyService = normalizedOptions.tavilyService ?? new TavilyService({
       stateDir: this.store.stateDir,
       clock: this.clock,
@@ -318,6 +345,7 @@ export class CompanionKernel {
         profileService: this.profileService,
         tavilyService: this.tavilyService,
         visionService: this.visionService,
+        relationshipService: this.relationshipService,
         stateDir: normalizedOptions.stateDir,
         clock: this.clock,
         modelResolver: normalizedOptions.modelResolver ?? this.resolveConfiguredModel.bind(this),
@@ -529,7 +557,9 @@ export class CompanionKernel {
 
   createCharacter(input: CreateCharacterInput) {
     this.assertModelProfileBinding(input.modelProfileId);
-    return this.rpService.createCharacter(input);
+    const character = this.rpService.createCharacter(input);
+    this.relationshipService.ensureState(character.id);
+    return character;
   }
 
   listCharacters() {
@@ -667,6 +697,24 @@ export class CompanionKernel {
     return this.memoryCoordinator.status();
   }
 
+  getRelationshipCoordinatorStatus() {
+    return this.relationshipCoordinator.status();
+  }
+
+  getCharacterRelationship(characterId: string) {
+    this.getCharacter(characterId);
+    return this.relationshipService.snapshot(characterId);
+  }
+
+  resetCharacterRelationship(characterId: string) {
+    this.getCharacter(characterId);
+    return this.relationshipService.reset(characterId);
+  }
+
+  retryRelationshipExtractionJob(id: string) {
+    return this.relationshipCoordinator.retry(id);
+  }
+
   previewContextPlan(input: {
     mode: Mode;
     sessionId: string;
@@ -766,6 +814,8 @@ export class CompanionKernel {
       reminderOccurrences: this.listReminderOccurrences(),
       notificationHistory: this.listNotificationHistory(),
       characters: this.listCharacters(),
+      relationships: this.listCharacters().map((character) =>
+        this.relationshipService.snapshot(character.id, 100)),
       roleSessions: this.rpService.listRoleSessions(),
       scenes: this.rpService.listScenes(),
       memories: this.rpService.listAllMemories(),
@@ -786,6 +836,7 @@ export class CompanionKernel {
           .map((character) => character.id),
       },
       memoryCoordinator: this.memoryCoordinator.status(),
+      relationshipCoordinator: this.relationshipCoordinator.status(),
     };
   }
 
@@ -834,6 +885,13 @@ export class CompanionKernel {
     }
     if ((memoryJob?.resultCount ?? 0) > 0) {
       throw new MessageRevisionError("this turn already changed long-term memory and cannot be revised safely");
+    }
+    const relationshipJob = this.relationshipCoordinator.repository.findJobByIdempotencyKey(`turn:${log.id}`);
+    if (relationshipJob?.status === "pending" || relationshipJob?.status === "running") {
+      throw new MessageRevisionError("relationship extraction is still processing; retry after it finishes");
+    }
+    if ((relationshipJob?.resultCount ?? 0) > 0) {
+      throw new MessageRevisionError("this turn already changed relationship state and cannot be revised safely");
     }
     const mutation = log.actions.find((action) =>
       action.status === "completed" && !readOnlyActionTypes.has(action.actionType));
@@ -1081,6 +1139,7 @@ export class CompanionKernel {
   dispose(): void {
     this.scheduler.stop();
     this.memoryCoordinator.dispose();
+    this.relationshipCoordinator.dispose();
     this.sessionRuntime.dispose();
     this.tavilyService.dispose();
     this.memoryVault.dispose();
@@ -1439,6 +1498,7 @@ export class CompanionKernel {
     }
     if (status === "completed") {
       this.memoryCoordinator.enqueueTurn(contextLog, { characterId: handle.metadata.characterId });
+      this.relationshipCoordinator.enqueueTurn(contextLog, { characterId: handle.metadata.characterId });
     }
     return {
       reply,
@@ -2352,6 +2412,9 @@ export class CompanionKernel {
       skillContext: "",
       permissionContext: "",
       serviceContext: "",
+      relationshipContext: this.moduleCatalog.isEnabled(relationshipStateMcpModuleId)
+        ? this.relationshipService.contextFor(input.characterId)
+        : "",
     });
   }
 
@@ -2431,6 +2494,42 @@ export class CompanionKernel {
     return agentEventMessageText(message);
   }
 
+  private async extractRelationshipWithConfiguredModel(input: Parameters<RelationshipExtractor>[0]): Promise<unknown> {
+    const config = this.store.getRawModelApiConfig();
+    if (!config.enabled || !config.baseUrl || !config.model) throw new Error("relationship extractor model is unavailable");
+    const userContent = relationshipExtractorUserPrompt(input);
+    this.store.addModelContextTrace({
+      sessionId: input.sourceSessionId,
+      mode: input.mode,
+      turnKind: "relationship_extraction",
+      requestText: input.userText,
+      payload: groupTracePayload(
+        config,
+        stableRelationshipExtractorPrompt,
+        userContent,
+        RELATIONSHIP_EXTRACTION_MAX_TOKENS,
+        0,
+      ),
+    });
+    const message = await completeSimple(createOpenAiCompatibleModel(config), {
+      systemPrompt: stableRelationshipExtractorPrompt,
+      messages: [{
+        role: "user",
+        content: userContent,
+        timestamp: this.clock.now().getTime(),
+      }],
+    }, {
+      apiKey: config.apiKey || "unused",
+      temperature: 0,
+      maxTokens: RELATIONSHIP_EXTRACTION_MAX_TOKENS,
+      sessionId: `relationship-extraction:${input.sourceContextLogId}`,
+    });
+    if (message.stopReason === "error" || message.stopReason === "aborted") {
+      throw new Error(message.errorMessage || `relationship extractor stopped: ${message.stopReason}`);
+    }
+    return agentEventMessageText(message);
+  }
+
   private buildContextPlan(input: {
     mode: Mode;
     sessionId: string;
@@ -2461,6 +2560,9 @@ export class CompanionKernel {
           this.store.getRawModelApiConfig().visionInputEnabled,
         ),
       ].join("\n"),
+      relationshipContext: input.characterId && this.moduleCatalog.isEnabled(relationshipStateMcpModuleId)
+        ? this.relationshipService.contextFor(input.characterId)
+        : "",
       ...(input.budgets ? { budgets: input.budgets } : {}),
       ...(input.allowBootstrap === undefined ? {} : { allowBootstrap: input.allowBootstrap }),
     });

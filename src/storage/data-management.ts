@@ -16,6 +16,7 @@ export class DataManagementRepository {
   } {
     return this.database.transaction(() => {
       this.database.connection.prepare("DELETE FROM memory_extraction_jobs WHERE session_id = ?").run(sessionId);
+      this.database.connection.prepare("DELETE FROM relationship_extraction_jobs WHERE session_id = ?").run(sessionId);
       const contextEconomics = Number(this.database.connection.prepare(
         "DELETE FROM context_economics WHERE session_id = ?",
       ).run(sessionId).changes);

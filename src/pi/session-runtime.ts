@@ -22,6 +22,7 @@ import {
   memoryCoordinatorMcpModuleId,
   tavilySearchMcpModuleId,
   subagentMcpModuleId,
+  relationshipStateMcpModuleId,
   userProfileMcpModuleId,
   visionMcpModuleId,
   type AgentModuleCatalog,
@@ -30,6 +31,7 @@ import type { AgentPermissionCatalog } from "../modules/permissions.js";
 import {
   createCharacterSoulMcpBridge,
   createMemoryMcpBridge,
+  createRelationshipMcpBridge,
   createScheduleMcpBridge,
   createSubagentMcpBridge,
   createTavilyMcpBridge,
@@ -45,6 +47,7 @@ import type { ScheduleService } from "../schedule/service.js";
 import type { TavilyService } from "../tavily/service.js";
 import type { MemoryLifecycleService } from "../memory-coordinator/lifecycle.js";
 import type { VisionService } from "../vision/service.js";
+import type { RelationshipService } from "../relationship/service.js";
 import type { ContextEconomicsRepository } from "../context/economics-repository.js";
 import { normalizeActualProviderUsage } from "../context/provider-usage.js";
 import { memoryContextVersion } from "../context/memory-version.js";
@@ -105,6 +108,7 @@ export type PiSessionRuntimeOptions = {
   profileService: UserProfileService;
   tavilyService: TavilyService;
   visionService: VisionService;
+  relationshipService: RelationshipService;
   stateDir?: string | false;
   cwd?: string;
   clock?: Clock;
@@ -177,6 +181,7 @@ export class PiSessionRuntime {
   private readonly profileService: UserProfileService;
   private readonly tavilyService: TavilyService;
   private readonly visionService: VisionService;
+  private readonly relationshipService: RelationshipService;
   private readonly stateDir?: string;
   private readonly cwd: string;
   private readonly workspaceDir: string;
@@ -206,6 +211,7 @@ export class PiSessionRuntime {
     this.profileService = options.profileService;
     this.tavilyService = options.tavilyService;
     this.visionService = options.visionService;
+    this.relationshipService = options.relationshipService;
     this.stateDir = options.stateDir === false ? undefined : options.stateDir ?? options.store.stateDir;
     this.cwd = resolve(options.cwd ?? process.cwd());
     this.workspaceDir = resolve(options.workspaceDir);
@@ -638,6 +644,13 @@ export class PiSessionRuntime {
           actions: toolState.actions,
           signal,
         }),
+      }));
+    }
+    if (metadata.characterId && this.moduleCatalog.isEnabled(relationshipStateMcpModuleId)) {
+      mcpBridges.push(await createRelationshipMcpBridge({
+        relationshipService: this.relationshipService,
+        sessionId: metadata.id,
+        characterId: metadata.characterId,
       }));
     }
     const permissions = this.permissionCatalog.get();

@@ -6,3 +6,4 @@ export * from "./tavily-server.js";
 export * from "./memory-server.js";
 export * from "./vision-server.js";
 export * from "./subagent-server.js";
+export * from "./relationship-server.js";

@@ -107,7 +107,7 @@ export type ModelContextTrace = {
   id: string;
   sessionId: string;
   mode: Mode;
-  turnKind: "user" | "reminder_due" | "group_gate" | "group_reply" | "subagent";
+  turnKind: "user" | "reminder_due" | "group_gate" | "group_reply" | "subagent" | "relationship_extraction";
   requestText: string;
   payload: Record<string, unknown>;
   createdAt: string;

@@ -726,7 +726,7 @@ export function renderAppHtml(): string {
     .character-detail-title { min-width: 0; display: grid; gap: 2px; }
     .character-detail-title > span { color: var(--muted); font-size: 11px; }
     .character-detail-title h3 { margin: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 17px; }
-    .character-tabs { width: min(360px, 44vw); grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    .character-tabs { width: min(480px, 52vw); grid-template-columns: repeat(3, minmax(0, 1fr)); }
     .character-panel { min-width: 0; padding: 20px clamp(16px, 2vw, 22px) 22px; }
     .character-editor-form { display: grid; }
     .character-editor-head h4,
@@ -746,6 +746,62 @@ export function renderAppHtml(): string {
     .character-memory-head .primary svg { width: 16px; height: 16px; }
     #characterMemoryPanel .memory-toolbar { margin-bottom: 0; padding-bottom: 12px; border-bottom: 1px solid var(--line); }
     #characterMemoryPanel .memory-list { border-top: 0; }
+    .relationship-panel { display: grid; gap: 18px; }
+    .relationship-head {
+      min-height: 40px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+    }
+    .relationship-head-copy { min-width: 0; display: flex; align-items: baseline; gap: 8px; }
+    .relationship-head h4 { margin: 0; font-size: 15px; }
+    .relationship-overview {
+      display: grid;
+      grid-template-columns: minmax(180px, 0.7fr) minmax(0, 1.3fr);
+      gap: 18px;
+      padding: 16px 0;
+      border-top: 1px solid var(--line);
+      border-bottom: 1px solid var(--line);
+    }
+    .relationship-stage { display: grid; align-content: start; gap: 8px; }
+    .relationship-stage-label { color: var(--muted); font-size: 11px; }
+    .relationship-stage strong { font-size: 22px; font-weight: 650; }
+    .affect-summary { display: flex; flex-wrap: wrap; gap: 6px; }
+    .affect-chip {
+      min-height: 25px;
+      padding: 4px 8px;
+      border: 1px solid #dfe3e1;
+      border-radius: 6px;
+      background: #f6f8f7;
+      color: #4e5752;
+      font-size: 11px;
+    }
+    .relationship-metrics { display: grid; gap: 10px; }
+    .relationship-metric { display: grid; grid-template-columns: 52px minmax(0, 1fr) 32px; gap: 10px; align-items: center; font-size: 12px; }
+    .relationship-metric > span:first-child { color: #4d5551; }
+    .relationship-metric > strong { text-align: right; font-size: 12px; font-variant-numeric: tabular-nums; }
+    .relationship-meter { height: 7px; overflow: hidden; border-radius: 4px; background: #e8ebe9; }
+    .relationship-meter > i { display: block; height: 100%; border-radius: inherit; background: #38a169; }
+    .relationship-metric[data-tone="warm"] .relationship-meter > i { background: #d58a36; }
+    .relationship-metric[data-tone="cool"] .relationship-meter > i { background: #4789b8; }
+    .relationship-metric[data-tone="alert"] .relationship-meter > i { background: #d65a5a; }
+    .relationship-events h5 { margin: 0 0 8px; font-size: 13px; }
+    .relationship-event-list { border-top: 1px solid var(--line); }
+    .relationship-event {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto;
+      gap: 10px;
+      padding: 11px 0;
+      border-bottom: 1px solid var(--line);
+    }
+    .relationship-event-copy { min-width: 0; display: grid; gap: 4px; }
+    .relationship-event-copy strong { font-size: 12px; }
+    .relationship-event-copy p { margin: 0; color: #4f5753; font-size: 12px; line-height: 1.5; overflow-wrap: anywhere; }
+    .relationship-event-copy time { color: var(--muted); font-size: 10px; }
+    .relationship-delta { align-self: center; display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 4px; max-width: 190px; }
+    .relationship-delta span { padding: 2px 5px; border-radius: 4px; background: #f0f2f1; color: #5b625f; font-size: 10px; font-variant-numeric: tabular-nums; }
+    .relationship-empty { padding: 28px 10px; color: var(--muted); text-align: center; font-size: 12px; }
     .memory-empty { padding: 38px 12px; color: var(--muted); text-align: center; font-size: 13px; }
     .memory-editor-dialog { width: min(680px, calc(100vw - 28px)); }
     .memory-editor-form { padding: 18px; display: grid; gap: 16px; }
@@ -2337,6 +2393,9 @@ export function renderAppHtml(): string {
       .character-detail-head { min-height: 0; padding: 12px 14px; align-items: stretch; flex-direction: column; }
       .character-tabs { width: 100%; }
       .character-panel { padding: 16px 14px 18px; }
+      .relationship-overview { grid-template-columns: minmax(0, 1fr); gap: 14px; }
+      .relationship-event { grid-template-columns: minmax(0, 1fr); }
+      .relationship-delta { justify-content: flex-start; max-width: none; }
       .character-memory-head .primary { width: auto; }
       .character-save-actions .primary { width: 100%; }
       .avatar-editor { grid-template-columns: 60px minmax(0, 1fr); }
@@ -2935,6 +2994,7 @@ export function renderAppHtml(): string {
               <div class="segmented character-tabs" role="tablist" aria-label="角色管理视图">
                 <button id="characterSettingsTabBtn" class="active" type="button" role="tab" aria-selected="true" aria-controls="characterSettingsPanel">角色设定</button>
                 <button id="characterMemoryTabBtn" type="button" role="tab" aria-selected="false" aria-controls="characterMemoryPanel">长期记忆</button>
+                <button id="characterRelationshipTabBtn" type="button" role="tab" aria-selected="false" aria-controls="characterRelationshipPanel">关系</button>
               </div>
             </div>
             <div id="characterSettingsPanel" class="character-panel" role="tabpanel">
@@ -2973,6 +3033,17 @@ export function renderAppHtml(): string {
                 <button id="searchMemoryBtn" class="secondary" type="button"><i data-lucide="search" aria-hidden="true"></i><span>搜索</span></button>
               </div>
               <div id="memoryList" class="memory-list"></div>
+            </div>
+            <div id="characterRelationshipPanel" class="character-panel relationship-panel" role="tabpanel" hidden>
+              <div class="relationship-head">
+                <div class="relationship-head-copy"><h4>关系与情绪</h4><span id="relationshipState" class="muted"></span></div>
+                <button id="resetRelationshipBtn" class="secondary" type="button"><i data-lucide="rotate-ccw" aria-hidden="true"></i><span>重置</span></button>
+              </div>
+              <div id="relationshipOverview" class="relationship-overview"></div>
+              <section class="relationship-events">
+                <h5>变化记录</h5>
+                <div id="relationshipEventList" class="relationship-event-list"></div>
+              </section>
             </div>
           </section>
         </div>
@@ -3577,6 +3648,7 @@ export function renderAppHtml(): string {
       selectedCharacterId: "",
       workspaceCharacterId: "",
       characterTab: "settings",
+      relationship: null,
       newConversationMode: "sms",
       newConversationKind: "direct",
       newConversationPreferredCharacterId: "",
@@ -3876,8 +3948,14 @@ export function renderAppHtml(): string {
       characterDetailTitle: document.getElementById("characterDetailTitle"),
       characterSettingsTabBtn: document.getElementById("characterSettingsTabBtn"),
       characterMemoryTabBtn: document.getElementById("characterMemoryTabBtn"),
+      characterRelationshipTabBtn: document.getElementById("characterRelationshipTabBtn"),
       characterSettingsPanel: document.getElementById("characterSettingsPanel"),
       characterMemoryPanel: document.getElementById("characterMemoryPanel"),
+      characterRelationshipPanel: document.getElementById("characterRelationshipPanel"),
+      relationshipState: document.getElementById("relationshipState"),
+      relationshipOverview: document.getElementById("relationshipOverview"),
+      relationshipEventList: document.getElementById("relationshipEventList"),
+      resetRelationshipBtn: document.getElementById("resetRelationshipBtn"),
       characterForm: document.getElementById("characterForm"),
       characterName: document.getElementById("characterName"),
       characterModelProfile: document.getElementById("characterModelProfile"),
@@ -4166,6 +4244,8 @@ export function renderAppHtml(): string {
     nodes.characterCardGrid.addEventListener("click", selectCharacterCard);
     nodes.characterSettingsTabBtn.addEventListener("click", () => setCharacterTab("settings"));
     nodes.characterMemoryTabBtn.addEventListener("click", () => setCharacterTab("memory"));
+    nodes.characterRelationshipTabBtn.addEventListener("click", () => setCharacterTab("relationship"));
+    nodes.resetRelationshipBtn.addEventListener("click", resetRelationship);
     nodes.characterForm.addEventListener("submit", saveCharacter);
     nodes.characterName.addEventListener("input", renderCharacterAvatarPreview);
     nodes.characterSoulMarkdown.addEventListener("input", updateCharacterSoulCount);
@@ -6268,6 +6348,8 @@ export function renderAppHtml(): string {
       updateCharacterSoulCount();
       nodes.saveCharacterBtn.textContent = "保存角色";
       nodes.characterMemoryTabBtn.disabled = false;
+      nodes.characterRelationshipTabBtn.disabled = false;
+      state.relationship = null;
       setCharacterTab("settings");
     }
 
@@ -6276,6 +6358,9 @@ export function renderAppHtml(): string {
       nodes.characterForm.reset();
       nodes.memoryForm.reset();
       nodes.memoryList.innerHTML = "";
+      nodes.relationshipOverview.innerHTML = "";
+      nodes.relationshipEventList.innerHTML = "";
+      state.relationship = null;
       state.pendingCharacterAvatarDataUrl = "";
       nodes.characterDetail.hidden = false;
       nodes.characterDetailTitle.textContent = "新角色";
@@ -6283,6 +6368,7 @@ export function renderAppHtml(): string {
       nodes.characterState.textContent = "";
       nodes.memoryState.textContent = "";
       nodes.characterMemoryTabBtn.disabled = true;
+      nodes.characterRelationshipTabBtn.disabled = true;
       renderCharacterCards();
       renderCharacterAvatarPreview();
       updateCharacterSoulCount();
@@ -6294,20 +6380,129 @@ export function renderAppHtml(): string {
     function hideCharacterDetail() {
       nodes.characterDetail.hidden = true;
       nodes.characterMemoryTabBtn.disabled = true;
+      nodes.characterRelationshipTabBtn.disabled = true;
       state.characterTab = "settings";
     }
 
     function setCharacterTab(tab) {
-      if (tab === "memory" && !state.workspaceCharacterId) return;
+      if (tab !== "settings" && !state.workspaceCharacterId) return;
       state.characterTab = tab;
       const settings = tab === "settings";
+      const memory = tab === "memory";
+      const relationship = tab === "relationship";
       nodes.characterSettingsTabBtn.classList.toggle("active", settings);
-      nodes.characterMemoryTabBtn.classList.toggle("active", !settings);
+      nodes.characterMemoryTabBtn.classList.toggle("active", memory);
+      nodes.characterRelationshipTabBtn.classList.toggle("active", relationship);
       nodes.characterSettingsTabBtn.setAttribute("aria-selected", String(settings));
-      nodes.characterMemoryTabBtn.setAttribute("aria-selected", String(!settings));
+      nodes.characterMemoryTabBtn.setAttribute("aria-selected", String(memory));
+      nodes.characterRelationshipTabBtn.setAttribute("aria-selected", String(relationship));
       nodes.characterSettingsPanel.hidden = !settings;
-      nodes.characterMemoryPanel.hidden = settings;
-      if (!settings) void loadMemories();
+      nodes.characterMemoryPanel.hidden = !memory;
+      nodes.characterRelationshipPanel.hidden = !relationship;
+      if (memory) void loadMemories();
+      if (relationship) void loadRelationship();
+    }
+
+    async function loadRelationship() {
+      if (!state.workspaceCharacterId) return;
+      nodes.relationshipState.textContent = "加载中...";
+      try {
+        const response = await fetch("/api/v1/characters/" + encodeURIComponent(state.workspaceCharacterId) + "/relationship");
+        const body = await response.json();
+        if (!response.ok) throw new Error(body.error || "关系状态加载失败");
+        state.relationship = body.relationship;
+        nodes.relationshipState.textContent = "";
+        renderRelationship();
+      } catch (error) {
+        nodes.relationshipState.textContent = error.message || String(error);
+      }
+    }
+
+    function renderRelationship() {
+      const snapshot = state.relationship;
+      if (!snapshot?.state) {
+        nodes.relationshipOverview.innerHTML = '<div class="relationship-empty">暂无关系状态</div>';
+        nodes.relationshipEventList.innerHTML = "";
+        return;
+      }
+      const current = snapshot.state;
+      const stageLabels = {
+        stranger: "陌生", acquaintance: "初识", familiar: "熟悉", close: "亲近", intimate: "亲密", strained: "紧张"
+      };
+      const affectLabels = {
+        calm: "平静", warm: "温暖", happy: "愉快", excited: "兴奋", moved: "感动", shy: "害羞",
+        worried: "担忧", sad: "难过", angry: "生气", hurt: "受伤", guarded: "戒备"
+      };
+      const metrics = [
+        ["信任", current.trust, "cool"],
+        ["亲近", current.closeness, ""],
+        ["好感", current.affection, "warm"],
+        ["尊重", current.respect, "cool"],
+        ["张力", current.tension, "alert"]
+      ];
+      const affect = current.affect || {};
+      const affectChips = [
+        '倾向 ' + formatSignedDecimal(affect.valence),
+        '唤醒 ' + Number(affect.arousal || 0).toFixed(2),
+        '克制 ' + Number(affect.control || 0).toFixed(2),
+        ...(affect.labels || []).map((label) => affectLabels[label] || label)
+      ];
+      nodes.relationshipOverview.innerHTML =
+        '<div class="relationship-stage"><span class="relationship-stage-label">当前关系</span><strong>' +
+          escapeHtml(stageLabels[current.stage] || current.stage || "初识") + '</strong><div class="affect-summary">' +
+          affectChips.map((label) => '<span class="affect-chip">' + escapeHtml(label) + '</span>').join("") + '</div></div>' +
+        '<div class="relationship-metrics">' + metrics.map(([label, value, tone]) =>
+          '<div class="relationship-metric" data-tone="' + tone + '"><span>' + label + '</span><span class="relationship-meter"><i style="width:' +
+            Math.max(0, Math.min(100, Number(value) || 0)) + '%"></i></span><strong>' + Number(value || 0) + '</strong></div>'
+        ).join("") + '</div>';
+      const eventLabels = {
+        support: "支持", reliability: "可靠", vulnerability: "袒露", shared_success: "共同成果",
+        conflict: "冲突", boundary_violation: "越界", repair: "修复", affection: "亲密表达"
+      };
+      const dimensionLabels = { trust: "信任", closeness: "亲近", affection: "好感", respect: "尊重", tension: "张力" };
+      const events = Array.isArray(snapshot.recentEvents) ? snapshot.recentEvents : [];
+      nodes.relationshipEventList.innerHTML = events.length ? events.map((event) => {
+        const changes = Object.entries(event.delta || {}).filter(([, value]) => Number(value) !== 0);
+        return '<article class="relationship-event"><div class="relationship-event-copy"><strong>' +
+          escapeHtml(eventLabels[event.type] || event.type) + ' · ' + escapeHtml(event.impact || "minor") +
+          '</strong><p>' + escapeHtml(event.summary || "") + '</p><time>' + escapeHtml(formatTraceTime(event.createdAt)) +
+          '</time></div><div class="relationship-delta">' + changes.map(([key, value]) => '<span>' +
+            escapeHtml(dimensionLabels[key] || key) + ' ' + (Number(value) > 0 ? '+' : '') + Number(value) + '</span>').join("") + '</div></article>';
+      }).join("") : '<div class="relationship-empty">还没有明确的关系变化记录</div>';
+      refreshIcons();
+    }
+
+    function formatSignedDecimal(value) {
+      const number = Number(value) || 0;
+      return (number > 0 ? "+" : "") + number.toFixed(2);
+    }
+
+    async function resetRelationship() {
+      const character = state.characters.find((entry) => entry.id === state.workspaceCharacterId);
+      if (!character) return;
+      const expected = character.name;
+      const confirmed = await openActionDialog({
+        title: "重置关系状态",
+        description: "这会清除该角色的关系变化记录，并将长期关系与短期情绪恢复为初始状态。请输入角色名称“" + expected + "”确认。",
+        fieldLabel: "输入角色名称确认",
+        value: "",
+        confirmLabel: "重置",
+        validate: (value) => value === expected ? "" : "角色名称不匹配，未重置。",
+        onConfirm: async (value) => {
+          const response = await fetch("/api/v1/characters/" + encodeURIComponent(character.id) + "/relationship/reset", {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify({ confirmation: value })
+          });
+          const body = await response.json();
+          if (!response.ok) throw new Error(body.error || "关系状态重置失败");
+          state.relationship = body.relationship;
+        }
+      });
+      if (confirmed) {
+        nodes.relationshipState.textContent = "已重置";
+        renderRelationship();
+      }
     }
 
     function updateCharacterSoulCount() {
@@ -9384,7 +9579,8 @@ export function renderAppHtml(): string {
         reminder_due: "主动提醒",
         group_gate: "群聊判断",
         group_reply: "群聊回复",
-        subagent: "子 Agent"
+        subagent: "子 Agent",
+        relationship_extraction: "关系提取"
       })[kind] || kind || "模型调用";
     }
 

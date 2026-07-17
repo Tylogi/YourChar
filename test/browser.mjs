@@ -199,11 +199,12 @@ async function runDesktopWorkflow(browser, baseUrl, outputDir) {
   await planningModule.waitFor();
   await planningModule.locator('input[type="checkbox"]').check();
   await planningModule.getByText("已启用", { exact: true }).waitFor();
-  assert.equal(await page.locator(".module-row").count(), 8);
+  assert.equal(await page.locator(".module-row").count(), 9);
   await page.locator(".module-row").filter({ hasText: "Tavily Search MCP" }).waitFor();
-  assert.equal(await page.locator(".module-token").count(), 8);
+  assert.equal(await page.locator(".module-token").count(), 9);
   await page.locator(".module-row").filter({ hasText: "Memory Coordinator MCP" }).locator(".module-token").filter({ hasText: "约 430 tokens/轮" }).waitFor();
   await page.locator(".module-row").filter({ hasText: "Subagent Delegation MCP" }).locator(".module-token").filter({ hasText: "约 390 tokens/轮" }).waitFor();
+  await page.locator(".module-row").filter({ hasText: "Relationship State MCP" }).locator(".module-token").filter({ hasText: "约 230 tokens/轮" }).waitFor();
   await page.locator(".module-row").filter({ hasText: "Tavily Search MCP" }).locator(".module-token").filter({ hasText: "约 350 tokens/轮" }).waitFor();
   await page.locator(".module-row").filter({ hasText: "Vision MCP" }).locator(".module-token").filter({ hasText: "约 420 tokens/轮" }).waitFor();
   await planningModule.locator(".module-token").filter({ hasText: /索引约 .*全文约 .*tokens\/调用/ }).waitFor();
@@ -382,6 +383,25 @@ async function runDesktopWorkflow(browser, baseUrl, outputDir) {
   await page.waitForFunction(() => document.activeElement?.id === "confirmSessionActionBtn");
   await page.keyboard.press("Enter");
   await correctedMemory.waitFor({ state: "detached" });
+
+  await page.getByRole("tab", { name: "关系", exact: true }).click();
+  await page.locator("#relationshipOverview").filter({ hasText: "初识" }).waitFor();
+  assert.equal(await page.locator("#relationshipOverview .relationship-metric").count(), 5);
+  assert.deepEqual(
+    await page.locator("#relationshipOverview .relationship-metric > strong").allTextContents(),
+    ["35", "20", "25", "50", "5"],
+  );
+  await page.locator("#relationshipEventList").filter({ hasText: "还没有明确的关系变化记录" }).waitFor();
+  await captureValidatedScreenshot(page, resolve(outputDir, "characters-relationship.png"));
+  await page.getByRole("button", { name: "重置", exact: true }).click();
+  await page.locator("#sessionActionDialog").filter({ hasText: "重置关系状态" }).waitFor({ state: "visible" });
+  await page.locator("#sessionActionInput").fill("错误角色");
+  await page.getByRole("button", { name: "重置", exact: true }).last().click();
+  await page.locator("#sessionActionError").filter({ hasText: "角色名称不匹配" }).waitFor();
+  await page.locator("#sessionActionInput").fill("林澈");
+  await page.locator("#sessionActionInput").press("Enter");
+  await page.locator("#sessionActionDialog").waitFor({ state: "hidden" });
+  await page.locator("#relationshipState").filter({ hasText: "已重置" }).waitFor();
 
   await page.getByRole("button", { name: "日程", exact: true }).click();
   await page.getByRole("tab", { name: "角色日程", exact: true }).click();
@@ -911,9 +931,15 @@ async function runDesktopWorkflow(browser, baseUrl, outputDir) {
   const tavilyModule = page.locator(".module-row").filter({ hasText: "Tavily Search MCP" });
   const visionModule = page.locator(".module-row").filter({ hasText: "Vision MCP" });
   const subagentModule = page.locator(".module-row").filter({ hasText: "Subagent Delegation MCP" });
+  const relationshipModule = page.locator(".module-row").filter({ hasText: "Relationship State MCP" });
   await subagentModule.getByRole("button", { name: "查看 Subagent Delegation MCP 详情" }).click();
   await page.locator("#moduleDetailContent").filter({ hasText: "delegate_task" }).filter({ hasText: "three tasks" }).waitFor();
   await page.getByRole("button", { name: "关闭模块详情" }).click();
+  await relationshipModule.getByRole("button", { name: "查看 Relationship State MCP 详情" }).click();
+  await page.locator("#moduleDetailContent").filter({ hasText: "get_relationship_state" }).filter({ hasText: "bounded changes" }).waitFor();
+  await page.getByRole("button", { name: "关闭模块详情" }).click();
+  await relationshipModule.locator('input[type="checkbox"]').check();
+  await relationshipModule.getByText("已启用", { exact: true }).waitFor();
   await visionModule.getByRole("button", { name: "查看 Vision MCP 详情" }).click();
   await page.locator("#moduleDetailContent").filter({ hasText: "analyze_image" }).waitFor();
   await page.getByRole("button", { name: "关闭模块详情" }).click();
@@ -1152,6 +1178,9 @@ async function runMobileWorkflow(browser, baseUrl, outputDir) {
   await page.waitForFunction(() => document.querySelector("#characterSoulMarkdown")?.value.includes("长期信任"));
   const mobileSoul = await page.locator("#characterSoulMarkdown").inputValue();
   assert.equal(await page.locator("#characterSoulCount").textContent(), `${[...mobileSoul].length} / 8000`);
+  await page.getByRole("tab", { name: "关系", exact: true }).click();
+  await page.locator("#relationshipOverview").filter({ hasText: "初识" }).waitFor();
+  assert.equal(await page.locator("#relationshipOverview .relationship-metric").count(), 5);
   await assertPanelInsideMain(page, "#charactersPage");
   await assertInteractiveBounds(page);
   await page.screenshot({ path: resolve(outputDir, "mobile.png"), fullPage: false });
