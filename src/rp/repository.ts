@@ -34,8 +34,8 @@ export class RpRepository {
     this.database.connection.prepare(`
       INSERT INTO characters(
         id, name, identity, voice, narrative_perspective, behavior,
-        relationship_defaults, boundaries_json, created_at, updated_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        relationship_defaults, boundaries_json, model_profile_id, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       character.id,
       character.name,
@@ -45,6 +45,7 @@ export class RpRepository {
       "",
       "",
       "[]",
+      character.modelProfileId ?? null,
       character.createdAt,
       character.updatedAt,
     );
@@ -62,14 +63,21 @@ export class RpRepository {
 
   updateCharacter(character: CharacterProfile): CharacterProfile {
     this.database.connection.prepare(`
-      UPDATE characters SET name = ?, updated_at = ?
+      UPDATE characters SET name = ?, model_profile_id = ?, updated_at = ?
       WHERE id = ?
     `).run(
       character.name,
+      character.modelProfileId ?? null,
       character.updatedAt,
       character.id,
     );
     return character;
+  }
+
+  clearModelProfileBindings(modelProfileId: string): number {
+    return Number(this.database.connection.prepare(`
+      UPDATE characters SET model_profile_id = NULL WHERE model_profile_id = ?
+    `).run(modelProfileId).changes);
   }
 
   getRoleSession(appSessionId: string): RoleSession | undefined {
@@ -475,6 +483,7 @@ function mapCharacter(row: Row): CharacterProfile {
   return {
     id: String(row.id),
     name: String(row.name),
+    modelProfileId: optionalString(row.model_profile_id),
     soulMarkdown,
     soulCharacterCount: [...soulMarkdown].length,
     soulMaxCharacters: CHARACTER_SOUL_MAX_CHARACTERS,

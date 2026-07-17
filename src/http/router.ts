@@ -16,8 +16,10 @@ import {
   TimeResolutionError,
   TurnRetryUnavailableError,
   MessageRevisionError,
+  GroupChatNotFoundError,
+  GroupChatValidationError,
 } from "../domain/index.js";
-import type { MessageRequest, ModelApiConfigPatch } from "../domain/index.js";
+import type { MessageRequest, ModelApiConfigPatch, ModelApiProfilePatch } from "../domain/index.js";
 import type {
   CreateScheduleItemInput,
   ScheduleItemKind,
@@ -115,6 +117,10 @@ export function createHttpServer(options: HttpServerOptions = {}) {
         sendJson(response, 409, { code: "SESSION_CHARACTER_MISMATCH", error: error.message });
       } else if (error instanceof CharacterBindingRequiredError) {
         sendJson(response, 422, { code: "CHARACTER_REQUIRED", error: error.message });
+      } else if (error instanceof GroupChatNotFoundError) {
+        sendJson(response, 404, { code: "GROUP_CHAT_NOT_FOUND", error: error.message });
+      } else if (error instanceof GroupChatValidationError) {
+        sendJson(response, 400, { code: "GROUP_CHAT_INVALID", error: error.message });
       } else if (error instanceof TimeResolutionError) {
         sendJson(response, 422, {
           code: error.code,
@@ -351,6 +357,53 @@ async function route(input: {
     return;
   }
 
+  if (method === "POST" && pathname === "/api/v1/conversations/batch") {
+    const body = asRecord(await readJson(input.request));
+    const action = body.action;
+    if (action !== "archive" && action !== "delete") {
+      throw new SessionBatchValidationError("action must be archive or delete");
+    }
+    const sessionIds = requireBatchIds(body.sessionIds, "sessionIds");
+    const groupIds = requireBatchIds(body.groupIds, "groupIds");
+    const total = sessionIds.length + groupIds.length;
+    if (total < 1 || total > 100) {
+      throw new SessionBatchValidationError("batch must contain between 1 and 100 conversations");
+    }
+    const metadata = new Map(kernel.listConversationMetadata().map((entry) => [entry.id, entry]));
+    const groups = new Map(kernel.listGroupChats(true).map((entry) => [entry.id, entry]));
+    const missingSession = sessionIds.find((sessionId) => !metadata.has(sessionId));
+    if (missingSession) throw new ConversationNotFoundError(missingSession);
+    const missingGroup = groupIds.find((groupId) => !groups.has(groupId));
+    if (missingGroup) throw new GroupChatNotFoundError(missingGroup);
+
+    if (action === "archive") {
+      const sessions = sessionIds.map((sessionId) => kernel.archiveConversation(sessionId));
+      const groupChats = groupIds.map((groupId) => kernel.archiveGroupChat(groupId));
+      sendJson(input.response, 200, { action, count: total, sessions, groups: groupChats });
+      return;
+    }
+
+    if (body.confirmation !== `永久删除 ${total} 个会话`) {
+      throw new ConversationDeletionConfirmationError();
+    }
+    for (const sessionId of sessionIds) {
+      const session = metadata.get(sessionId);
+      kernel.assertConversationDeletable(sessionId, session?.title || sessionId);
+    }
+    const sessionDeletions = [];
+    for (const sessionId of sessionIds) {
+      const session = metadata.get(sessionId);
+      sessionDeletions.push(await kernel.deleteConversation(sessionId, session?.title || sessionId));
+    }
+    const groupDeletions = groupIds.map((groupId) => kernel.deleteGroupChat(groupId));
+    sendJson(input.response, 200, {
+      action,
+      count: total,
+      deletions: { sessions: sessionDeletions, groups: groupDeletions },
+    });
+    return;
+  }
+
   const archiveSessionMatch = pathname.match(/^\/api\/v1\/sessions\/([^/]+)\/archive$/);
   if (archiveSessionMatch && method === "POST") {
     const session = kernel.archiveConversation(decodeURIComponent(archiveSessionMatch[1]));
@@ -381,6 +434,105 @@ async function route(input: {
       200,
       await kernel.deleteConversation(decodeURIComponent(sessionMetadataMatch[1]), confirmation),
     );
+    return;
+  }
+
+  if (pathname === "/api/v1/group-chats") {
+    if (method === "GET") {
+      sendJson(input.response, 200, {
+        groups: kernel.listGroupChats(url.searchParams.get("includeArchived") === "1"),
+      });
+      return;
+    }
+    if (method === "POST") {
+      const body = asRecord(await readJson(input.request));
+      sendJson(input.response, 201, {
+        group: kernel.createGroupChat({
+          title: optionalString(body.title),
+          mode: body.mode === undefined ? undefined : requiredMode(body.mode),
+          characterIds: optionalStringArray(body.characterIds),
+          maxSpeakers: body.maxSpeakers === undefined ? undefined : requiredNumber(body.maxSpeakers, "maxSpeakers"),
+        }),
+      });
+      return;
+    }
+  }
+
+  const groupChatMatch = pathname.match(/^\/api\/v1\/group-chats\/([^/]+)$/);
+  if (groupChatMatch && method === "GET") {
+    sendJson(input.response, 200, { group: kernel.getGroupChat(decodeURIComponent(groupChatMatch[1])) });
+    return;
+  }
+  if (groupChatMatch && method === "DELETE") {
+    const groupId = decodeURIComponent(groupChatMatch[1]);
+    const group = kernel.getGroupChat(groupId);
+    const body = asRecord(await readJson(input.request));
+    if (body.confirmation !== `永久删除 ${group.title}`) {
+      throw new ConversationDeletionConfirmationError();
+    }
+    sendJson(input.response, 200, kernel.deleteGroupChat(groupId));
+    return;
+  }
+
+  const groupLifecycleMatch = pathname.match(/^\/api\/v1\/group-chats\/([^/]+)\/(archive|restore)$/);
+  if (groupLifecycleMatch && method === "POST") {
+    const groupId = decodeURIComponent(groupLifecycleMatch[1]);
+    const group = groupLifecycleMatch[2] === "archive"
+      ? kernel.archiveGroupChat(groupId)
+      : kernel.restoreGroupChat(groupId);
+    sendJson(input.response, 200, { group });
+    return;
+  }
+
+  const groupMessagesMatch = pathname.match(/^\/api\/v1\/group-chats\/([^/]+)\/messages$/);
+  if (groupMessagesMatch && method === "GET") {
+    const limit = Number(url.searchParams.get("limit") ?? "200");
+    sendJson(input.response, 200, {
+      messages: kernel.listGroupChatMessages(decodeURIComponent(groupMessagesMatch[1]), limit),
+    });
+    return;
+  }
+  if (groupMessagesMatch && method === "POST") {
+    const body = asRecord(await readJson(input.request));
+    sendJson(input.response, 200, await kernel.sendGroupMessage(
+      decodeURIComponent(groupMessagesMatch[1]),
+      requiredString(body.text, "text"),
+      optionalString(body.timezone) ?? "Asia/Shanghai",
+    ));
+    return;
+  }
+
+  const groupStreamMatch = pathname.match(/^\/api\/v1\/group-chats\/([^/]+)\/messages\/stream$/);
+  if (groupStreamMatch && method === "POST") {
+    const body = asRecord(await readJson(input.request));
+    const abortController = new AbortController();
+    input.response.on("close", () => {
+      if (!input.response.writableEnded) abortController.abort();
+    });
+    input.response.writeHead(200, {
+      "content-type": "text/event-stream; charset=utf-8",
+      "cache-control": "no-cache, no-transform",
+      connection: "keep-alive",
+      "x-accel-buffering": "no",
+    });
+    input.response.write(": connected\n\n");
+    try {
+      const result = await kernel.sendGroupMessage(
+        decodeURIComponent(groupStreamMatch[1]),
+        requiredString(body.text, "text"),
+        optionalString(body.timezone) ?? "Asia/Shanghai",
+        (event) => sendStreamEvent(input.response, event),
+        abortController.signal,
+      );
+      sendStreamEvent(input.response, { type: "done", response: result });
+    } catch (error) {
+      sendStreamEvent(input.response, {
+        type: "error",
+        error: error instanceof Error ? error.message : String(error),
+      });
+    } finally {
+      input.response.end();
+    }
     return;
   }
 
@@ -916,6 +1068,7 @@ async function route(input: {
         ...(body as CreateCharacterInput),
         name: requiredString(body.name, "name"),
         soulMarkdown: optionalDocumentString(body.soulMarkdown, "soulMarkdown"),
+        modelProfileId: optionalNullableString(body.modelProfileId, "modelProfileId"),
         boundaries: optionalStringArray(body.boundaries),
       });
       sendJson(input.response, 201, { character: withCharacterAvatar(kernel, character) });
@@ -937,6 +1090,9 @@ async function route(input: {
           ...(body as UpdateCharacterInput),
           name: body.name === undefined ? undefined : requiredString(body.name, "name"),
           soulMarkdown: optionalDocumentString(body.soulMarkdown, "soulMarkdown"),
+          modelProfileId: body.modelProfileId === undefined
+            ? undefined
+            : optionalNullableString(body.modelProfileId, "modelProfileId"),
           boundaries: body.boundaries === undefined ? undefined : optionalStringArray(body.boundaries),
         })),
       });
@@ -1119,6 +1275,42 @@ async function route(input: {
     }
   }
 
+  if (pathname === "/api/v1/model-profiles") {
+    if (method === "GET") {
+      sendJson(input.response, 200, kernel.listModelApiProfiles());
+      return;
+    }
+    if (method === "POST") {
+      const body = asRecord(await readJson(input.request));
+      sendJson(input.response, 201, { profile: kernel.createModelApiProfile(body as ModelApiProfilePatch) });
+      return;
+    }
+  }
+
+  const modelProfileMatch = pathname.match(/^\/api\/v1\/model-profiles\/([^/]+)$/);
+  if (modelProfileMatch) {
+    const id = decodeURIComponent(modelProfileMatch[1]);
+    if (method === "PATCH") {
+      const body = asRecord(await readJson(input.request));
+      sendJson(input.response, 200, { profile: kernel.patchModelApiProfile(id, body as ModelApiProfilePatch) });
+      return;
+    }
+    if (method === "DELETE") {
+      sendJson(input.response, 200, kernel.deleteModelApiProfile(id));
+      return;
+    }
+  }
+
+  const defaultModelProfileMatch = pathname.match(/^\/api\/v1\/model-profiles\/([^/]+)\/default$/);
+  if (defaultModelProfileMatch && method === "POST") {
+    sendJson(
+      input.response,
+      200,
+      kernel.setDefaultModelApiProfile(decodeURIComponent(defaultModelProfileMatch[1])),
+    );
+    return;
+  }
+
   if (pathname === "/api/settings/tavily") {
     if (method === "GET") {
       sendJson(input.response, 200, kernel.getTavilyConfig());
@@ -1144,12 +1336,14 @@ async function route(input: {
   }
 
   if (pathname === "/api/v1/diagnostics/model/test" && method === "POST") {
-    sendJson(input.response, 200, await kernel.testModelConnection());
+    sendJson(input.response, 200, await kernel.testModelConnection(optionalString(url.searchParams.get("profileId"))));
     return;
   }
 
   if (pathname === "/api/v1/diagnostics/model/models" && method === "GET") {
-    sendJson(input.response, 200, { models: await kernel.discoverModels() });
+    sendJson(input.response, 200, {
+      models: await kernel.discoverModels(optionalString(url.searchParams.get("profileId"))),
+    });
     return;
   }
 
@@ -1417,6 +1611,18 @@ class SessionBatchValidationError extends Error {
   }
 }
 
+function requireBatchIds(value: unknown, label: string): string[] {
+  if (value === undefined) return [];
+  if (!Array.isArray(value) || value.some((entry) => typeof entry !== "string" || !entry.trim())) {
+    throw new SessionBatchValidationError(`${label} must contain non-empty string ids`);
+  }
+  const ids = value.map((entry) => String(entry).trim());
+  if (new Set(ids).size !== ids.length) {
+    throw new SessionBatchValidationError(`${label} must not contain duplicates`);
+  }
+  return ids;
+}
+
 class CharacterBindingRequiredError extends Error {
   constructor(message: string) {
     super(message);
@@ -1525,6 +1731,13 @@ function optionalDocumentString(value: unknown, field: string): string | undefin
   if (value === undefined) return undefined;
   if (typeof value !== "string") throw new Error(`${field} must be a string`);
   return value;
+}
+
+function optionalNullableString(value: unknown, field: string): string | null | undefined {
+  if (value === undefined) return undefined;
+  if (value === null) return null;
+  if (typeof value !== "string") throw new Error(`${field} must be a string or null`);
+  return value.trim() || null;
 }
 
 function requiredNumber(value: unknown, field: string): number {

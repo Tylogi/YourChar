@@ -431,6 +431,155 @@ const migrations: Migration[] = [
         ON schedule_items(owner_type, character_id, status, start_at);
     `,
   },
+  {
+    version: 12,
+    sql: `
+      ALTER TABLE characters ADD COLUMN model_profile_id TEXT;
+      CREATE INDEX characters_model_profile_idx ON characters(model_profile_id);
+    `,
+  },
+  {
+    version: 13,
+    sql: `
+      CREATE TABLE group_chats (
+        id TEXT PRIMARY KEY,
+        title TEXT NOT NULL,
+        mode TEXT NOT NULL CHECK (mode IN ('sms', 'rp')),
+        status TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active', 'archived')),
+        max_speakers INTEGER NOT NULL DEFAULT 3 CHECK (max_speakers >= 1 AND max_speakers <= 8),
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      );
+
+      CREATE TABLE group_chat_members (
+        group_id TEXT NOT NULL REFERENCES group_chats(id) ON DELETE CASCADE,
+        character_id TEXT NOT NULL REFERENCES characters(id) ON DELETE RESTRICT,
+        position INTEGER NOT NULL,
+        joined_at TEXT NOT NULL,
+        PRIMARY KEY(group_id, character_id),
+        UNIQUE(group_id, position)
+      );
+      CREATE INDEX group_chat_members_character_idx ON group_chat_members(character_id, group_id);
+
+      CREATE TABLE group_chat_turns (
+        id TEXT PRIMARY KEY,
+        group_id TEXT NOT NULL REFERENCES group_chats(id) ON DELETE CASCADE,
+        status TEXT NOT NULL CHECK (status IN ('running', 'completed', 'partial', 'failed', 'cancelled')),
+        model_calls INTEGER NOT NULL DEFAULT 0,
+        speaker_count INTEGER NOT NULL DEFAULT 0,
+        started_at TEXT NOT NULL,
+        completed_at TEXT
+      );
+      CREATE INDEX group_chat_turns_group_idx ON group_chat_turns(group_id, started_at DESC);
+
+      CREATE TABLE group_chat_messages (
+        id TEXT PRIMARY KEY,
+        group_id TEXT NOT NULL REFERENCES group_chats(id) ON DELETE CASCADE,
+        turn_id TEXT NOT NULL REFERENCES group_chat_turns(id) ON DELETE CASCADE,
+        sequence INTEGER NOT NULL,
+        sender_type TEXT NOT NULL CHECK (sender_type IN ('user', 'character', 'system')),
+        sender_id TEXT,
+        content TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        UNIQUE(group_id, sequence)
+      );
+      CREATE INDEX group_chat_messages_group_idx ON group_chat_messages(group_id, sequence);
+
+      CREATE TABLE group_chat_decisions (
+        id TEXT PRIMARY KEY,
+        turn_id TEXT NOT NULL REFERENCES group_chat_turns(id) ON DELETE CASCADE,
+        character_id TEXT NOT NULL,
+        outcome TEXT NOT NULL CHECK (outcome IN ('speak', 'silent', 'failed')),
+        reason_code TEXT NOT NULL,
+        model_profile_id TEXT,
+        model TEXT,
+        created_at TEXT NOT NULL,
+        UNIQUE(turn_id, character_id)
+      );
+    `,
+  },
+  {
+    version: 14,
+    sql: `
+      DROP INDEX model_context_traces_session_idx;
+      ALTER TABLE model_context_traces RENAME TO model_context_traces_legacy;
+      CREATE TABLE model_context_traces (
+        sequence INTEGER PRIMARY KEY AUTOINCREMENT,
+        id TEXT NOT NULL UNIQUE,
+        session_id TEXT NOT NULL,
+        mode TEXT NOT NULL CHECK (mode IN ('sms', 'rp')),
+        turn_kind TEXT NOT NULL CHECK (turn_kind IN ('user', 'reminder_due', 'group_gate', 'group_reply')),
+        request_text TEXT NOT NULL,
+        payload_json TEXT NOT NULL,
+        created_at TEXT NOT NULL
+      );
+      INSERT INTO model_context_traces(
+        sequence, id, session_id, mode, turn_kind, request_text, payload_json, created_at
+      )
+      SELECT sequence, id, session_id, mode, turn_kind, request_text, payload_json, created_at
+      FROM model_context_traces_legacy;
+      DROP TABLE model_context_traces_legacy;
+      CREATE INDEX model_context_traces_session_idx
+        ON model_context_traces(session_id, sequence DESC);
+    `,
+  },
+  {
+    version: 15,
+    sql: `
+      ALTER TABLE group_chat_turns ADD COLUMN message_count INTEGER NOT NULL DEFAULT 0;
+      UPDATE group_chat_turns
+      SET message_count = (
+        SELECT COUNT(*) FROM group_chat_messages
+        WHERE group_chat_messages.turn_id = group_chat_turns.id
+          AND group_chat_messages.sender_type = 'character'
+      );
+
+      ALTER TABLE group_chat_decisions RENAME TO group_chat_decisions_legacy;
+      CREATE TABLE group_chat_decisions (
+        id TEXT PRIMARY KEY,
+        turn_id TEXT NOT NULL REFERENCES group_chat_turns(id) ON DELETE CASCADE,
+        character_id TEXT NOT NULL,
+        outcome TEXT NOT NULL CHECK (outcome IN ('speak', 'silent', 'failed')),
+        reason_code TEXT NOT NULL,
+        model_profile_id TEXT,
+        model TEXT,
+        created_at TEXT NOT NULL
+      );
+      INSERT INTO group_chat_decisions(
+        id, turn_id, character_id, outcome, reason_code, model_profile_id, model, created_at
+      )
+      SELECT id, turn_id, character_id, outcome, reason_code, model_profile_id, model, created_at
+      FROM group_chat_decisions_legacy;
+      DROP TABLE group_chat_decisions_legacy;
+      CREATE INDEX group_chat_decisions_turn_idx
+        ON group_chat_decisions(turn_id, created_at, id);
+    `,
+  },
+  {
+    version: 16,
+    sql: `
+      DROP INDEX model_context_traces_session_idx;
+      ALTER TABLE model_context_traces RENAME TO model_context_traces_legacy;
+      CREATE TABLE model_context_traces (
+        sequence INTEGER PRIMARY KEY AUTOINCREMENT,
+        id TEXT NOT NULL UNIQUE,
+        session_id TEXT NOT NULL,
+        mode TEXT NOT NULL CHECK (mode IN ('sms', 'rp')),
+        turn_kind TEXT NOT NULL CHECK (turn_kind IN ('user', 'reminder_due', 'group_gate', 'group_reply', 'subagent')),
+        request_text TEXT NOT NULL,
+        payload_json TEXT NOT NULL,
+        created_at TEXT NOT NULL
+      );
+      INSERT INTO model_context_traces(
+        sequence, id, session_id, mode, turn_kind, request_text, payload_json, created_at
+      )
+      SELECT sequence, id, session_id, mode, turn_kind, request_text, payload_json, created_at
+      FROM model_context_traces_legacy;
+      DROP TABLE model_context_traces_legacy;
+      CREATE INDEX model_context_traces_session_idx
+        ON model_context_traces(session_id, sequence DESC);
+    `,
+  },
 ];
 
 export class AppDatabase {

@@ -12,6 +12,7 @@ export const userProfileMcpModuleId = "mcp:user-profile";
 export const tavilySearchMcpModuleId = "mcp:tavily-search";
 export const visionMcpModuleId = "mcp:vision";
 export const memoryCoordinatorMcpModuleId = "mcp:memory-coordinator";
+export const subagentMcpModuleId = "mcp:subagent";
 
 // Rounded from the current provider-facing tool definitions; tests keep these visible estimates intentional.
 const mcpEstimatedTokens = {
@@ -20,9 +21,26 @@ const mcpEstimatedTokens = {
   [visionMcpModuleId]: 420,
   [userProfileMcpModuleId]: 270,
   [memoryCoordinatorMcpModuleId]: 430,
+  [subagentMcpModuleId]: 390,
 } as const;
 
 const mcpDetails: Record<string, string> = {
+  [subagentMcpModuleId]: `# Subagent Delegation MCP
+
+## Tools
+
+- \`delegate_task\`: run one bounded task through an isolated worker, researcher, planner, or reviewer subagent.
+
+## Boundaries
+
+- Available only to direct SMS and RP conversations. Group chat actors do not receive this tool.
+- The subagent uses the current character's model binding but receives no private conversation transcript.
+- The parent must provide a self-contained task and only the supporting context the child needs.
+- Child tools are read-only: enabled Skill files, read-only Workspace, configured Tavily Search, and configured Vision MCP.
+- The child cannot change schedules, memory, user profile, SOUL.md, scenes, or Workspace files and cannot create another subagent.
+- A task is limited to eight model calls, 90 seconds, and 12,000 output characters. At most three tasks may run concurrently per private session.
+- Delegation is metered and disabled while composing background reminder messages.
+`,
   [memoryCoordinatorMcpModuleId]: `# Memory Coordinator MCP
 
 ## Tools
@@ -115,6 +133,16 @@ export class AgentModuleCatalog {
         .map((row) => [row.module_id, Boolean(row.enabled)]),
     );
     const modules: AgentModule[] = [
+      {
+        id: subagentMcpModuleId,
+        type: "mcp",
+        name: "Subagent Delegation MCP",
+        description: "将研究、规划、执行或审查任务委派给隔离的只读子 Agent；默认关闭，不进入群聊。",
+        source: "built-in",
+        enabled: settings.get(subagentMcpModuleId) ?? false,
+        defaultEnabled: false,
+        estimatedTokens: mcpEstimatedTokens[subagentMcpModuleId],
+      },
       {
         id: memoryCoordinatorMcpModuleId,
         type: "mcp",
@@ -240,6 +268,9 @@ export class AgentModuleCatalog {
       this.isEnabled(visionMcpModuleId)
         ? "Capability status: Vision MCP module is enabled."
         : "Capability status: Vision MCP module is disabled. Do not claim to inspect image pixels.",
+      this.isEnabled(subagentMcpModuleId)
+        ? "Capability status: Subagent delegation is enabled for bounded independent tasks. Do not delegate ordinary conversation, and provide each isolated child only the context it needs."
+        : "Capability status: Subagent delegation is disabled. Do not claim to create or consult a subagent.",
     ].join("\n");
   }
 

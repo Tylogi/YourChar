@@ -72,6 +72,21 @@ export type ModelApiConfigPatch = {
   maxTokens?: number | null;
 };
 
+export type ModelApiProfile = ModelApiConfig & {
+  id: string;
+  name: string;
+  isDefault: boolean;
+};
+
+export type ModelApiProfilePatch = ModelApiConfigPatch & {
+  name?: string;
+};
+
+export type ModelApiProfileCollection = {
+  defaultProfileId: string;
+  profiles: ModelApiProfile[];
+};
+
 export type ContextLogEntry = {
   id: string;
   sessionId: string;
@@ -92,7 +107,7 @@ export type ModelContextTrace = {
   id: string;
   sessionId: string;
   mode: Mode;
-  turnKind: "user" | "reminder_due";
+  turnKind: "user" | "reminder_due" | "group_gate" | "group_reply" | "subagent";
   requestText: string;
   payload: Record<string, unknown>;
   createdAt: string;

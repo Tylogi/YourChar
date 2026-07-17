@@ -19,6 +19,7 @@ and adds the RP companion domain on top:
 - runtime MCP/Skill discovery and persisted capability toggles;
 - optional Tavily live web search through a credential-isolated local MCP;
 - direct or independent Vision MCP image understanding for text-only primary models;
+- optional isolated private-chat subagents for bounded work, research, planning, and review;
 - a 2000-character profile summary plus durable reality/global memory;
 - persistent, retryable post-turn Memory Coordinator jobs with trusted review;
 - permission-gated workspace file tools and a Bubblewrap-isolated shell;
@@ -49,12 +50,17 @@ Module lifecycle and user-profile rules are documented in
 [`docs/agent-modules-and-user-profile.md`](docs/agent-modules-and-user-profile.md).
 Character identity and migration rules are documented in
 [`docs/character-soul.md`](docs/character-soul.md).
+Multi-model profiles, per-character routing, and bounded multi-character group
+chat scheduling are documented in
+[`docs/group-chat-multi-model.md`](docs/group-chat-multi-model.md).
 Workspace, shell, and protected-document permissions are documented in
 [`docs/workspace-capabilities.md`](docs/workspace-capabilities.md).
 Tavily module enablement, Key handling, tool limits, and test contracts are
 documented in [`docs/tavily-search-mcp.md`](docs/tavily-search-mcp.md).
 Vision routing, upload boundaries, caching, and test contracts are documented in
 [`docs/vision-mcp.md`](docs/vision-mcp.md).
+Private-chat delegation, child isolation, budgets, and test contracts are
+documented in [`docs/subagent-delegation.md`](docs/subagent-delegation.md).
 The current memory retrieval, context budget, resident snapshot, cache, and
 token-economics contracts are documented in
 [`docs/memory-architecture-r4.md`](docs/memory-architecture-r4.md). The capture
@@ -132,6 +138,10 @@ persistent scheduling, scheduler/outbox delivery, per-character SOUL.md and scen
 state, confirmed long-term memory retrieval, RP mutation confirmation, Schedule
 and Characters UI, isolated Agent test controls, SSE streaming/cancellation,
 diagnostics, export/deletion, persistent audit summaries, and browser automation.
+The current feature branch also adds versioned model profiles, per-character
+model selection, and persistent SMS/RP group chats with serial participation
+gates and bounded speaker turns. It also adds an optional Subagent Delegation
+MCP for isolated private-chat work without changing group-chat scheduling.
 M5 moves schedule operations behind an MCP server/client boundary and makes due
 reminders resume the originating Pi session before delivery. Debug also retains
 the latest 10 final provider request payloads, with role-colored messages and a

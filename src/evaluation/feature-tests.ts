@@ -7,7 +7,7 @@ import type { MemoryTargetRealm } from "../memory-coordinator/types.js";
 
 export type FeatureTestCase = {
   id: string;
-  category: "conversation" | "schedule" | "memory" | "search" | "workspace" | "character" | "vision";
+  category: "conversation" | "schedule" | "memory" | "search" | "workspace" | "character" | "vision" | "subagent";
   name: string;
   description: string;
   mode: Mode;
@@ -107,6 +107,16 @@ const cases: FeatureTestCase[] = [
     mode: "sms",
     input: "我的功能测试召回码是什么？只回答召回码。",
     requiredModules: ["mcp:memory-coordinator"],
+    requiredPermissions: [],
+  },
+  {
+    id: "subagent-delegation",
+    category: "subagent",
+    name: "私聊子 Agent 委派",
+    description: "验证主 Agent 调用 Subagent MCP，并在隔离上下文完成独立审查后汇总结果。",
+    mode: "sms",
+    input: "请委派一个 reviewer 子 Agent，独立检查‘每天凌晨整理第二天计划’这个习惯可能有哪些风险，然后汇总它的结论。",
+    requiredModules: ["mcp:subagent"],
     requiredPermissions: [],
   },
   {
@@ -394,6 +404,9 @@ function evaluateCase(
     rules.push(rule("confirmed-rp-memory", "创建当前角色已确认 RP 记忆", memory?.confirmed === true && memory.validity === "active", memory ? `${memory.validity}/${memory.confirmed}` : "missing"));
   } else if (definition.id === "cross-session-memory-recall") {
     rules.push(rule("memory-recalled", "回复召回测试码松针-17", /松针[-—]?17/u.test(reply), excerpt(reply)));
+  } else if (definition.id === "subagent-delegation") {
+    rules.push(rule("subagent-tool", "调用 delegate_task", hasAction(completedActions, "delegate_subagent"), actionEvidence(completedActions)));
+    rules.push(rule("subagent-model-calls", "发生独立子 Agent 模型调用", runtime.getModelRequestCount() >= 3, `${runtime.getModelRequestCount()} requests`));
   } else if (definition.id === "tavily-search-trigger") {
     rules.push(rule("tavily-tool", "调用 tavily_search", hasAction(completedActions, "tavily_search"), actionEvidence(completedActions)));
     rules.push(rule("source-url", "回复包含来源 URL", /https?:\/\//u.test(reply), excerpt(reply)));

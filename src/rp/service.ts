@@ -71,6 +71,7 @@ export class RpService {
     const character: CharacterProfile = {
       id,
       name,
+      modelProfileId: optionalModelProfileId(input.modelProfileId),
       soulMarkdown: soul.markdown,
       soulCharacterCount: soul.characterCount,
       soulMaxCharacters: soul.maxCharacters,
@@ -128,6 +129,9 @@ export class RpService {
     const next: CharacterProfile = {
       ...current,
       name,
+      modelProfileId: patch.modelProfileId === undefined
+        ? current.modelProfileId
+        : optionalModelProfileId(patch.modelProfileId),
       soulMarkdown: soul.markdown,
       soulCharacterCount: soul.characterCount,
       soulMaxCharacters: soul.maxCharacters,
@@ -421,6 +425,11 @@ export class RpService {
     this.setRealMutationStatus(mutation.id, "rejected");
     return undefined;
   }
+}
+
+function optionalModelProfileId(value: string | null | undefined): string | undefined {
+  if (value === null || value === undefined) return undefined;
+  return value.trim() || undefined;
 }
 
 function requiredText(value: string, field: string): string {

@@ -3,7 +3,7 @@ export function renderAppHtml(): string {
 <html lang="zh-CN">
 <head>
   <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-content" />
   <title>RP Agent</title>
   <style>
     :root {
@@ -25,6 +25,8 @@ export function renderAppHtml(): string {
       --control-height: 36px;
       --control-radius: 6px;
       --control-icon-size: 16px;
+      --app-height: 100dvh;
+      --visual-viewport-top: 0px;
     }
     * { box-sizing: border-box; }
     html,
@@ -42,6 +44,8 @@ export function renderAppHtml(): string {
     [hidden] { display: none !important; }
     .app {
       height: 100vh;
+      height: 100dvh;
+      height: var(--app-height, 100dvh);
       min-height: 0;
       display: grid;
       grid-template-rows: auto 1fr auto;
@@ -270,6 +274,57 @@ export function renderAppHtml(): string {
     .danger-button svg { width: var(--control-icon-size); height: var(--control-icon-size); }
     .danger-button:hover:not(:disabled) { background: #fff5f4; border-color: #d9938e; }
     .conversation-batch-actions button:disabled { opacity: 0.45; cursor: not-allowed; }
+    .group-avatar-cluster {
+      width: 100%;
+      height: 100%;
+      padding: 2px;
+      border-radius: inherit;
+      overflow: hidden;
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      grid-auto-rows: minmax(0, 1fr);
+      gap: 1px;
+      background: #d9dddb;
+    }
+    .group-avatar-cluster.members-1 { grid-template-columns: 1fr; }
+    .group-avatar-cluster.members-2 { display: flex; align-items: center; }
+    .group-avatar-cluster.members-2 > span { flex: 1 1 0; height: auto; aspect-ratio: 1; }
+    .group-avatar-cluster.members-3,
+    .group-avatar-cluster.members-4 {
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      grid-template-rows: repeat(2, minmax(0, 1fr));
+    }
+    .group-avatar-cluster.members-3 > span:first-child {
+      width: calc(50% - 0.5px);
+      grid-column: 1 / -1;
+      justify-self: center;
+    }
+    .group-avatar-cluster.members-5,
+    .group-avatar-cluster.members-6,
+    .group-avatar-cluster.members-7,
+    .group-avatar-cluster.members-8,
+    .group-avatar-cluster.members-9 { grid-template-rows: repeat(3, minmax(0, 1fr)); }
+    .group-avatar-cluster > span {
+      min-width: 0;
+      min-height: 0;
+      border-radius: 2px;
+      overflow: hidden;
+      display: grid;
+      place-items: center;
+      background: #edf3ef;
+      color: #176b45;
+      font-size: 8px;
+      font-weight: 700;
+    }
+    .group-avatar-cluster img { width: 100%; height: 100%; object-fit: cover; }
+    .group-avatar-cluster.compact { width: 28px; height: 28px; border-radius: 6px; }
+    .conversation-header-avatar.group {
+      width: 38px;
+      flex-basis: 38px;
+      overflow: hidden;
+      background: #d9dddb;
+    }
+    .conversation-header-avatar.group > .group-avatar-cluster { width: 100%; height: 100%; }
     .chat-thread { min-width: 0; min-height: 0; display: grid; grid-template-rows: 1fr auto; overflow: hidden; }
     .conversation-list-toggle { display: none; }
     .settings-page {
@@ -326,6 +381,37 @@ export function renderAppHtml(): string {
       flex-wrap: wrap;
       margin-top: 16px;
     }
+    .model-profile-bar {
+      display: grid;
+      grid-template-columns: minmax(180px, 1fr) auto auto auto;
+      gap: 8px;
+      align-items: center;
+      margin-bottom: 16px;
+      padding-bottom: 16px;
+      border-bottom: 1px solid var(--line);
+    }
+    .model-profile-bar select { min-width: 0; width: 100%; }
+    .new-conversation-kind { margin: 0; padding: 0; border: 0; }
+    .new-conversation-kind legend { margin-bottom: 7px; color: var(--muted); font-size: 12px; }
+    .group-conversation-fields { display: grid; gap: 12px; }
+    .group-member-picker {
+      max-height: 220px;
+      overflow: auto;
+      border-block: 1px solid var(--line);
+    }
+    .group-member-option {
+      min-height: 46px;
+      padding: 8px 2px;
+      display: grid;
+      grid-template-columns: 18px 32px minmax(0, 1fr);
+      gap: 9px;
+      align-items: center;
+      border-bottom: 1px solid var(--line);
+      cursor: pointer;
+    }
+    .group-member-option:last-child { border-bottom: 0; }
+    .group-member-option input { width: 16px; height: 16px; }
+    .group-member-option .conversation-group-avatar { width: 32px; height: 32px; }
     .vault-health-panel {
       height: min(164px, 28vh);
       min-height: 130px;
@@ -1337,6 +1423,7 @@ export function renderAppHtml(): string {
       .composer { grid-template-columns: 1fr; }
       .primary { width: 100%; }
       .settings-grid { grid-template-columns: 1fr; }
+      .model-profile-bar { grid-template-columns: minmax(0, 1fr) repeat(3, auto); }
       .schedule-form { grid-template-columns: 1fr; }
       .schedule-form > label { grid-column: auto; }
       .schedule-row { grid-template-columns: 1fr; }
@@ -2618,7 +2705,15 @@ export function renderAppHtml(): string {
     .scene-editor-form textarea { min-height: 92px; }
 
     @media (max-width: 900px) {
-      .app { grid-template-rows: 58px minmax(0, 1fr) 60px; }
+      .app {
+        position: fixed;
+        top: var(--visual-viewport-top, 0px);
+        right: 0;
+        left: 0;
+        width: 100%;
+        height: var(--app-height, 100dvh);
+        grid-template-rows: 58px minmax(0, 1fr) calc(60px + env(safe-area-inset-bottom, 0px));
+      }
       .header-right {
         grid-column: 1;
         grid-row: 1;
@@ -2656,6 +2751,12 @@ export function renderAppHtml(): string {
       .conversation-header-actions > .icon-button,
       .mobile-session-actions > .icon-button { width: 32px; height: 32px; }
       main { grid-column: 1; grid-row: 2; }
+      .header-left { height: calc(60px + env(safe-area-inset-bottom, 0px)); padding-bottom: env(safe-area-inset-bottom, 0px); }
+      .composer { padding-bottom: max(9px, env(safe-area-inset-bottom, 0px)); }
+      .composer textarea { font-size: 16px; }
+      body.keyboard-open .app { grid-template-rows: 58px minmax(0, 1fr) 0; }
+      body.keyboard-open .header-left { visibility: hidden; pointer-events: none; }
+      body.keyboard-open .composer { padding-bottom: 8px; }
       .scene-info-row { grid-template-columns: 72px minmax(0, 1fr); }
     }
   </style>
@@ -2849,7 +2950,8 @@ export function renderAppHtml(): string {
                     </div>
                     <span class="avatar-hint">自动裁剪为正方形，仅保存在本机。</span>
                   </div>
-                  <label class="full">名称<input id="characterName" required /></label>
+                  <label>名称<input id="characterName" required /></label>
+                  <label>使用模型<select id="characterModelProfile"><option value="">继承系统默认模型</option></select></label>
                   <div class="full character-soul-head">
                     <h4>SOUL.md</h4>
                     <span id="characterSoulCount" class="muted character-soul-count">0 / 8000</span>
@@ -3104,7 +3206,17 @@ export function renderAppHtml(): string {
           </div>
           <section id="modelSettingsPanel" class="management-panel settings-panel">
             <h3>模型 API</h3>
+            <div class="model-profile-bar">
+              <select id="apiProfileSelect" aria-label="模型配置"></select>
+              <button id="newApiProfileBtn" class="secondary icon-button" type="button" title="新建模型配置" aria-label="新建模型配置"><i data-lucide="plus" aria-hidden="true"></i></button>
+              <button id="defaultApiProfileBtn" class="secondary icon-button" type="button" title="设为系统默认" aria-label="设为系统默认"><i data-lucide="star" aria-hidden="true"></i></button>
+              <button id="deleteApiProfileBtn" class="secondary icon-button" type="button" title="删除模型配置" aria-label="删除模型配置"><i data-lucide="trash-2" aria-hidden="true"></i></button>
+            </div>
             <div class="settings-grid">
+              <div class="settings-field full">
+                <label for="apiProfileName">配置名称</label>
+                <input id="apiProfileName" placeholder="例如：红莉栖专用" />
+              </div>
               <label class="checkbox-row full">
                 <input id="apiEnabled" type="checkbox" />
                 <span>启用 OpenAI-compatible API</span>
@@ -3313,7 +3425,19 @@ export function renderAppHtml(): string {
         <button id="closeNewConversationBtn" class="secondary icon-button" type="button" title="关闭" aria-label="关闭新建对话"><i data-lucide="x" aria-hidden="true"></i></button>
       </div>
       <form id="newConversationForm" class="new-conversation-form">
-        <label class="settings-field"><span>角色</span><select id="newConversationCharacter"><option value="">请选择角色</option></select></label>
+        <fieldset class="new-conversation-kind">
+          <legend>对话类型</legend>
+          <div class="segmented" aria-label="新对话类型">
+            <button id="newConversationDirectBtn" class="active" type="button">单聊</button>
+            <button id="newConversationGroupBtn" type="button">群聊</button>
+          </div>
+        </fieldset>
+        <label id="newConversationCharacterField" class="settings-field"><span>角色</span><select id="newConversationCharacter"><option value="">请选择角色</option></select></label>
+        <div id="newConversationGroupFields" class="group-conversation-fields" hidden>
+          <label class="settings-field"><span>群聊名称</span><input id="newConversationGroupTitle" maxlength="80" placeholder="留空则使用角色名称" /></label>
+          <div class="settings-field"><span>群成员</span><div id="newConversationMembers" class="group-member-picker"></div></div>
+          <label class="settings-field"><span>每轮最多参与角色</span><input id="newConversationMaxSpeakers" type="number" min="1" max="8" value="3" /></label>
+        </div>
         <fieldset class="new-conversation-mode">
           <legend>模式</legend>
           <div class="segmented" aria-label="新会话模式">
@@ -3438,6 +3562,7 @@ export function renderAppHtml(): string {
       busy: false,
       sessions: [],
       archivedSessions: [],
+      archivedGroupChats: [],
       activeSessionId: "",
       sessionDraft: true,
       calendarCursor: new Date(new Date().getFullYear(), new Date().getMonth(), 1),
@@ -3453,6 +3578,12 @@ export function renderAppHtml(): string {
       workspaceCharacterId: "",
       characterTab: "settings",
       newConversationMode: "sms",
+      newConversationKind: "direct",
+      newConversationPreferredCharacterId: "",
+      groupChats: [],
+      activeConversationKind: "direct",
+      activeGroupId: "",
+      groupAbortController: null,
       currentScene: null,
       sceneEditing: false,
       pendingCharacterAvatarDataUrl: "",
@@ -3463,6 +3594,9 @@ export function renderAppHtml(): string {
       promptMode: "sms",
       systemPrompts: null,
       discoveredModels: [],
+      modelProfiles: [],
+      defaultModelProfileId: "",
+      selectedModelProfileId: "",
       discoveredVisionModels: [],
       pendingAttachments: [],
       attachmentUploadQueue: [],
@@ -3487,6 +3621,7 @@ export function renderAppHtml(): string {
       conversationListOpen: false,
       conversationBatchMode: false,
       selectedSessionIds: new Set(),
+      selectedGroupIds: new Set(),
       collapsedConversationGroups: new Set(),
       composingMessage: false,
       compositionEndedAt: 0,
@@ -3643,7 +3778,14 @@ export function renderAppHtml(): string {
       closeArchivedSessionsBtn: document.getElementById("closeArchivedSessionsBtn"),
       newConversationDialog: document.getElementById("newConversationDialog"),
       newConversationForm: document.getElementById("newConversationForm"),
+      newConversationDirectBtn: document.getElementById("newConversationDirectBtn"),
+      newConversationGroupBtn: document.getElementById("newConversationGroupBtn"),
+      newConversationCharacterField: document.getElementById("newConversationCharacterField"),
       newConversationCharacter: document.getElementById("newConversationCharacter"),
+      newConversationGroupFields: document.getElementById("newConversationGroupFields"),
+      newConversationGroupTitle: document.getElementById("newConversationGroupTitle"),
+      newConversationMembers: document.getElementById("newConversationMembers"),
+      newConversationMaxSpeakers: document.getElementById("newConversationMaxSpeakers"),
       newConversationSmsBtn: document.getElementById("newConversationSmsBtn"),
       newConversationRpBtn: document.getElementById("newConversationRpBtn"),
       newConversationError: document.getElementById("newConversationError"),
@@ -3738,6 +3880,7 @@ export function renderAppHtml(): string {
       characterMemoryPanel: document.getElementById("characterMemoryPanel"),
       characterForm: document.getElementById("characterForm"),
       characterName: document.getElementById("characterName"),
+      characterModelProfile: document.getElementById("characterModelProfile"),
       characterAvatarPreview: document.getElementById("characterAvatarPreview"),
       characterAvatarInput: document.getElementById("characterAvatarInput"),
       changeCharacterAvatarBtn: document.getElementById("changeCharacterAvatarBtn"),
@@ -3770,6 +3913,11 @@ export function renderAppHtml(): string {
       memoryState: document.getElementById("memoryState"),
       memoryList: document.getElementById("memoryList"),
       apiEnabled: document.getElementById("apiEnabled"),
+      apiProfileSelect: document.getElementById("apiProfileSelect"),
+      apiProfileName: document.getElementById("apiProfileName"),
+      newApiProfileBtn: document.getElementById("newApiProfileBtn"),
+      defaultApiProfileBtn: document.getElementById("defaultApiProfileBtn"),
+      deleteApiProfileBtn: document.getElementById("deleteApiProfileBtn"),
       apiVisionInputEnabled: document.getElementById("apiVisionInputEnabled"),
       apiBaseUrl: document.getElementById("apiBaseUrl"),
       apiModel: document.getElementById("apiModel"),
@@ -3847,6 +3995,10 @@ export function renderAppHtml(): string {
       runtimeState: document.getElementById("runtimeState")
     };
 
+    let mobileViewportFrame = 0;
+    let mobileViewportWidth = Math.round(window.visualViewport?.width || window.innerWidth);
+    let mobileViewportBaselineHeight = Math.round(window.visualViewport?.height || window.innerHeight);
+
     nodes.normalBtn.addEventListener("click", () => setUiMode("normal"));
     nodes.scheduleBtn.addEventListener("click", () => setUiMode("schedule"));
     nodes.charactersBtn.addEventListener("click", () => setUiMode("characters"));
@@ -3895,6 +4047,10 @@ export function renderAppHtml(): string {
     nodes.traceContent.addEventListener("toggle", updateTraceExpandButton, true);
     nodes.traceContent.addEventListener("click", jumpFromMemoryDiagnostic);
     nodes.saveApiSettingsBtn.addEventListener("click", () => saveApiSettings());
+    nodes.apiProfileSelect.addEventListener("change", selectApiProfile);
+    nodes.newApiProfileBtn.addEventListener("click", createApiProfile);
+    nodes.defaultApiProfileBtn.addEventListener("click", setDefaultApiProfile);
+    nodes.deleteApiProfileBtn.addEventListener("click", deleteApiProfile);
     nodes.testModelBtn.addEventListener("click", testModelConnection);
     nodes.discoverModelsBtn.addEventListener("click", discoverModels);
     nodes.clearApiKeyBtn.addEventListener("click", clearApiKey);
@@ -3937,6 +4093,9 @@ export function renderAppHtml(): string {
     nodes.mobileDeleteSessionBtn.addEventListener("click", () => runMobileSessionAction(deleteCurrentSession));
     nodes.mobileArchivedSessionsBtn.addEventListener("click", () => runMobileSessionAction(openArchivedSessions));
     nodes.newConversationForm.addEventListener("submit", createNewConversation);
+    nodes.newConversationDirectBtn.addEventListener("click", () => setNewConversationKind("direct"));
+    nodes.newConversationGroupBtn.addEventListener("click", () => setNewConversationKind("group"));
+    nodes.newConversationMembers.addEventListener("change", updateNewGroupControls);
     nodes.newConversationSmsBtn.addEventListener("click", () => setNewConversationMode("sms"));
     nodes.newConversationRpBtn.addEventListener("click", () => setNewConversationMode("rp"));
     nodes.closeNewConversationBtn.addEventListener("click", closeNewConversationDialog);
@@ -4042,6 +4201,8 @@ export function renderAppHtml(): string {
       state.compositionEndedAt = performance.now();
     });
     nodes.textInput.addEventListener("paste", pasteChatAttachments);
+    nodes.textInput.addEventListener("focus", scheduleMobileViewportSync);
+    nodes.textInput.addEventListener("blur", scheduleMobileViewportSync);
     nodes.textInput.addEventListener("keydown", async (event) => {
       if (event.key === "Enter" && !event.shiftKey) {
         const justCommittedComposition = performance.now() - state.compositionEndedAt < 100;
@@ -4068,12 +4229,58 @@ export function renderAppHtml(): string {
     renderMessages();
     refreshIcons();
     updateRpControls();
+    scheduleMobileViewportSync();
+    window.addEventListener("resize", scheduleMobileViewportSync, { passive: true });
+    window.addEventListener("orientationchange", scheduleMobileViewportSync, { passive: true });
+    window.visualViewport?.addEventListener("resize", scheduleMobileViewportSync, { passive: true });
+    window.visualViewport?.addEventListener("scroll", scheduleMobileViewportSync, { passive: true });
     void initializeChat();
     window.setInterval(() => {
       if (!state.busy && !state.sessionDraft && state.activeSessionId && state.uiMode === "normal") {
         void refreshSessionMessages(true);
       }
     }, 3000);
+
+    function scheduleMobileViewportSync() {
+      if (mobileViewportFrame) cancelAnimationFrame(mobileViewportFrame);
+      mobileViewportFrame = requestAnimationFrame(syncMobileViewport);
+    }
+
+    function syncMobileViewport() {
+      mobileViewportFrame = 0;
+      const root = document.documentElement;
+      const mobile = window.matchMedia("(max-width: 900px)").matches;
+      if (!mobile) {
+        document.body.classList.remove("keyboard-open");
+        root.style.setProperty("--app-height", "100dvh");
+        root.style.setProperty("--visual-viewport-top", "0px");
+        return;
+      }
+
+      const viewport = window.visualViewport;
+      const width = Math.round(viewport?.width || window.innerWidth);
+      const height = Math.max(1, Math.round(viewport?.height || window.innerHeight));
+      const offsetTop = Math.max(0, Math.round(viewport?.offsetTop || 0));
+      const inputFocused = document.activeElement === nodes.textInput;
+
+      if (Math.abs(width - mobileViewportWidth) > 48) {
+        mobileViewportWidth = width;
+        mobileViewportBaselineHeight = height;
+      } else if (!inputFocused) {
+        mobileViewportBaselineHeight = Math.max(mobileViewportBaselineHeight, height);
+      }
+
+      const keyboardOpen = inputFocused && mobileViewportBaselineHeight - height > 96;
+      root.style.setProperty("--app-height", height + "px");
+      root.style.setProperty("--visual-viewport-top", offsetTop + "px");
+      document.body.classList.toggle("keyboard-open", keyboardOpen);
+      if (keyboardOpen && state.uiMode === "normal") {
+        document.scrollingElement?.scrollTo(0, 0);
+        requestAnimationFrame(() => {
+          nodes.messages.scrollTop = nodes.messages.scrollHeight;
+        });
+      }
+    }
 
     function setUiMode(mode) {
       state.uiMode = mode;
@@ -4891,26 +5098,44 @@ export function renderAppHtml(): string {
     }
 
     async function initializeChat() {
-      await Promise.all([loadCharacters(), loadUserAvatarState()]);
+      await Promise.all([loadModelProfiles(), loadUserAvatarState()]);
+      await loadCharacters();
       await loadSessions();
     }
 
     async function loadSessions() {
       try {
-        const response = await fetch("/api/v1/sessions");
-        const body = await response.json();
+        const [response, groupResponse] = await Promise.all([
+          fetch("/api/v1/sessions"),
+          fetch("/api/v1/group-chats")
+        ]);
+        const [body, groupBody] = await Promise.all([response.json(), groupResponse.json()]);
         if (!response.ok) throw new Error(body.error || "会话加载失败");
+        if (!groupResponse.ok) throw new Error(groupBody.error || "群聊加载失败");
         state.sessions = Array.isArray(body.sessions)
           ? body.sessions.slice().sort((left, right) => String(right.updatedAt || "").localeCompare(String(left.updatedAt || "")))
           : [];
+        state.groupChats = Array.isArray(groupBody.groups)
+          ? groupBody.groups.slice().sort((left, right) => String(right.updatedAt || "").localeCompare(String(left.updatedAt || "")))
+          : [];
         renderConversationList();
         renderCharacterCards();
+        const currentGroup = state.groupChats.find((entry) => entry.id === state.activeGroupId);
+        if (state.activeConversationKind === "group" && currentGroup) {
+          await applyGroupChat(currentGroup);
+          return;
+        }
         const current = state.sessions.find((entry) => entry.id === state.activeSessionId);
         if (current) {
           await applySession(current);
           return;
         }
         const recentBound = state.sessions.find((entry) => entry.characterId);
+        const recentGroup = state.groupChats[0];
+        if (recentGroup && (!recentBound || String(recentGroup.updatedAt) > String(recentBound.updatedAt))) {
+          await applyGroupChat(recentGroup);
+          return;
+        }
         if (recentBound) {
           await applySession(recentBound);
           return;
@@ -4924,6 +5149,8 @@ export function renderAppHtml(): string {
 
     function startNewSession() {
       if (state.busy) return;
+      state.activeConversationKind = "direct";
+      state.activeGroupId = "";
       state.activeSessionId = generateSessionId();
       state.sessionDraft = true;
       state.messages = [];
@@ -4931,6 +5158,7 @@ export function renderAppHtml(): string {
       state.lastTurnCanRetry = false;
       updateRetryState();
       setSessionControlsLocked(false);
+      nodes.attachFileBtn.disabled = false;
       renderSessionOptions();
       setConversationListOpen(false);
       renderConversationList();
@@ -4943,18 +5171,29 @@ export function renderAppHtml(): string {
     let newConversationOpener = null;
 
     function openNewConversationDialog() {
-      if (state.busy || nodes.newConversationDialog.open) return;
+      if (nodes.newConversationDialog.open) return;
+      if (state.busy) {
+        setStatus("当前消息仍在生成，结束后再新建对话", true);
+        return;
+      }
       newConversationOpener = document.activeElement;
       const options = state.characters.map((character) =>
         '<option value="' + escapeHtml(character.id) + '">' + escapeHtml(character.name) + '</option>'
       ).join("");
       nodes.newConversationCharacter.innerHTML = '<option value="">请选择角色</option>' + options;
-      const preferredCharacter = state.selectedCharacterId && state.characters.some((entry) => entry.id === state.selectedCharacterId)
-        ? state.selectedCharacterId
-        : state.characters[0]?.id || "";
+      const preferredCharacter = [state.newConversationPreferredCharacterId, state.selectedCharacterId]
+        .find((id) => id && state.characters.some((entry) => entry.id === id)) || state.characters[0]?.id || "";
       nodes.newConversationCharacter.value = preferredCharacter;
+      nodes.newConversationGroupTitle.value = "";
+      nodes.newConversationMembers.innerHTML = state.characters.map((character, index) =>
+        '<label class="group-member-option"><input type="checkbox" value="' + escapeHtml(character.id) + '"' + (index < 2 ? ' checked' : '') + ' />' +
+          '<span class="conversation-group-avatar" style="--avatar-hue:' + avatarHue(character.name) + '">' + avatarImageOrInitial(character.avatarUrl, character.name) + '</span>' +
+          '<span><strong>' + escapeHtml(character.name) + '</strong></span></label>'
+      ).join("");
+      nodes.newConversationMaxSpeakers.value = String(Math.min(3, Math.max(1, state.characters.length)));
       nodes.newConversationError.textContent = state.characters.length ? "" : "请先在角色页创建角色。";
       nodes.createConversationBtn.disabled = !state.characters.length;
+      setNewConversationKind("direct");
       setNewConversationMode(nodes.modeSelect.value === "rp" ? "rp" : "sms");
       nodes.newConversationDialog.showModal();
       refreshIcons();
@@ -4974,14 +5213,70 @@ export function renderAppHtml(): string {
       nodes.newConversationRpBtn.classList.toggle("active", mode === "rp");
     }
 
-    function createNewConversation(event) {
+    function setNewConversationKind(kind) {
+      state.newConversationKind = kind === "group" ? "group" : "direct";
+      const group = state.newConversationKind === "group";
+      nodes.newConversationDirectBtn.classList.toggle("active", !group);
+      nodes.newConversationGroupBtn.classList.toggle("active", group);
+      nodes.newConversationCharacterField.hidden = group;
+      nodes.newConversationGroupFields.hidden = !group;
+      updateNewGroupControls();
+    }
+
+    function updateNewGroupControls() {
+      if (state.newConversationKind !== "group") {
+        nodes.createConversationBtn.disabled = !state.characters.length;
+        return;
+      }
+      const count = nodes.newConversationMembers.querySelectorAll('input[type="checkbox"]:checked').length;
+      nodes.newConversationMaxSpeakers.max = String(Math.max(1, count));
+      const current = Number(nodes.newConversationMaxSpeakers.value) || 1;
+      nodes.newConversationMaxSpeakers.value = String(Math.min(Math.max(1, current), Math.max(1, count)));
+      nodes.createConversationBtn.disabled = count < 2;
+      nodes.newConversationError.textContent = count < 2 ? "群聊至少需要选择两个角色。" : "";
+    }
+
+    async function createNewConversation(event) {
       event.preventDefault();
+      if (state.newConversationKind === "group") {
+        const characterIds = [...nodes.newConversationMembers.querySelectorAll('input[type="checkbox"]:checked')]
+          .map((input) => input.value);
+        if (characterIds.length < 2) {
+          nodes.newConversationError.textContent = "群聊至少需要选择两个角色。";
+          return;
+        }
+        nodes.createConversationBtn.disabled = true;
+        try {
+          const response = await fetch("/api/v1/group-chats", {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify({
+              title: nodes.newConversationGroupTitle.value.trim() || undefined,
+              mode: state.newConversationMode,
+              characterIds,
+              maxSpeakers: Number(nodes.newConversationMaxSpeakers.value) || Math.min(3, characterIds.length)
+            })
+          });
+          const body = await response.json();
+          if (!response.ok) throw new Error(body.error || "群聊创建失败");
+          state.groupChats = [body.group, ...state.groupChats.filter((entry) => entry.id !== body.group.id)];
+          state.newConversationPreferredCharacterId = "";
+          closeNewConversationDialog();
+          await applyGroupChat(body.group);
+          requestAnimationFrame(() => nodes.textInput.focus());
+        } catch (error) {
+          nodes.newConversationError.textContent = error.message || String(error);
+          nodes.createConversationBtn.disabled = false;
+        }
+        return;
+      }
       const characterId = nodes.newConversationCharacter.value;
       if (!characterId) {
         nodes.newConversationError.textContent = "请选择角色。";
         return;
       }
       state.selectedCharacterId = characterId;
+      state.newConversationPreferredCharacterId = "";
       nodes.chatCharacterSelect.value = characterId;
       nodes.modeSelect.value = state.newConversationMode;
       startNewSession();
@@ -4996,6 +5291,8 @@ export function renderAppHtml(): string {
     }
 
     async function applySession(session) {
+      state.activeConversationKind = "direct";
+      state.activeGroupId = "";
       state.activeSessionId = session.id;
       state.sessionDraft = false;
       state.lastTurnStatus = session.lastTurnStatus || null;
@@ -5005,6 +5302,7 @@ export function renderAppHtml(): string {
       state.selectedCharacterId = session.characterId || "";
       nodes.chatCharacterSelect.value = state.selectedCharacterId;
       setSessionControlsLocked(true);
+      nodes.attachFileBtn.disabled = false;
       renderSessionOptions();
       updateSessionActionState();
       updateChatIdentity();
@@ -5014,6 +5312,50 @@ export function renderAppHtml(): string {
       await loadConversationScene();
       if (!session.characterId) {
         setStatus("这是未绑定角色的旧会话，仅供查看；请新建会话后继续。", true);
+      }
+    }
+
+    async function applyGroupChat(group) {
+      state.activeConversationKind = "group";
+      state.activeGroupId = group.id;
+      state.activeSessionId = "";
+      state.sessionDraft = false;
+      state.selectedCharacterId = "";
+      state.lastTurnStatus = null;
+      state.lastTurnCanRetry = false;
+      nodes.modeSelect.value = group.mode === "rp" ? "rp" : "sms";
+      nodes.chatCharacterSelect.value = "";
+      nodes.attachFileBtn.disabled = true;
+      state.pendingAttachments = [];
+      renderAttachmentQueue();
+      setSessionControlsLocked(true);
+      updateRetryState();
+      updateSessionActionState();
+      updateChatIdentity();
+      setConversationListOpen(false);
+      renderConversationList();
+      clearConversationScene();
+      await refreshGroupMessages(false);
+    }
+
+    async function refreshGroupMessages(silent) {
+      if (state.activeConversationKind !== "group" || !state.activeGroupId) return;
+      if (!silent) setStatus("加载群聊...");
+      try {
+        const response = await fetch("/api/v1/group-chats/" + encodeURIComponent(state.activeGroupId) + "/messages");
+        const body = await response.json();
+        if (!response.ok) throw new Error(body.error || "群聊消息加载失败");
+        state.messages = (body.messages || []).map((message) => ({
+          role: message.senderType === "user" ? "user" : message.senderType === "character" ? "assistant" : "system",
+          text: message.content || "",
+          senderId: message.senderId || "",
+          groupMessageId: message.id,
+          at: message.createdAt ? new Date(message.createdAt).toLocaleTimeString() : ""
+        }));
+        renderMessages();
+        if (!silent) setStatus("就绪");
+      } catch (error) {
+        if (!silent) setStatus(error.message || String(error), true);
       }
     }
 
@@ -5045,7 +5387,9 @@ export function renderAppHtml(): string {
     function renderConversationList() {
       if (!nodes.conversationList) return;
       const availableSessionIds = new Set(state.sessions.map((session) => session.id));
+      const availableGroupIds = new Set(state.groupChats.map((group) => group.id));
       state.selectedSessionIds = new Set([...state.selectedSessionIds].filter((sessionId) => availableSessionIds.has(sessionId)));
+      state.selectedGroupIds = new Set([...state.selectedGroupIds].filter((groupId) => availableGroupIds.has(groupId)));
       const draft = state.sessionDraft && state.selectedCharacterId
         ? [{
             id: state.activeSessionId,
@@ -5058,7 +5402,8 @@ export function renderAppHtml(): string {
           }]
         : [];
       const conversations = [...draft, ...state.sessions];
-      if (!conversations.length) {
+      const groupSection = renderGroupConversationSection();
+      if (!conversations.length && !groupSection) {
         nodes.conversationList.innerHTML = '<div class="conversation-list-empty">点击右上角 + 开始新对话</div>';
         updateConversationBatchControls();
         return;
@@ -5069,7 +5414,7 @@ export function renderAppHtml(): string {
         if (!groups.has(key)) groups.set(key, []);
         groups.get(key).push(session);
       }
-      nodes.conversationList.innerHTML = [...groups.entries()].map(([groupKey, sessions]) => {
+      const directSections = [...groups.entries()].map(([groupKey, sessions]) => {
         const character = state.characters.find((entry) => entry.id === sessions[0]?.characterId);
         const identity = character?.name || "未绑定角色";
         const collapsed = state.collapsedConversationGroups.has(groupKey);
@@ -5089,8 +5434,34 @@ export function renderAppHtml(): string {
         return '<section class="conversation-group' + (collapsed ? ' collapsed' : '') + '" data-conversation-group="' + escapeHtml(groupKey) + '">' + head +
           '<div class="conversation-group-sessions"' + (collapsed && !state.conversationBatchMode ? ' hidden' : '') + '>' + items + '</div></section>';
       }).join("");
+      nodes.conversationList.innerHTML = groupSection + directSections;
       updateConversationBatchControls();
       refreshIcons();
+    }
+
+    function renderGroupConversationSection() {
+      if (!state.groupChats.length) return "";
+      const allSelected = state.groupChats.every((group) => state.selectedGroupIds.has(group.id));
+      const items = state.groupChats.map((group) => {
+        const active = state.activeConversationKind === "group" && group.id === state.activeGroupId;
+        const date = new Date(group.updatedAt || group.createdAt || 0);
+        const time = Number.isNaN(date.getTime()) ? "" : date.toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit" });
+        const members = group.characterIds.map((id) => state.characters.find((entry) => entry.id === id)).filter(Boolean);
+        const content = groupAvatarCluster(group, "compact") +
+          '<span class="conversation-copy"><span class="conversation-line"><strong>' + escapeHtml(group.title) + '</strong><span class="conversation-time">' + escapeHtml(time) + '</span></span>' +
+          '<span class="conversation-preview">' + escapeHtml((group.mode === "rp" ? "群体剧情" : "角色群聊") + " · " + members.length + " 人") + '</span></span>';
+        return state.conversationBatchMode
+          ? '<label class="conversation-item batch' + (active ? ' active' : '') + '"><input type="checkbox" data-group-chat-select="' + escapeHtml(group.id) + '" aria-label="选择群聊 ' + escapeHtml(group.title) + '"' + (state.selectedGroupIds.has(group.id) ? ' checked' : '') + ' />' + content + '</label>'
+          : '<button class="conversation-item' + (active ? ' active' : '') + '" type="button" data-group-chat-id="' + escapeHtml(group.id) + '">' + content + '</button>';
+      }).join("");
+      const head = state.conversationBatchMode
+        ? '<label class="conversation-group-head batch"><input type="checkbox" data-group-chat-select-all aria-label="选择全部群聊"' + (allSelected ? ' checked' : '') + ' />' +
+            '<span class="conversation-group-avatar"><i data-lucide="users-round" aria-hidden="true"></i></span>' +
+            '<span class="conversation-group-copy"><strong>群聊</strong><span>' + state.groupChats.length + ' 个会话</span></span></label>'
+        : '<div class="conversation-group-head"><span class="conversation-group-avatar"><i data-lucide="users-round" aria-hidden="true"></i></span>' +
+            '<span class="conversation-group-copy"><strong>群聊</strong><span>' + state.groupChats.length + ' 个会话</span></span></div>';
+      return '<section class="conversation-group">' + head +
+        '<div class="conversation-group-sessions">' + items + '</div></section>';
     }
 
     function conversationGroupKey(session) {
@@ -5122,8 +5493,8 @@ export function renderAppHtml(): string {
     }
 
     function updateConversationBatchControls() {
-      const selectedCount = state.selectedSessionIds.size;
-      const selectableCount = state.sessions.length;
+      const selectedCount = state.selectedSessionIds.size + state.selectedGroupIds.size;
+      const selectableCount = state.sessions.length + state.groupChats.length;
       nodes.conversationListTitle.textContent = state.conversationBatchMode ? "批量管理" : "会话";
       nodes.conversationBatchBar.hidden = !state.conversationBatchMode;
       nodes.sidebarArchivedSessionsBtn.hidden = state.conversationBatchMode;
@@ -5143,23 +5514,47 @@ export function renderAppHtml(): string {
       if (state.busy) return;
       state.conversationBatchMode = !state.conversationBatchMode;
       state.selectedSessionIds.clear();
+      state.selectedGroupIds.clear();
       renderConversationList();
     }
 
     function toggleAllConversationSelections() {
       if (!state.conversationBatchMode) return;
-      if (state.selectedSessionIds.size === state.sessions.length) state.selectedSessionIds.clear();
-      else state.selectedSessionIds = new Set(state.sessions.map((session) => session.id));
+      const allSelected = state.selectedSessionIds.size + state.selectedGroupIds.size === state.sessions.length + state.groupChats.length;
+      if (allSelected) {
+        state.selectedSessionIds.clear();
+        state.selectedGroupIds.clear();
+      } else {
+        state.selectedSessionIds = new Set(state.sessions.map((session) => session.id));
+        state.selectedGroupIds = new Set(state.groupChats.map((group) => group.id));
+      }
       renderConversationList();
     }
 
     function updateConversationBatchSelection(event) {
       if (!state.conversationBatchMode) return;
-      const groupInput = event.target.closest("input[data-conversation-group-select]");
+      const allGroupsInput = event.target.closest("input[data-group-chat-select-all]");
+      if (allGroupsInput) {
+        state.groupChats.forEach((group) => {
+          if (allGroupsInput.checked) state.selectedGroupIds.add(group.id);
+          else state.selectedGroupIds.delete(group.id);
+        });
+        renderConversationList();
+        return;
+      }
+      const groupInput = event.target.closest("input[data-group-chat-select]");
       if (groupInput) {
-        const groupKey = groupInput.dataset.conversationGroupSelect;
+        const groupId = groupInput.dataset.groupChatSelect;
+        if (groupInput.checked) state.selectedGroupIds.add(groupId);
+        else state.selectedGroupIds.delete(groupId);
+        renderConversationList();
+        return;
+      }
+      const characterGroupInput = event.target.closest("input[data-conversation-group-select]");
+      if (characterGroupInput) {
+        const groupKey = characterGroupInput.dataset.conversationGroupSelect;
         state.sessions.filter((session) => conversationGroupKey(session) === groupKey).forEach((session) => {
-          if (groupInput.checked) state.selectedSessionIds.add(session.id);
+          if (characterGroupInput.checked) state.selectedSessionIds.add(session.id);
           else state.selectedSessionIds.delete(session.id);
         });
         renderConversationList();
@@ -5174,39 +5569,46 @@ export function renderAppHtml(): string {
     }
 
     async function runConversationBatchAction(action) {
-      if (state.busy || !state.conversationBatchMode || !state.selectedSessionIds.size) return;
+      const selectedCount = state.selectedSessionIds.size + state.selectedGroupIds.size;
+      if (state.busy || !state.conversationBatchMode || !selectedCount) return;
       const sessionIds = [...state.selectedSessionIds];
+      const groupIds = [...state.selectedGroupIds];
       const deleting = action === "delete";
-      const confirmation = "永久删除 " + sessionIds.length + " 个会话";
+      const confirmation = "永久删除 " + selectedCount + " 个会话";
       const completed = await openActionDialog({
         title: deleting ? "批量永久删除" : "批量归档",
         description: deleting
-          ? "将永久删除选中的 " + sessionIds.length + " 个会话及其消息、场景和待确认操作。请输入“" + confirmation + "”确认。"
-          : "将选中的 " + sessionIds.length + " 个会话移入归档，之后仍可逐个恢复。",
+          ? "将永久删除选中的 " + selectedCount + " 个会话及其消息、场景和待确认操作。请输入“" + confirmation + "”确认。"
+          : "将选中的 " + selectedCount + " 个会话移入归档，之后仍可逐个恢复。",
         fieldLabel: deleting ? "输入确认短语" : undefined,
         value: "",
         confirmLabel: deleting ? "永久删除" : "归档",
         validate: deleting ? (value) => value === confirmation ? "" : "确认短语不匹配，未删除。" : undefined,
         onConfirm: async (value) => {
-          const response = await fetch("/api/v1/sessions/batch", {
+          const response = await fetch("/api/v1/conversations/batch", {
             method: "POST",
             headers: { "content-type": "application/json" },
-            body: JSON.stringify({ action, sessionIds, confirmation: deleting ? value : undefined })
+            body: JSON.stringify({ action, sessionIds, groupIds, confirmation: deleting ? value : undefined })
           });
           const body = await response.json();
           if (!response.ok) throw new Error(body.error || (deleting ? "批量删除失败" : "批量归档失败"));
         }
       });
       if (!completed) return;
-      const activeWasSelected = state.selectedSessionIds.has(state.activeSessionId);
+      const activeWasSelected = state.activeConversationKind === "group"
+        ? state.selectedGroupIds.has(state.activeGroupId)
+        : state.selectedSessionIds.has(state.activeSessionId);
       state.conversationBatchMode = false;
       state.selectedSessionIds.clear();
+      state.selectedGroupIds.clear();
       if (activeWasSelected) {
         state.activeSessionId = "";
+        state.activeGroupId = "";
+        state.activeConversationKind = "direct";
         state.sessionDraft = false;
       }
       await loadSessions();
-      setStatus(sessionIds.length + " 个会话已" + (deleting ? "永久删除" : "归档"));
+      setStatus(selectedCount + " 个会话已" + (deleting ? "永久删除" : "归档"));
     }
 
     function avatarHue(value) {
@@ -5225,6 +5627,12 @@ export function renderAppHtml(): string {
         return;
       }
       if (state.conversationBatchMode) return;
+      const groupItem = event.target.closest("button[data-group-chat-id]");
+      if (groupItem && !state.busy) {
+        const group = state.groupChats.find((entry) => entry.id === groupItem.dataset.groupChatId);
+        if (group) await applyGroupChat(group);
+        return;
+      }
       const item = event.target.closest("button[data-session-id]");
       if (!item || state.busy) return;
       if (item.dataset.sessionDraft) {
@@ -5285,7 +5693,7 @@ export function renderAppHtml(): string {
     }
 
     function updateSessionActionState() {
-      const disabled = state.sessionDraft || !state.activeSessionId;
+      const disabled = state.activeConversationKind === "group" || state.sessionDraft || !state.activeSessionId;
       nodes.renameSessionBtn.disabled = disabled;
       nodes.archiveSessionBtn.disabled = disabled;
       nodes.deleteSessionBtn.disabled = disabled;
@@ -5338,11 +5746,18 @@ export function renderAppHtml(): string {
 
     async function loadArchivedSessions() {
       try {
-        const response = await fetch("/api/v1/sessions?includeArchived=1");
-        const body = await response.json();
+        const [response, groupResponse] = await Promise.all([
+          fetch("/api/v1/sessions?includeArchived=1"),
+          fetch("/api/v1/group-chats?includeArchived=1")
+        ]);
+        const [body, groupBody] = await Promise.all([response.json(), groupResponse.json()]);
         if (!response.ok) throw new Error(body.error || "归档会话加载失败");
+        if (!groupResponse.ok) throw new Error(groupBody.error || "归档群聊加载失败");
         state.archivedSessions = (Array.isArray(body.sessions) ? body.sessions : [])
           .filter((session) => session.archivedAt)
+          .sort((left, right) => String(right.updatedAt || "").localeCompare(String(left.updatedAt || "")));
+        state.archivedGroupChats = (Array.isArray(groupBody.groups) ? groupBody.groups : [])
+          .filter((group) => group.status === "archived")
           .sort((left, right) => String(right.updatedAt || "").localeCompare(String(left.updatedAt || "")));
         renderArchivedSessions();
       } catch (error) {
@@ -5351,12 +5766,21 @@ export function renderAppHtml(): string {
     }
 
     function renderArchivedSessions() {
-      if (!state.archivedSessions.length) {
+      if (!state.archivedSessions.length && !state.archivedGroupChats.length) {
         nodes.archivedSessionList.innerHTML = '<div class="archived-empty">暂无归档会话</div>';
         refreshIcons();
         return;
       }
-      nodes.archivedSessionList.innerHTML = state.archivedSessions.map((session) =>
+      const groups = state.archivedGroupChats.map((group) =>
+        '<div class="archived-row" data-group-id="' + escapeHtml(group.id) + '">' +
+          '<div><strong title="' + escapeHtml(group.title) + '">' + escapeHtml(group.title) + '</strong>' +
+          '<span>群聊 · ' + group.characterIds.length + ' 人</span></div>' +
+          '<div class="archived-row-actions">' +
+            '<button class="secondary icon-button" type="button" data-archived-action="restore" title="恢复群聊" aria-label="恢复群聊"><i data-lucide="archive-restore" aria-hidden="true"></i></button>' +
+            '<button class="secondary icon-button" type="button" data-archived-action="delete" title="永久删除群聊" aria-label="永久删除归档群聊"><i data-lucide="trash-2" aria-hidden="true"></i></button>' +
+          '</div></div>'
+      ).join("");
+      const sessions = state.archivedSessions.map((session) =>
         '<div class="archived-row" data-session-id="' + escapeHtml(session.id) + '">' +
           '<div><strong title="' + escapeHtml(session.title || session.id) + '">' + escapeHtml(session.title || "旧会话") + '</strong>' +
           '<span title="' + escapeHtml(sessionLabel(session)) + '">' + escapeHtml(sessionLabel(session)) + '</span></div>' +
@@ -5365,12 +5789,38 @@ export function renderAppHtml(): string {
             '<button class="secondary icon-button" type="button" data-archived-action="delete" title="永久删除会话" aria-label="永久删除归档会话"><i data-lucide="trash-2" aria-hidden="true"></i></button>' +
           '</div></div>'
       ).join("");
+      nodes.archivedSessionList.innerHTML = groups + sessions;
       refreshIcons();
     }
 
     async function handleArchivedSessionAction(event) {
       const button = event.target.closest("button[data-archived-action]");
       if (!button) return;
+      const groupRow = button.closest("[data-group-id]");
+      if (groupRow) {
+        const group = state.archivedGroupChats.find((entry) => entry.id === groupRow.dataset.groupId);
+        if (!group) return;
+        if (button.dataset.archivedAction === "restore") {
+          try {
+            const response = await fetch("/api/v1/group-chats/" + encodeURIComponent(group.id) + "/restore", { method: "POST" });
+            const body = await response.json();
+            if (!response.ok) throw new Error(body.error || "恢复群聊失败");
+            nodes.archivedSessionsDialog.close();
+            state.activeGroupId = group.id;
+            state.activeConversationKind = "group";
+            await loadSessions();
+            setStatus("群聊已恢复");
+          } catch (error) {
+            setStatus(error.message || String(error), true);
+          }
+          return;
+        }
+        if (button.dataset.archivedAction === "delete" && await permanentlyDeleteGroup(group)) {
+          state.archivedGroupChats = state.archivedGroupChats.filter((entry) => entry.id !== group.id);
+          renderArchivedSessions();
+        }
+        return;
+      }
       const row = button.closest("[data-session-id]");
       const session = state.archivedSessions.find((entry) => entry.id === row?.dataset.sessionId);
       if (!session) return;
@@ -5407,6 +5857,27 @@ export function renderAppHtml(): string {
 
     async function permanentlyDeleteSession(session) {
       return openSessionActionDialog("delete", session);
+    }
+
+    async function permanentlyDeleteGroup(group) {
+      const expected = group.title;
+      return openActionDialog({
+        title: "永久删除群聊",
+        description: "群聊中的全部消息将无法恢复。请输入群聊名称“" + expected + "”确认删除。",
+        fieldLabel: "输入群聊名称确认",
+        value: "",
+        confirmLabel: "永久删除",
+        validate: (value) => value === expected ? "" : "群聊名称不匹配，未删除。",
+        onConfirm: async (value) => {
+          const response = await fetch("/api/v1/group-chats/" + encodeURIComponent(group.id), {
+            method: "DELETE",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify({ confirmation: "永久删除 " + value })
+          });
+          const body = await response.json();
+          if (!response.ok) throw new Error(body.error || "永久删除群聊失败");
+        }
+      });
     }
 
     function openSessionActionDialog(kind, session) {
@@ -5554,7 +6025,21 @@ export function renderAppHtml(): string {
         renderMessages();
         return;
       }
+      if (state.activeConversationKind === "group") {
+        const group = state.groupChats.find((entry) => entry.id === state.activeGroupId);
+        const members = group?.characterIds.map((id) => state.characters.find((entry) => entry.id === id)).filter(Boolean) || [];
+        nodes.conversationCharacter.textContent = group?.title || "群聊";
+        nodes.conversationMode.textContent = (group?.mode === "rp" ? "群体剧情" : "角色群聊") + " · " + members.length + " 人";
+        nodes.conversationHeaderAvatar.classList.add("group");
+        nodes.conversationHeaderAvatar.innerHTML = groupAvatarCluster(group);
+        nodes.conversationScene.hidden = true;
+        nodes.sceneInfoBtn.hidden = true;
+        renderConversationList();
+        renderMessages();
+        return;
+      }
       const character = state.characters.find((entry) => entry.id === state.selectedCharacterId);
+      nodes.conversationHeaderAvatar.classList.remove("group");
       nodes.conversationCharacter.textContent = character?.name || "未选择角色";
       nodes.conversationMode.textContent = nodes.modeSelect.value === "rp" ? "剧情演绎" : "角色私聊";
       nodes.conversationHeaderAvatar.style.setProperty("--avatar-hue", avatarHue(character?.name || "角色"));
@@ -5568,6 +6053,7 @@ export function renderAppHtml(): string {
       const characterMode = state.scheduleOwnerType === "character";
       const character = state.characters.find((entry) => entry.id === state.scheduleCharacterId);
       nodes.conversationCharacter.textContent = characterMode ? (character?.name || "未选择角色") : "我的日程";
+      nodes.conversationHeaderAvatar.classList.remove("group");
       nodes.conversationMode.textContent = characterMode ? "角色日程" : "现实日程";
       nodes.conversationHeaderAvatar.style.setProperty("--avatar-hue", avatarHue(characterMode ? character?.name || "角色" : "我"));
       nodes.conversationHeaderAvatar.innerHTML = characterMode
@@ -5583,6 +6069,7 @@ export function renderAppHtml(): string {
     async function loadConversationScene(preserveDialog = false) {
       clearConversationScene(!preserveDialog);
       if (
+        state.activeConversationKind === "group" ||
         state.sessionDraft ||
         nodes.modeSelect.value !== "rp" ||
         !state.activeSessionId ||
@@ -5711,6 +6198,13 @@ export function renderAppHtml(): string {
       const options = state.characters.map((character) =>
         '<option value="' + escapeHtml(character.id) + '">' + escapeHtml(character.name) + '</option>'
       ).join("");
+      const selectedCharacterModel = nodes.characterModelProfile.value;
+      nodes.characterModelProfile.innerHTML = '<option value="">继承系统默认模型</option>' + state.modelProfiles.map((profile) =>
+        '<option value="' + escapeHtml(profile.id) + '">' + escapeHtml(profile.name) + (profile.isDefault ? '（默认）' : '') + '</option>'
+      ).join("");
+      nodes.characterModelProfile.value = state.modelProfiles.some((profile) => profile.id === selectedCharacterModel)
+        ? selectedCharacterModel
+        : "";
       nodes.chatCharacterSelect.innerHTML = '<option value="">请创建或选择角色</option>' + options;
       nodes.chatCharacterSelect.value = state.selectedCharacterId;
       nodes.featureTestCharacter.innerHTML = '<option value="">选择测试角色</option>' + options;
@@ -5767,6 +6261,7 @@ export function renderAppHtml(): string {
       nodes.characterDetail.hidden = false;
       nodes.characterDetailTitle.textContent = character.name || "未命名角色";
       nodes.characterName.value = character.name || "";
+      nodes.characterModelProfile.value = character.modelProfileId || "";
       nodes.characterSoulMarkdown.value = character.soulMarkdown || "";
       state.pendingCharacterAvatarDataUrl = "";
       renderCharacterAvatarPreview();
@@ -5829,6 +6324,7 @@ export function renderAppHtml(): string {
       if ([...nodes.characterSoulMarkdown.value].length > 8000) return;
       const payload = {
         name: nodes.characterName.value.trim(),
+        modelProfileId: nodes.characterModelProfile.value || null,
         soulMarkdown: editing || nodes.characterSoulMarkdown.value
           ? nodes.characterSoulMarkdown.value
           : undefined
@@ -5847,6 +6343,7 @@ export function renderAppHtml(): string {
         const body = await response.json();
         if (!response.ok) throw new Error(body.error || "角色保存失败");
         state.workspaceCharacterId = body.character.id;
+        if (!editing) state.newConversationPreferredCharacterId = body.character.id;
         if (state.pendingCharacterAvatarDataUrl) {
           const avatarResponse = await fetch("/api/v1/avatars/characters/" + encodeURIComponent(body.character.id), {
             method: "PUT",
@@ -6901,6 +7398,11 @@ export function renderAppHtml(): string {
 
     async function sendMessage() {
       const rawText = nodes.textInput.value.trim();
+      if (state.activeConversationKind === "group") {
+        if (!rawText || state.busy) return;
+        await sendGroupChatMessage(rawText);
+        return;
+      }
       if ((!rawText && !state.pendingAttachments.length) || state.busy || state.uploadingAttachments) return;
       const attachments = [...state.pendingAttachments];
       const text = messageWithAttachments(rawText, attachments);
@@ -7068,6 +7570,110 @@ export function renderAppHtml(): string {
       }
     }
 
+    async function sendGroupChatMessage(text) {
+      const group = state.groupChats.find((entry) => entry.id === state.activeGroupId);
+      if (!group) {
+        setStatus("群聊不存在或已被删除。", true);
+        return;
+      }
+      state.busy = true;
+      state.lastTurnStatus = null;
+      state.lastTurnCanRetry = false;
+      nodes.sendBtn.disabled = true;
+      nodes.cancelMessageBtn.disabled = false;
+      nodes.retryMessageBtn.disabled = true;
+      nodes.textInput.value = "";
+      setStatus("群聊调度中...");
+      pushMessage("user", text);
+      const progressByCharacter = new Map();
+      const controller = new AbortController();
+      state.groupAbortController = controller;
+      let finalResponse;
+      try {
+        const response = await fetch("/api/v1/group-chats/" + encodeURIComponent(group.id) + "/messages/stream", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ text, timezone: Intl.DateTimeFormat().resolvedOptions().timeZone || "Asia/Shanghai" }),
+          signal: controller.signal
+        });
+        if (!response.ok) {
+          const body = await response.json().catch(() => ({}));
+          throw new Error(body.error || "群聊请求失败");
+        }
+        if (!response.body) throw new Error("群聊流式响应不可用");
+        await consumeEventStream(response.body, (event) => {
+          if (event.type === "participant_state") {
+            const character = state.characters.find((entry) => entry.id === event.characterId);
+            const label = character?.name || "角色";
+            let index = progressByCharacter.get(event.characterId);
+            if (event.phase === "typing") {
+              index = pushMessage("assistant", "", {
+                senderId: event.characterId,
+                working: true,
+                progressOpen: false,
+                progress: [{ key: "generation", label: "正在输入", status: "active" }]
+              });
+              progressByCharacter.set(event.characterId, index);
+              setStatus(label + " 正在输入...");
+            } else if (event.phase === "failed" && index !== undefined) {
+              state.messages.splice(index, 1);
+              progressByCharacter.delete(event.characterId);
+              for (const [id, storedIndex] of progressByCharacter) {
+                if (storedIndex > index) progressByCharacter.set(id, storedIndex - 1);
+              }
+              renderMessages();
+            }
+          }
+          if (event.type === "message") {
+            const index = progressByCharacter.get(event.message.senderId);
+            if (index !== undefined && state.messages[index]) {
+              state.messages[index].text = event.message.content || "";
+              state.messages[index].working = false;
+              completeMessageProgress(index, "completed");
+              progressByCharacter.delete(event.message.senderId);
+              renderMessages();
+            }
+          }
+          if (event.type === "done") finalResponse = event.response;
+          if (event.type === "error") throw new Error(event.error || "群聊调用失败");
+        });
+        if (!finalResponse) throw new Error("群聊流式响应提前结束");
+        state.lastTurnStatus = finalResponse.turn?.status || "completed";
+        await refreshGroupMessages(true);
+        await refreshGroupChatList();
+        const speakerCount = Number(finalResponse.turn?.speakerCount || 0);
+        const messageCount = Number(finalResponse.turn?.messageCount ?? finalResponse.messages?.length ?? 0);
+        const turnStatus = finalResponse.turn?.status || "completed";
+        setStatus(messageCount
+          ? speakerCount + " 个角色发送了 " + messageCount + " 条消息"
+          : turnStatus === "failed" || turnStatus === "partial"
+            ? "本轮角色调用失败，请在 Debug 中查看判定记录"
+            : "本轮没有角色选择发言",
+          !messageCount && (turnStatus === "failed" || turnStatus === "partial"));
+        if (state.uiMode === "debug") await loadDebugLogs();
+      } catch (error) {
+        await refreshGroupMessages(true);
+        if (error?.name === "AbortError") setStatus("群聊生成已停止");
+        else setStatus(error.message || String(error), true);
+      } finally {
+        state.groupAbortController = null;
+        state.busy = false;
+        nodes.sendBtn.disabled = false;
+        nodes.cancelMessageBtn.disabled = true;
+        updateRetryState();
+        nodes.textInput.focus();
+      }
+    }
+
+    async function refreshGroupChatList() {
+      const response = await fetch("/api/v1/group-chats");
+      const body = await response.json();
+      if (!response.ok) throw new Error(body.error || "群聊列表刷新失败");
+      state.groupChats = Array.isArray(body.groups) ? body.groups : [];
+      renderConversationList();
+      updateChatIdentity();
+    }
+
     async function consumeEventStream(stream, onEvent) {
       const reader = stream.getReader();
       const decoder = new TextDecoder();
@@ -7090,6 +7696,11 @@ export function renderAppHtml(): string {
 
     async function cancelMessage() {
       if (!state.busy) return;
+      if (state.activeConversationKind === "group") {
+        state.groupAbortController?.abort();
+        setStatus("正在停止群聊生成...");
+        return;
+      }
       const sessionId = encodeURIComponent(state.activeSessionId);
       try {
         await fetch("/api/v1/sessions/" + sessionId + "/messages/cancel", { method: "POST" });
@@ -7278,6 +7889,12 @@ export function renderAppHtml(): string {
 
     function renderMessages() {
       if (!state.messages.length) {
+        if (state.activeConversationKind === "group") {
+          const group = state.groupChats.find((entry) => entry.id === state.activeGroupId);
+          nodes.messages.innerHTML = '<div class="chat-empty"><span class="brand-mark group-empty-avatar">' + groupAvatarCluster(group) + '</span><strong>' + escapeHtml(group?.title || "群聊") + '</strong></div>';
+          refreshIcons();
+          return;
+        }
         const character = state.characters.find((entry) => entry.id === state.selectedCharacterId);
         const identity = character ? character.name : "请先创建或选择角色";
         nodes.messages.innerHTML = '<div class="chat-empty"><span class="brand-mark">' + avatarImageOrInitial(character?.avatarUrl, character?.name) + '</span><strong>' + escapeHtml(identity) + '</strong></div>';
@@ -7296,9 +7913,9 @@ export function renderAppHtml(): string {
         const hasText = Boolean(String(message.text || "").trim());
         const content = media + (hasText ? '<div class="bubble-text markdown-body">' + renderMarkdown(message.text, true) + '</div>' : '');
         const mediaOnly = media && !hasText ? " media-only" : "";
-        const meta = [roleLabel(message.role), message.at].filter(Boolean).join(" · ");
+        const meta = [roleLabel(message), message.at].filter(Boolean).join(" · ");
         return '<div class="message-row ' + escapeHtml(message.role) + '">' +
-          '<div class="message-avatar" aria-hidden="true">' + messageAvatar(message.role) + '</div>' +
+          '<div class="message-avatar" aria-hidden="true">' + messageAvatar(message) + '</div>' +
           '<div class="message-stack">' +
             '<span class="meta">' + escapeHtml(meta) + '</span>' +
             '<div class="message-bubble-row"><div class="bubble ' + escapeHtml(message.role) + mediaOnly + '">' + progress + content + '</div>' +
@@ -7463,11 +8080,20 @@ export function renderAppHtml(): string {
       if (button.dataset.systemAction === "retry") void retryMessage();
     }
 
-    function messageAvatar(role) {
-      if (role === "user") return avatarImageOrInitial(state.userAvatarUrl, "我", "我");
-      if (role === "tool") return '<i data-lucide="wrench" aria-hidden="true"></i>';
-      const character = state.characters.find((entry) => entry.id === state.selectedCharacterId);
+    function messageAvatar(message) {
+      if (message.role === "user") return avatarImageOrInitial(state.userAvatarUrl, "我", "我");
+      if (message.role === "tool") return '<i data-lucide="wrench" aria-hidden="true"></i>';
+      const character = state.characters.find((entry) => entry.id === (message.senderId || state.selectedCharacterId));
       return avatarImageOrInitial(character?.avatarUrl, character?.name);
+    }
+
+    function groupAvatarCluster(group, variant) {
+      const members = (group?.characterIds || []).slice(0, 9)
+        .map((id) => state.characters.find((entry) => entry.id === id)).filter(Boolean);
+      if (!members.length) return '<span class="group-avatar-cluster members-1' + (variant ? ' ' + escapeHtml(variant) : '') + '"><span><i data-lucide="users-round" aria-hidden="true"></i></span></span>';
+      return '<span class="group-avatar-cluster members-' + members.length + (variant ? ' ' + escapeHtml(variant) : '') + '">' + members.map((character) =>
+        '<span>' + avatarImageOrInitial(character.avatarUrl, character.name) + '</span>'
+      ).join("") + '</span>';
     }
 
     function avatarImageOrInitial(url, name, fallback) {
@@ -7697,7 +8323,7 @@ export function renderAppHtml(): string {
     }
 
     function updateRetryState() {
-      nodes.retryMessageBtn.disabled = state.busy || state.sessionDraft || !state.lastTurnCanRetry;
+      nodes.retryMessageBtn.disabled = state.activeConversationKind === "group" || state.busy || state.sessionDraft || !state.lastTurnCanRetry;
     }
 
     function toolDisplayName(name) {
@@ -7722,7 +8348,8 @@ export function renderAppHtml(): string {
         tavily_search: "Tavily 网页搜索",
         analyze_image: "分析图片",
         vision_auto_analyze: "分析图片",
-        vision_direct_input: "发送图片给主模型"
+        vision_direct_input: "发送图片给主模型",
+        delegate_task: "委派子 Agent"
       })[name] || name || "未知工具";
     }
 
@@ -7808,7 +8435,16 @@ export function renderAppHtml(): string {
     }
 
     function featureCategoryLabel(category) {
-      return ({ conversation: "对话", schedule: "日程", memory: "记忆", search: "搜索", workspace: "文件", character: "角色" })[category] || category;
+      return ({
+        conversation: "对话",
+        schedule: "日程",
+        memory: "记忆",
+        search: "搜索",
+        workspace: "文件",
+        character: "角色",
+        vision: "视觉",
+        subagent: "子 Agent"
+      })[category] || category;
     }
 
     function toggleAllFeatureTests() {
@@ -7879,12 +8515,31 @@ export function renderAppHtml(): string {
       ).join("");
     }
 
-    async function loadApiSettings() {
+    async function loadModelProfiles(preferredId) {
+      const response = await fetch("/api/v1/model-profiles");
+      const body = await response.json();
+      if (!response.ok) throw new Error(body.error || "模型配置加载失败");
+      state.modelProfiles = Array.isArray(body.profiles) ? body.profiles : [];
+      state.defaultModelProfileId = body.defaultProfileId || "";
+      const candidate = preferredId || state.selectedModelProfileId;
+      state.selectedModelProfileId = state.modelProfiles.some((profile) => profile.id === candidate)
+        ? candidate
+        : state.defaultModelProfileId || state.modelProfiles[0]?.id || "";
+      nodes.apiProfileSelect.innerHTML = state.modelProfiles.map((profile) =>
+        '<option value="' + escapeHtml(profile.id) + '">' + escapeHtml(profile.name) + (profile.isDefault ? '（系统默认）' : '') + '</option>'
+      ).join("");
+      nodes.apiProfileSelect.value = state.selectedModelProfileId;
+      nodes.deleteApiProfileBtn.disabled = state.modelProfiles.length <= 1;
+      nodes.defaultApiProfileBtn.disabled = state.selectedModelProfileId === state.defaultModelProfileId;
+      return state.modelProfiles.find((profile) => profile.id === state.selectedModelProfileId);
+    }
+
+    async function loadApiSettings(preferredId) {
       nodes.apiSettingsState.textContent = "加载中...";
       try {
-        const response = await fetch("/api/settings/model-api");
-        const config = await response.json();
-        if (!response.ok) throw new Error(config.error || "加载失败");
+        const config = await loadModelProfiles(preferredId);
+        if (!config) throw new Error("至少需要一个模型配置");
+        nodes.apiProfileName.value = config.name || "";
         nodes.apiEnabled.checked = Boolean(config.enabled);
         nodes.apiVisionInputEnabled.checked = Boolean(config.visionInputEnabled);
         nodes.apiBaseUrl.value = config.baseUrl || "";
@@ -7892,7 +8547,71 @@ export function renderAppHtml(): string {
         nodes.apiKey.value = "";
         nodes.apiTemperature.value = config.temperature ?? "";
         nodes.apiMaxTokens.value = config.maxTokens ?? "";
-        nodes.apiSettingsState.textContent = config.apiKeySet ? "Key: " + config.apiKeyMasked : "Key: 未设置";
+        nodes.apiSettingsState.textContent = (config.isDefault ? "系统默认 · " : "") +
+          (config.apiKeySet ? "Key: " + config.apiKeyMasked : "Key: 未设置");
+        renderCharacterOptions();
+      } catch (error) {
+        nodes.apiSettingsState.textContent = error.message || String(error);
+      }
+    }
+
+    function selectApiProfile() {
+      state.selectedModelProfileId = nodes.apiProfileSelect.value;
+      state.discoveredModels = [];
+      void loadApiSettings(state.selectedModelProfileId);
+    }
+
+    async function createApiProfile() {
+      nodes.newApiProfileBtn.disabled = true;
+      try {
+        const response = await fetch("/api/v1/model-profiles", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ name: "模型配置 " + (state.modelProfiles.length + 1) })
+        });
+        const body = await response.json();
+        if (!response.ok) throw new Error(body.error || "模型配置创建失败");
+        state.discoveredModels = [];
+        await loadApiSettings(body.profile.id);
+        nodes.apiProfileName.focus();
+        setStatus("模型配置已创建");
+      } catch (error) {
+        nodes.apiSettingsState.textContent = error.message || String(error);
+      } finally {
+        nodes.newApiProfileBtn.disabled = false;
+      }
+    }
+
+    async function setDefaultApiProfile() {
+      if (!state.selectedModelProfileId) return;
+      nodes.defaultApiProfileBtn.disabled = true;
+      try {
+        const response = await fetch("/api/v1/model-profiles/" + encodeURIComponent(state.selectedModelProfileId) + "/default", {
+          method: "POST"
+        });
+        const body = await response.json();
+        if (!response.ok) throw new Error(body.error || "默认模型设置失败");
+        await loadApiSettings(state.selectedModelProfileId);
+        setStatus("系统默认模型已更新");
+      } catch (error) {
+        nodes.apiSettingsState.textContent = error.message || String(error);
+      }
+    }
+
+    async function deleteApiProfile() {
+      const profile = state.modelProfiles.find((entry) => entry.id === state.selectedModelProfileId);
+      if (!profile || state.modelProfiles.length <= 1) return;
+      if (!window.confirm("删除模型配置“" + profile.name + "”？绑定该配置的角色将继承系统默认模型。")) return;
+      nodes.deleteApiProfileBtn.disabled = true;
+      try {
+        const response = await fetch("/api/v1/model-profiles/" + encodeURIComponent(profile.id), { method: "DELETE" });
+        const body = await response.json();
+        if (!response.ok) throw new Error(body.error || "模型配置删除失败");
+        state.selectedModelProfileId = body.defaultProfileId || body.profiles?.[0]?.id || "";
+        state.discoveredModels = [];
+        await loadApiSettings(state.selectedModelProfileId);
+        await loadCharacters();
+        setStatus("模型配置已删除");
       } catch (error) {
         nodes.apiSettingsState.textContent = error.message || String(error);
       }
@@ -8182,7 +8901,7 @@ export function renderAppHtml(): string {
       nodes.testModelBtn.disabled = true;
       try {
         await saveApiSettings(true);
-        const response = await fetch("/api/v1/diagnostics/model/test", { method: "POST" });
+        const response = await fetch("/api/v1/diagnostics/model/test?profileId=" + encodeURIComponent(state.selectedModelProfileId), { method: "POST" });
         const body = await response.json();
         if (!response.ok) throw new Error(body.error || "连接测试失败");
         nodes.apiSettingsState.textContent = "连接正常 · " + body.latencyMs + " ms";
@@ -8199,7 +8918,7 @@ export function renderAppHtml(): string {
       try {
         const selectedBefore = selectedModelName();
         await saveApiSettings(true);
-        const response = await fetch("/api/v1/diagnostics/model/models");
+        const response = await fetch("/api/v1/diagnostics/model/models?profileId=" + encodeURIComponent(state.selectedModelProfileId));
         const body = await response.json();
         if (!response.ok) throw new Error(body.error || "模型读取失败");
         state.discoveredModels = Array.isArray(body.models) ? body.models : [];
@@ -8434,6 +9153,7 @@ export function renderAppHtml(): string {
     async function saveApiSettings(rethrow) {
       nodes.apiSettingsState.textContent = "保存中...";
       const payload = {
+        name: nodes.apiProfileName.value.trim(),
         enabled: nodes.apiEnabled.checked,
         visionInputEnabled: nodes.apiVisionInputEnabled.checked,
         baseUrl: nodes.apiBaseUrl.value.trim(),
@@ -8445,15 +9165,19 @@ export function renderAppHtml(): string {
         payload.apiKey = nodes.apiKey.value;
       }
       try {
-        const response = await fetch("/api/settings/model-api", {
+        if (!state.selectedModelProfileId) throw new Error("请先选择模型配置");
+        const response = await fetch("/api/v1/model-profiles/" + encodeURIComponent(state.selectedModelProfileId), {
           method: "PATCH",
           headers: { "content-type": "application/json" },
           body: JSON.stringify(payload)
         });
-        const config = await response.json();
-        if (!response.ok) throw new Error(config.error || "保存失败");
+        const body = await response.json();
+        if (!response.ok) throw new Error(body.error || "保存失败");
+        const config = body.profile;
         nodes.apiKey.value = "";
         nodes.apiSettingsState.textContent = config.apiKeySet ? "已保存，Key: " + config.apiKeyMasked : "已保存，Key: 未设置";
+        await loadModelProfiles(config.id);
+        renderCharacterOptions();
         setStatus("API 设置已保存");
         return config;
       } catch (error) {
@@ -8467,13 +9191,14 @@ export function renderAppHtml(): string {
     async function clearApiKey() {
       nodes.apiSettingsState.textContent = "清除中...";
       try {
-        const response = await fetch("/api/settings/model-api", {
+        const response = await fetch("/api/v1/model-profiles/" + encodeURIComponent(state.selectedModelProfileId), {
           method: "PATCH",
           headers: { "content-type": "application/json" },
           body: JSON.stringify({ clearApiKey: true })
         });
-        const config = await response.json();
-        if (!response.ok) throw new Error(config.error || "清除失败");
+        const body = await response.json();
+        if (!response.ok) throw new Error(body.error || "清除失败");
+        const config = body.profile;
         nodes.apiKey.value = "";
         nodes.apiSettingsState.textContent = config.apiKeySet ? "Key: " + config.apiKeyMasked : "Key: 未设置";
         setStatus("API Key 已清除");
@@ -8512,7 +9237,7 @@ export function renderAppHtml(): string {
         return;
       }
       nodes.traceIndex.innerHTML = state.debugTraces.map((trace, index) => {
-        const turnLabel = trace.turnKind === "reminder_due" ? "主动提醒" : "用户消息";
+        const turnLabel = traceTurnLabel(trace.turnKind);
         return '<button class="trace-index-item' + (index === state.selectedTraceIndex ? ' active' : '') + '"' +
           ' type="button" data-trace-index="' + index + '" title="' + escapeHtml(trace.requestText || "") + '">' +
           '<span class="trace-index-title">' + escapeHtml(trace.requestText || "（无请求摘要）") + '</span>' +
@@ -8551,7 +9276,7 @@ export function renderAppHtml(): string {
         return;
       }
       const payload = trace.payload && typeof trace.payload === "object" ? trace.payload : {};
-      const turnLabel = trace.turnKind === "reminder_due" ? "主动提醒" : "用户消息";
+      const turnLabel = traceTurnLabel(trace.turnKind);
       const model = typeof payload.model === "string" ? payload.model : "未标明模型";
       nodes.traceEmpty.hidden = true;
       nodes.traceDetail.hidden = false;
@@ -8653,6 +9378,16 @@ export function renderAppHtml(): string {
       return Number.isNaN(date.getTime()) ? String(value || "") : date.toLocaleString();
     }
 
+    function traceTurnLabel(kind) {
+      return ({
+        user: "用户消息",
+        reminder_due: "主动提醒",
+        group_gate: "群聊判断",
+        group_reply: "群聊回复",
+        subagent: "子 Agent"
+      })[kind] || kind || "模型调用";
+    }
+
     function renderEconomicsBlocks(entry) {
       const actual = entry.actual || {};
       const actualValue = (value) => value === null || value === undefined ? "unknown" : Number(value).toLocaleString();
@@ -8750,13 +9485,13 @@ export function renderAppHtml(): string {
       return json === undefined ? String(value) : json;
     }
 
-    function roleLabel(role) {
-      if (role === "user") return "你";
-      if (role === "assistant") {
-        return state.characters.find((entry) => entry.id === state.selectedCharacterId)?.name || "角色";
+    function roleLabel(message) {
+      if (message.role === "user") return "你";
+      if (message.role === "assistant") {
+        return state.characters.find((entry) => entry.id === (message.senderId || state.selectedCharacterId))?.name || "角色";
       }
-      if (role === "tool") return "Tool";
-      return role;
+      if (message.role === "tool") return "Tool";
+      return message.role;
     }
 
     function setStatus(text, isError) {

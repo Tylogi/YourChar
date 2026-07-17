@@ -6,3 +6,4 @@ export * from "../pi/index.js";
 export * from "../schedule/index.js";
 export * from "../notifications/index.js";
 export * from "../rp/index.js";
+export * from "../group-chat/index.js";

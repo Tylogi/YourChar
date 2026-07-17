@@ -199,10 +199,11 @@ async function runDesktopWorkflow(browser, baseUrl, outputDir) {
   await planningModule.waitFor();
   await planningModule.locator('input[type="checkbox"]').check();
   await planningModule.getByText("已启用", { exact: true }).waitFor();
-  assert.equal(await page.locator(".module-row").count(), 7);
+  assert.equal(await page.locator(".module-row").count(), 8);
   await page.locator(".module-row").filter({ hasText: "Tavily Search MCP" }).waitFor();
-  assert.equal(await page.locator(".module-token").count(), 7);
+  assert.equal(await page.locator(".module-token").count(), 8);
   await page.locator(".module-row").filter({ hasText: "Memory Coordinator MCP" }).locator(".module-token").filter({ hasText: "约 430 tokens/轮" }).waitFor();
+  await page.locator(".module-row").filter({ hasText: "Subagent Delegation MCP" }).locator(".module-token").filter({ hasText: "约 390 tokens/轮" }).waitFor();
   await page.locator(".module-row").filter({ hasText: "Tavily Search MCP" }).locator(".module-token").filter({ hasText: "约 350 tokens/轮" }).waitFor();
   await page.locator(".module-row").filter({ hasText: "Vision MCP" }).locator(".module-token").filter({ hasText: "约 420 tokens/轮" }).waitFor();
   await planningModule.locator(".module-token").filter({ hasText: /索引约 .*全文约 .*tokens\/调用/ }).waitFor();
@@ -402,7 +403,7 @@ async function runDesktopWorkflow(browser, baseUrl, outputDir) {
   await page.locator("#scheduleList .schedule-row").filter({ hasText: "傍晚去河岸" }).waitFor({ state: "detached" });
 
   await page.getByRole("button", { name: "设置", exact: true }).click();
-  await page.route("**/api/v1/diagnostics/model/models", async (route) => {
+  await page.route("**/api/v1/diagnostics/model/models?**", async (route) => {
     await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ models: ["browser-model-a", "browser-model-b"] }) });
   });
   await page.locator("#apiBaseUrl").fill("http://127.0.0.1:8317/v1");
@@ -412,7 +413,7 @@ async function runDesktopWorkflow(browser, baseUrl, outputDir) {
   await page.locator("#apiModel").selectOption("browser-model-b");
   await page.getByRole("button", { name: "保存设置", exact: true }).click();
   await page.locator("#apiSettingsState").filter({ hasText: "已保存" }).waitFor();
-  await page.unroute("**/api/v1/diagnostics/model/models");
+  await page.unroute("**/api/v1/diagnostics/model/models?**");
 
   await page.getByRole("button", { name: "视觉", exact: true }).click();
   await page.locator("#visionSettingsState").filter({ hasText: "Key: 未设置" }).waitFor();
@@ -495,7 +496,7 @@ async function runDesktopWorkflow(browser, baseUrl, outputDir) {
   await page.getByRole("button", { name: "聊天", exact: true }).click();
   await page.getByRole("button", { name: "新建对话" }).click();
   await page.locator("#newConversationDialog").waitFor({ state: "visible" });
-  await page.locator("#newConversationCharacter").selectOption({ label: "林澈" });
+  assert.equal(await page.locator("#newConversationCharacter option:checked").textContent(), "林澈");
   await assertInteractiveBounds(page);
   await captureValidatedScreenshot(page, resolve(outputDir, "new-conversation-dialog.png"));
   await page.getByRole("button", { name: "开始对话", exact: true }).click();
@@ -557,6 +558,52 @@ async function runDesktopWorkflow(browser, baseUrl, outputDir) {
   await renamedSmsOption.waitFor({ state: "attached" });
   assert.match(await renamedSmsOption.textContent(), /日常私聊/);
   await captureValidatedScreenshot(page, resolve(outputDir, "session-renamed-sms.png"));
+
+  await page.getByRole("button", { name: "角色", exact: true }).click();
+  await page.getByRole("button", { name: "新建角色", exact: true }).click();
+  await page.locator("#characterName").fill("顾遥");
+  await page.locator("#characterSoulMarkdown").fill("# SOUL.md - 顾遥\n\n沉静、善于倾听，以第一人称自然交流。");
+  await page.getByRole("button", { name: "创建角色", exact: true }).click();
+  await page.locator("#characterState").filter({ hasText: "已创建" }).waitFor();
+  await page.locator("#characterCardGrid .character-card").filter({ hasText: "顾遥" }).waitFor();
+  await page.getByRole("button", { name: "聊天", exact: true }).click();
+  await page.getByRole("button", { name: "新建对话" }).click();
+  await page.locator("#newConversationDialog").waitFor({ state: "visible" });
+  assert.equal(await page.locator("#newConversationCharacter option:checked").textContent(), "顾遥");
+  await page.getByRole("button", { name: "群聊", exact: true }).click();
+  await page.locator("#newConversationGroupTitle").fill("河岸小组");
+  assert.equal(await page.locator('#newConversationMembers input[type="checkbox"]:checked').count(), 2);
+  await page.getByRole("button", { name: "开始对话", exact: true }).click();
+  await page.locator("#newConversationDialog").waitFor({ state: "hidden" });
+  await page.locator("#conversationCharacter").filter({ hasText: "河岸小组" }).waitFor();
+  await page.locator("#conversationMode").filter({ hasText: "角色群聊 · 2 人" }).waitFor();
+  assert.equal(await page.locator("#attachFileBtn").isDisabled(), true);
+  await page.locator("#textInput").fill("大家在吗？");
+  await page.locator("#textInput").press("Enter");
+  await page.locator("#status").filter({ hasText: "本轮角色调用失败" }).waitFor();
+  await page.locator("#messages .message-row.user").filter({ hasText: "大家在吗" }).waitFor();
+  assert.equal(await page.locator("#messages .message-row.assistant").count(), 0);
+  const groupConversationItem = page.locator("#conversationList button[data-group-chat-id]").filter({ hasText: "河岸小组" });
+  await groupConversationItem.waitFor();
+  assert.equal(await groupConversationItem.locator(".group-avatar-cluster.compact > span").count(), 2);
+  assert.equal(await page.locator("#conversationHeaderAvatar .group-avatar-cluster > span").count(), 2);
+  await captureValidatedScreenshot(page, resolve(outputDir, "group-chat.png"));
+
+  await page.getByRole("button", { name: "批量管理会话" }).click();
+  await page.getByRole("checkbox", { name: "选择群聊 河岸小组" }).check();
+  await page.locator("#conversationBatchCount").filter({ hasText: "已选 1 项" }).waitFor();
+  await captureValidatedScreenshot(page, resolve(outputDir, "group-chat-batch-selection.png"));
+  await page.locator("#conversationBatchArchiveBtn").click();
+  await page.locator("#sessionActionDialog").filter({ hasText: "批量归档" }).waitFor({ state: "visible" });
+  await page.locator("#confirmSessionActionBtn").click();
+  await page.locator("#sessionActionDialog").waitFor({ state: "hidden" });
+  await page.locator('#conversationList [data-group-chat-id]').filter({ hasText: "河岸小组" }).waitFor({ state: "detached" });
+  await page.locator("#sidebarArchivedSessionsBtn").click();
+  const archivedGroup = page.locator("#archivedSessionList [data-group-id]").filter({ hasText: "河岸小组" });
+  await archivedGroup.waitFor();
+  await archivedGroup.getByRole("button", { name: "恢复群聊" }).click();
+  await page.locator("#archivedSessionsDialog").waitFor({ state: "hidden" });
+  await page.locator('#conversationList [data-group-chat-id]').filter({ hasText: "河岸小组" }).waitFor();
 
   await page.getByRole("button", { name: "新建对话" }).click();
   await page.locator("#newConversationCharacter").selectOption({ label: "林澈" });
@@ -863,6 +910,10 @@ async function runDesktopWorkflow(browser, baseUrl, outputDir) {
   await page.getByRole("button", { name: "能力模块", exact: true }).click();
   const tavilyModule = page.locator(".module-row").filter({ hasText: "Tavily Search MCP" });
   const visionModule = page.locator(".module-row").filter({ hasText: "Vision MCP" });
+  const subagentModule = page.locator(".module-row").filter({ hasText: "Subagent Delegation MCP" });
+  await subagentModule.getByRole("button", { name: "查看 Subagent Delegation MCP 详情" }).click();
+  await page.locator("#moduleDetailContent").filter({ hasText: "delegate_task" }).filter({ hasText: "three tasks" }).waitFor();
+  await page.getByRole("button", { name: "关闭模块详情" }).click();
   await visionModule.getByRole("button", { name: "查看 Vision MCP 详情" }).click();
   await page.locator("#moduleDetailContent").filter({ hasText: "analyze_image" }).waitFor();
   await page.getByRole("button", { name: "关闭模块详情" }).click();
@@ -955,6 +1006,34 @@ async function runMobileWorkflow(browser, baseUrl, outputDir) {
   await captureValidatedScreenshot(page, resolve(outputDir, "mobile-role-chat.png"));
   assert.equal(await page.locator("#modeSelect").isDisabled(), true);
   assert.equal(await page.locator("#chatCharacterSelect").isDisabled(), true);
+  await page.locator("#textInput").focus();
+  await page.setViewportSize({ width: 390, height: 520 });
+  await page.waitForFunction(() => document.body.classList.contains("keyboard-open"));
+  const mobileKeyboardLayout = await page.evaluate(() => {
+    const viewport = window.visualViewport;
+    const app = document.querySelector(".app")?.getBoundingClientRect();
+    const composer = document.querySelector("#composer")?.getBoundingClientRect();
+    const messages = document.querySelector("#messages")?.getBoundingClientRect();
+    const mobileNav = document.querySelector(".header-left");
+    const input = document.querySelector("#textInput");
+    return {
+      viewportBottom: (viewport?.offsetTop || 0) + (viewport?.height || window.innerHeight),
+      appBottom: app?.bottom || 0,
+      composerBottom: composer?.bottom || 0,
+      messagesHeight: messages?.height || 0,
+      navVisible: mobileNav ? getComputedStyle(mobileNav).visibility !== "hidden" : true,
+      inputFontSize: input ? getComputedStyle(input).fontSize : "",
+    };
+  });
+  assert.equal(mobileKeyboardLayout.navVisible, false);
+  assert.equal(mobileKeyboardLayout.inputFontSize, "16px");
+  assert.ok(mobileKeyboardLayout.messagesHeight > 80);
+  assert.ok(mobileKeyboardLayout.appBottom <= mobileKeyboardLayout.viewportBottom + 1);
+  assert.ok(mobileKeyboardLayout.composerBottom <= mobileKeyboardLayout.viewportBottom + 1);
+  await captureValidatedScreenshot(page, resolve(outputDir, "mobile-keyboard-composer.png"));
+  await page.locator("#textInput").evaluate((element) => element.blur());
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.waitForFunction(() => !document.body.classList.contains("keyboard-open"));
   await page.getByRole("button", { name: "会话操作" }).click();
   await page.getByRole("menu").waitFor({ state: "visible" });
   await page.getByRole("menuitem", { name: "重命名会话", exact: true }).waitFor({ state: "visible" });

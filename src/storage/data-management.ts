@@ -46,6 +46,7 @@ export class DataManagementRepository {
         DELETE FROM reminder_occurrences;
         DELETE FROM schedule_items;
         DELETE FROM pending_real_mutations;
+        DELETE FROM group_chats;
         DELETE FROM rp_memories_fts;
         DELETE FROM rp_memories;
         DELETE FROM scene_states;

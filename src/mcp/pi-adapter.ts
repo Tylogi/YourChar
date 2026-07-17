@@ -14,6 +14,7 @@ export type McpPiBridge = {
 export async function connectMcpServerToPi(
   server: McpServer,
   clientName: string,
+  options: { executionMode?: "sequential" | "parallel" } = {},
 ): Promise<McpPiBridge> {
   const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
   const client = new Client({ name: clientName, version: "0.1.0" });
@@ -27,7 +28,7 @@ export async function connectMcpServerToPi(
         label: tool.annotations?.title ?? tool.name,
         description: tool.description ?? `MCP tool ${tool.name}`,
         parameters: Type.Unsafe<Record<string, unknown>>(tool.inputSchema as TSchema),
-        executionMode: "sequential",
+        executionMode: options.executionMode ?? "sequential",
         async execute(toolCallId, input, signal) {
           const result = await client.callTool(
             {

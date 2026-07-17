@@ -55,6 +55,7 @@ export class ContextPlanner {
     serviceContext: string;
     budgets?: Partial<ContextPlannerBudgets>;
     allowBootstrap?: boolean;
+    includeScene?: boolean;
   }): ContextPlan {
     const budgets = normalizeBudgets(input.budgets);
     const bootstrapAlreadyConsumed = this.economics.bootstrapConsumed(input.sessionId);
@@ -98,7 +99,7 @@ export class ContextPlanner {
       `Conversation mode: ${input.mode}`,
       input.characterId ? `Selected character ID: ${input.characterId}` : "",
     ];
-    let scene = input.mode === "rp" && input.characterId
+    let scene = input.includeScene !== false && input.mode === "rp" && input.characterId
       ? this.sceneSection(input.sessionId, input.characterId, budgets.sceneTokens)
       : { text: "", truncated: false, characters: 0, tokens: 0 };
     const runtime = createRuntimeEnvelope(this.clock.now(), input.timezone);
