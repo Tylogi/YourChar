@@ -30,6 +30,8 @@ test("server serves chat UI and debug model traces", async () => {
     assert.match(html, /语义上下文/);
     assert.match(html, /原始 JSON/);
     assert.match(html, /复制 Payload/);
+    assert.match(html, /上下文数量汇总/);
+    assert.match(html, /function traceContextQuantity/);
     assert.match(html, /模型 API/);
     assert.match(html, /id="apiModel"/);
     assert.match(html, /id="systemPromptCustom"/);
@@ -39,6 +41,8 @@ test("server serves chat UI and debug model traces", async () => {
     assert.match(html, /function clipboardFileExtension/);
     assert.match(html, /id="okfImportInput"/);
     assert.match(html, /id="stageOkfImportBtn"/);
+    assert.match(html, /id="traceArchiveEnabled"/);
+    assert.match(html, /api\/settings\/trace-archive/);
     assert.match(html, /function renderOkfImportPreview/);
     assert.match(html, /id="chatImageDialog"/);
     assert.match(html, /data-message-image/);
@@ -59,6 +63,7 @@ test("server serves chat UI and debug model traces", async () => {
     assert.match(html, /id="sidebarBatchManageBtn"/);
     assert.match(html, /id="conversationBatchBar"/);
     assert.match(html, /data-conversation-group-toggle/);
+    assert.match(html, /__group_chats__/);
     assert.match(html, /data-conversation-session-select/);
     assert.match(html, /data-session-draft/);
     assert.doesNotMatch(html, /id="sessionInput"/);
@@ -71,6 +76,8 @@ test("server serves chat UI and debug model traces", async () => {
     assert.match(html, /id="archivedSessionsDialog"/);
     assert.match(html, /data-system-action/);
     assert.match(html, /lastTurnCanRetry/);
+    assert.match(html, /sleepState/);
+    assert.match(html, /休息中/);
     assert.doesNotMatch(html, /lastTurnFailed|turnFailed|retryFailed/);
     assert.match(html, /id="schedulePage"/);
     assert.match(html, /id="userScheduleTabBtn"/);

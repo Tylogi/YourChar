@@ -1,6 +1,8 @@
 import {
   createFauxCore,
   fauxAssistantMessage,
+  fauxText,
+  fauxThinking,
   fauxToolCall,
   type Context,
   type FauxResponseFactory,
@@ -11,7 +13,10 @@ import { SeededIdGenerator } from "../app/id-generator.js";
 import { VirtualClock } from "../app/clock.js";
 import { CompanionKernel } from "../domain/kernel.js";
 import { CaptureNotificationSink } from "../notifications/sink.js";
-import type { PiModelResolver } from "../pi/session-runtime.js";
+import type {
+  ConversationLifecycleThresholds,
+  PiModelResolver,
+} from "../pi/session-runtime.js";
 import type { MemoryExtractor } from "../memory-coordinator/types.js";
 import type { RelationshipExtractor } from "../relationship/types.js";
 import type { VisionService } from "../vision/service.js";
@@ -21,6 +26,7 @@ export type ScriptedModelResponse =
   | {
       kind: "assistant_text";
       text: string;
+      thinking?: string;
       usage?: { input: number; output: number; cacheRead?: number; cacheWrite?: number };
     }
   | { kind: "tool_call"; name: string; arguments: Record<string, unknown>; id?: string }
@@ -46,6 +52,7 @@ export type CreateTestRuntimeOptions = {
   relationshipExtractor?: RelationshipExtractor;
   visionService?: VisionService;
   webReaderService?: WebReaderService;
+  conversationLifecycleThresholds?: Partial<ConversationLifecycleThresholds>;
 };
 
 export class ScriptedModelController {
@@ -95,7 +102,9 @@ export class ScriptedModelController {
       await options?.onPayload?.(providerPayload, model as Model<Api>);
       this.captureRequest(context, providerPayload);
       if (response.kind === "assistant_text") {
-        const message = fauxAssistantMessage(response.text);
+        const message = fauxAssistantMessage(response.thinking === undefined
+          ? response.text
+          : [fauxThinking(response.thinking), fauxText(response.text)]);
         if (response.usage) {
           message.usage = {
             input: response.usage.input,
@@ -169,6 +178,7 @@ export class TestRuntime {
       webReaderService: options.webReaderService,
       memoryExtractor: options.memoryExtractor ?? (async () => ({ candidates: [] })),
       relationshipExtractor: options.relationshipExtractor ?? (async () => ({ significant: false, confidence: 0 })),
+      conversationLifecycleThresholds: options.conversationLifecycleThresholds,
     });
     this.kernel.patchModelApiConfig({
       enabled: true,

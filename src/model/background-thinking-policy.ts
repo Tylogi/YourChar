@@ -14,6 +14,21 @@ type ModelIdentity = {
   model: string;
 };
 
+export const minimumInteractiveThinkingCharacters = 16;
+export const maxInteractiveThinkingRetries = 2;
+
+export function interactiveThinkingTemplateKwargs(
+  config: ModelIdentity,
+): Record<string, boolean> | undefined {
+  return supportsMlxThinkingControl(config.model)
+    ? { enable_thinking: true, preserve_thinking: true }
+    : undefined;
+}
+
+export function requiresInteractiveThinking(config: ModelIdentity): boolean {
+  return supportsMlxThinkingControl(config.model);
+}
+
 const budgets: Record<BackgroundThinkingScenario, { thinkingOff: number; fallback: number }> = {
   group_gate: { thinkingOff: 256, fallback: 768 },
   memory_extraction: { thinkingOff: 1_024, fallback: 2_400 },

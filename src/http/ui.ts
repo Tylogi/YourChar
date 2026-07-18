@@ -229,6 +229,7 @@ export function renderAppHtml(): string {
     .conversation-mode-icon svg { width: 14px; height: 14px; }
     .conversation-copy { min-width: 0; display: grid; gap: 4px; }
     .conversation-line { min-width: 0; display: flex; align-items: center; gap: 8px; }
+    .conversation-line > svg { width: 12px; height: 12px; flex: 0 0 auto; color: #69716c; }
     .conversation-line strong,
     .conversation-preview { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     .conversation-line strong { font-size: 13px; font-weight: 650; }
@@ -1377,6 +1378,21 @@ export function renderAppHtml(): string {
     .trace-block.schema { border-color: #0891b2; background: #ecfeff; }
     .trace-block.parameters { border-color: #64748b; background: #f8fafc; }
     .trace-block.economics { border-color: #5b6472; background: #f7f8fa; }
+    .trace-quantity-summary {
+      flex: 0 0 auto;
+      padding: 10px;
+      border: 1px solid var(--line);
+      background: #f8fafc;
+    }
+    .trace-quantity-head {
+      display: flex;
+      align-items: baseline;
+      justify-content: space-between;
+      gap: 12px;
+      margin-bottom: 8px;
+    }
+    .trace-quantity-head strong { font-size: 12px; }
+    .trace-quantity-head span { color: var(--muted); font-size: 10px; }
     .economics-grid {
       display: grid;
       grid-template-columns: repeat(4, minmax(0, 1fr));
@@ -3486,6 +3502,23 @@ export function renderAppHtml(): string {
               </div>
             </div>
             <div class="settings-data-section">
+              <h3>Trace 日志</h3>
+              <div class="settings-grid">
+                <label class="checkbox-row full">
+                  <input id="traceArchiveEnabled" type="checkbox" />
+                  <span>归档全部 Provider Trace</span>
+                </label>
+                <div class="settings-field full">
+                  <label for="traceArchivePath">JSONL 目录</label>
+                  <input id="traceArchivePath" readonly />
+                </div>
+              </div>
+              <div class="settings-actions">
+                <span id="traceArchiveState" class="muted" aria-live="polite"></span>
+              </div>
+              <p class="muted">日志包含完整对话、工具结果和模型请求。凭据字段会脱敏，但用户在正文中输入的敏感信息仍可能被记录。</p>
+            </div>
+            <div class="settings-data-section">
               <h3>数据管理</h3>
               <div class="settings-actions">
                 <button id="exportDataBtn" class="secondary" type="button">导出数据</button>
@@ -4068,6 +4101,9 @@ export function renderAppHtml(): string {
       memoryVaultRecovery: document.getElementById("memoryVaultRecovery"),
       memoryVaultProjection: document.getElementById("memoryVaultProjection"),
       memoryVaultBackup: document.getElementById("memoryVaultBackup"),
+      traceArchiveEnabled: document.getElementById("traceArchiveEnabled"),
+      traceArchivePath: document.getElementById("traceArchivePath"),
+      traceArchiveState: document.getElementById("traceArchiveState"),
       okfImportRealm: document.getElementById("okfImportRealm"),
       okfImportCharacterField: document.getElementById("okfImportCharacterField"),
       okfImportCharacter: document.getElementById("okfImportCharacter"),
@@ -4156,6 +4192,7 @@ export function renderAppHtml(): string {
     nodes.clearVisionApiKeyBtn.addEventListener("click", clearVisionApiKey);
     nodes.syncMemoryVaultBtn.addEventListener("click", () => runMemoryVaultAction("sync"));
     nodes.rebuildMemoryVaultBtn.addEventListener("click", () => runMemoryVaultAction("rebuild"));
+    nodes.traceArchiveEnabled.addEventListener("change", updateTraceArchiveSetting);
     nodes.exportOkfBtn.addEventListener("click", exportOkfBundle);
     nodes.selectOkfImportBtn.addEventListener("click", () => nodes.okfImportInput.click());
     nodes.okfImportInput.addEventListener("change", selectOkfImportBundle);
@@ -4458,6 +4495,7 @@ export function renderAppHtml(): string {
       if (tab === "data") {
         loadReadiness();
         loadMemoryVaultStatus();
+        loadTraceArchiveSettings();
       }
     }
 
@@ -5535,6 +5573,8 @@ export function renderAppHtml(): string {
 
     function renderGroupConversationSection() {
       if (!state.groupChats.length) return "";
+      const groupKey = "__group_chats__";
+      const collapsed = state.collapsedConversationGroups.has(groupKey);
       const allSelected = state.groupChats.every((group) => state.selectedGroupIds.has(group.id));
       const items = state.groupChats.map((group) => {
         const active = state.activeConversationKind === "group" && group.id === state.activeGroupId;
@@ -5552,10 +5592,12 @@ export function renderAppHtml(): string {
         ? '<label class="conversation-group-head batch"><input type="checkbox" data-group-chat-select-all aria-label="选择全部群聊"' + (allSelected ? ' checked' : '') + ' />' +
             '<span class="conversation-group-avatar"><i data-lucide="users-round" aria-hidden="true"></i></span>' +
             '<span class="conversation-group-copy"><strong>群聊</strong><span>' + state.groupChats.length + ' 个会话</span></span></label>'
-        : '<div class="conversation-group-head"><span class="conversation-group-avatar"><i data-lucide="users-round" aria-hidden="true"></i></span>' +
-            '<span class="conversation-group-copy"><strong>群聊</strong><span>' + state.groupChats.length + ' 个会话</span></span></div>';
-      return '<section class="conversation-group">' + head +
-        '<div class="conversation-group-sessions">' + items + '</div></section>';
+        : '<button class="conversation-group-head" type="button" data-conversation-group-toggle="' + groupKey + '" aria-expanded="' + String(!collapsed) + '">' +
+            '<span class="conversation-group-avatar"><i data-lucide="users-round" aria-hidden="true"></i></span>' +
+            '<span class="conversation-group-copy"><strong>群聊</strong><span>' + state.groupChats.length + ' 个会话</span></span>' +
+            '<i class="conversation-group-chevron" data-lucide="chevron-down" aria-hidden="true"></i></button>';
+      return '<section class="conversation-group' + (collapsed ? ' collapsed' : '') + '" data-conversation-group="' + groupKey + '">' + head +
+        '<div class="conversation-group-sessions"' + (collapsed && !state.conversationBatchMode ? ' hidden' : '') + '>' + items + '</div></section>';
     }
 
     function conversationGroupKey(session) {
@@ -5571,9 +5613,13 @@ export function renderAppHtml(): string {
       const rp = session.mode === "rp";
       const mode = rp ? "剧情演绎" : "角色私聊";
       const title = session.title || (session.draft ? "新会话" : mode);
-      const preview = session.preview && session.preview !== title ? mode + " · " + session.preview : mode;
+      const lifecycle = session.sleepState === "sleeping"
+        ? "休息中"
+        : session.sleepState === "tired" ? "有些困了" : "";
+      const previewText = session.preview && session.preview !== title ? mode + " · " + session.preview : mode;
+      const preview = [lifecycle, previewText].filter(Boolean).join(" · ");
       const content = '<span class="conversation-mode-icon' + (rp ? ' rp' : '') + '"><i data-lucide="' + (rp ? 'drama' : 'message-circle') + '" aria-hidden="true"></i></span>' +
-        '<span class="conversation-copy"><span class="conversation-line"><strong>' + escapeHtml(title) + '</strong><span class="conversation-time">' + escapeHtml(time) + '</span></span>' +
+        '<span class="conversation-copy"><span class="conversation-line"><strong>' + escapeHtml(title) + '</strong>' + (session.sleepState === "sleeping" ? '<i data-lucide="moon" aria-label="角色正在休息"></i>' : '') + '<span class="conversation-time">' + escapeHtml(time) + '</span></span>' +
         '<span class="conversation-preview">' + escapeHtml(preview) + '</span></span>';
       if (!state.conversationBatchMode) {
         return '<button class="conversation-item' + (active ? ' active' : '') + '" type="button" data-session-id="' + escapeHtml(session.id) + '"' +
@@ -5787,15 +5833,19 @@ export function renderAppHtml(): string {
     }
 
     function updateSessionActionState() {
-      const disabled = state.activeConversationKind === "group" || state.sessionDraft || !state.activeSessionId;
-      nodes.renameSessionBtn.disabled = disabled;
-      nodes.archiveSessionBtn.disabled = disabled;
-      nodes.deleteSessionBtn.disabled = disabled;
-      nodes.mobileRenameSessionBtn.disabled = disabled;
-      nodes.mobileArchiveSessionBtn.disabled = disabled;
-      nodes.mobileDeleteSessionBtn.disabled = disabled;
-      nodes.sessionActionsMenuBtn.hidden = disabled;
-      if (disabled) closeSessionActionsMenu();
+      const groupActive = state.activeConversationKind === "group" && Boolean(state.activeGroupId);
+      const directActive = state.activeConversationKind === "direct" && !state.sessionDraft && Boolean(state.activeSessionId);
+      nodes.renameSessionBtn.disabled = !directActive;
+      nodes.archiveSessionBtn.disabled = !directActive && !groupActive;
+      nodes.deleteSessionBtn.disabled = !directActive && !groupActive;
+      nodes.mobileRenameSessionBtn.disabled = !directActive;
+      nodes.mobileRenameSessionBtn.hidden = groupActive;
+      nodes.mobileArchiveSessionBtn.disabled = !directActive && !groupActive;
+      nodes.mobileDeleteSessionBtn.disabled = !directActive && !groupActive;
+      nodes.mobileArchiveSessionBtn.querySelector("span").textContent = groupActive ? "归档群聊" : "归档会话";
+      nodes.mobileDeleteSessionBtn.querySelector("span").textContent = groupActive ? "永久删除群聊" : "永久删除会话";
+      nodes.sessionActionsMenuBtn.hidden = !directActive && !groupActive;
+      if (!directActive && !groupActive) closeSessionActionsMenu();
     }
 
     async function renameCurrentSession() {
@@ -5807,7 +5857,31 @@ export function renderAppHtml(): string {
     }
 
     async function archiveCurrentSession() {
-      if (state.busy || state.sessionDraft || !state.activeSessionId) return;
+      if (state.busy || state.sessionDraft) return;
+      if (state.activeConversationKind === "group") {
+        const group = state.groupChats.find((entry) => entry.id === state.activeGroupId);
+        if (!group) return;
+        const archived = await openActionDialog({
+          title: "归档群聊",
+          description: "归档“" + group.title + "”后，将切换到最近的可用会话，并可在归档会话中恢复。",
+          confirmLabel: "归档",
+          onConfirm: async () => {
+            const response = await fetch("/api/v1/group-chats/" + encodeURIComponent(group.id) + "/archive", {
+              method: "POST"
+            });
+            const body = await response.json();
+            if (!response.ok) throw new Error(body.error || "归档群聊失败");
+          }
+        });
+        if (!archived) return;
+        state.groupChats = state.groupChats.filter((entry) => entry.id !== group.id);
+        state.activeGroupId = "";
+        state.activeConversationKind = "direct";
+        await loadSessions();
+        setStatus("群聊已归档");
+        return;
+      }
+      if (!state.activeSessionId) return;
       const archivedId = state.activeSessionId;
       const current = state.sessions.find((entry) => entry.id === archivedId);
       const archived = await openActionDialog({
@@ -5939,7 +6013,18 @@ export function renderAppHtml(): string {
     }
 
     async function deleteCurrentSession() {
-      if (state.busy || state.sessionDraft || !state.activeSessionId) return;
+      if (state.busy || state.sessionDraft) return;
+      if (state.activeConversationKind === "group") {
+        const group = state.groupChats.find((entry) => entry.id === state.activeGroupId);
+        if (!group || !await permanentlyDeleteGroup(group)) return;
+        state.groupChats = state.groupChats.filter((entry) => entry.id !== group.id);
+        state.activeGroupId = "";
+        state.activeConversationKind = "direct";
+        await loadSessions();
+        setStatus("群聊已永久删除");
+        return;
+      }
+      if (!state.activeSessionId) return;
       const session = state.sessions.find((entry) => entry.id === state.activeSessionId);
       if (!session || !await permanentlyDeleteSession(session)) return;
       state.sessions = state.sessions.filter((entry) => entry.id !== session.id);
@@ -8601,9 +8686,12 @@ export function renderAppHtml(): string {
       try {
         const [tracesResponse, economicsResponse] = await Promise.all([
           fetch("/api/debug/model-traces?limit=10"),
-          fetch("/api/debug/context-economics?limit=100")
+          fetch("/api/debug/context-economics?limit=30")
         ]);
-        const [tracesBody, economicsBody] = await Promise.all([tracesResponse.json(), economicsResponse.json()]);
+        const [tracesBody, economicsBody] = await Promise.all([
+          readJsonApiResponse(tracesResponse, "Provider Trace"),
+          readJsonApiResponse(economicsResponse, "Context Economics")
+        ]);
         if (!tracesResponse.ok) throw new Error(tracesBody.error || "Trace 加载失败");
         if (!economicsResponse.ok) throw new Error(economicsBody.error || "Economics 加载失败");
         state.debugEconomics = Array.isArray(economicsBody.economics) ? economicsBody.economics : [];
@@ -8613,6 +8701,19 @@ export function renderAppHtml(): string {
         nodes.traceIndex.innerHTML = "";
         nodes.traceEmpty.hidden = false;
         nodes.traceEmpty.innerHTML = '<span class="error">' + escapeHtml(error.message || String(error)) + '</span>';
+      }
+    }
+
+    async function readJsonApiResponse(response, label) {
+      const contentType = response.headers.get("content-type") || "";
+      if (!contentType.toLowerCase().includes("application/json")) {
+        await response.body?.cancel().catch(() => {});
+        throw new Error(label + " 返回了非 JSON 响应（HTTP " + response.status + "），服务可能正在重启");
+      }
+      try {
+        return await response.json();
+      } catch {
+        throw new Error(label + " 返回的 JSON 不完整，请重试");
       }
     }
 
@@ -9341,6 +9442,49 @@ export function renderAppHtml(): string {
       }
     }
 
+    async function loadTraceArchiveSettings() {
+      nodes.traceArchiveEnabled.disabled = true;
+      nodes.traceArchiveState.textContent = "加载中...";
+      try {
+        const response = await fetch("/api/settings/trace-archive");
+        const body = await response.json();
+        if (!response.ok) throw new Error(body.error || "Trace 日志状态读取失败");
+        renderTraceArchiveSettings(body);
+      } catch (error) {
+        nodes.traceArchiveState.textContent = error.message || String(error);
+      }
+    }
+
+    function renderTraceArchiveSettings(status) {
+      nodes.traceArchiveEnabled.checked = Boolean(status.enabled);
+      nodes.traceArchiveEnabled.disabled = !status.available;
+      nodes.traceArchivePath.value = status.directory || "仅持久化运行模式可用";
+      const usage = Number(status.files || 0) + " 个文件 · " + formatFileSize(status.totalBytes || 0);
+      nodes.traceArchiveState.textContent = status.lastError
+        ? "写入失败 · " + status.lastError
+        : (status.enabled ? "已开启 · " : "已关闭 · ") + usage;
+    }
+
+    async function updateTraceArchiveSetting() {
+      const enabled = nodes.traceArchiveEnabled.checked;
+      nodes.traceArchiveEnabled.disabled = true;
+      nodes.traceArchiveState.textContent = enabled ? "开启中..." : "关闭中...";
+      try {
+        const response = await fetch("/api/settings/trace-archive", {
+          method: "PATCH",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ enabled })
+        });
+        const body = await response.json();
+        if (!response.ok) throw new Error(body.error || "Trace 日志设置失败");
+        renderTraceArchiveSettings(body);
+      } catch (error) {
+        nodes.traceArchiveEnabled.checked = !enabled;
+        nodes.traceArchiveEnabled.disabled = false;
+        nodes.traceArchiveState.textContent = error.message || String(error);
+      }
+    }
+
     async function runMemoryVaultAction(action) {
       nodes.syncMemoryVaultBtn.disabled = true;
       nodes.rebuildMemoryVaultBtn.disabled = true;
@@ -9478,10 +9622,12 @@ export function renderAppHtml(): string {
       }
       nodes.traceIndex.innerHTML = state.debugTraces.map((trace, index) => {
         const turnLabel = traceTurnLabel(trace.turnKind);
+        const quantity = traceContextQuantity(trace.payload);
         return '<button class="trace-index-item' + (index === state.selectedTraceIndex ? ' active' : '') + '"' +
           ' type="button" data-trace-index="' + index + '" title="' + escapeHtml(trace.requestText || "") + '">' +
           '<span class="trace-index-title">' + escapeHtml(trace.requestText || "（无请求摘要）") + '</span>' +
-          '<span class="trace-index-meta">#' + (index + 1) + ' · ' + escapeHtml(trace.mode || "") + ' · ' + turnLabel + '<br>' + escapeHtml(formatTraceTime(trace.createdAt)) + '</span>' +
+          '<span class="trace-index-meta">#' + (index + 1) + ' · ' + escapeHtml(trace.mode || "") + ' · ' + turnLabel +
+            '<br>' + quantity.total + ' 条上下文 · ' + quantity.toolSchemas + ' 个 Schema · ' + escapeHtml(formatTraceTime(trace.createdAt)) + '</span>' +
         '</button>';
       }).join("");
       if (!state.debugTraces.length) showEmptyDebug("暂无模型请求 Trace。启用模型并发送消息后会显示记录。");
@@ -9516,12 +9662,21 @@ export function renderAppHtml(): string {
         return;
       }
       const payload = trace.payload && typeof trace.payload === "object" ? trace.payload : {};
+      const quantity = traceContextQuantity(payload);
       const turnLabel = traceTurnLabel(trace.turnKind);
       const model = typeof payload.model === "string" ? payload.model : "未标明模型";
       nodes.traceEmpty.hidden = true;
       nodes.traceDetail.hidden = false;
       nodes.traceDetailTitle.textContent = trace.requestText || "（无请求摘要）";
-      nodes.traceDetailMeta.textContent = [trace.sessionId, trace.mode, turnLabel, model, formatTraceTime(trace.createdAt)].filter(Boolean).join(" · ");
+      nodes.traceDetailMeta.textContent = [
+        trace.sessionId,
+        trace.mode,
+        turnLabel,
+        model,
+        quantity.total + " 条上下文",
+        quantity.toolSchemas + " 个 Schema",
+        formatTraceTime(trace.createdAt)
+      ].filter(Boolean).join(" · ");
       nodes.traceSemanticBtn.classList.toggle("active", state.traceView === "semantic");
       nodes.traceRawBtn.classList.toggle("active", state.traceView === "raw");
       nodes.traceSemanticBtn.setAttribute("aria-selected", String(state.traceView === "semantic"));
@@ -9534,7 +9689,7 @@ export function renderAppHtml(): string {
       if (state.traceView === "raw") {
         nodes.traceContent.innerHTML = '<pre class="trace-json">' + escapeHtml(formatTraceValue(payload)) + '</pre>';
       } else {
-        nodes.traceContent.innerHTML = renderTraceBlocks(payload);
+        nodes.traceContent.innerHTML = renderTraceQuantitySummary(quantity) + renderTraceBlocks(payload);
       }
       nodes.traceContent.scrollTop = 0;
       updateTraceExpandButton();
@@ -9700,6 +9855,83 @@ export function renderAppHtml(): string {
         blocks.push(traceBlock("parameters", "Request parameters", parameters, false));
       }
       return blocks.join("");
+    }
+
+    function traceContextQuantity(payload) {
+      const counts = { system: 0, user: 0, assistant: 0, tool: 0, other: 0 };
+      let contextCharacters = 0;
+      const countMessage = (message, fallbackRole) => {
+        const role = traceContextRole(message, fallbackRole);
+        counts[role] += 1;
+        contextCharacters += traceCompactLength(message);
+      };
+      if (payload && payload.system !== undefined) countMessage(payload.system, "system");
+      if (Array.isArray(payload?.messages)) {
+        payload.messages.forEach((message) => countMessage(message, "other"));
+      }
+      if (payload && payload.input !== undefined) {
+        if (Array.isArray(payload.input)) {
+          payload.input.forEach((message) => countMessage(message, "user"));
+        } else {
+          countMessage(payload.input, "user");
+        }
+      }
+      const toolSchemas = Array.isArray(payload?.tools)
+        ? payload.tools.length
+        : payload?.tools === undefined || payload?.tools === null ? 0 : 1;
+      return {
+        ...counts,
+        total: counts.system + counts.user + counts.assistant + counts.tool + counts.other,
+        toolSchemas,
+        contextCharacters,
+        toolSchemaCharacters: traceCompactLength(payload?.tools)
+      };
+    }
+
+    function traceContextRole(message, fallbackRole) {
+      const role = message && typeof message === "object" && !Array.isArray(message)
+        ? String(message.role || "").toLowerCase()
+        : "";
+      if (role === "system" || role === "developer") return "system";
+      if (role === "user") return "user";
+      if (role === "assistant") return "assistant";
+      if (role === "tool" || role === "function") return "tool";
+      const type = message && typeof message === "object" && !Array.isArray(message)
+        ? String(message.type || "").toLowerCase()
+        : "";
+      if (type === "function_call_output" || type === "tool_result") return "tool";
+      if (type === "function_call") return "assistant";
+      return fallbackRole;
+    }
+
+    function traceCompactLength(value) {
+      if (value === undefined || value === null) return 0;
+      if (typeof value === "string") return [...value].length;
+      try {
+        return [...JSON.stringify(value)].length;
+      } catch {
+        return [...String(value)].length;
+      }
+    }
+
+    function renderTraceQuantitySummary(quantity) {
+      const metrics = [
+        ["上下文总数", quantity.total],
+        ["System", quantity.system],
+        ["User", quantity.user],
+        ["Assistant", quantity.assistant],
+        ["Tool", quantity.tool],
+        ["其他", quantity.other],
+        ["Tool Schema", quantity.toolSchemas],
+        ["上下文字符", Number(quantity.contextCharacters || 0).toLocaleString()]
+      ];
+      return '<section class="trace-quantity-summary" aria-label="上下文数量汇总">' +
+        '<div class="trace-quantity-head"><strong>上下文数量汇总</strong><span>Schema ' +
+          Number(quantity.toolSchemaCharacters || 0).toLocaleString() + ' 字符，不计入上下文字符</span></div>' +
+        '<div class="economics-grid">' + metrics.map((metric) =>
+          '<div class="economics-metric"><span>' + escapeHtml(metric[0]) + '</span><strong>' +
+            escapeHtml(String(metric[1])) + '</strong></div>'
+        ).join("") + '</div></section>';
     }
 
     function traceMessageBlock(message, index) {

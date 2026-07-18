@@ -60,6 +60,16 @@ test("provider errors are retryable only before a side effect completes", async 
     const recovered = await retryable.kernel.retryLastMessage("retryable");
     assert.equal(recovered.status, "completed");
     assert.equal(recovered.canRetry, false);
+    const retryPayload = JSON.stringify(retryable.model.requests.at(-1)?.providerPayload.messages);
+    assert.equal((retryPayload.match(/请回复/g) ?? []).length, 1);
+    assert.doesNotMatch(retryPayload, /temporary outage|模型调用失败/);
+    const recoveredSession = await retryable.kernel.getSession("retryable");
+    assert.equal(recoveredSession.messages.filter((message) =>
+      message.role === "user" && JSON.stringify(message.content).includes("请回复")
+    ).length, 1);
+    assert.equal(recoveredSession.messages.some((message) =>
+      message.role === "custom" && message.customType === "rp-agent/system_event"
+    ), false);
   } finally {
     retryable.dispose();
   }

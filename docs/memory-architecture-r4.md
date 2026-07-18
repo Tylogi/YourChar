@@ -84,33 +84,63 @@ hits. Preview is read-only. Management exposes `core`, `hitCount`,
 
 ## Snapshot And Resident State
 
-Each hidden `rp-agent/turn_context` v2 message is a point-in-time snapshot.
-Only the newest snapshot is authoritative for current time and scene. Old
-snapshot time must never be interpreted as current. Time is minute precision
+Each hidden `rp-agent/turn_context` v3 session message stores one raw audit
+record, but its details split the dynamic plan into two provider segments:
+
+- `volatileContent`: runtime clock, mode, relationship, scene, and turn-local
+  inputs such as vision analysis;
+- `memoryContent`: query-selected confirmed reality and RP memory.
+
+The provider context hook reconstructs these raw records before every request.
+It retains valid historical memory carriers, removes every historical volatile
+segment, and emits the newest volatile segment exactly once. A newly selected
+memory carrier is emitted immediately before the newest volatile segment. All
+runtime carriers are moved before their associated real user message and are
+wrapped in a `NOT_USER_AUTHORED` boundary. The real user message is therefore
+the final user-role item of the turn; the model must not attribute runtime time,
+memory, relationship, scene, or vision metadata to the user. Raw session JSONL
+remains unchanged for audit and Debug Trace generation. Time is minute precision
 with an explicit IANA timezone and UTC minute.
 
-Memory text may remain in an older provider prefix to preserve cache reuse. A
-resident table records the memory ID and a digest of all injection-relevant
-fields, not `updatedAt`. Before every real plan, and when loading or compacting
-a session, the runtime replaces that table from v2 turn-context details that
-actually remain in `AgentSession.messages`. For repeated IDs, the newest
-surviving version wins.
+Provider-facing wrappers are intentionally compact. The stable System owns the
+full trust contract, so the volatile carrier contains only one short authorship
+warning, current time/mode, bounded relationship continuity, optional scene,
+and turn-local inputs. Relationship event summaries are whitespace-normalized,
+bounded to 140 characters each, and omit redundant timestamps. The 900-token
+dynamic budget remains a ceiling for turns that also need scene, memory, or
+vision context, not a target that ordinary private turns should fill.
+
+Memory text may remain in an older provider prefix to preserve useful cache
+reuse. A resident table records the memory ID and a digest of all
+injection-relevant fields, not `updatedAt`. Before every real plan, and when
+loading or compacting a session, the runtime replaces that table from valid v3
+memory-carrier details that remain in `AgentSession.messages`. For repeated IDs,
+the newest surviving version wins. Historical v2 mixed snapshots are not
+resident carriers; after an upgrade they are removed and relevant memory is
+eligible for normal retrieval again.
 
 - If a matching ID/version survives in the recent tail, the planner does not
   duplicate it.
 - If compaction removes its snapshot, resident state becomes empty and a
   relevant/core fact can be injected again.
 - An Obsidian body-only or frontmatter-only change produces a new content
-  digest. The next provider request removes every old-version snapshot and may
+  digest. The next provider request removes every old-version carrier and may
   inject the new version.
-- Correction, forget, archive, and module disable remove stale memory-bearing
-  snapshots before the next provider call.
+- Correction, forget, archive, and module disable remove stale memory carriers
+  before the next provider call.
 
 Compaction resets resident state before running so a failure can cause at most
 one duplicate, never permanent omission. Successful compaction then rebuilds
 from the actual remaining tail. The 40-turn regression reaches a stable request
 shape of at most 25 messages and below 30,000 estimated input tokens; the latest
 request contains a resident core fact at most once.
+
+The cache boundary is deliberate: the stable System and valid historical memory
+carrier can remain a common prefix. The prior volatile snapshot is not reused,
+and the newest volatile snapshot sits immediately before the newest real user
+message. This gives up exact whole-request prefix equality in exchange for
+bounded, current time/relationship/scene context and unambiguous user-message
+attribution.
 
 ## Cache And Token Economics
 
@@ -137,7 +167,9 @@ field is `null` and the UI displays `unknown`. Once a group is reported, an
 actual cache read/write value of zero remains numeric zero. Extractor job token
 estimates remain in Coordinator jobs and are not mixed into chat economics.
 
-Full provider payload traces remain capped at 10. Lightweight economics remain
+Full provider payload traces remain capped at 10. Embedded binary data URLs are
+replaced with MIME/encoded-size placeholders before trace persistence and API
+delivery; the actual provider request is unchanged. Lightweight economics remain
 capped at 100 and omit query text, profile/SOUL/scene/memory bodies, candidate
 keys/tags, credentials, and tool arguments. They retain hashes, IDs, scores,
 budgets, and reasons. Session delete and delete-all clear checkpoints and

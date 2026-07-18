@@ -93,6 +93,11 @@ export function createHttpServer(options: HttpServerOptions = {}) {
     try {
       await route({ kernel, testRuns, request, response });
     } catch (error) {
+      if (response.headersSent || response.writableEnded) {
+        console.error("RP Agent HTTP request failed after the response started", error);
+        if (!response.writableEnded) response.destroy(asError(error));
+        return;
+      }
       if (error instanceof RequestBodyTooLargeError) {
         sendJson(response, 413, { code: "BODY_TOO_LARGE", error: error.message });
       } else if (error instanceof SyntaxError) {
@@ -289,6 +294,7 @@ async function route(input: {
       modelApiSettings: "GET/PATCH /api/settings/model-api",
       tavilySettings: "GET/PATCH /api/settings/tavily",
       visionSettings: "GET/PATCH /api/settings/vision",
+      traceArchiveSettings: "GET/PATCH /api/settings/trace-archive",
     });
     return;
   }
@@ -306,6 +312,8 @@ async function route(input: {
         archivedAt: metadata.get(record.id)?.archivedAt,
         lastTurnStatus: metadata.get(record.id)?.lastTurnStatus,
         lastTurnCanRetry: metadata.get(record.id)?.lastTurnCanRetry ?? false,
+        sleepState: metadata.get(record.id)?.sleepState ?? "awake",
+        sleepCheckpointAt: metadata.get(record.id)?.sleepCheckpointAt,
         messageCount: visibleConversationMessages(record.messages).length,
         preview: latestConversationPreview(record.messages),
         createdAt: record.createdAt,
@@ -1369,6 +1377,22 @@ async function route(input: {
     }
   }
 
+  if (pathname === "/api/settings/trace-archive") {
+    if (method === "GET") {
+      sendJson(input.response, 200, kernel.getTraceArchiveStatus());
+      return;
+    }
+    if (method === "PATCH") {
+      const body = asRecord(await readJson(input.request));
+      if (typeof body.enabled !== "boolean") {
+        sendJson(input.response, 400, { error: "enabled must be a boolean" });
+        return;
+      }
+      sendJson(input.response, 200, kernel.patchTraceArchiveConfig({ enabled: body.enabled }));
+      return;
+    }
+  }
+
   if (pathname === "/api/v1/diagnostics/model/test" && method === "POST") {
     sendJson(input.response, 200, await kernel.testModelConnection(optionalString(url.searchParams.get("profileId"))));
     return;
@@ -1977,10 +2001,12 @@ function optionalPositiveInteger(value: unknown): number | undefined {
 }
 
 function sendJson(response: ServerResponse, statusCode: number, payload: unknown): void {
+  const body = JSON.stringify(payload);
   response.writeHead(statusCode, {
     "content-type": "application/json; charset=utf-8",
+    "cache-control": "no-store",
   });
-  response.end(JSON.stringify(payload));
+  response.end(body);
 }
 
 function sendAvatar(response: ServerResponse, avatar: AvatarAsset): void {

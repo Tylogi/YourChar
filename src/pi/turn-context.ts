@@ -24,7 +24,7 @@ export function createTurnContextMessage(input: TurnContextInput) {
     ].filter(Boolean).join("\n\n"),
     display: false,
     details: {
-      schemaVersion: 2,
+      schemaVersion: input.plan ? 3 : 2,
       mode: input.mode,
       timezone: runtime.timezone,
       precision: "minute",
@@ -32,6 +32,10 @@ export function createTurnContextMessage(input: TurnContextInput) {
       queryHash: input.plan?.queryHash,
       memoryIds: input.plan?.selectedMemoryIds ?? [],
       memoryVersions: input.plan?.selectedMemoryVersions ?? {},
+      volatileContent: input.plan
+        ? [runtime.content, input.plan.volatileContext].filter(Boolean).join("\n\n")
+        : undefined,
+      memoryContent: input.plan?.memoryContext,
       dynamicEstimatedTokens: input.plan?.dynamicEstimatedTokens,
     },
   } as const;

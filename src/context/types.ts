@@ -87,6 +87,8 @@ export type ContextPlan = {
   truncated: boolean;
   runtimeEnvelope: string;
   stableSystemContext: string;
+  volatileContext: string;
+  memoryContext: string;
   turnContext: string;
   stableEstimatedTokens: number;
   dynamicEstimatedTokens: number;
@@ -126,7 +128,10 @@ export type ContextEconomics = {
   createdAt: string;
 };
 
-export type ContextEconomicsPlan = Omit<ContextPlan, "stableSystemContext" | "turnContext" | "query" | "retrieval"> & {
+export type ContextEconomicsPlan = Omit<
+  ContextPlan,
+  "stableSystemContext" | "volatileContext" | "memoryContext" | "turnContext" | "query" | "retrieval"
+> & {
   query: null;
   retrieval: Array<Omit<MemoryRetrievalPlan, "query" | "normalizedQuery" | "candidates"> & {
     query: null;

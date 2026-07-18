@@ -1,5 +1,8 @@
 # RP Agent Product and Development Specification
 
+Long-conversation lifecycle and compaction behavior are specified in
+[`conversation-sleep-lifecycle.md`](./conversation-sleep-lifecycle.md).
+
 Status: Approved development baseline
 Audience: maintainers, coding agents, reviewers, and test agents
 Last updated: 2026-07-15
@@ -580,10 +583,14 @@ with distinct colors. A master-detail layout keeps the latest calls selectable
 without stacking all payloads vertically. The detail viewer supports semantic/raw
 tabs, per-block and global expansion, line wrapping, and payload copy; its content
 scrolls independently without per-block height truncation. The semantic view is
-accompanied by the complete raw JSON payload so provider-specific fields remain inspectable. Credential-shaped fields
-are redacted by key, while message content and tool schemas are not truncated.
+accompanied by the sanitized raw JSON payload so provider-specific fields remain inspectable. Credential-shaped fields
+are redacted by key, while textual message content and tool schemas are not truncated. Embedded binary data URLs are
+replaced with MIME/encoded-size placeholders to keep Debug bounded; this never changes the actual provider request.
 The read endpoint is `GET /api/debug/model-traces?limit=10`; the limit is always
-clamped to 10. Trace data participates in user-data export and complete deletion.
+clamped to 10. The optional JSONL archive is controlled through
+`GET/PATCH /api/settings/trace-archive`, is included in state backups, and is
+removed by complete deletion. Bounded Trace data participates in normal
+user-data export; the unbounded JSONL archive does not.
 Raw token deltas are not stored indefinitely or returned in normal message
 responses.
 

@@ -113,6 +113,21 @@ export type ModelContextTrace = {
   createdAt: string;
 };
 
+export type TraceArchiveConfig = {
+  enabled: boolean;
+  available: boolean;
+  updatedAt?: string;
+};
+
+export type TraceArchiveStatus = TraceArchiveConfig & {
+  format: "jsonl";
+  directory?: string;
+  currentFile?: string;
+  files: number;
+  totalBytes: number;
+  lastError?: string;
+};
+
 export type SessionRecord = {
   id: string;
   messages: AgentMessage[];

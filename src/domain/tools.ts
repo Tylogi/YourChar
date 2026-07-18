@@ -28,6 +28,11 @@ type RuntimeState = {
   outputGuardRetryUsed: boolean;
   outputGuardBlocked: boolean;
   outputGuardRecoveryPrompt?: string;
+  interactiveThinkingRequired: boolean;
+  interactiveThinkingMissing: boolean;
+  interactiveThinkingRetryCount: number;
+  interactiveThinkingRetryPrompt?: string;
+  toolCallObserved: boolean;
 };
 
 export type CompanionToolRuntimeState = RuntimeState;

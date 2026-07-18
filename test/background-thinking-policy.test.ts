@@ -3,7 +3,19 @@ import test from "node:test";
 import {
   applyBackgroundThinkingPolicy,
   backgroundThinkingPolicy,
+  interactiveThinkingTemplateKwargs,
+  requiresInteractiveThinking,
 } from "../src/model/background-thinking-policy.js";
+
+test("MLX interactive calls explicitly keep thinking enabled across turns", () => {
+  assert.deepEqual(interactiveThinkingTemplateKwargs({ model: "gemma-4-26B-A4B-MLX-9bit" }), {
+    enable_thinking: true,
+    preserve_thinking: true,
+  });
+  assert.equal(interactiveThinkingTemplateKwargs({ model: "remote-reasoning-model" }), undefined);
+  assert.equal(requiresInteractiveThinking({ model: "gemma-4-26B-A4B-MLX-9bit" }), true);
+  assert.equal(requiresInteractiveThinking({ model: "remote-reasoning-model" }), false);
+});
 
 test("MLX deterministic background calls disable thinking and use compact budgets", () => {
   const config = { model: "gemma-4-26B-A4B-MLX-9bit" };

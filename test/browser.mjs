@@ -170,6 +170,12 @@ async function runDesktopWorkflow(browser, baseUrl, outputDir) {
   assert.equal(await page.locator(".trace-block.assistant").count(), 1);
   assert.equal(await page.locator(".trace-block.tool").count(), 1);
   assert.equal(await page.locator(".trace-block.schema").count(), 1);
+  const quantitySummary = page.locator('[aria-label="上下文数量汇总"]');
+  await quantitySummary.waitFor({ state: "visible" });
+  await quantitySummary.filter({ hasText: "上下文总数" }).filter({ hasText: "4" }).waitFor();
+  await quantitySummary.filter({ hasText: "System" }).filter({ hasText: "User" })
+    .filter({ hasText: "Assistant" }).filter({ hasText: "Tool Schema" }).waitFor();
+  assert.match(await page.locator(".trace-index-item.active .trace-index-meta").textContent(), /4 条上下文 · 1 个 Schema/);
   await page.getByRole("tab", { name: "Context Economics" }).click();
   await page.locator("#traceDetailTitle").filter({ hasText: "420 estimated tokens" }).waitFor();
   await page.locator("#traceContent").filter({ hasText: "Cache read" }).filter({ hasText: "unknown" }).waitFor();
@@ -491,6 +497,17 @@ async function runDesktopWorkflow(browser, baseUrl, outputDir) {
   await page.screenshot({ path: resolve(outputDir, "settings-tavily.png"), fullPage: false });
   await page.getByRole("button", { name: "数据", exact: true }).click();
   await page.locator("#runtimeState").filter({ hasText: "数据库 ok" }).waitFor();
+  await page.locator("#traceArchiveState").filter({ hasText: "已关闭" }).waitFor();
+  await page.locator("#traceArchiveEnabled").check();
+  await page.locator("#traceArchiveState").filter({ hasText: "已开启" }).waitFor();
+  assert.match(await page.locator("#traceArchivePath").inputValue(), /trace-archive$/);
+  const traceArchiveConfig = await page.evaluate(async () => {
+    const response = await fetch("/api/settings/trace-archive");
+    return response.json();
+  });
+  assert.equal(traceArchiveConfig.enabled, true);
+  await page.locator("#traceArchiveEnabled").uncheck();
+  await page.locator("#traceArchiveState").filter({ hasText: "已关闭" }).waitFor();
   await page.locator("#memoryVaultHealth").scrollIntoViewIfNeeded();
   await page.locator("#memoryVaultWriter").filter({ hasText: "writer" }).waitFor();
   await assertVaultHealthBounds(page);
@@ -611,6 +628,25 @@ async function runDesktopWorkflow(browser, baseUrl, outputDir) {
   assert.equal(await groupConversationItem.locator(".group-avatar-cluster.compact > span").count(), 2);
   assert.equal(await page.locator("#conversationHeaderAvatar .group-avatar-cluster > span").count(), 2);
   await captureValidatedScreenshot(page, resolve(outputDir, "group-chat.png"));
+
+  await page.getByRole("button", { name: "会话操作" }).click();
+  await page.getByRole("menuitem", { name: "归档群聊", exact: true }).click();
+  await page.locator("#sessionActionDialog").filter({ hasText: "归档群聊" }).waitFor({ state: "visible" });
+  await page.locator("#confirmSessionActionBtn").click();
+  await page.locator("#sessionActionDialog").waitFor({ state: "hidden" });
+  await page.locator('#conversationList [data-group-chat-id]').filter({ hasText: "河岸小组" }).waitFor({ state: "detached" });
+  await page.locator("#sidebarArchivedSessionsBtn").click();
+  const singlyArchivedGroup = page.locator("#archivedSessionList [data-group-id]").filter({ hasText: "河岸小组" });
+  await singlyArchivedGroup.waitFor();
+  await singlyArchivedGroup.getByRole("button", { name: "恢复群聊" }).click();
+  await page.locator("#archivedSessionsDialog").waitFor({ state: "hidden" });
+  await page.locator('#conversationList [data-group-chat-id]').filter({ hasText: "河岸小组" }).waitFor();
+  const groupChatSection = page.locator('#conversationList [data-conversation-group="__group_chats__"]');
+  await groupChatSection.locator("button[data-conversation-group-toggle]").click();
+  assert.equal(await groupChatSection.locator(".conversation-group-sessions").isHidden(), true);
+  assert.equal(await groupChatSection.locator("button[data-conversation-group-toggle]").getAttribute("aria-expanded"), "false");
+  await groupChatSection.locator("button[data-conversation-group-toggle]").click();
+  await groupChatSection.locator(".conversation-group-sessions").waitFor({ state: "visible" });
 
   await page.getByRole("button", { name: "批量管理会话" }).click();
   await page.getByRole("checkbox", { name: "选择群聊 河岸小组" }).check();

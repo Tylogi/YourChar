@@ -15,6 +15,33 @@ Character replies, private SMS/RP turns, group actor replies, subagents, and
 vision analysis are outside this policy. Their output quality may depend on
 reasoning or multimodal processing and must be evaluated separately.
 
+For the current MLX model, private interactive turns explicitly send
+`enable_thinking: true` and `preserve_thinking: true` on every provider request.
+This avoids relying on model-server state or the previous turn's chat-template
+selection. Bounded background classifiers continue to use the disabled policy
+below.
+
+`enable_thinking` is a capability switch, not a guarantee that the model will
+emit a substantive thinking block. For ordinary private SMS/RP dialogue, the
+runtime therefore requires at least 16 non-whitespace thinking characters. A
+draft that does not meet the threshold is removed before streaming or active
+session persistence, the session is rewound to the same real user message, and
+the model is regenerated with a private-thinking correction. Regeneration is
+bounded to two retries. If all three attempts omit thinking, the final draft is
+accepted only when it still has visible text and passes the output guard. This
+bounded degradation avoids turning a usable reply into a repeated user-visible
+model failure merely because the provider ignored its thinking switch.
+
+Thinking blocks remain available in the persisted session and Debug trace for
+the turn that produced them. Historical thinking blocks are removed by the
+provider-context hook before later model calls, so private reasoning is not paid
+for or reinterpreted on every subsequent turn.
+
+The guard does not regenerate assistant tool-call messages or any continuation
+after a tool action has run. This prevents schedule, file, network, profile, and
+other MCP actions from being executed twice. Providers without an explicit
+interactive-thinking contract are not subject to this enforcement.
+
 ## Compatibility
 
 The current MLX model receives:
@@ -27,6 +54,9 @@ The current MLX model receives:
   }
 }
 ```
+
+for background classification. Interactive private turns receive the same
+object with `enable_thinking` set to `true`.
 
 An unknown OpenAI-compatible provider receives neither field. It keeps the
 larger fallback budget because silently generated reasoning could otherwise

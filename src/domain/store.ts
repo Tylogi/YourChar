@@ -5,6 +5,7 @@ import { SystemClock } from "../app/clock.js";
 import type { IdGenerator } from "../app/id-generator.js";
 import { SystemIdGenerator } from "../app/id-generator.js";
 import type { ObservabilitySink } from "../storage/observability.js";
+import { TraceArchive } from "../storage/trace-archive.js";
 import type {
   ActionRecord,
   ContextLogEntry,
@@ -14,6 +15,7 @@ import type {
   ModelApiProfileCollection,
   ModelApiProfilePatch,
   ModelContextTrace,
+  TraceArchiveStatus,
 } from "./types.js";
 
 type StoredModelApiConfig = ModelApiConfig & { apiKey?: string };
@@ -52,6 +54,7 @@ export class CompanionStore {
   private readonly modelApiConfigPath?: string;
   private modelApiDocument: StoredModelApiDocument;
   private observability?: ObservabilitySink;
+  private readonly traceArchive: TraceArchive;
   private modelRequestCount = 0;
 
   constructor(options: CompanionStoreOptions = {}) {
@@ -61,6 +64,7 @@ export class CompanionStore {
     this.clock = options.clock ?? new SystemClock();
     this.idGenerator = options.idGenerator ?? new SystemIdGenerator();
     this.modelApiConfigPath = this.stateDir ? join(this.stateDir, "model-api.json") : undefined;
+    this.traceArchive = new TraceArchive(this.stateDir, this.clock);
     this.modelApiDocument = this.loadModelApiDocument();
     if (this.modelApiConfigPath && existsSync(this.modelApiConfigPath)) {
       this.persistModelApiConfig();
@@ -120,6 +124,7 @@ export class CompanionStore {
     if (this.modelContextTraces.length > 10) {
       this.modelContextTraces.length = 10;
     }
+    this.traceArchive.append(trace);
     this.observability?.recordModelContextTrace(trace);
     return trace;
   }
@@ -127,12 +132,24 @@ export class CompanionStore {
   recentModelContextTraces(limit = 10): ModelContextTrace[] {
     const requested = Number.isFinite(limit) ? limit : 10;
     const bounded = Math.max(1, Math.min(requested, 10));
-    return this.observability?.recentModelContextTraces(bounded) ??
+    const traces = this.observability?.recentModelContextTraces(bounded) ??
       this.modelContextTraces.slice(0, bounded);
+    return traces.map((trace) => ({
+      ...trace,
+      payload: sanitizeTracePayload(trace.payload),
+    }));
   }
 
   getModelRequestCount(): number {
     return this.modelRequestCount;
+  }
+
+  getTraceArchiveStatus(): TraceArchiveStatus {
+    return this.traceArchive.status();
+  }
+
+  patchTraceArchiveConfig(patch: { enabled?: boolean }): TraceArchiveStatus {
+    return this.traceArchive.patchConfig(patch);
   }
 
   attachObservability(sink: ObservabilitySink): void {
@@ -148,6 +165,7 @@ export class CompanionStore {
     this.contextLogs.length = 0;
     this.modelContextTraces.length = 0;
     this.modelRequestCount = 0;
+    this.traceArchive.clearData();
   }
 
   deleteSessionRuntimeData(sessionId: string): void {
@@ -402,6 +420,13 @@ function sanitizeTracePayload(payload: Record<string, unknown>): Record<string, 
   const seen = new WeakSet<object>();
   const json = JSON.stringify(payload, (key, value: unknown) => {
     if (sensitiveTraceField.test(key)) return "[REDACTED]";
+    if (typeof value === "string") {
+      const dataUrl = value.match(/^data:([^;,]+)(?:;[^,]*)?;base64,/iu);
+      if (dataUrl) {
+        const encodedCharacters = Math.max(0, value.length - value.indexOf(",") - 1);
+        return `[Binary data URL omitted: ${dataUrl[1]}, ${encodedCharacters} base64 chars]`;
+      }
+    }
     if (value && typeof value === "object") {
       if (seen.has(value)) return "[Circular]";
       seen.add(value);

@@ -91,9 +91,11 @@ test("private relationship signals produce bounded state events and inject a qua
     const request = runtime.model.requests[1];
     assert.ok(request.toolNames.includes("get_relationship_state"));
     const messages = JSON.stringify(request.messages);
-    assert.match(messages, /Trusted relationship snapshot/);
+    assert.match(messages, /Relationship continuity/);
     assert.match(messages, /用户感谢角色持续陪伴并表达信任/);
     assert.doesNotMatch(messages, /"trust":37|trust:\s*37/);
+    const runtimeCarrier = request.messages.find((message) => JSON.stringify(message).includes("RP_AGENT_RUNTIME_CONTEXT"));
+    assert.ok(JSON.stringify(runtimeCarrier).length < 1_800);
 
     const other = runtime.kernel.createCharacter({ name: "苏遥", soulMarkdown: "# 苏遥" });
     assert.equal(runtime.kernel.getCharacterRelationship(other.id).state.trust, 35);
@@ -418,7 +420,7 @@ test("disabled relationship module preserves state without extraction, tools, or
     assert.equal(extractionCalls, 0);
     assert.equal(runtime.kernel.getCharacterRelationship(character.id).recentEvents.length, 0);
     assert.equal(runtime.model.requests[0].toolNames.includes("get_relationship_state"), false);
-    assert.doesNotMatch(JSON.stringify(runtime.model.requests[0].messages), /Trusted relationship snapshot/);
+    assert.doesNotMatch(JSON.stringify(runtime.model.requests[0].messages), /Relationship continuity/);
   } finally {
     runtime.dispose();
   }
@@ -467,7 +469,7 @@ test("relationship affect decays and group chat reads but never mutates characte
     });
     await runtime.kernel.sendGroupMessage(group.id, "我喜欢你们，也谢谢你们。", "Asia/Shanghai");
     assert.ok(runtime.model.requests.slice(-2).every((request) =>
-      JSON.stringify(request.messages).includes("Trusted relationship snapshot")));
+      JSON.stringify(request.messages).includes("Relationship continuity")));
     assert.equal(runtime.kernel.getCharacterRelationship(first.id).recentEvents.length, 1);
     assert.equal(runtime.kernel.getCharacterRelationship(second.id).recentEvents.length, 0);
   } finally {

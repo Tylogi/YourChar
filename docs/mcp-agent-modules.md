@@ -153,4 +153,5 @@ without a manual refresh.
 - Notification retries do not produce a second Agent message.
 - Model-disabled fallback remains deterministic.
 - Provider request traces include each tool-loop call, preserve complete message
-  and MCP tool-schema payloads, and retain only the latest 10 calls.
+  and MCP tool-schema payloads. The Debug store retains only the latest 10 calls;
+  the separately enabled JSONL archive retains every subsequent sanitized call.
