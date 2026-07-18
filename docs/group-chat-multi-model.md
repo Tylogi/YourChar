@@ -29,7 +29,11 @@ One user message creates exactly one group turn:
 6. After one complete pass produces a reply, eligible characters are evaluated again against the expanded transcript.
 7. A character can send at most ten messages in one user turn. Scheduling stops when a complete pass produces no replies or every eligible character reaches its cap.
 
-The gate must return `{ "speak": boolean, "reasonCode": string }`. Reasoning-capable providers receive enough output budget to finish the JSON, and fenced or lightly wrapped JSON is accepted. Only the bounded decision is persisted; provider reasoning is not written into the group transcript.
+The gate must return `{ "speak": boolean, "reasonCode": string }`. The current
+MLX profile explicitly disables chat-template thinking and uses a 256-token
+ceiling. Providers without a known thinking-control contract retain a 768-token
+fallback. Fenced or lightly wrapped JSON is accepted. Only the bounded decision
+is persisted; provider reasoning is not written into the group transcript.
 
 ## Context and safety
 

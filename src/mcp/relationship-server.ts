@@ -16,7 +16,7 @@ export function createRelationshipMcpServer(context: RelationshipMcpContext): Mc
     { name: "rp-agent-relationship", version: "1.0.0" },
     {
       instructions:
-        "This server exposes a read-only qualitative relationship snapshot for the bound character. " +
+        "This server exposes a read-only qualitative relationship, explicit bond, romantic status, and affect snapshot for the bound character. " +
         "There are no score, delta, event, or mutation tools. Never reveal internal state mechanics to the user.",
     },
   );
@@ -24,7 +24,7 @@ export function createRelationshipMcpServer(context: RelationshipMcpContext): Mc
     "get_relationship_state",
     {
       title: "Read relationship state",
-      description: "Read the trusted qualitative relationship and current affect snapshot for this character.",
+      description: "Read the trusted qualitative relationship, established bonds, romantic status, and current affect for this character.",
       inputSchema: z.object({}).strict(),
       annotations: { readOnlyHint: true },
     },
@@ -35,9 +35,12 @@ export function createRelationshipMcpServer(context: RelationshipMcpContext): Mc
         structuredContent: {
           characterId: context.characterId,
           qualitative: snapshot.qualitative,
+          bondFacets: snapshot.state.bondFacets,
+          romanceStatus: snapshot.state.romanceStatus,
           recentCauses: snapshot.recentEvents.map((event) => ({
             type: event.type,
             summary: event.summary,
+            semanticChange: event.semanticChange,
             createdAt: event.createdAt,
           })),
         },

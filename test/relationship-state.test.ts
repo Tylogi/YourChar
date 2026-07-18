@@ -4,7 +4,25 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 import { relationshipStateMcpModuleId } from "../src/modules/catalog.js";
+import {
+  relationshipExtractorSystemPrompt,
+  stableRelationshipExtractorPrompt,
+} from "../src/relationship/index.js";
 import { createTestRuntime } from "../src/testing/index.js";
+
+test("relationship extraction uses one stable prompt for every private turn", () => {
+  const base = {
+    mode: "sms" as const,
+    characterId: "character",
+    sourceSessionId: "session",
+    sourceContextLogId: "context",
+    assistantText: "我听见了。",
+  };
+  assert.equal(relationshipExtractorSystemPrompt({ ...base, userText: "午饭吃什么？" }), stableRelationshipExtractorPrompt);
+  assert.equal(relationshipExtractorSystemPrompt({ ...base, userText: "我现在很信任你。" }), stableRelationshipExtractorPrompt);
+  assert.equal(relationshipExtractorSystemPrompt({ ...base, userText: "我们正式交往吧。" }), stableRelationshipExtractorPrompt);
+  assert.equal(relationshipExtractorSystemPrompt({ ...base, userText: "今天怎么样？", assistantText: "其实我喜欢你。" }), stableRelationshipExtractorPrompt);
+});
 
 test("private relationship signals produce bounded state events and inject a qualitative snapshot across sessions", async () => {
   let extractionCalls = 0;
@@ -44,6 +62,8 @@ test("private relationship signals produce bounded state events and inject a qua
     assert.equal(snapshot.state.closeness, 22);
     assert.equal(snapshot.state.affection, 27);
     assert.equal(snapshot.state.tension, 3);
+    assert.deepEqual(snapshot.state.bondFacets, []);
+    assert.equal(snapshot.state.romanceStatus, "none");
     assert.equal(snapshot.recentEvents.length, 1);
     assert.deepEqual(snapshot.recentEvents[0].delta, {
       trust: 2,
@@ -78,6 +98,300 @@ test("private relationship signals produce bounded state events and inject a qua
     const other = runtime.kernel.createCharacter({ name: "苏遥", soulMarkdown: "# 苏遥" });
     assert.equal(runtime.kernel.getCharacterRelationship(other.id).state.trust, 35);
     assert.equal(runtime.kernel.getCharacterRelationship(other.id).recentEvents.length, 0);
+  } finally {
+    runtime.dispose();
+  }
+});
+
+test("romance requires evidenced milestones and never follows from affection scores alone", () => {
+  const runtime = createTestRuntime({ seed: "relationship-romance-milestones" });
+  try {
+    const character = runtime.kernel.createCharacter({ name: "迟雾" });
+    const apply = (sourceContextLogId: string, userText: string, assistantText: string, extraction: Parameters<typeof runtime.kernel.relationshipService.applyExtraction>[1]) =>
+      runtime.kernel.relationshipService.applyExtraction({
+        mode: "sms",
+        characterId: character.id,
+        sourceSessionId: "romance-session",
+        sourceContextLogId,
+        userText,
+        assistantText,
+      }, extraction);
+
+    apply("affection-only", "今天见到你很开心。", "我也很开心。", {
+      significant: true,
+      eventType: "affection",
+      impact: "major",
+      summary: "双方进行了亲密表达",
+      confidence: 1,
+    });
+    assert.equal(runtime.kernel.getCharacterRelationship(character.id).state.romanceStatus, "none");
+
+    const invalid = apply("invented-confirmation", "我很喜欢你。", "谢谢你告诉我。", {
+      significant: true,
+      eventType: "relationship_confirmed",
+      impact: "major",
+      summary: "模型错误地声称双方确认交往",
+      confidence: 1,
+      initiator: "mutual",
+      evidence: { user: "我们正式交往吧", assistant: "好，我们在一起" },
+    });
+    assert.equal(invalid, undefined);
+    assert.equal(runtime.kernel.getCharacterRelationship(character.id).state.romanceStatus, "none");
+
+    apply("user-confession", "我喜欢你。", "我需要想一想。", {
+      significant: true,
+      eventType: "confession",
+      impact: "moderate",
+      summary: "用户向角色表达浪漫好感",
+      confidence: 0.95,
+      initiator: "user",
+      evidence: { user: "我喜欢你" },
+    });
+    assert.equal(runtime.kernel.getCharacterRelationship(character.id).state.romanceStatus, "user_interest");
+
+    apply("accepted-confession", "我还是喜欢你。", "我也喜欢你。", {
+      significant: true,
+      eventType: "confession_accepted",
+      impact: "major",
+      summary: "角色明确回应用户的好感",
+      confidence: 0.95,
+      initiator: "user",
+      evidence: { user: "我还是喜欢你", assistant: "我也喜欢你" },
+    });
+    assert.equal(runtime.kernel.getCharacterRelationship(character.id).state.romanceStatus, "mutual_interest");
+
+    apply("dating-confirmed", "我们正式交往吧。", "好，我们从今天开始交往。", {
+      significant: true,
+      eventType: "relationship_confirmed",
+      impact: "major",
+      summary: "双方明确确认开始交往",
+      confidence: 0.98,
+      initiator: "mutual",
+      evidence: { user: "我们正式交往吧", assistant: "我们从今天开始交往" },
+    });
+    const dating = runtime.kernel.getCharacterRelationship(character.id);
+    assert.equal(dating.state.romanceStatus, "dating");
+    assert.equal(dating.recentEvents[0].semanticChange?.romanceFrom, "mutual_interest");
+    assert.equal(dating.recentEvents[0].semanticChange?.romanceTo, "dating");
+    assert.match(dating.qualitative, /mutually confirmed dating relationship/);
+
+    apply("affection-while-dating", "我还是很喜欢你。", "我也一直喜欢你。", {
+      significant: true,
+      eventType: "confession_accepted",
+      impact: "minor",
+      summary: "交往中的双方再次表达爱意",
+      confidence: 0.95,
+      initiator: "mutual",
+      evidence: { user: "我还是很喜欢你", assistant: "我也一直喜欢你" },
+    });
+    assert.equal(runtime.kernel.getCharacterRelationship(character.id).state.romanceStatus, "dating");
+
+    apply("commitment", "我想和你长期走下去。", "我也愿意成为你的长期伴侣。", {
+      significant: true,
+      eventType: "commitment",
+      impact: "major",
+      summary: "双方作出长期关系承诺",
+      confidence: 0.98,
+      initiator: "mutual",
+      evidence: { user: "我想和你长期走下去", assistant: "我也愿意成为你的长期伴侣" },
+    });
+    assert.equal(runtime.kernel.getCharacterRelationship(character.id).state.romanceStatus, "committed");
+
+    apply("reconfirm-after-commitment", "我们继续交往，好吗？", "好，我们继续交往。", {
+      significant: true,
+      eventType: "relationship_confirmed",
+      impact: "minor",
+      summary: "稳定伴侣再次确认交往",
+      confidence: 0.95,
+      initiator: "mutual",
+      evidence: { user: "我们继续交往", assistant: "我们继续交往" },
+    });
+    assert.equal(runtime.kernel.getCharacterRelationship(character.id).state.romanceStatus, "committed");
+  } finally {
+    runtime.dispose();
+  }
+});
+
+test("a character-initiated confession in the assistant reply is classified semantically", async () => {
+  let extractionCalls = 0;
+  const runtime = createTestRuntime({
+    seed: "relationship-character-confession",
+    relationshipExtractor: async (input) => {
+      extractionCalls += 1;
+      assert.equal(input.userText, "今天有什么想说的吗？");
+      assert.match(input.assistantText, /我喜欢你/);
+      return {
+        significant: true,
+        eventType: "confession",
+        impact: "major",
+        summary: "角色主动向用户表达浪漫好感",
+        confidence: 0.95,
+        initiator: "character",
+        evidence: { assistant: "我喜欢你" },
+      };
+    },
+  });
+  try {
+    const character = runtime.kernel.createCharacter({ name: "星野" });
+    runtime.kernel.setAgentModuleEnabled(relationshipStateMcpModuleId, true);
+    runtime.model.enqueue([{ kind: "assistant_text", text: "其实，有件事想告诉你：我喜欢你。" }]);
+    await runtime.kernel.sendMessage("character-confession", {
+      mode: "sms",
+      characterId: character.id,
+      text: "今天有什么想说的吗？",
+    });
+    await runtime.kernel.relationshipCoordinator.drain();
+    assert.equal(extractionCalls, 1);
+    assert.equal(runtime.kernel.getCharacterRelationship(character.id).state.romanceStatus, "character_interest");
+  } finally {
+    runtime.dispose();
+  }
+});
+
+test("relationship facts support explicit bonds, confidant development, breakup, and reunion", () => {
+  const runtime = createTestRuntime({ seed: "relationship-semantic-facts" });
+  try {
+    const character = runtime.kernel.createCharacter({ name: "南星" });
+    const apply = (id: string, userText: string, assistantText: string, extraction: Parameters<typeof runtime.kernel.relationshipService.applyExtraction>[1]) =>
+      runtime.kernel.relationshipService.applyExtraction({
+        mode: "rp",
+        characterId: character.id,
+        sourceSessionId: "semantic-session",
+        sourceContextLogId: id,
+        userText,
+        assistantText,
+      }, extraction);
+
+    apply("friends", "我们是朋友，对吗？", "对，我们是朋友。", {
+      significant: true,
+      eventType: "bond_defined",
+      impact: "moderate",
+      summary: "双方明确将彼此定义为朋友",
+      confidence: 0.95,
+      initiator: "mutual",
+      bondFacet: "friendship",
+      evidence: { user: "我们是朋友", assistant: "我们是朋友" },
+    });
+    assert.deepEqual(runtime.kernel.getCharacterRelationship(character.id).state.bondFacets, ["friendship"]);
+
+    for (const [id, secret] of [["secret-one", "这是我没有告诉别人的第一件事"], ["secret-two", "还有一件只告诉你的事"]] as const) {
+      apply(id, secret, "我会替你保守这个秘密。", {
+        significant: true,
+        eventType: "shared_secret",
+        impact: "moderate",
+        summary: "用户向角色分享了私人秘密",
+        confidence: 0.9,
+      });
+    }
+    assert.deepEqual(runtime.kernel.getCharacterRelationship(character.id).state.bondFacets, ["friendship", "confidant"]);
+
+    apply("dating", "我们交往吧。", "好。", {
+      significant: true,
+      eventType: "relationship_confirmed",
+      impact: "major",
+      summary: "双方确认交往",
+      confidence: 1,
+      initiator: "mutual",
+      evidence: { user: "我们交往吧", assistant: "好" },
+    });
+    apply("breakup", "我们分手吧。", "我听清楚了。", {
+      significant: true,
+      eventType: "breakup",
+      impact: "major",
+      summary: "用户明确结束交往关系",
+      confidence: 0.98,
+      initiator: "user",
+      evidence: { user: "我们分手吧" },
+    });
+    assert.equal(runtime.kernel.getCharacterRelationship(character.id).state.romanceStatus, "former_partners");
+
+    apply("reunion", "我们重新在一起，好吗？", "好，我们重新开始。", {
+      significant: true,
+      eventType: "reconciliation",
+      impact: "major",
+      summary: "双方明确同意恢复交往",
+      confidence: 0.98,
+      initiator: "mutual",
+      evidence: { user: "我们重新在一起", assistant: "我们重新开始" },
+    });
+    assert.equal(runtime.kernel.getCharacterRelationship(character.id).state.romanceStatus, "dating");
+  } finally {
+    runtime.dispose();
+  }
+});
+
+test("every completed private turn receives one bounded relationship review", async () => {
+  let extractionCalls = 0;
+  const runtime = createTestRuntime({
+    seed: "relationship-periodic-review",
+    relationshipExtractor: async (input) => {
+      extractionCalls += 1;
+      assert.equal(input.reviewKind, "single_turn");
+      assert.equal(input.reviewTurns, undefined);
+      return { significant: false, confidence: 0 };
+    },
+  });
+  try {
+    const character = runtime.kernel.createCharacter({ name: "微澜" });
+    runtime.kernel.setAgentModuleEnabled(relationshipStateMcpModuleId, true);
+    runtime.model.enqueue(Array.from({ length: 8 }, (_, index) => ({
+      kind: "assistant_text" as const,
+      text: `这是第${index + 1}次平常回应。`,
+    })));
+    for (let index = 0; index < 8; index += 1) {
+      await runtime.kernel.sendMessage("relationship-periodic", {
+        mode: "sms",
+        characterId: character.id,
+        text: `今天是第${index + 1}次普通聊天。`,
+      });
+    }
+    await runtime.kernel.relationshipCoordinator.drain();
+    assert.equal(extractionCalls, 8);
+    const jobs = runtime.kernel.getRelationshipCoordinatorStatus().recentJobs;
+    assert.equal(jobs.filter((job) => job.triggerReason === "private_turn_review").length, 8);
+    assert.equal(jobs.every((job) => job.status === "completed"), true);
+    assert.equal(runtime.kernel.getCharacterRelationship(character.id).recentEvents.length, 0);
+  } finally {
+    runtime.dispose();
+  }
+});
+
+test("relationship reset keeps subsequent per-turn extraction active", async () => {
+  let extractionCalls = 0;
+  const runtime = createTestRuntime({
+    seed: "relationship-reset-periodic-fence",
+    relationshipExtractor: async () => {
+      extractionCalls += 1;
+      return { significant: false, confidence: 0 };
+    },
+  });
+  try {
+    const character = runtime.kernel.createCharacter({ name: "清和" });
+    runtime.kernel.setAgentModuleEnabled(relationshipStateMcpModuleId, true);
+    runtime.model.enqueue(Array.from({ length: 8 }, (_, index) => ({
+      kind: "assistant_text" as const,
+      text: `普通回复 ${index + 1}`,
+    })));
+    for (let index = 0; index < 7; index += 1) {
+      await runtime.kernel.sendMessage("relationship-reset-periodic", {
+        mode: "sms",
+        characterId: character.id,
+        text: `普通话题 ${index + 1}`,
+      });
+    }
+    await runtime.kernel.relationshipCoordinator.drain();
+    assert.equal(extractionCalls, 7);
+    runtime.kernel.resetCharacterRelationship(character.id);
+    await runtime.kernel.sendMessage("relationship-reset-periodic", {
+      mode: "sms",
+      characterId: character.id,
+      text: "重置后的普通话题",
+    });
+    await runtime.kernel.relationshipCoordinator.drain();
+    assert.equal(extractionCalls, 8);
+    const jobs = runtime.kernel.getRelationshipCoordinatorStatus().recentJobs;
+    assert.equal(jobs.filter((job) => job.triggerReason === "private_turn_review").length, 1);
+    assert.equal(jobs.filter((job) => job.triggerReason.startsWith("before_relationship_reset:")).length, 7);
   } finally {
     runtime.dispose();
   }

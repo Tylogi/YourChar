@@ -9,11 +9,42 @@ export const relationshipEventTypes = [
   "boundary_violation",
   "repair",
   "affection",
+  "bond_defined",
+  "confession",
+  "confession_accepted",
+  "confession_rejected",
+  "relationship_confirmed",
+  "commitment",
+  "jealousy",
+  "shared_secret",
+  "breakup",
+  "reconciliation",
 ] as const;
 
 export type RelationshipEventType = typeof relationshipEventTypes[number];
 export type RelationshipImpact = "minor" | "moderate" | "major";
 export type RelationshipStage = "stranger" | "acquaintance" | "familiar" | "close" | "intimate" | "strained";
+export const relationshipBondFacets = [
+  "friendship",
+  "confidant",
+  "companionship",
+  "partnership",
+  "mentorship",
+  "rivalry",
+  "familial",
+] as const;
+export type RelationshipBondFacet = typeof relationshipBondFacets[number];
+export const romanceStatuses = [
+  "none",
+  "user_interest",
+  "character_interest",
+  "mutual_interest",
+  "dating",
+  "committed",
+  "former_partners",
+] as const;
+export type RomanceStatus = typeof romanceStatuses[number];
+export type RelationshipInitiator = "user" | "character" | "mutual";
 export type AffectLabel =
   | "calm"
   | "warm"
@@ -46,6 +77,9 @@ export type AffectState = {
 export type CharacterRelationshipState = RelationshipDimensions & {
   characterId: string;
   stage: RelationshipStage;
+  bondFacets: RelationshipBondFacet[];
+  romanceStatus: RomanceStatus;
+  semanticUpdatedAt?: string;
   affect: AffectState;
   version: number;
   createdAt: string;
@@ -64,7 +98,28 @@ export type RelationshipEvent = {
   summary: string;
   confidence: number;
   delta: RelationshipDelta;
+  initiator?: RelationshipInitiator;
+  bondFacet?: RelationshipBondFacet;
+  evidence?: RelationshipEvidence;
+  semanticChange?: RelationshipSemanticChange;
   createdAt: string;
+};
+
+export type RelationshipEvidence = {
+  user?: string;
+  assistant?: string;
+};
+
+export type RelationshipSemanticChange = {
+  addedBondFacets: RelationshipBondFacet[];
+  romanceFrom?: RomanceStatus;
+  romanceTo?: RomanceStatus;
+};
+
+export type RelationshipReviewTurn = {
+  sourceContextLogId: string;
+  userText: string;
+  assistantText: string;
 };
 
 export type RelationshipExtractionInput = {
@@ -74,6 +129,13 @@ export type RelationshipExtractionInput = {
   sourceContextLogId: string;
   userText: string;
   assistantText: string;
+  reviewKind?: "single_turn" | "periodic";
+  reviewTurns?: RelationshipReviewTurn[];
+  currentRelationship?: {
+    stage: RelationshipStage;
+    bondFacets: RelationshipBondFacet[];
+    romanceStatus: RomanceStatus;
+  };
 };
 
 export type RelationshipExtraction = {
@@ -82,6 +144,9 @@ export type RelationshipExtraction = {
   impact?: RelationshipImpact;
   summary?: string;
   confidence: number;
+  initiator?: RelationshipInitiator;
+  bondFacet?: RelationshipBondFacet;
+  evidence?: RelationshipEvidence;
 };
 
 export type RelationshipExtractor = (input: RelationshipExtractionInput) => Promise<unknown>;

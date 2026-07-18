@@ -3,11 +3,15 @@ import type { ContextLogEntry, Mode } from "../domain/types.js";
 import type {
   AffectLabel,
   CharacterRelationshipState,
+  RelationshipBondFacet,
   RelationshipDelta,
   RelationshipEvent,
   RelationshipExtractionJob,
   RelationshipJobStatus,
+  RelationshipSemanticChange,
+  RomanceStatus,
 } from "./types.js";
+import { relationshipBondFacets, romanceStatuses } from "./types.js";
 
 type Row = Record<string, unknown>;
 
@@ -22,9 +26,10 @@ export class RelationshipRepository {
     this.database.connection.prepare(`
       INSERT INTO character_relationship_states(
         character_id, trust, closeness, affection, respect, tension,
+        bond_facets_json, romance_status, semantic_updated_at,
         affect_valence, affect_arousal, affect_control, affect_labels_json,
         affect_updated_at, version, created_at, updated_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT(character_id) DO NOTHING
     `).run(
       state.characterId,
@@ -33,6 +38,9 @@ export class RelationshipRepository {
       state.affection,
       state.respect,
       state.tension,
+      JSON.stringify(state.bondFacets),
+      state.romanceStatus,
+      state.semanticUpdatedAt ?? null,
       state.affect.valence,
       state.affect.arousal,
       state.affect.control,
@@ -56,6 +64,7 @@ export class RelationshipRepository {
     this.database.connection.prepare(`
       UPDATE character_relationship_states SET
         trust = ?, closeness = ?, affection = ?, respect = ?, tension = ?,
+        bond_facets_json = ?, romance_status = ?, semantic_updated_at = ?,
         affect_valence = ?, affect_arousal = ?, affect_control = ?,
         affect_labels_json = ?, affect_updated_at = ?, version = ?, updated_at = ?
       WHERE character_id = ?
@@ -65,6 +74,9 @@ export class RelationshipRepository {
       state.affection,
       state.respect,
       state.tension,
+      JSON.stringify(state.bondFacets),
+      state.romanceStatus,
+      state.semanticUpdatedAt ?? null,
       state.affect.valence,
       state.affect.arousal,
       state.affect.control,
@@ -85,8 +97,9 @@ export class RelationshipRepository {
     this.database.connection.prepare(`
       INSERT INTO relationship_events(
         id, character_id, source_session_id, source_context_log_id,
-        event_type, impact, summary, confidence, delta_json, created_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        event_type, impact, summary, confidence, delta_json,
+        initiator, bond_facet, evidence_json, semantic_change_json, created_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT(source_context_log_id) DO NOTHING
     `).run(
       event.id,
@@ -98,6 +111,10 @@ export class RelationshipRepository {
       event.summary,
       event.confidence,
       JSON.stringify(event.delta),
+      event.initiator ?? null,
+      event.bondFacet ?? null,
+      event.evidence ? JSON.stringify(event.evidence) : null,
+      event.semanticChange ? JSON.stringify(event.semanticChange) : null,
       event.createdAt,
     );
     return this.findEventByContextLog(event.sourceContextLogId)!;
@@ -122,6 +139,23 @@ export class RelationshipRepository {
     this.database.connection.prepare("DELETE FROM relationship_events WHERE character_id = ?").run(characterId);
   }
 
+  listRecentQuietTurns(characterId: string, beforeJobId?: string, limit = 7): ContextLogEntry[] {
+    const rows = this.database.connection.prepare(`
+      SELECT context_log_summaries.*
+      FROM relationship_extraction_jobs
+      JOIN context_log_summaries
+        ON context_log_summaries.id = relationship_extraction_jobs.source_context_log_id
+      WHERE relationship_extraction_jobs.character_id = ?
+        AND relationship_extraction_jobs.trigger_reason = 'no_relationship_signal'
+        AND (? IS NULL OR relationship_extraction_jobs.rowid < (
+          SELECT rowid FROM relationship_extraction_jobs WHERE id = ?
+        ))
+      ORDER BY relationship_extraction_jobs.rowid DESC
+      LIMIT ?
+    `).all(characterId, beforeJobId ?? null, beforeJobId ?? null, Math.min(Math.max(limit, 1), 20)) as Row[];
+    return rows.map(mapContextLog);
+  }
+
   cancelOutstandingJobs(characterId: string, now: string): number {
     return Number(this.database.connection.prepare(`
       UPDATE relationship_extraction_jobs
@@ -129,6 +163,14 @@ export class RelationshipRepository {
           result_count = 0, last_error = NULL, owner_id = NULL, claim_token = NULL,
           lease_expires_at = NULL, updated_at = ?
       WHERE character_id = ? AND status IN ('pending', 'running', 'failed')
+    `).run(now, characterId).changes);
+  }
+
+  fenceReviewHistory(characterId: string, now: string): number {
+    return Number(this.database.connection.prepare(`
+      UPDATE relationship_extraction_jobs
+      SET trigger_reason = 'before_relationship_reset:' || trigger_reason, updated_at = ?
+      WHERE character_id = ? AND trigger_reason NOT LIKE 'before_relationship_reset:%'
     `).run(now, characterId).changes);
   }
 
@@ -280,22 +322,7 @@ export class RelationshipRepository {
     const row = this.database.connection.prepare(
       "SELECT * FROM context_log_summaries WHERE id = ?",
     ).get(id) as Row | undefined;
-    if (!row) return undefined;
-    return {
-      id: String(row.id),
-      sessionId: String(row.session_id),
-      mode: row.mode as Mode,
-      requestText: String(row.request_text),
-      systemPrompt: String(row.system_prompt_excerpt),
-      messageCountBefore: Number(row.message_count_before),
-      toolNames: [],
-      reply: String(row.reply),
-      status: row.turn_status === "completed" ? "completed" : "failed",
-      canRetry: Boolean(row.can_retry),
-      actions: [],
-      events: [],
-      createdAt: String(row.created_at),
-    };
+    return row ? mapContextLog(row) : undefined;
   }
 
   pendingCount(): number {
@@ -323,6 +350,11 @@ function mapState(row: Row): CharacterRelationshipState {
     affection: Number(row.affection),
     respect: Number(row.respect),
     tension: Number(row.tension),
+    bondFacets: parseBondFacets(row.bond_facets_json),
+    romanceStatus: parseRomanceStatus(row.romance_status),
+    ...(typeof row.semantic_updated_at === "string" && row.semantic_updated_at
+      ? { semanticUpdatedAt: row.semantic_updated_at }
+      : {}),
     affect: {
       valence: Number(row.affect_valence),
       arousal: Number(row.affect_arousal),
@@ -338,6 +370,8 @@ function mapState(row: Row): CharacterRelationshipState {
 }
 
 function mapEvent(row: Row): RelationshipEvent {
+  const evidence = parseEvidence(row.evidence_json);
+  const semanticChange = parseSemanticChange(row.semantic_change_json);
   return {
     id: String(row.id),
     characterId: String(row.character_id),
@@ -348,6 +382,28 @@ function mapEvent(row: Row): RelationshipEvent {
     summary: String(row.summary),
     confidence: Number(row.confidence),
     delta: parseDelta(row.delta_json),
+    ...(isInitiator(row.initiator) ? { initiator: row.initiator } : {}),
+    ...(isBondFacet(row.bond_facet) ? { bondFacet: row.bond_facet } : {}),
+    ...(evidence ? { evidence } : {}),
+    ...(semanticChange ? { semanticChange } : {}),
+    createdAt: String(row.created_at),
+  };
+}
+
+function mapContextLog(row: Row): ContextLogEntry {
+  return {
+    id: String(row.id),
+    sessionId: String(row.session_id),
+    mode: row.mode as Mode,
+    requestText: String(row.request_text),
+    systemPrompt: String(row.system_prompt_excerpt),
+    messageCountBefore: Number(row.message_count_before),
+    toolNames: [],
+    reply: String(row.reply),
+    status: row.turn_status === "completed" ? "completed" : "failed",
+    canRetry: Boolean(row.can_retry),
+    actions: [],
+    events: [],
     createdAt: String(row.created_at),
   };
 }
@@ -384,6 +440,69 @@ function parseLabels(value: unknown): AffectLabel[] {
   } catch {
     return [];
   }
+}
+
+function parseBondFacets(value: unknown): RelationshipBondFacet[] {
+  try {
+    const parsed = JSON.parse(String(value));
+    return Array.isArray(parsed)
+      ? [...new Set(parsed.filter(isBondFacet))]
+      : [];
+  } catch {
+    return [];
+  }
+}
+
+function parseRomanceStatus(value: unknown): RomanceStatus {
+  return typeof value === "string" && romanceStatuses.some((entry) => entry === value)
+    ? value as RomanceStatus
+    : "none";
+}
+
+function parseEvidence(value: unknown): RelationshipEvent["evidence"] | undefined {
+  if (typeof value !== "string" || !value) return undefined;
+  try {
+    const parsed = JSON.parse(value) as Record<string, unknown>;
+    const user = typeof parsed.user === "string" && parsed.user ? parsed.user : undefined;
+    const assistant = typeof parsed.assistant === "string" && parsed.assistant ? parsed.assistant : undefined;
+    return user || assistant ? { ...(user ? { user } : {}), ...(assistant ? { assistant } : {}) } : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+function parseSemanticChange(value: unknown): RelationshipSemanticChange | undefined {
+  if (typeof value !== "string" || !value) return undefined;
+  try {
+    const parsed = JSON.parse(value) as Record<string, unknown>;
+    const addedBondFacets = Array.isArray(parsed.addedBondFacets)
+      ? [...new Set(parsed.addedBondFacets.filter(isBondFacet))]
+      : [];
+    const romanceFrom = parseOptionalRomanceStatus(parsed.romanceFrom);
+    const romanceTo = parseOptionalRomanceStatus(parsed.romanceTo);
+    if (!addedBondFacets.length && !romanceTo) return undefined;
+    return {
+      addedBondFacets,
+      ...(romanceFrom ? { romanceFrom } : {}),
+      ...(romanceTo ? { romanceTo } : {}),
+    };
+  } catch {
+    return undefined;
+  }
+}
+
+function parseOptionalRomanceStatus(value: unknown): RomanceStatus | undefined {
+  return typeof value === "string" && romanceStatuses.some((entry) => entry === value)
+    ? value as RomanceStatus
+    : undefined;
+}
+
+function isBondFacet(value: unknown): value is RelationshipBondFacet {
+  return typeof value === "string" && relationshipBondFacets.some((entry) => entry === value);
+}
+
+function isInitiator(value: unknown): value is NonNullable<RelationshipEvent["initiator"]> {
+  return value === "user" || value === "character" || value === "mutual";
 }
 
 function parseDelta(value: unknown): RelationshipDelta {

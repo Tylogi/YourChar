@@ -79,6 +79,7 @@ export type ExtractedMemoryCandidate = {
   salience?: number;
   confidence?: number;
   tags?: string[];
+  evidence?: { user: string };
 };
 
 export type MemoryExtractor = (input: MemoryExtractionInput) => Promise<unknown>;

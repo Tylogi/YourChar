@@ -199,14 +199,15 @@ async function runDesktopWorkflow(browser, baseUrl, outputDir) {
   await planningModule.waitFor();
   await planningModule.locator('input[type="checkbox"]').check();
   await planningModule.getByText("已启用", { exact: true }).waitFor();
-  assert.equal(await page.locator(".module-row").count(), 9);
+  assert.equal(await page.locator(".module-row").count(), 10);
   await page.locator(".module-row").filter({ hasText: "Tavily Search MCP" }).waitFor();
-  assert.equal(await page.locator(".module-token").count(), 9);
+  assert.equal(await page.locator(".module-token").count(), 10);
   await page.locator(".module-row").filter({ hasText: "Memory Coordinator MCP" }).locator(".module-token").filter({ hasText: "约 430 tokens/轮" }).waitFor();
   await page.locator(".module-row").filter({ hasText: "Subagent Delegation MCP" }).locator(".module-token").filter({ hasText: "约 390 tokens/轮" }).waitFor();
   await page.locator(".module-row").filter({ hasText: "Relationship State MCP" }).locator(".module-token").filter({ hasText: "约 230 tokens/轮" }).waitFor();
   await page.locator(".module-row").filter({ hasText: "Tavily Search MCP" }).locator(".module-token").filter({ hasText: "约 350 tokens/轮" }).waitFor();
   await page.locator(".module-row").filter({ hasText: "Vision MCP" }).locator(".module-token").filter({ hasText: "约 420 tokens/轮" }).waitFor();
+  await page.locator(".module-row").filter({ hasText: "Web Reader MCP" }).locator(".module-token").filter({ hasText: "约 260 tokens/轮" }).waitFor();
   await planningModule.locator(".module-token").filter({ hasText: /索引约 .*全文约 .*tokens\/调用/ }).waitFor();
   await page.locator("#permissionRuntime").filter({ hasText: "Bubblewrap 可用" }).waitFor();
   assert.match(await page.locator("#workspacePath").textContent(), /workspace$/);
@@ -386,6 +387,8 @@ async function runDesktopWorkflow(browser, baseUrl, outputDir) {
 
   await page.getByRole("tab", { name: "关系", exact: true }).click();
   await page.locator("#relationshipOverview").filter({ hasText: "初识" }).waitFor();
+  await page.locator("#relationshipOverview").filter({ hasText: "尚未建立浪漫关系" }).waitFor();
+  await page.locator("#relationshipOverview").filter({ hasText: "尚未明确关系身份" }).waitFor();
   assert.equal(await page.locator("#relationshipOverview .relationship-metric").count(), 5);
   assert.deepEqual(
     await page.locator("#relationshipOverview .relationship-metric > strong").allTextContents(),
@@ -1180,6 +1183,7 @@ async function runMobileWorkflow(browser, baseUrl, outputDir) {
   assert.equal(await page.locator("#characterSoulCount").textContent(), `${[...mobileSoul].length} / 8000`);
   await page.getByRole("tab", { name: "关系", exact: true }).click();
   await page.locator("#relationshipOverview").filter({ hasText: "初识" }).waitFor();
+  await page.locator("#relationshipOverview").filter({ hasText: "尚未建立浪漫关系" }).waitFor();
   assert.equal(await page.locator("#relationshipOverview .relationship-metric").count(), 5);
   await assertPanelInsideMain(page, "#charactersPage");
   await assertInteractiveBounds(page);

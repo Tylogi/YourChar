@@ -35,7 +35,6 @@ export class RelationshipCoordinator {
   enqueueTurn(log: ContextLogEntry, context: { characterId?: string }): RelationshipExtractionJob | undefined {
     if (log.status !== "completed" || !context.characterId) return undefined;
     const enabled = this.modules.isEnabled(relationshipStateMcpModuleId);
-    const triggered = hasRelationshipSignal(log.requestText);
     const now = this.now();
     const job = this.repository.createJob({
       id: this.idGenerator.next("relationship-job"),
@@ -44,13 +43,11 @@ export class RelationshipCoordinator {
       sessionId: log.sessionId,
       characterId: context.characterId,
       mode: log.mode,
-      triggerReason: !enabled ? "module_disabled" : triggered ? "relationship_signal_detected" : "no_relationship_signal",
-      status: enabled && triggered ? "pending" : "skipped",
+      triggerReason: enabled ? "private_turn_review" : "module_disabled",
+      status: enabled ? "pending" : "skipped",
       attempts: 0,
       maxAttempts: 3,
-      inputTokenEstimate: enabled && triggered
-        ? estimateTokens(log.requestText) + estimateTokens(log.reply) + 280
-        : 0,
+      inputTokenEstimate: enabled ? estimateTurnTokens([log]) + 900 : 0,
       resultCount: 0,
       availableAt: now,
       createdAt: now,
@@ -136,9 +133,16 @@ export class RelationshipCoordinator {
       }
       const log = this.repository.getContextLog(job.sourceContextLogId);
       if (!log) throw new Error("source context log is unavailable");
-      if ([...log.requestText].length > 8_000 || [...log.reply].length > 12_000) {
+      // Persisted jobs from the pre-all-turn policy may still contain an eight-turn review window.
+      const periodicReview = job.triggerReason.startsWith("periodic_relationship_review");
+      const reviewLogs = periodicReview
+        ? [...this.repository.listRecentQuietTurns(job.characterId, job.id, 7)].reverse()
+        : [];
+      const sourceLogs = [...reviewLogs, log];
+      if (sourceLogs.some((entry) => [...entry.requestText].length > 8_000 || [...entry.reply].length > 12_000)) {
         throw new Error("source turn exceeds relationship extraction limits");
       }
+      const current = this.service.ensureState(job.characterId);
       const input: RelationshipExtractionInput = {
         mode: job.mode,
         characterId: job.characterId,
@@ -146,6 +150,19 @@ export class RelationshipCoordinator {
         sourceContextLogId: job.sourceContextLogId,
         userText: log.requestText,
         assistantText: log.reply,
+        reviewKind: periodicReview ? "periodic" : "single_turn",
+        ...(periodicReview ? {
+          reviewTurns: sourceLogs.map((entry) => ({
+            sourceContextLogId: entry.id,
+            userText: entry.requestText,
+            assistantText: entry.reply,
+          })),
+        } : {}),
+        currentRelationship: {
+          stage: current.stage,
+          bondFacets: current.bondFacets,
+          romanceStatus: current.romanceStatus,
+        },
       };
       const raw = await this.extractor(input);
       if (this.disposed || claimLost) return;
@@ -180,10 +197,8 @@ export class RelationshipCoordinator {
   }
 }
 
-export function hasRelationshipSignal(text: string): boolean {
-  const normalized = text.trim();
-  if ([...normalized].length < 2) return false;
-  return /(?:谢谢|感谢|辛苦|支持|相信|信任|答应|承诺|陪我|想你|喜欢你|爱你|在乎你|抱抱|拥抱|亲吻|亲你|对不起|抱歉|原谅|和好|吵架|生气|讨厌你|恨你|失望|骗我|背叛|不尊重|越界|别再|不要这样|秘密|只告诉你|成功了|做到了|thank|trust|promise|miss you|like you|love you|hug|kiss|sorry|forgive|argue|angry|hate you|disappointed|betray|boundary|secret)/iu.test(normalized);
+function estimateTurnTokens(logs: ContextLogEntry[]): number {
+  return logs.reduce((total, log) => total + estimateTokens(log.requestText) + estimateTokens(log.reply), 0);
 }
 
 function estimateTokens(value: string): number {

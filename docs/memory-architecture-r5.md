@@ -117,8 +117,11 @@ Vault-relative paths without changing UUID IDs or strict frontmatter.
 
 - Reality/global Markdown remains under `reality/`; character continuity stays
   under `roleplay/characters/<id>/`; legacy records remain quarantined.
-- Only trusted HTTP/UI or explicit-user authorization can activate or forget
-  memory. Agent/MCP extraction can only propose pending candidates.
+- Trusted HTTP/UI and explicit-user authorization can activate or forget
+  memory. Direct Agent/MCP proposals remain pending. When Reality Memory Write
+  is enabled, the trusted background Coordinator may activate only low-risk
+  reality facts with high confidence and exact user-quote evidence; sensitive
+  facts remain pending.
 - Pending, rejected, archived, superseded, deleted, legacy, and wrong-character
   records never enter provider context.
 - Turning Memory Coordinator off disables extraction, tools, and all memory

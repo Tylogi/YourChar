@@ -21,6 +21,7 @@ import {
   scheduleMcpModuleId,
   memoryCoordinatorMcpModuleId,
   tavilySearchMcpModuleId,
+  webReaderMcpModuleId,
   subagentMcpModuleId,
   relationshipStateMcpModuleId,
   userProfileMcpModuleId,
@@ -35,6 +36,7 @@ import {
   createScheduleMcpBridge,
   createSubagentMcpBridge,
   createTavilyMcpBridge,
+  createWebReaderMcpBridge,
   createUserProfileMcpBridge,
   createVisionMcpBridge,
   type McpPiBridge,
@@ -45,6 +47,7 @@ import type { UserProfileService } from "../profile/service.js";
 import type { RpService } from "../rp/service.js";
 import type { ScheduleService } from "../schedule/service.js";
 import type { TavilyService } from "../tavily/service.js";
+import type { WebReaderService } from "../web-reader/service.js";
 import type { MemoryLifecycleService } from "../memory-coordinator/lifecycle.js";
 import type { VisionService } from "../vision/service.js";
 import type { RelationshipService } from "../relationship/service.js";
@@ -107,6 +110,7 @@ export type PiSessionRuntimeOptions = {
   rpService: RpService;
   profileService: UserProfileService;
   tavilyService: TavilyService;
+  webReaderService: WebReaderService;
   visionService: VisionService;
   relationshipService: RelationshipService;
   stateDir?: string | false;
@@ -180,6 +184,7 @@ export class PiSessionRuntime {
   private readonly rpService: RpService;
   private readonly profileService: UserProfileService;
   private readonly tavilyService: TavilyService;
+  private readonly webReaderService: WebReaderService;
   private readonly visionService: VisionService;
   private readonly relationshipService: RelationshipService;
   private readonly stateDir?: string;
@@ -210,6 +215,7 @@ export class PiSessionRuntime {
     this.rpService = options.rpService;
     this.profileService = options.profileService;
     this.tavilyService = options.tavilyService;
+    this.webReaderService = options.webReaderService;
     this.visionService = options.visionService;
     this.relationshipService = options.relationshipService;
     this.stateDir = options.stateDir === false ? undefined : options.stateDir ?? options.store.stateDir;
@@ -619,6 +625,14 @@ export class PiSessionRuntime {
         actions: () => toolState.actions,
       }));
     }
+    if (this.moduleCatalog.isEnabled(webReaderMcpModuleId)) {
+      mcpBridges.push(await createWebReaderMcpBridge({
+        webReaderService: this.webReaderService,
+        store: this.store,
+        sessionId: metadata.id,
+        actions: () => toolState.actions,
+      }));
+    }
     if (
       this.moduleCatalog.isEnabled(visionMcpModuleId) &&
       this.visionService.isConfigured() &&
@@ -815,6 +829,14 @@ export class PiSessionRuntime {
       ) {
         childBridges.push(await createTavilyMcpBridge({
           tavilyService: this.tavilyService,
+          store: this.store,
+          sessionId: childSessionId,
+          actions: () => input.actions,
+        }));
+      }
+      if (this.moduleCatalog.isEnabled(webReaderMcpModuleId)) {
+        childBridges.push(await createWebReaderMcpBridge({
+          webReaderService: this.webReaderService,
           store: this.store,
           sessionId: childSessionId,
           actions: () => input.actions,

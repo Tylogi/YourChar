@@ -767,6 +767,20 @@ export function renderAppHtml(): string {
     .relationship-stage { display: grid; align-content: start; gap: 8px; }
     .relationship-stage-label { color: var(--muted); font-size: 11px; }
     .relationship-stage strong { font-size: 22px; font-weight: 650; }
+    .relationship-definition { display: grid; gap: 7px; margin-top: 3px; }
+    .relationship-definition-row { display: flex; align-items: baseline; gap: 7px; font-size: 12px; }
+    .relationship-definition-row span { color: var(--muted); }
+    .relationship-definition-row b { color: #303733; font-weight: 620; }
+    .relationship-bonds { display: flex; flex-wrap: wrap; gap: 5px; }
+    .relationship-bond-chip {
+      min-height: 24px;
+      padding: 3px 7px;
+      border: 1px solid #d9dfdc;
+      border-radius: 5px;
+      background: #fff;
+      color: #46504b;
+      font-size: 11px;
+    }
     .affect-summary { display: flex; flex-wrap: wrap; gap: 6px; }
     .affect-chip {
       min-height: 25px;
@@ -3112,8 +3126,8 @@ export function renderAppHtml(): string {
                 </div>
                 <div class="permission-row">
                   <div>
-                    <div class="module-name">现实记忆提议</div>
-                    <div class="module-description">允许 Agent MCP 在 reality/global 创建 pending 候选</div>
+                    <div class="module-name">现实记忆收录</div>
+                    <div class="module-description">允许 MCP 提议；后台可自动收录有原话依据的低风险信息，敏感信息仍待确认</div>
                   </div>
                   <label class="toggle"><span id="realityMemoryWritePermissionLabel">已关闭</span><input id="realityMemoryWritePermissionInput" type="checkbox" data-permission="realityMemoryWriteEnabled" /></label>
                 </div>
@@ -6429,6 +6443,19 @@ export function renderAppHtml(): string {
       const stageLabels = {
         stranger: "陌生", acquaintance: "初识", familiar: "熟悉", close: "亲近", intimate: "亲密", strained: "紧张"
       };
+      const romanceLabels = {
+        none: "尚未建立浪漫关系",
+        user_interest: "用户单方好感",
+        character_interest: "角色单方好感",
+        mutual_interest: "互有好感，尚未交往",
+        dating: "交往中",
+        committed: "稳定伴侣",
+        former_partners: "曾经交往"
+      };
+      const bondLabels = {
+        friendship: "朋友", confidant: "知己", companionship: "陪伴关系", partnership: "搭档",
+        mentorship: "师生", rivalry: "对手", familial: "家人般的关系"
+      };
       const affectLabels = {
         calm: "平静", warm: "温暖", happy: "愉快", excited: "兴奋", moved: "感动", shy: "害羞",
         worried: "担忧", sad: "难过", angry: "生气", hurt: "受伤", guarded: "戒备"
@@ -6447,9 +6474,15 @@ export function renderAppHtml(): string {
         '克制 ' + Number(affect.control || 0).toFixed(2),
         ...(affect.labels || []).map((label) => affectLabels[label] || label)
       ];
+      const bonds = Array.isArray(current.bondFacets) ? current.bondFacets : [];
       nodes.relationshipOverview.innerHTML =
-        '<div class="relationship-stage"><span class="relationship-stage-label">当前关系</span><strong>' +
-          escapeHtml(stageLabels[current.stage] || current.stage || "初识") + '</strong><div class="affect-summary">' +
+        '<div class="relationship-stage"><span class="relationship-stage-label">亲疏阶段</span><strong>' +
+          escapeHtml(stageLabels[current.stage] || current.stage || "初识") + '</strong><div class="relationship-definition">' +
+          '<div class="relationship-definition-row"><span>浪漫状态</span><b>' +
+          escapeHtml(romanceLabels[current.romanceStatus] || current.romanceStatus || romanceLabels.none) + '</b></div>' +
+          '<div class="relationship-bonds">' + (bonds.length
+            ? bonds.map((facet) => '<span class="relationship-bond-chip">' + escapeHtml(bondLabels[facet] || facet) + '</span>').join("")
+            : '<span class="relationship-bond-chip">尚未明确关系身份</span>') + '</div></div><div class="affect-summary">' +
           affectChips.map((label) => '<span class="affect-chip">' + escapeHtml(label) + '</span>').join("") + '</div></div>' +
         '<div class="relationship-metrics">' + metrics.map(([label, value, tone]) =>
           '<div class="relationship-metric" data-tone="' + tone + '"><span>' + label + '</span><span class="relationship-meter"><i style="width:' +
@@ -6457,17 +6490,29 @@ export function renderAppHtml(): string {
         ).join("") + '</div>';
       const eventLabels = {
         support: "支持", reliability: "可靠", vulnerability: "袒露", shared_success: "共同成果",
-        conflict: "冲突", boundary_violation: "越界", repair: "修复", affection: "亲密表达"
+        conflict: "冲突", boundary_violation: "越界", repair: "修复", affection: "亲密表达",
+        bond_defined: "确认关系身份", confession: "表达爱意", confession_accepted: "接受告白",
+        confession_rejected: "拒绝告白", relationship_confirmed: "确认交往", commitment: "长期承诺",
+        jealousy: "嫉妒", shared_secret: "共享秘密", breakup: "结束关系", reconciliation: "复合"
       };
       const dimensionLabels = { trust: "信任", closeness: "亲近", affection: "好感", respect: "尊重", tension: "张力" };
+      const initiatorLabels = { user: "用户发起", character: "角色发起", mutual: "双方确认" };
+      const impactLabels = { minor: "轻微", moderate: "显著", major: "重大" };
       const events = Array.isArray(snapshot.recentEvents) ? snapshot.recentEvents : [];
       nodes.relationshipEventList.innerHTML = events.length ? events.map((event) => {
         const changes = Object.entries(event.delta || {}).filter(([, value]) => Number(value) !== 0);
+        const semantic = event.semanticChange || {};
+        const semanticChanges = [
+          ...(semantic.addedBondFacets || []).map((facet) => '建立“' + (bondLabels[facet] || facet) + '”纽带'),
+          ...(semantic.romanceTo ? ['浪漫状态：' + (romanceLabels[semantic.romanceTo] || semantic.romanceTo)] : [])
+        ];
         return '<article class="relationship-event"><div class="relationship-event-copy"><strong>' +
-          escapeHtml(eventLabels[event.type] || event.type) + ' · ' + escapeHtml(event.impact || "minor") +
+          escapeHtml(eventLabels[event.type] || event.type) + ' · ' + escapeHtml(impactLabels[event.impact] || event.impact || "轻微") +
+          (event.initiator ? ' · ' + escapeHtml(initiatorLabels[event.initiator] || event.initiator) : '') +
           '</strong><p>' + escapeHtml(event.summary || "") + '</p><time>' + escapeHtml(formatTraceTime(event.createdAt)) +
           '</time></div><div class="relationship-delta">' + changes.map(([key, value]) => '<span>' +
-            escapeHtml(dimensionLabels[key] || key) + ' ' + (Number(value) > 0 ? '+' : '') + Number(value) + '</span>').join("") + '</div></article>';
+            escapeHtml(dimensionLabels[key] || key) + ' ' + (Number(value) > 0 ? '+' : '') + Number(value) + '</span>').join("") +
+            semanticChanges.map((label) => '<span>' + escapeHtml(label) + '</span>').join("") + '</div></article>';
       }).join("") : '<div class="relationship-empty">还没有明确的关系变化记录</div>';
       refreshIcons();
     }
@@ -9580,6 +9625,7 @@ export function renderAppHtml(): string {
         group_gate: "群聊判断",
         group_reply: "群聊回复",
         subagent: "子 Agent",
+        memory_extraction: "记忆提取",
         relationship_extraction: "关系提取"
       })[kind] || kind || "模型调用";
     }

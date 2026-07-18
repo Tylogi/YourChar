@@ -18,6 +18,7 @@ and adds the RP companion domain on top:
 - per-character SOUL.md files, scenes, typed long-term memory, and FTS5 retrieval;
 - runtime MCP/Skill discovery and persisted capability toggles;
 - optional Tavily live web search through a credential-isolated local MCP;
+- optional SSRF-restricted Web Reader MCP for readable public URL contents;
 - direct or independent Vision MCP image understanding for text-only primary models;
 - optional isolated private-chat subagents for bounded work, research, planning, and review;
 - optional per-character relationship and decaying affect state with trusted bounded updates;
@@ -58,6 +59,8 @@ Workspace, shell, and protected-document permissions are documented in
 [`docs/workspace-capabilities.md`](docs/workspace-capabilities.md).
 Tavily module enablement, Key handling, tool limits, and test contracts are
 documented in [`docs/tavily-search-mcp.md`](docs/tavily-search-mcp.md).
+Read-only URL extraction, network boundaries, TUN behavior, and test contracts
+are documented in [`docs/web-reader-mcp.md`](docs/web-reader-mcp.md).
 Vision routing, upload boundaries, caching, and test contracts are documented in
 [`docs/vision-mcp.md`](docs/vision-mcp.md).
 Private-chat delegation, child isolation, budgets, and test contracts are
@@ -73,6 +76,12 @@ and lifecycle foundation remains in
 consistency, writer/job leases, startup recovery, backup verification, and Vault
 Health contracts are documented in
 [`docs/memory-architecture-r5.md`](docs/memory-architecture-r5.md).
+Daily-chat capture policy, the failure audit, semantic retrieval tags, and the
+configured-model evaluation are documented in
+[`docs/memory-daily-capture.md`](docs/memory-daily-capture.md).
+The per-scenario background thinking controls, compatibility fallback, token
+ceilings, and configured-model corpus are documented in
+[`docs/background-thinking-policy.md`](docs/background-thinking-policy.md).
 
 The deterministic Agent test control API is disabled by default. Start a
 loopback-only test server with:

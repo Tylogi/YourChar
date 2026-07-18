@@ -4,6 +4,7 @@ export * from "./http/router.js";
 export * from "./testing/index.js";
 export * from "./modules/index.js";
 export * from "./tavily/index.js";
+export * from "./web-reader/index.js";
 export * from "./profile/index.js";
 export * from "./context/index.js";
 export * from "./vision/index.js";

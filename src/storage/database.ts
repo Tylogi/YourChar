@@ -671,6 +671,60 @@ const migrations: Migration[] = [
         ON model_context_traces(session_id, sequence DESC);
     `,
   },
+  {
+    version: 18,
+    sql: `
+      ALTER TABLE character_relationship_states
+        ADD COLUMN bond_facets_json TEXT NOT NULL DEFAULT '[]';
+      ALTER TABLE character_relationship_states
+        ADD COLUMN romance_status TEXT NOT NULL DEFAULT 'none'
+        CHECK (romance_status IN (
+          'none', 'user_interest', 'character_interest', 'mutual_interest',
+          'dating', 'committed', 'former_partners'
+        ));
+      ALTER TABLE character_relationship_states
+        ADD COLUMN semantic_updated_at TEXT;
+
+      DROP INDEX relationship_events_character_idx;
+      ALTER TABLE relationship_events RENAME TO relationship_events_legacy;
+      CREATE TABLE relationship_events (
+        id TEXT PRIMARY KEY,
+        character_id TEXT NOT NULL REFERENCES characters(id) ON DELETE CASCADE,
+        source_session_id TEXT NOT NULL,
+        source_context_log_id TEXT NOT NULL UNIQUE,
+        event_type TEXT NOT NULL CHECK (event_type IN (
+          'support', 'reliability', 'vulnerability', 'shared_success',
+          'conflict', 'boundary_violation', 'repair', 'affection',
+          'bond_defined', 'confession', 'confession_accepted',
+          'confession_rejected', 'relationship_confirmed', 'commitment',
+          'jealousy', 'shared_secret', 'breakup', 'reconciliation'
+        )),
+        impact TEXT NOT NULL CHECK (impact IN ('minor', 'moderate', 'major')),
+        summary TEXT NOT NULL,
+        confidence REAL NOT NULL CHECK (confidence BETWEEN 0 AND 1),
+        delta_json TEXT NOT NULL,
+        initiator TEXT CHECK (initiator IN ('user', 'character', 'mutual')),
+        bond_facet TEXT CHECK (bond_facet IN (
+          'friendship', 'confidant', 'companionship', 'partnership',
+          'mentorship', 'rivalry', 'familial'
+        )),
+        evidence_json TEXT,
+        semantic_change_json TEXT,
+        created_at TEXT NOT NULL
+      );
+      INSERT INTO relationship_events(
+        id, character_id, source_session_id, source_context_log_id,
+        event_type, impact, summary, confidence, delta_json, created_at
+      )
+      SELECT
+        id, character_id, source_session_id, source_context_log_id,
+        event_type, impact, summary, confidence, delta_json, created_at
+      FROM relationship_events_legacy;
+      DROP TABLE relationship_events_legacy;
+      CREATE INDEX relationship_events_character_idx
+        ON relationship_events(character_id, created_at DESC, id DESC);
+    `,
+  },
 ];
 
 export class AppDatabase {

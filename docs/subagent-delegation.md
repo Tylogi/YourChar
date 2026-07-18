@@ -47,6 +47,8 @@ The child can receive only capabilities already enabled for the application:
 - Workspace `read` and `list_workspace`, downgraded to read-only even when the
   parent has read-write access;
 - Tavily Search when both its module and credential are available;
+- Web Reader when its module is enabled, with the same public-network and
+  untrusted-content boundaries as the parent session;
 - Vision MCP when its module and independent vision configuration are available.
 
 The child never receives Workspace write/edit, shell, schedules, memory,

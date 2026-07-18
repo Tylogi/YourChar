@@ -84,6 +84,8 @@ test("server serves chat UI and debug model traces", async () => {
     assert.match(html, /id="characterDetail" class="character-detail" hidden/);
     assert.match(html, /id="characterMemoryPanel"/);
     assert.match(html, /id="memoryEditorDialog"/);
+    assert.match(html, /尚未建立浪漫关系/);
+    assert.match(html, /relationship_confirmed: "确认交往"/);
     const characterPage = html.match(/<section id="charactersPage"[\s\S]*?<section id="managementPage"/)?.[0] ?? "";
     assert.doesNotMatch(characterPage, /id="sceneForm"/);
     const characterMemoryForm = html.match(/<form id="memoryForm"[\s\S]*?<\/form>/)?.[0] ?? "";
@@ -123,6 +125,15 @@ test("server serves chat UI and debug model traces", async () => {
 
     const pageWithSlash = await fetch(`${baseUrl}/ui/`);
     assert.equal(pageWithSlash.status, 200);
+
+    const relationshipResponse = await fetch(`${baseUrl}/api/v1/characters/${encodeURIComponent(character.id)}/relationship`);
+    assert.equal(relationshipResponse.status, 200);
+    const relationshipBody = await relationshipResponse.json() as {
+      relationship: { state: { bondFacets: string[]; romanceStatus: string }; qualitative: string };
+    };
+    assert.deepEqual(relationshipBody.relationship.state.bondFacets, []);
+    assert.equal(relationshipBody.relationship.state.romanceStatus, "none");
+    assert.match(relationshipBody.relationship.qualitative, /Explicit romantic status/);
     assert.match(await pageWithSlash.text(), /RP Agent/);
 
     const apiHealth = await fetch(`${baseUrl}/api/health`);

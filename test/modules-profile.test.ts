@@ -20,12 +20,13 @@ test("module toggles rebuild Pi capabilities and profile context without losing 
       ["mcp", "Tavily Search MCP", false],
       ["mcp", "User Profile MCP", true],
       ["mcp", "Vision MCP", false],
+      ["mcp", "Web Reader MCP", false],
       ["skill", "daily-planning", false],
       ["skill", "roleplay-continuity", false],
     ]);
     assert.deepEqual(
       modules.filter((entry) => entry.type === "mcp").map((entry) => [entry.name, entry.estimatedTokens]),
-      [["Memory Coordinator MCP", 430], ["Relationship State MCP", 230], ["Schedule MCP", 960], ["Subagent Delegation MCP", 390], ["Tavily Search MCP", 350], ["User Profile MCP", 270], ["Vision MCP", 420]],
+      [["Memory Coordinator MCP", 430], ["Relationship State MCP", 230], ["Schedule MCP", 960], ["Subagent Delegation MCP", 390], ["Tavily Search MCP", 350], ["User Profile MCP", 270], ["Vision MCP", 420], ["Web Reader MCP", 260]],
     );
     assert.match(runtime.kernel.getAgentModuleDetail("mcp:schedule").content, /calendar=character/);
     assert.match(runtime.kernel.getAgentModuleDetail("mcp:schedule").content, /never reminders or system notifications/);

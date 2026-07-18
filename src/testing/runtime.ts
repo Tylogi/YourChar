@@ -15,6 +15,7 @@ import type { PiModelResolver } from "../pi/session-runtime.js";
 import type { MemoryExtractor } from "../memory-coordinator/types.js";
 import type { RelationshipExtractor } from "../relationship/types.js";
 import type { VisionService } from "../vision/service.js";
+import type { WebReaderService } from "../web-reader/service.js";
 
 export type ScriptedModelResponse =
   | {
@@ -44,6 +45,7 @@ export type CreateTestRuntimeOptions = {
   memoryExtractor?: MemoryExtractor;
   relationshipExtractor?: RelationshipExtractor;
   visionService?: VisionService;
+  webReaderService?: WebReaderService;
 };
 
 export class ScriptedModelController {
@@ -164,6 +166,7 @@ export class TestRuntime {
       workspaceDir: options.workspaceDir,
       tavilyBaseUrl: options.tavilyBaseUrl,
       visionService: options.visionService,
+      webReaderService: options.webReaderService,
       memoryExtractor: options.memoryExtractor ?? (async () => ({ candidates: [] })),
       relationshipExtractor: options.relationshipExtractor ?? (async () => ({ significant: false, confidence: 0 })),
     });
