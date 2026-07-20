@@ -13,6 +13,7 @@ test("module toggles rebuild Pi capabilities and profile context without losing 
   try {
     const modules = runtime.kernel.listAgentModules();
     assert.deepEqual(modules.map((entry) => [entry.type, entry.name, entry.enabled]), [
+      ["mcp", "Interaction State MCP", true],
       ["mcp", "Memory Coordinator MCP", true],
       ["mcp", "Relationship State MCP", false],
       ["mcp", "Schedule MCP", true],
@@ -21,13 +22,16 @@ test("module toggles rebuild Pi capabilities and profile context without losing 
       ["mcp", "User Profile MCP", true],
       ["mcp", "Vision MCP", false],
       ["mcp", "Web Reader MCP", false],
+      ["mcp", "World State MCP", true],
       ["skill", "daily-planning", false],
       ["skill", "roleplay-continuity", false],
     ]);
     assert.deepEqual(
       modules.filter((entry) => entry.type === "mcp").map((entry) => [entry.name, entry.estimatedTokens]),
-      [["Memory Coordinator MCP", 430], ["Relationship State MCP", 230], ["Schedule MCP", 960], ["Subagent Delegation MCP", 390], ["Tavily Search MCP", 350], ["User Profile MCP", 270], ["Vision MCP", 420], ["Web Reader MCP", 260]],
+      [["Interaction State MCP", 650], ["Memory Coordinator MCP", 430], ["Relationship State MCP", 230], ["Schedule MCP", 960], ["Subagent Delegation MCP", 390], ["Tavily Search MCP", 350], ["User Profile MCP", 270], ["Vision MCP", 420], ["Web Reader MCP", 260], ["World State MCP", 420]],
     );
+    assert.match(runtime.kernel.getAgentModuleDetail("mcp:interaction-state").content, /begin_meeting/);
+    assert.match(runtime.kernel.getAgentModuleDetail("mcp:interaction-state").content, /semantic evidence/);
     assert.match(runtime.kernel.getAgentModuleDetail("mcp:schedule").content, /calendar=character/);
     assert.match(runtime.kernel.getAgentModuleDetail("mcp:schedule").content, /never reminders or system notifications/);
     assert.match(runtime.kernel.getAgentModuleDetail("mcp:subagent").content, /delegate_task/);

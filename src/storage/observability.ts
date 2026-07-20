@@ -36,10 +36,10 @@ export class ObservabilityRepository implements ObservabilitySink {
       truncate(log.requestText, 8_000),
       truncate(log.systemPrompt, 12_000),
       log.messageCountBefore,
-      boundedJson(log.toolNames, 8_000),
+      boundedStringArrayJson(log.toolNames, 8_000),
       truncate(log.reply, 12_000),
-      boundedJson(log.actions, 32_000),
-      boundedJson(log.events.map((event) => event.type), 8_000),
+      boundedActionsJson(log.actions, 32_000),
+      boundedStringArrayJson(log.events.map((event) => event.type), 8_000),
       log.status,
       log.canRetry ? 1 : 0,
       log.createdAt,
@@ -58,12 +58,14 @@ export class ObservabilityRepository implements ObservabilitySink {
       requestText: String(row.request_text),
       systemPrompt: String(row.system_prompt_excerpt),
       messageCountBefore: Number(row.message_count_before),
-      toolNames: parseJson<string[]>(row.tool_names_json, []),
+      toolNames: parseJsonArray<string>(row.tool_names_json),
       reply: String(row.reply),
       status: normalizeTurnStatus(row.turn_status),
       canRetry: Boolean(row.can_retry),
-      actions: parseJson<ActionRecord[]>(row.actions_json, []),
-      events: parseJson<string[]>(row.event_types_json, []).map((type) => ({ type }) as ContextLogEntry["events"][number]),
+      actions: parseJsonArray<ActionRecord>(row.actions_json),
+      events: parseJsonArray<unknown>(row.event_types_json)
+        .filter((type): type is string => typeof type === "string")
+        .map((type) => ({ type }) as ContextLogEntry["events"][number]),
       createdAt: String(row.created_at),
     }));
   }
@@ -138,6 +140,25 @@ function boundedJson(value: unknown, limit: number): string {
     : JSON.stringify({ truncated: true, preview: json.slice(0, Math.max(0, limit - 64)) });
 }
 
+function boundedStringArrayJson(values: string[], limit: number): string {
+  const bounded: string[] = [];
+  for (const value of new Set(values)) {
+    const candidate = JSON.stringify([...bounded, value]);
+    if (candidate.length > limit) break;
+    bounded.push(value);
+  }
+  return JSON.stringify(bounded);
+}
+
+function boundedActionsJson(actions: ActionRecord[], limit: number): string {
+  const json = JSON.stringify(actions);
+  if (json.length <= limit) return json;
+  return JSON.stringify(actions.map((action) => ({
+    ...action,
+    payload: { truncated: true },
+  })));
+}
+
 function truncate(value: string, limit: number): string {
   return value.length <= limit ? value : `${value.slice(0, limit)}...[truncated]`;
 }
@@ -148,4 +169,9 @@ function parseJson<T>(value: unknown, fallback: T): T {
   } catch {
     return fallback;
   }
+}
+
+function parseJsonArray<T>(value: unknown): T[] {
+  const parsed = parseJson<unknown>(value, []);
+  return Array.isArray(parsed) ? parsed as T[] : [];
 }

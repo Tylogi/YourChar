@@ -60,6 +60,36 @@ const cases: FeatureTestCase[] = [
     requiredPermissions: [],
   },
   {
+    id: "interaction-meeting-proposal",
+    category: "conversation",
+    name: "约见状态切换",
+    description: "验证模型先记录具体见面约定，并在用户尚未到达时继续保持消息交流。",
+    mode: "sms",
+    input: "我们一会儿在未来道具研究所见吧，请记下这个约定。",
+    requiredModules: ["mcp:interaction-state"],
+    requiredPermissions: [],
+  },
+  {
+    id: "interaction-arrival-confirmation",
+    category: "conversation",
+    name: "抵达确认切换",
+    description: "预置见面约定后，验证模型只凭本轮明确抵达信息进入现场可见视角。",
+    mode: "sms",
+    input: "我已经到未来道具研究所门口了。",
+    requiredModules: ["mcp:interaction-state"],
+    requiredPermissions: [],
+  },
+  {
+    id: "interaction-meeting-departure",
+    category: "conversation",
+    name: "告别后结束见面",
+    description: "预置见面现场后，验证模型先完成现场告别，再回到远程消息状态。",
+    mode: "sms",
+    input: "时间不早了，今天就到这里吧。",
+    requiredModules: ["mcp:interaction-state"],
+    requiredPermissions: [],
+  },
+  {
     id: "schedule-relative-reminder",
     category: "schedule",
     name: "相对时间提醒",
@@ -313,6 +343,26 @@ function cloneConfirmedMemories(
 }
 
 function setupCase(runtime: CompanionKernel, definition: FeatureTestCase, characterId: string): MessageAttachment[] {
+  const sessionId = `feature-test-${definition.id}`;
+  if (definition.id === "interaction-arrival-confirmation" || definition.id === "interaction-meeting-departure") {
+    runtime.rpService.ensureRoleSession(sessionId, characterId);
+    runtime.interactionService.proposeMeeting({
+      sessionId,
+      characterId,
+      mode: "sms",
+      location: "未来道具研究所",
+      source: "system",
+    });
+    if (definition.id === "interaction-meeting-departure") {
+      runtime.interactionService.beginMeeting({
+        sessionId,
+        characterId,
+        mode: "sms",
+        source: "user_control",
+        userConfirmed: true,
+      });
+    }
+  }
   if (definition.id === "cross-session-memory-recall") {
     runtime.createControlPlaneMemory({
       realm: "reality",
@@ -400,6 +450,18 @@ function evaluateCase(
   } else if (definition.id === "rp-narrative-form") {
     rules.push(rule("narrative-length", "剧情正文不少于 60 字", [...reply].length >= 60, `${[...reply].length} chars`));
     rules.push(rule("narrative-form", "包含环境、动作和对白", /雨|屋檐|风|街/u.test(reply) && /走|抬|停|望|伸|靠|转/u.test(reply) && /[“”]/u.test(reply), excerpt(reply)));
+  } else if (definition.id === "interaction-meeting-proposal") {
+    const interaction = runtime.getConversationInteraction(`feature-test-${definition.id}`);
+    rules.push(rule("propose-tool", "调用 propose_meeting", hasAction(completedActions, "propose_meeting"), actionEvidence(completedActions)));
+    rules.push(rule("meeting-pending", "保持远程并记录见面约定", interaction.state.presence === "meeting_pending" && interaction.state.location === "未来道具研究所", `${interaction.state.presence}/${interaction.state.location ?? "missing"}`));
+  } else if (definition.id === "interaction-arrival-confirmation") {
+    const interaction = runtime.getConversationInteraction(`feature-test-${definition.id}`);
+    rules.push(rule("begin-tool", "调用 begin_meeting", hasAction(completedActions, "begin_meeting"), actionEvidence(completedActions)));
+    rules.push(rule("co-present", "进入现场可见视角", interaction.state.presence === "co_present" && interaction.state.lens === "observable_scene", `${interaction.state.presence}/${interaction.state.lens}`));
+  } else if (definition.id === "interaction-meeting-departure") {
+    const interaction = runtime.getConversationInteraction(`feature-test-${definition.id}`);
+    rules.push(rule("end-tool", "调用 end_meeting", hasAction(completedActions, "end_meeting"), actionEvidence(completedActions)));
+    rules.push(rule("remote-after-farewell", "告别回复后回到消息交流", interaction.state.presence === "remote" && !interaction.state.pendingEventId, `${interaction.state.presence}/${interaction.state.pendingEventId ?? "settled"}`));
   } else if (definition.id === "schedule-relative-reminder") {
     rules.push(rule("schedule-tool", "调用 create_schedule_item", hasAction(completedActions, "create_schedule_item"), actionEvidence(completedActions)));
     rules.push(rule("schedule-created", "隔离日程库新增提醒", runtime.listScheduleItems().length === 1, `${runtime.listScheduleItems().length} items`));

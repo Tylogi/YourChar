@@ -50,21 +50,24 @@ writing SQLite, so opening a page does not produce state churn.
 ## Trusted Update Pipeline
 
 1. Every completed private turn with a selected character creates a durable
-   `relationship_extraction_jobs` row when the module is enabled. Keyword
-   matching is not used as a model-call gate.
+   Post-turn job. Relationship analysis is requested only when this module is
+   enabled; an eligible Interaction consumer may independently keep the job
+   active. Keyword matching is not used as a model-call gate.
 2. Jobs run asynchronously and serially, so extraction never blocks the next
    live conversation turn.
-3. The configured default model classifies the turn into one
-   event type, impact, summary, and confidence. For semantic milestones it must
-   also return an initiator and short verbatim evidence excerpts. It cannot
-   submit scores, deltas, or a target romantic status.
+3. One configured default-model call returns separate `relationship` and
+   `interaction` objects for the requested consumers. The relationship object
+   contains at most one event type, impact, summary, and confidence. For
+   semantic milestones it must also return an initiator and short verbatim
+   evidence excerpts. It cannot submit scores, deltas, or a target romantic
+   status.
 4. Strict parsing rejects malformed, incomplete, or low-confidence output.
 5. A trusted policy table maps the validated event to bounded deltas and an
    affect target. Per-axis limits are 2, 4, and 6 for minor, moderate, and major
    events respectively.
 6. State and its immutable event ledger entry commit in one SQLite transaction.
 
-The extractor uses one stable system prompt for ordinary interaction, affection,
+The Post-turn analyzer uses one stable system prompt for ordinary interaction, affection,
 conflict, bonds, and romantic milestones. Per-turn conversation data and the
 current relationship snapshot remain in the user message. This maximizes the
 stable prefix available to provider KV caching and avoids keyword blind spots
@@ -141,6 +144,8 @@ The user control plane is:
 - `POST /api/v1/characters/{id}/relationship/reset`
 - `GET /api/v1/relationship-coordinator/status`
 - `POST /api/v1/relationship-coordinator/jobs/{id}/retry`
+- `GET /api/v1/post-turn-coordinator/status`
+- `POST /api/v1/post-turn-coordinator/jobs/{id}/retry`
 
 Reset requires the exact character name or ID. The character page shows raw
 dimensions, decayed affect, and the event ledger because it is a user-facing
@@ -162,6 +167,9 @@ expands the trusted event enum, and migrates every existing character to empty
 bond facets with romantic status `none`. Existing scores and event history are
 preserved.
 
+Schema 22 adds Post-turn consumer and per-consumer result metadata to the
+compatibility job table. See [post-turn-coordinator.md](./post-turn-coordinator.md).
+
 All three use `ON DELETE CASCADE` from `characters`. Operational backup supports
 database schema 17, and the normal user-data export includes snapshots, events,
 and Coordinator status. Relationship state is SQLite runtime data in this version;
@@ -172,8 +180,8 @@ it is not yet projected into the Markdown Memory Vault or OKF exports.
 Automated tests must preserve these invariants:
 
 - disabled module means no extraction, tool, or context section;
-- ordinary turns use no relationship-extraction tokens except for one periodic
-  batch after every eight quiet turns;
+- every completed private turn is analyzed when Relationship State is enabled;
+- relationship and eligible departure analysis share one model call;
 - injected score/delta fields are ignored and policy limits still apply;
 - affection and intimacy never imply a romantic status;
 - formal romantic milestones require source-verifiable evidence from the
@@ -185,7 +193,7 @@ Automated tests must preserve these invariants:
 - group chat reads but does not write state;
 - completed state mutations block message revision;
 - reset requires trusted user confirmation;
-- Debug Trace labels background calls as `relationship_extraction`.
+- Debug Trace labels new background calls as `post_turn_analysis`.
 
 The built-in real-model case `relationship-affect-update` checks classifier
 triggering and bounded mutation under the currently configured model.

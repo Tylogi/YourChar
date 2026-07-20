@@ -45,9 +45,21 @@ export class DataManagementRepository {
       this.database.connection.exec(`
         DELETE FROM notification_outbox;
         DELETE FROM reminder_occurrences;
+        DELETE FROM proactive_messages;
+        DELETE FROM world_event_participants;
+        DELETE FROM world_events;
+        DELETE FROM character_activity_plans;
+        DELETE FROM character_runtime_states;
+        DELETE FROM character_autonomy_policies;
+        DELETE FROM character_world_memberships;
+        DELETE FROM role_places;
+        DELETE FROM role_worlds;
         DELETE FROM schedule_items;
         DELETE FROM pending_real_mutations;
         DELETE FROM group_chats;
+        DELETE FROM private_message_inbox;
+        DELETE FROM interaction_transition_events;
+        DELETE FROM conversation_interaction_states;
         DELETE FROM rp_memories_fts;
         DELETE FROM rp_memories;
         DELETE FROM scene_states;

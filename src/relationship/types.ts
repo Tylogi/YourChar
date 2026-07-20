@@ -161,12 +161,17 @@ export type RelationshipExtractionJob = {
   characterId: string;
   mode: Mode;
   triggerReason: string;
+  analysisKinds: Array<"relationship" | "interaction">;
+  interactionPresence?: "co_present";
+  interactionRevision?: number;
   status: RelationshipJobStatus;
   attempts: number;
   maxAttempts: number;
   inputTokenEstimate: number;
   durationMs?: number;
   resultCount: number;
+  relationshipResultCount: number;
+  interactionResultCount: number;
   lastError?: string;
   availableAt: string;
   createdAt: string;
@@ -184,6 +189,8 @@ export type RelationshipSnapshot = {
 
 export type RelationshipCoordinatorStatus = {
   enabled: boolean;
+  relationshipEnabled: boolean;
+  interactionFallbackEnabled: boolean;
   pendingCount: number;
   estimatedTokensLast24Hours: number;
   recentJobs: RelationshipExtractionJob[];

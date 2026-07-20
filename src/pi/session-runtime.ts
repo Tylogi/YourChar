@@ -28,6 +28,8 @@ import {
   webReaderMcpModuleId,
   subagentMcpModuleId,
   relationshipStateMcpModuleId,
+  worldStateMcpModuleId,
+  interactionStateMcpModuleId,
   userProfileMcpModuleId,
   visionMcpModuleId,
   type AgentModuleCatalog,
@@ -43,6 +45,8 @@ import {
   createWebReaderMcpBridge,
   createUserProfileMcpBridge,
   createVisionMcpBridge,
+  createWorldMcpBridge,
+  createInteractionMcpBridge,
   type McpPiBridge,
   type SubagentRequest,
   type SubagentResult,
@@ -55,6 +59,9 @@ import type { WebReaderService } from "../web-reader/service.js";
 import type { MemoryLifecycleService } from "../memory-coordinator/lifecycle.js";
 import type { VisionService } from "../vision/service.js";
 import type { RelationshipService } from "../relationship/service.js";
+import type { WorldService } from "../world/service.js";
+import type { WorldAutonomyCoordinator } from "../world/coordinator.js";
+import type { InteractionService } from "../interaction/service.js";
 import type { ContextEconomicsRepository } from "../context/economics-repository.js";
 import { normalizeActualProviderUsage } from "../context/provider-usage.js";
 import { memoryContextVersion } from "../context/memory-version.js";
@@ -63,7 +70,7 @@ import type { ContextEconomicsPlan, ContextPlan } from "../context/types.js";
 import { createSandboxedShellTool } from "./sandboxed-shell-tool.js";
 import { createSkillReadTool } from "./skill-read-tool.js";
 import { createWorkspaceTools } from "./workspace-tools.js";
-import { classifyAssistantOutput } from "./output-guard.js";
+import { classifyAssistantOutput, classifyToolProtocolOutput } from "./output-guard.js";
 import { createTurnContextMessage, TURN_CONTEXT_CUSTOM_TYPE } from "./turn-context.js";
 
 const roleplayContextWindow = 131_072;
@@ -72,18 +79,24 @@ const roleplayAutoCompactionTriggerTokens = 98_304;
 // 4k estimated tokens retains roughly 8-16k real conversational tokens here.
 const roleplayRecentContextTokens = 4_096;
 const defaultConversationLifecycleThresholds = {
-  tiredTokens: 40_000,
-  hardSleepTokens: 80_000,
+  tiredTokens: 32_000,
+  hardSleepTokens: 60_000,
 } as const;
 const maxConcurrentSubagentsPerSession = 3;
 const maxSubagentModelCalls = 8;
 const maxSubagentOutputCharacters = 12_000;
 const subagentTimeoutMs = 90_000;
+const historicalToolResultContextCharacters = 6_000;
+const currentToolResultContextCharacters = 48_000;
+const maxCurrentToolResultCharacters = 32_000;
+const historicalToolCallArgumentCharacters = 1_200;
+const currentToolCallArgumentCharacters = 8_000;
 
 export type ConversationMetadata = {
   id: string;
   mode: Mode;
   characterId?: string;
+  canonicalDirect?: boolean;
   title?: string;
   archivedAt?: string;
   lastTurnStatus?: TurnStatus;
@@ -145,6 +158,9 @@ export type PiSessionRuntimeOptions = {
   webReaderService: WebReaderService;
   visionService: VisionService;
   relationshipService: RelationshipService;
+  worldService: WorldService;
+  worldCoordinator: WorldAutonomyCoordinator;
+  interactionService: InteractionService;
   stateDir?: string | false;
   cwd?: string;
   clock?: Clock;
@@ -220,6 +236,9 @@ export class PiSessionRuntime {
   private readonly webReaderService: WebReaderService;
   private readonly visionService: VisionService;
   private readonly relationshipService: RelationshipService;
+  private readonly worldService: WorldService;
+  private readonly worldCoordinator: WorldAutonomyCoordinator;
+  private readonly interactionService: InteractionService;
   private readonly stateDir?: string;
   private readonly cwd: string;
   private readonly workspaceDir: string;
@@ -241,6 +260,8 @@ export class PiSessionRuntime {
   private readonly pendingCacheBreakReasons = new Map<string, string>();
   private readonly activeSubagentCounts = new Map<string, number>();
   private readonly activeSubagents = new Set<AgentSession>();
+  private readonly canonicalDirectLoading = new Map<string, Promise<PiSessionHandle>>();
+  private readonly legacyDirectMigrationTargets = new Map<string, string>();
   private readonly conversationLifecycleThresholds: ConversationLifecycleThresholds;
 
   constructor(options: PiSessionRuntimeOptions) {
@@ -252,6 +273,9 @@ export class PiSessionRuntime {
     this.webReaderService = options.webReaderService;
     this.visionService = options.visionService;
     this.relationshipService = options.relationshipService;
+    this.worldService = options.worldService;
+    this.worldCoordinator = options.worldCoordinator;
+    this.interactionService = options.interactionService;
     this.stateDir = options.stateDir === false ? undefined : options.stateDir ?? options.store.stateDir;
     this.cwd = resolve(options.cwd ?? process.cwd());
     this.workspaceDir = resolve(options.workspaceDir);
@@ -567,6 +591,47 @@ export class PiSessionRuntime {
       .sort((left, right) => left.id.localeCompare(right.id));
   }
 
+  getCanonicalDirectConversation(characterId: string): ConversationMetadata | undefined {
+    const normalizedCharacterId = normalizeCharacterId(characterId);
+    const metadata = [...this.metadata.values()].find((entry) =>
+      entry.mode === "sms" &&
+      entry.characterId === normalizedCharacterId &&
+      entry.canonicalDirect === true
+    );
+    return metadata ? { ...metadata } : undefined;
+  }
+
+  getLegacyDirectMigrationTargets(): Array<{ fromSessionId: string; toSessionId: string }> {
+    return [...this.legacyDirectMigrationTargets.entries()].map(([fromSessionId, toSessionId]) => ({
+      fromSessionId,
+      toSessionId,
+    }));
+  }
+
+  async getOrCreateCanonicalDirect(
+    sessionId: string,
+    characterId: string,
+  ): Promise<PiSessionHandle> {
+    const normalizedCharacterId = normalizeCharacterId(characterId);
+    const current = this.getCanonicalDirectConversation(normalizedCharacterId);
+    if (current) {
+      if (current.archivedAt) this.restoreConversation(current.id);
+      return this.getOrCreate(current.id, "sms", normalizedCharacterId);
+    }
+
+    const pending = this.canonicalDirectLoading.get(normalizedCharacterId);
+    if (pending) return pending;
+    const operation = this.createCanonicalDirect(sessionId, normalizedCharacterId);
+    this.canonicalDirectLoading.set(normalizedCharacterId, operation);
+    try {
+      return await operation;
+    } finally {
+      if (this.canonicalDirectLoading.get(normalizedCharacterId) === operation) {
+        this.canonicalDirectLoading.delete(normalizedCharacterId);
+      }
+    }
+  }
+
   ensureConversationTitle(sessionId: string, sourceText: string): ConversationMetadata {
     const metadata = this.requireMetadata(sessionId);
     if (!metadata.title) {
@@ -722,6 +787,7 @@ export class PiSessionRuntime {
       timezone: "Asia/Shanghai",
       traceKind: "user",
       traceRequestText: "",
+      currentUserText: "",
       toolMutationsAllowed: true,
       realWorldMutationConfirmed: metadata.mode !== "rp",
       confirmedMutationId: undefined,
@@ -729,6 +795,8 @@ export class PiSessionRuntime {
       outputGuardRetryUsed: false,
       outputGuardBlocked: false,
       outputGuardRecoveryPrompt: undefined,
+      toolProtocolLeakBlocked: false,
+      toolProtocolLeakRetryUsed: false,
       interactiveThinkingRequired: false,
       interactiveThinkingMissing: false,
       interactiveThinkingRetryCount: 0,
@@ -742,7 +810,15 @@ export class PiSessionRuntime {
         store: this.store,
         clock: this.clock,
         sessionId: metadata.id,
+        mode: metadata.mode,
         characterId: metadata.characterId,
+        worldCoordinator: metadata.mode === "sms" &&
+            Boolean(metadata.characterId) &&
+            this.moduleCatalog.isEnabled(worldStateMcpModuleId) &&
+            Boolean(metadata.characterId && this.worldService.repository.getMembership(metadata.characterId))
+          ? this.worldCoordinator
+          : undefined,
+        currentUserText: () => toolState.currentUserText,
         actions: () => toolState.actions,
       }));
     }
@@ -807,6 +883,35 @@ export class PiSessionRuntime {
         relationshipService: this.relationshipService,
         sessionId: metadata.id,
         characterId: metadata.characterId,
+      }));
+    }
+    if (
+      metadata.mode === "sms" &&
+      metadata.characterId &&
+      this.moduleCatalog.isEnabled(worldStateMcpModuleId) &&
+      this.worldService.repository.getMembership(metadata.characterId)
+    ) {
+      mcpBridges.push(await createWorldMcpBridge({
+        worldService: this.worldService,
+        coordinator: this.worldCoordinator,
+        store: this.store,
+        sessionId: metadata.id,
+        characterId: metadata.characterId,
+        actions: () => toolState.actions,
+      }));
+    }
+    if (
+      metadata.mode === "sms" &&
+      metadata.characterId &&
+      this.moduleCatalog.isEnabled(interactionStateMcpModuleId)
+    ) {
+      mcpBridges.push(await createInteractionMcpBridge({
+        interactionService: this.interactionService,
+        store: this.store,
+        sessionId: metadata.id,
+        characterId: metadata.characterId,
+        currentUserText: () => toolState.currentUserText,
+        actions: () => toolState.actions,
       }));
     }
     const permissions = this.permissionCatalog.get();
@@ -1190,17 +1295,21 @@ export class PiSessionRuntime {
         pi.on("context", (event) => {
           const sanitized = this.sanitizeProviderHistory(event.messages);
           const filtered = this.filterProviderTurnContexts(sanitized.messages, toolState);
-          const filterReason = [sanitized.reason, filtered.reason].filter(Boolean).join("+");
+          const compactedTools = compactProviderToolHistory(filtered.messages);
+          const merged = mergeConsecutiveProviderUserMessages(compactedTools.messages);
+          const providerMessages = merged.messages;
+          const filterReason = [sanitized.reason, filtered.reason, compactedTools.reason]
+            .filter(Boolean).join("+");
           if (filterReason) {
             toolState.cacheBreakReason = [toolState.cacheBreakReason, filterReason]
               .filter(Boolean).join("+");
           }
           if (toolState.contextPlan) {
             try {
-              this.contextEconomics.replaceResidentMemories(
-                toolState.sessionId,
-                this.residentVersionsFromMessages(filtered.messages, toolState.characterId),
-              );
+                this.contextEconomics.replaceResidentMemories(
+                  toolState.sessionId,
+                  this.residentVersionsFromMessages(providerMessages, toolState.characterId),
+                );
               this.commitProviderContext(toolState);
               const active = new Set(pi.getActiveTools());
               const tools = pi.getAllTools().filter((tool) => active.has(tool.name));
@@ -1209,7 +1318,7 @@ export class PiSessionRuntime {
                   role: "system",
                   content: [this.systemPromptFor(mode), toolState.stableContextPrompt]
                     .filter(Boolean).join("\n\n"),
-                }, ...filtered.messages],
+                }, ...providerMessages],
                 tools,
               }, toolState, mode);
               toolState.pendingEconomicsIds.push(economics.id);
@@ -1219,7 +1328,7 @@ export class PiSessionRuntime {
               }));
             }
           }
-          return filtered.messages === event.messages ? undefined : { messages: filtered.messages };
+          return providerMessages === event.messages ? undefined : { messages: providerMessages };
         });
         pi.on("tool_call", (event) => {
           toolState.toolCallObserved = true;
@@ -1278,6 +1387,17 @@ export class PiSessionRuntime {
           if (event.message.role !== "assistant") return undefined;
           toolState.interactiveThinkingMissing = false;
           const text = agentMessageText(event.message);
+          if (classifyToolProtocolOutput(text) === "blocked") {
+            toolState.toolProtocolLeakBlocked = true;
+            return {
+              message: {
+                ...event.message,
+                content: [],
+                stopReason: "error",
+                errorMessage: "模型误输出内部工具协议，已阻止展示。",
+              },
+            };
+          }
           if (
             toolState.traceKind === "user" &&
             toolState.interactiveThinkingRequired &&
@@ -1378,7 +1498,7 @@ export class PiSessionRuntime {
         kept.push(message);
         continue;
       }
-      const content = message.content.filter((block) => block.type !== "thinking");
+      const content = message.content.filter((block) => block && block.type !== "thinking");
       if (content.length !== message.content.length) {
         changed = true;
         reasons.add("historical_thinking_filtered");
@@ -1393,8 +1513,13 @@ export class PiSessionRuntime {
       }
       kept.push(content === message.content ? message : { ...message, content });
     }
+    const resolvedInteractionErrors = filterResolvedInteractionToolErrors(kept);
+    if (resolvedInteractionErrors.changed) {
+      changed = true;
+      reasons.add("resolved_interaction_tool_error_filtered");
+    }
     return changed
-      ? { messages: kept, reason: [...reasons].join("+") }
+      ? { messages: resolvedInteractionErrors.messages, reason: [...reasons].join("+") }
       : { messages };
   }
 
@@ -1631,9 +1756,61 @@ export class PiSessionRuntime {
           this.metadata.set(normalized.id, normalized);
         }
       }
+      if (this.migrateLegacyDirectConversations()) this.persistConversationIndex();
     } catch {
       // A corrupt index is ignored; existing Pi JSONL files remain untouched.
     }
+  }
+
+  private async createCanonicalDirect(
+    sessionId: string,
+    characterId: string,
+  ): Promise<PiSessionHandle> {
+    const handle = await this.getOrCreate(sessionId, "sms", characterId);
+    handle.metadata.canonicalDirect = true;
+    delete handle.metadata.archivedAt;
+    this.touch(handle.metadata);
+    return handle;
+  }
+
+  private migrateLegacyDirectConversations(): boolean {
+    const groups = new Map<string, ConversationMetadata[]>();
+    for (const metadata of this.metadata.values()) {
+      if (metadata.mode !== "sms" || !metadata.characterId) continue;
+      const entries = groups.get(metadata.characterId) ?? [];
+      entries.push(metadata);
+      groups.set(metadata.characterId, entries);
+    }
+
+    let changed = false;
+    const migratedAt = this.clock.now().toISOString();
+    for (const entries of groups.values()) {
+      const flagged = entries.filter((entry) => entry.canonicalDirect === true);
+      const candidates = flagged.length
+        ? flagged
+        : entries.some((entry) => !entry.archivedAt)
+          ? entries.filter((entry) => !entry.archivedAt)
+          : entries;
+      const canonical = [...candidates].sort(compareConversationRecency)[0];
+      if (!canonical) continue;
+      if (canonical.canonicalDirect !== true) {
+        canonical.canonicalDirect = true;
+        changed = true;
+      }
+      for (const entry of entries) {
+        if (entry.id === canonical.id) continue;
+        this.legacyDirectMigrationTargets.set(entry.id, canonical.id);
+        if (entry.canonicalDirect !== undefined) {
+          delete entry.canonicalDirect;
+          changed = true;
+        }
+        if (!entry.archivedAt) {
+          entry.archivedAt = migratedAt;
+          changed = true;
+        }
+      }
+    }
+    return changed;
   }
 
   private persistConversationIndex(): void {
@@ -1757,6 +1934,218 @@ function supersededFailedUserIndexes(messages: AgentMessage[]): Set<number> {
   return output;
 }
 
+function compactProviderToolHistory(
+  messages: AgentMessage[],
+): { messages: AgentMessage[]; reason?: string } {
+  let latestUserIndex = -1;
+  for (const [index, message] of messages.entries()) {
+    if (message.role === "user") latestUserIndex = index;
+  }
+  const historicalResultIndexes = messages.flatMap((message, index) =>
+    message.role === "toolResult" && index < latestUserIndex ? [index] : []
+  );
+  const currentResultIndexes = messages.flatMap((message, index) =>
+    message.role === "toolResult" && index > latestUserIndex ? [index] : []
+  );
+
+  const historicalLimits = new Map<number, number>();
+  let historicalRemaining = historicalToolResultContextCharacters;
+  for (const index of [...historicalResultIndexes].reverse()) {
+    const message = messages[index];
+    if (message.role !== "toolResult") continue;
+    const size = toolResultContextCharacters(message, true);
+    if (size <= historicalRemaining) {
+      historicalLimits.set(index, size);
+      historicalRemaining -= size;
+      continue;
+    }
+    if (historicalRemaining >= 256) {
+      historicalLimits.set(index, historicalRemaining);
+      historicalRemaining = 0;
+    }
+  }
+
+  const currentLimit = currentResultIndexes.length
+    ? Math.min(
+        maxCurrentToolResultCharacters,
+        Math.max(256, Math.floor(currentToolResultContextCharacters / currentResultIndexes.length)),
+      )
+    : maxCurrentToolResultCharacters;
+  const removedCallIds = new Set(historicalResultIndexes.flatMap((index) => {
+    if (historicalLimits.has(index)) return [];
+    const message = messages[index];
+    return message.role === "toolResult" ? [message.toolCallId] : [];
+  }));
+  const reasons = new Set<string>();
+  const output: AgentMessage[] = [];
+  let changed = false;
+
+  for (const [index, message] of messages.entries()) {
+    if (message.role === "toolResult") {
+      const historical = index < latestUserIndex;
+      const limit = historical ? historicalLimits.get(index) : currentLimit;
+      if (limit === undefined) {
+        reasons.add("historical_tool_context_filtered");
+        changed = true;
+        continue;
+      }
+      const compacted = compactToolResultMessage(message, limit, historical);
+      if (compacted !== message) {
+        reasons.add("tool_result_context_truncated");
+        changed = true;
+      }
+      output.push(compacted);
+      continue;
+    }
+
+    if (message.role !== "assistant" || typeof message.content === "string") {
+      output.push(message);
+      continue;
+    }
+    const argumentLimit = index < latestUserIndex
+      ? historicalToolCallArgumentCharacters
+      : currentToolCallArgumentCharacters;
+    let assistantChanged = false;
+    const content: typeof message.content = [];
+    for (const block of message.content) {
+      if (!block || block.type !== "toolCall") {
+        content.push(block);
+        continue;
+      }
+      if (removedCallIds.has(block.id)) {
+        assistantChanged = true;
+        continue;
+      }
+      const compactedArguments = compactToolCallArguments(block.arguments, argumentLimit);
+      if (compactedArguments === block.arguments) {
+        content.push(block);
+      } else {
+        assistantChanged = true;
+        reasons.add("tool_call_arguments_truncated");
+        content.push({ ...block, arguments: compactedArguments });
+      }
+    }
+    if (!assistantChanged) {
+      output.push(message);
+      continue;
+    }
+    changed = true;
+    const meaningful = content.some((block) =>
+      block?.type !== "text" || (typeof block.text === "string" && Boolean(block.text.trim()))
+    );
+    if (meaningful) output.push({ ...message, content });
+  }
+
+  return changed
+    ? { messages: output, reason: [...reasons].join("+") }
+    : { messages };
+}
+
+function compactToolResultMessage(
+  message: Extract<AgentMessage, { role: "toolResult" }>,
+  maxCharacters: number,
+  historical: boolean,
+): AgentMessage {
+  const images = message.content.filter((block) => block.type === "image");
+  const text = message.content.flatMap((block) => block.type === "text" ? [block.text] : []).join("\n");
+  const imageNote = historical && images.length
+    ? `[${images.length} historical tool image(s) omitted from active model context; full results remain in the transcript.]`
+    : "";
+  const combined = [text, imageNote].filter(Boolean).join("\n");
+  const clipped = clipToolContextText(combined, maxCharacters);
+  if (clipped === combined && (!historical || images.length === 0)) return message;
+  return {
+    ...message,
+    content: [
+      ...(clipped ? [{ type: "text" as const, text: clipped }] : []),
+      ...(historical ? [] : images),
+    ],
+  };
+}
+
+function toolResultContextCharacters(
+  message: Extract<AgentMessage, { role: "toolResult" }>,
+  historical: boolean,
+): number {
+  const textCharacters = message.content.reduce((total, block) =>
+    total + (block.type === "text" ? block.text.length : 0), 0);
+  const historicalImageNotes = historical
+    ? message.content.filter((block) => block.type === "image").length * 160
+    : 0;
+  return textCharacters + historicalImageNotes;
+}
+
+function clipToolContextText(text: string, maxCharacters: number): string {
+  if (text.length <= maxCharacters) return text;
+  const marker = `\n[Tool result compacted for active model context; full result remains in transcript; original_chars=${text.length}.]\n`;
+  if (marker.length >= maxCharacters) return marker.slice(0, maxCharacters);
+  const available = maxCharacters - marker.length;
+  const head = Math.ceil(available * 0.8);
+  const tail = available - head;
+  return `${text.slice(0, head)}${marker}${tail ? text.slice(-tail) : ""}`;
+}
+
+function compactToolCallArguments(
+  value: Record<string, unknown>,
+  maxCharacters: number,
+): Record<string, unknown> {
+  let serialized: string;
+  try {
+    serialized = JSON.stringify(value);
+  } catch {
+    serialized = String(value);
+  }
+  if (serialized.length <= maxCharacters) return value;
+  const previewLimit = Math.max(0, maxCharacters - 120);
+  return {
+    _contextCompacted: true,
+    originalCharacters: serialized.length,
+    preview: serialized.slice(0, previewLimit),
+  };
+}
+
+function filterResolvedInteractionToolErrors(
+  messages: AgentMessage[],
+): { messages: AgentMessage[]; changed: boolean } {
+  const removableCallIds = new Set<string>();
+  for (let index = 0; index < messages.length; index += 1) {
+    const message = messages[index];
+    if (
+      message.role !== "toolResult" ||
+      message.toolName !== "begin_meeting" ||
+      message.isError !== true ||
+      !isResolvedInteractionErrorText(agentMessageText(message))
+    ) continue;
+    const consumed = messages.slice(index + 1).some((candidate) => candidate.role === "assistant");
+    if (consumed) removableCallIds.add(message.toolCallId);
+  }
+  if (!removableCallIds.size) return { messages, changed: false };
+
+  const output: AgentMessage[] = [];
+  for (const message of messages) {
+    if (message.role === "toolResult" && removableCallIds.has(message.toolCallId)) continue;
+    if (message.role !== "assistant" || typeof message.content === "string") {
+      output.push(message);
+      continue;
+    }
+    const content = message.content.filter((block) =>
+      !(block?.type === "toolCall" && removableCallIds.has(block.id))
+    );
+    const meaningful = content.some((block) =>
+      block?.type !== "text" || (typeof block.text === "string" && Boolean(block.text.trim()))
+    );
+    if (!meaningful) continue;
+    output.push(content.length === message.content.length ? message : { ...message, content });
+  }
+  return { messages: output, changed: true };
+}
+
+function isResolvedInteractionErrorText(text: string): boolean {
+  return text.includes("a meeting must be planned before physical co-presence can begin") ||
+    text.includes("the current user message does not explicitly confirm arrival") ||
+    text.includes("the current user message explicitly contradicts immediate co-presence");
+}
+
 function isSystemEvent(message: AgentMessage): boolean {
   return message.role === "custom" && message.customType === "rp-agent/system_event";
 }
@@ -1779,22 +2168,21 @@ function normalizeConversationLifecycleThresholds(
 function agentMessageText(message: AgentMessage): string {
   if (!("content" in message)) return "";
   if (typeof message.content === "string") return message.content;
-  return message.content
-    .filter((block): block is Extract<typeof block, { type: "text" }> => block.type === "text")
-    .map((block) => block.text)
-    .join("");
+  return message.content.flatMap((block) =>
+    block?.type === "text" && typeof block.text === "string" ? [block.text] : []).join("");
 }
 
 function assistantThinkingCharacters(message: AgentMessage): number {
   if (message.role !== "assistant" || typeof message.content === "string") return 0;
-  return message.content
-    .filter((block): block is Extract<typeof block, { type: "thinking" }> => block.type === "thinking")
-    .reduce((total, block) => total + [...block.thinking.trim()].length, 0);
+  return message.content.reduce((total, block) =>
+    total + (block?.type === "thinking" && typeof block.thinking === "string"
+      ? [...block.thinking.trim()].length
+      : 0), 0);
 }
 
 function assistantHasToolCall(message: AgentMessage): boolean {
   return message.role === "assistant" && typeof message.content !== "string" &&
-    message.content.some((block) => block.type === "toolCall");
+    message.content.some((block) => block?.type === "toolCall");
 }
 
 function subagentSystemPrompt(
@@ -1855,6 +2243,9 @@ const mutatingTools = new Set([
   "bash",
   "tavily_search",
   "delegate_task",
+  "propose_meeting",
+  "begin_meeting",
+  "end_meeting",
 ]);
 
 function isCharacterScheduleInput(input: unknown): boolean {
@@ -1868,6 +2259,18 @@ function normalizeSessionId(value: string): string {
     throw new Error("sessionId is required");
   }
   return id;
+}
+
+function normalizeCharacterId(value: string): string {
+  const id = value.trim();
+  if (!id) throw new Error("characterId is required");
+  return id;
+}
+
+function compareConversationRecency(left: ConversationMetadata, right: ConversationMetadata): number {
+  return right.updatedAt.localeCompare(left.updatedAt) ||
+    right.createdAt.localeCompare(left.createdAt) ||
+    right.id.localeCompare(left.id);
 }
 
 function normalizeMetadata(value: unknown): ConversationMetadata | undefined {
@@ -1885,6 +2288,7 @@ function normalizeMetadata(value: unknown): ConversationMetadata | undefined {
     id,
     mode,
     characterId: typeof value.characterId === "string" ? value.characterId : undefined,
+    canonicalDirect: value.canonicalDirect === true ? true : undefined,
     title: typeof value.title === "string" && value.title.trim()
       ? value.title.trim().slice(0, 60)
       : undefined,
@@ -1969,13 +2373,60 @@ function turnContextSegment(
 
 function appendContextBeforeUser(kept: AgentMessage[], segments: AgentMessage[]): void {
   if (!segments.length) return;
-  const preceding = kept.at(-1);
-  if (preceding?.role !== "user") {
+  const trailingUsers: AgentMessage[] = [];
+  while (kept.at(-1)?.role === "user") trailingUsers.unshift(kept.pop()!);
+  if (!trailingUsers.length) {
     kept.push(...segments);
     return;
   }
-  kept.pop();
-  kept.push(...segments, preceding);
+  kept.push(...segments, ...trailingUsers);
+}
+
+function mergeConsecutiveProviderUserMessages(
+  messages: AgentMessage[],
+): { messages: AgentMessage[]; changed: boolean } {
+  const output: AgentMessage[] = [];
+  let changed = false;
+  for (let index = 0; index < messages.length;) {
+    const message = messages[index];
+    if (message.role !== "user") {
+      output.push(message);
+      index += 1;
+      continue;
+    }
+    const run: AgentMessage[] = [];
+    while (index < messages.length && messages[index].role === "user") {
+      run.push(messages[index]);
+      index += 1;
+    }
+    if (run.length === 1) {
+      output.push(run[0]);
+      continue;
+    }
+    changed = true;
+    const textParts: string[] = [];
+    const nonTextBlocks: unknown[] = [];
+    for (const entry of run) {
+      const content: unknown = "content" in entry ? entry.content : undefined;
+      if (typeof content === "string") {
+        if (content.trim()) textParts.push(content.trim());
+        continue;
+      }
+      if (!Array.isArray(content)) continue;
+      const text = content.flatMap((block) =>
+        isRecord(block) && block.type === "text" && typeof block.text === "string" ? [block.text] : []
+      ).join("").trim();
+      if (text) textParts.push(text);
+      nonTextBlocks.push(...content.filter((block) => !(isRecord(block) && block.type === "text")));
+    }
+    const latest = run.at(-1)!;
+    const content = [
+      ...(textParts.length ? [{ type: "text" as const, text: textParts.join("\n") }] : []),
+      ...nonTextBlocks,
+    ];
+    output.push({ ...latest, content } as AgentMessage);
+  }
+  return changed ? { messages: output, changed } : { messages, changed };
 }
 
 function providerContextEnvelope(segment: "memory" | "volatile", content: string): string {

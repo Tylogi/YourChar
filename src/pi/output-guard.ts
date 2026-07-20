@@ -23,6 +23,8 @@ const explicitReasoningTitles = [
 export type AssistantOutputClassification = "pending" | "safe" | "blocked";
 
 export function classifyAssistantOutput(text: string): AssistantOutputClassification {
+  const toolProtocol = classifyToolProtocolOutput(text);
+  if (toolProtocol) return toolProtocol;
   const visible = stripCompletedThinkingBlocks(text).trimStart();
   if (!visible) return "pending";
   if (/^<(?:think|thinking)(?:>|\s|$)/i.test(visible)) return "pending";
@@ -38,6 +40,22 @@ export function classifyAssistantOutput(text: string): AssistantOutputClassifica
     return "pending";
   }
   return "safe";
+}
+
+export function classifyToolProtocolOutput(
+  text: string,
+): Extract<AssistantOutputClassification, "pending" | "blocked"> | undefined {
+  const visible = stripCompletedThinkingBlocks(text).trimStart();
+  if (!visible) return undefined;
+  const firstLine = visible.split(/\r?\n/, 1)[0];
+  const lower = firstLine.toLocaleLowerCase("en-US");
+  if ("call:".startsWith(lower) || /^call\s*$/i.test(firstLine)) return "pending";
+  if (!/^call\s*:/i.test(firstLine)) return undefined;
+
+  const invocation = firstLine.replace(/^call\s*:\s*/i, "");
+  if (/^[a-z_][\w.-]*\s*\{/i.test(invocation)) return "blocked";
+  if (/^(?:[a-z_][\w.-]*)?\s*$/i.test(invocation)) return "pending";
+  return undefined;
 }
 
 function classifyExplicitReasoningTitle(

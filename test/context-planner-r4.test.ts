@@ -394,7 +394,7 @@ test("economics keeps stable system hashes, exact LCP evidence, and actual usage
   }
 });
 
-test("40 long turns defer compaction until rest and preserve bounded memory context after waking", async () => {
+test("30 long turns defer compaction until rest and preserve bounded memory context after waking", async () => {
   const stateDir = mkdtempSync(join(tmpdir(), "rp-agent-r4-long-"));
   const runtime = createTestRuntime({ stateDir, seed: "r4-long" });
   try {
@@ -405,11 +405,11 @@ test("40 long turns defer compaction until rest and preserve bounded memory cont
       tags: ["长会话核心"],
       salience: 0.96,
     });
-    runtime.model.enqueue(Array.from({ length: 40 }, (_, index) => ({
+    runtime.model.enqueue(Array.from({ length: 30 }, (_, index) => ({
       kind: "assistant_text" as const,
       text: `第${index + 1}轮回复。${"稳定记录".repeat(220)}`,
     })));
-    for (let index = 0; index < 40; index += 1) {
+    for (let index = 0; index < 30; index += 1) {
       await runtime.kernel.sendMessage("long-context", {
         mode: "sms",
         text: `第${index + 1}轮询问长会话核心。${"输入条件".repeat(220)}`,

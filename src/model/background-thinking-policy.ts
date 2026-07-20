@@ -1,7 +1,10 @@
 export type BackgroundThinkingScenario =
   | "group_gate"
   | "memory_extraction"
-  | "relationship_extraction";
+  | "relationship_extraction"
+  | "post_turn_analysis"
+  | "world_planning"
+  | "proactive_message";
 
 export type BackgroundThinkingPolicy = {
   requested: "off";
@@ -33,6 +36,9 @@ const budgets: Record<BackgroundThinkingScenario, { thinkingOff: number; fallbac
   group_gate: { thinkingOff: 256, fallback: 768 },
   memory_extraction: { thinkingOff: 1_024, fallback: 2_400 },
   relationship_extraction: { thinkingOff: 1_024, fallback: 2_400 },
+  post_turn_analysis: { thinkingOff: 1_024, fallback: 2_400 },
+  world_planning: { thinkingOff: 1_200, fallback: 2_400 },
+  proactive_message: { thinkingOff: 640, fallback: 1_200 },
 };
 
 export function backgroundThinkingPolicy(

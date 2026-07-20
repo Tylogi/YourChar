@@ -2,12 +2,16 @@
 
 Long-conversation lifecycle and compaction behavior are specified in
 [`conversation-sleep-lifecycle.md`](./conversation-sleep-lifecycle.md).
+Shared fictional worlds, character autonomy, and proactive character messages
+are specified in [`world-autonomy.md`](./world-autonomy.md).
+Private SMS meeting state and in-person narrative transitions are specified in
+[`interaction-state.md`](./interaction-state.md).
 
 Status: Approved development baseline
 Audience: maintainers, coding agents, reviewers, and test agents
-Last updated: 2026-07-15
+Last updated: 2026-07-19
 
-Implementation status: M0-M8 are implemented. Scheduling uses SQLite,
+Implementation status: M0-M11 are implemented. Scheduling uses SQLite,
 occurrences, an outbox scheduler, quiet hours, in-app history, an opt-in
 `notify-send` adapter, and deterministic test controls. The current workstation
 does not provide `notify-send`, so desktop delivery still requires the host
@@ -28,11 +32,41 @@ permissions for User Profile and character SOUL Markdown.
 M8 adds optional live web search through a local Tavily MCP, a protected Key
 settings flow, source-preserving results, metered-tool policy, and deterministic
 fake-upstream tests.
+M9 adds shared fictional worlds, fixed-capability places, character runtime
+state, autonomous character calendar planning, event-to-memory settlement,
+bounded proactive SMS delivery, a conditional World State MCP, and deterministic
+world test controls. Canonical world state is private-SMS-only; independent RP
+scenes remain isolated by default.
+M10 adds durable private-conversation interaction state. Canonical SMS can move
+from remote messages through a planned meeting into a confirmed observable
+scene without changing conversation mode. Future plans use the pending state;
+semantically established immediate co-presence can begin directly at a concrete
+location, while explicit future/negative evidence is rejected. Departure settles
+only after the farewell reply.
+M11 adds a durable private-message Inbox. Rapid user messages are accepted while
+the character is generating, grouped with a 5-second initial grace period and a
+7-second hard maximum, and delivered to one Pi turn as a single newline-separated
+provider user message while remaining separate durable transcript/UI entries.
+Messages arriving during generation remain queued for the next turn. SQLite
+preserves queued input across restarts, while a session-scoped SSE subscription
+streams progress independently of the request that enqueued the message.
+Each character has exactly one canonical SMS private conversation. Opening SMS
+again returns that conversation instead of creating another Pi session; RP
+conversations remain independent and may be created repeatedly. On upgrade,
+the most recently updated unarchived legacy SMS session is retained per
+character (or the latest archived one when none are active), and all earlier
+SMS sessions are archived without transcript merging or deletion. Queued input
+from those older sessions is reassigned to the retained conversation.
 Chat bubbles expose a collapsible execution summary built from sanitized Pi
 lifecycle events. It shows request preparation, response generation, tool names,
 tool completion, safe reasoning start/end status, and retries, but never tool
 arguments, hidden chain-of-thought, credentials, or system prompt content. Tool
-result messages are complete but collapsed by default. Management shows
+result messages are complete but collapsed by default. Full tool results remain
+in the Pi transcript and Debug/audit surfaces; the provider-only context copy
+caps the current tool phase at 48,000 text characters (32,000 per result) and
+retains at most 6,000 characters from the newest historical results. Older
+results and their matching historical tool-call blocks are removed together;
+large historical call arguments are represented by bounded previews. Management shows
 tokenizer-dependent estimates for MCP schemas and Skill index/full-content cost.
 
 This document is the source of truth for evolving RP Agent from the current
@@ -140,12 +174,21 @@ one Pi session ID. A conversation has a fixed kind (`sms` or `rp`). Changing kin
 creates a new conversation or an explicit branch; it does not silently replace
 the prompt over the same history.
 
+SMS is additionally canonical per character: one character maps to one current
+private Pi session, including remote messages and confirmed in-person
+continuity. RP remains a sandbox conversation type and can have multiple
+sessions per character. Reminders and proactive world messages resolve their
+delivery target through the canonical SMS mapping and restore that conversation
+when it was archived.
+
 ### 4.2 Durable application state
 
 Pi JSONL is the source of truth for conversation transcripts. SQLite is the
 source of truth for relational application state:
 
 - application conversation metadata;
+- queued and processing private messages with client idempotency IDs;
+- private-conversation interaction state and transition provenance;
 - characters and scene state;
 - memories and memory provenance;
 - schedule items and reminder occurrences;
@@ -221,6 +264,8 @@ model reasoning.
 Browser / API client
         |
 HTTP routes and stream transport
+        |
+Durable private Inbox + per-conversation burst coordinator
         |
 Application services + per-conversation execution queue
         |
@@ -379,6 +424,14 @@ The context assembler budgets context in this order:
 Pi compaction summarizes older complete turns. It must never split an assistant
 tool call from its tool result.
 
+Before each provider request, tool-result compaction operates only on the
+ephemeral provider context, never on session persistence. The current tool phase
+keeps enough bounded evidence for the model to finish the operation. On later
+user turns, only the newest bounded historical tool evidence remains; any
+discarded result and its matching assistant call are removed as a pair. This
+prevents search, web, file, and subagent payloads from consuming every later
+turn while preserving complete user-visible diagnostics.
+
 The current integration keeps character, scene, and retrieved memory outside
 the transcript and injects them through Pi's `before_agent_start` hook on every
 turn. Consequently transcript compaction cannot remove durable RP state.
@@ -393,10 +446,14 @@ temporary compatibility adapters until the UI migrates.
 | GET | `/api/v1/health` | Process liveness |
 | GET | `/api/v1/readiness` | Database and runtime readiness |
 | POST | `/api/v1/sessions` | Create a fixed-kind conversation |
+| POST | `/api/v1/direct-conversations` | Open or restore one character's canonical SMS conversation |
 | GET | `/api/v1/sessions` | List resumable conversations |
 | GET | `/api/v1/sessions/{id}/messages` | Read persisted transcript |
 | POST | `/api/v1/sessions/{id}/messages` | Synchronous JSON turn for clients and tests |
 | POST | `/api/v1/sessions/{id}/messages/stream` | Streaming turn over fetch-compatible SSE |
+| GET/POST | `/api/v1/sessions/{id}/inbox` | Inspect active private input or enqueue an idempotent message |
+| PATCH/DELETE | `/api/v1/sessions/{id}/inbox/{messageId}` | Edit or retract a message that is still queued |
+| GET | `/api/v1/sessions/{id}/inbox/events` | Durable-turn progress over reconnectable SSE |
 | POST | `/api/v1/sessions/{id}/messages/cancel` | Abort the active Pi turn |
 | POST | `/api/v1/sessions/{id}/messages/retry` | Retry a failed side-effect-free turn |
 | GET/POST | `/api/v1/schedule-items` | Query or create schedule items |
@@ -433,6 +490,15 @@ Mutating requests accept `Idempotency-Key`. Every response contains a
 
 The synchronous message endpoint remains available even after streaming is
 implemented because it is easier for automation and contract tests.
+
+The browser uses the Inbox endpoints for private chat. A burst is bounded to 10
+messages and 12,000 Unicode characters. The model receives each message as its
+own Pi `user` entry and is invoked only by the final entry; retrieval, trace,
+memory extraction, and relationship extraction receive the bounded combined
+text. Tools that require current-message evidence, such as `begin_meeting`, read
+only the final real user message. Disconnecting the browser never aborts the
+turn, and archiving or deleting a conversation is rejected while its Inbox is
+not idle.
 
 ## 9. Agent-oriented test interfaces
 
@@ -733,6 +799,29 @@ Implementation status: complete.
 Exit gate: tool gating, search mapping, credential redaction, persistence,
 diagnostics, module lifecycle, and browser workflows pass without production
 network traffic.
+
+### M9: shared worlds and character autonomy
+
+Implementation status: complete.
+
+- Add canonical worlds, fixed-capability places, memberships, runtime state, and character autonomy policy.
+- Reuse character calendars for autonomous plans and settle completed activities into events and memories.
+- Add bounded proactive SMS delivery and a conditional World State MCP.
+
+Exit gate: planning, settlement, context isolation, proactive limits, world
+reassignment cleanup, and desktop/mobile world-management workflows pass.
+
+### M10: private meeting continuity
+
+Implementation status: complete.
+
+- Add durable `remote`, `meeting_pending`, and `co_present` state with append-only transition events.
+- Add Interaction State MCP tools with actual-message arrival validation and delayed departure settlement.
+- Keep the stable SMS prompt cacheable while replacing only one bounded volatile interaction projection.
+- Add inline transition history, trusted manual controls, undo, and proactive-message suppression during co-presence.
+
+Exit gate: tool flow, evidence rejection, failure rollback, HTTP confirmation,
+context isolation, Agent test cases, and desktop/mobile browser workflows pass.
 
 ## 14. Development rules for humans and agents
 

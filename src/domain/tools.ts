@@ -21,6 +21,7 @@ type RuntimeState = {
   timezone: string;
   traceKind: "user" | "reminder_due";
   traceRequestText: string;
+  currentUserText: string;
   toolMutationsAllowed: boolean;
   realWorldMutationConfirmed: boolean;
   confirmedMutationId?: string;
@@ -28,6 +29,8 @@ type RuntimeState = {
   outputGuardRetryUsed: boolean;
   outputGuardBlocked: boolean;
   outputGuardRecoveryPrompt?: string;
+  toolProtocolLeakBlocked: boolean;
+  toolProtocolLeakRetryUsed: boolean;
   interactiveThinkingRequired: boolean;
   interactiveThinkingMissing: boolean;
   interactiveThinkingRetryCount: number;

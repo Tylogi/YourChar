@@ -5,6 +5,7 @@ export function renderAppHtml(): string {
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-content" />
   <title>RP Agent</title>
+  <link rel="stylesheet" href="/assets/noto-emoji/400.css" />
   <style>
     :root {
       color-scheme: light;
@@ -37,7 +38,7 @@ export function renderAppHtml(): string {
       margin: 0;
       background: var(--bg);
       color: var(--text);
-      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", "Apple Color Emoji", "Segoe UI Emoji", "Noto Color Emoji", "Noto Emoji", sans-serif;
       letter-spacing: 0;
       overflow: hidden;
     }
@@ -234,6 +235,18 @@ export function renderAppHtml(): string {
     .conversation-preview { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     .conversation-line strong { font-size: 13px; font-weight: 650; }
     .conversation-time { margin-left: auto; color: #a0a0a0; font-size: 10px; white-space: nowrap; }
+    .conversation-unread {
+      min-width: 18px;
+      height: 18px;
+      padding: 0 5px;
+      border-radius: 9px;
+      background: #e64b45;
+      color: #fff;
+      display: inline-grid;
+      place-items: center;
+      font-size: 10px;
+      font-weight: 700;
+    }
     .conversation-preview { color: var(--muted); font-size: 11px; }
     .conversation-list-empty { padding: 24px 14px; color: var(--muted); font-size: 12px; text-align: center; }
     .conversation-batch-bar {
@@ -727,7 +740,7 @@ export function renderAppHtml(): string {
     .character-detail-title { min-width: 0; display: grid; gap: 2px; }
     .character-detail-title > span { color: var(--muted); font-size: 11px; }
     .character-detail-title h3 { margin: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 17px; }
-    .character-tabs { width: min(480px, 52vw); grid-template-columns: repeat(3, minmax(0, 1fr)); }
+    .character-tabs { width: min(600px, 60vw); grid-template-columns: repeat(4, minmax(0, 1fr)); }
     .character-panel { min-width: 0; padding: 20px clamp(16px, 2vw, 22px) 22px; }
     .character-editor-form { display: grid; }
     .character-editor-head h4,
@@ -817,6 +830,53 @@ export function renderAppHtml(): string {
     .relationship-delta { align-self: center; display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 4px; max-width: 190px; }
     .relationship-delta span { padding: 2px 5px; border-radius: 4px; background: #f0f2f1; color: #5b625f; font-size: 10px; font-variant-numeric: tabular-nums; }
     .relationship-empty { padding: 28px 10px; color: var(--muted); text-align: center; font-size: 12px; }
+    .character-life-panel { display: grid; gap: 18px; }
+    .character-life-head,
+    .life-world-binding {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+    }
+    .character-life-head > div { min-width: 0; display: flex; align-items: baseline; gap: 8px; }
+    .character-life-head h4 { margin: 0; font-size: 15px; }
+    .life-world-binding { padding-block: 12px; border-top: 1px solid var(--line); border-bottom: 1px solid var(--line); }
+    .life-world-binding label { flex: 1; display: grid; grid-template-columns: auto minmax(180px, 1fr); align-items: center; gap: 10px; color: var(--muted); font-size: 12px; }
+    .life-runtime-band {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      border-top: 1px solid var(--line);
+      border-bottom: 1px solid var(--line);
+    }
+    .life-runtime-band > div { min-width: 0; padding: 13px 12px; display: grid; gap: 4px; border-right: 1px solid var(--line); }
+    .life-runtime-band > div:last-child { border-right: 0; }
+    .life-runtime-band span { color: var(--muted); font-size: 10px; }
+    .life-runtime-band strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13px; }
+    .life-settings-band { display: grid; gap: 14px; }
+    .life-settings-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; }
+    .life-settings-grid > label { display: grid; gap: 6px; color: var(--muted); font-size: 12px; }
+    .life-toggle-stack { display: grid; align-content: end; gap: 8px; }
+    .life-toggle-stack .toggle { justify-content: space-between; }
+    .life-actions { justify-content: flex-end; }
+    .life-detail-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 18px; }
+    .life-detail-section { min-width: 0; }
+    .life-detail-section h5 { margin: 0 0 8px; font-size: 13px; }
+    .life-place-list,
+    .life-event-list,
+    .world-place-list { border-top: 1px solid var(--line); }
+    .life-place-row,
+    .life-event-row,
+    .world-place-row { padding: 10px 0; border-bottom: 1px solid var(--line); display: grid; gap: 5px; }
+    .life-place-row strong,
+    .life-event-row strong,
+    .world-place-row strong { font-size: 12px; }
+    .life-place-row p,
+    .life-event-row p,
+    .world-place-row p { margin: 0; color: #525a56; font-size: 11px; line-height: 1.5; }
+    .life-capabilities { display: flex; flex-wrap: wrap; gap: 4px; }
+    .life-capabilities span { padding: 2px 6px; border-radius: 4px; background: #eef3f0; color: #466052; font-size: 10px; }
+    .life-event-row time { color: var(--muted); font-size: 10px; }
+    .life-empty-row { padding: 24px 8px; color: var(--muted); font-size: 12px; text-align: center; }
     .memory-empty { padding: 38px 12px; color: var(--muted); text-align: center; font-size: 13px; }
     .memory-editor-dialog { width: min(680px, calc(100vw - 28px)); }
     .memory-editor-form { padding: 18px; display: grid; gap: 16px; }
@@ -879,6 +939,50 @@ export function renderAppHtml(): string {
     .module-detail-meta { margin-bottom: 12px; color: var(--muted); font-size: 11px; }
     .message-edit-form { padding: 16px; display: grid; gap: 12px; }
     .message-edit-form textarea { min-height: 150px; max-height: 46vh; resize: vertical; }
+    .character-profile-dialog {
+      width: min(640px, calc(100vw - 28px));
+      max-height: min(780px, calc(100dvh - 28px));
+      padding: 0;
+      border: 1px solid #d8d8d8;
+      border-radius: 8px;
+      background: #ffffff;
+      color: var(--text);
+      box-shadow: 0 12px 34px rgba(0, 0, 0, 0.2);
+      overflow: hidden;
+    }
+    .character-profile-dialog[open] { display: flex; flex-direction: column; }
+    .character-profile-dialog::backdrop { background: rgba(0, 0, 0, 0.34); }
+    .character-profile-content { min-height: 0; overflow: auto; overscroll-behavior: contain; }
+    .character-profile-identity {
+      min-height: 132px;
+      padding: 24px 22px;
+      display: grid;
+      grid-template-columns: 84px minmax(0, 1fr);
+      align-items: center;
+      gap: 18px;
+      border-bottom: 1px solid var(--line);
+      background: #ffffff;
+    }
+    .character-profile-avatar {
+      width: 84px;
+      height: 84px;
+      border-radius: 8px;
+      display: grid;
+      place-items: center;
+      overflow: hidden;
+      background: hsl(var(--avatar-hue, 145) 52% 46%);
+      color: #ffffff;
+      font-size: 28px;
+      font-weight: 700;
+    }
+    .character-profile-avatar img { width: 100%; height: 100%; object-fit: cover; display: block; }
+    .character-profile-name { min-width: 0; display: grid; gap: 5px; }
+    .character-profile-name h3 { margin: 0; overflow-wrap: anywhere; font-size: 21px; line-height: 1.3; }
+    .character-profile-name span { color: var(--muted); font-size: 11px; }
+    .character-profile-soul { padding: 18px 22px 28px; background: #ffffff; }
+    .character-profile-soul > h3 { margin: 0 0 14px; font-size: 14px; }
+    .character-profile-soul .markdown-body { color: #303632; font-size: 13px; line-height: 1.7; }
+    .character-profile-empty { margin: 0; padding: 28px 0; color: var(--muted); text-align: center; }
     .module-type {
       min-width: 48px;
       padding: 3px 7px;
@@ -1251,6 +1355,7 @@ export function renderAppHtml(): string {
       grid-template-columns: 280px minmax(0, 1fr);
       overflow: hidden;
     }
+    .mobile-trace-select { display: none; }
     .trace-index {
       min-width: 0;
       min-height: 0;
@@ -1744,8 +1849,44 @@ export function renderAppHtml(): string {
     }
     .system-event-action:hover { background: #e9ebed; color: #25292c; }
     .system-event-action svg { width: 13px; height: 13px; margin: 0; }
+    .message-row.interaction {
+      width: min(100%, 980px);
+      justify-content: center;
+      padding: 2px 42px;
+    }
+    .interaction-event {
+      max-width: min(620px, 100%);
+      min-width: 0;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
+      color: #67716b;
+      font-size: 12px;
+      line-height: 1.45;
+      text-align: center;
+    }
+    .interaction-event::before,
+    .interaction-event::after { content: ""; width: clamp(20px, 7vw, 72px); height: 1px; background: #d7ddd9; }
+    .interaction-event-copy { min-width: 0; display: inline-flex; align-items: center; gap: 6px; }
+    .interaction-event-copy svg { flex: 0 0 auto; width: 14px; height: 14px; color: #4d7b5e; }
+    .interaction-event-copy span { overflow-wrap: anywhere; }
+    .interaction-event-actions { display: inline-flex; align-items: center; gap: 5px; }
+    .interaction-event-actions button {
+      min-width: 0;
+      height: 28px;
+      padding: 0 9px;
+      border: 1px solid #cfd8d2;
+      border-radius: 5px;
+      background: #f8faf9;
+      color: #42614e;
+      font-size: 11px;
+      cursor: pointer;
+    }
+    .interaction-event-actions button.primary { border-color: #70bf8e; background: #eaf7ef; color: #24613b; }
     .archived-dialog,
-    .session-action-dialog {
+    .session-action-dialog,
+    .world-manager-dialog {
       width: min(620px, calc(100vw - 28px));
       max-height: min(640px, calc(100vh - 48px));
       padding: 0;
@@ -1756,8 +1897,10 @@ export function renderAppHtml(): string {
       box-shadow: 0 12px 34px rgba(0, 0, 0, 0.2);
     }
     .session-action-dialog { width: min(440px, calc(100vw - 28px)); }
+    .world-manager-dialog { width: min(860px, calc(100vw - 28px)); max-height: min(820px, calc(100vh - 32px)); }
     .archived-dialog::backdrop,
-    .session-action-dialog::backdrop { background: rgba(0, 0, 0, 0.28); }
+    .session-action-dialog::backdrop,
+    .world-manager-dialog::backdrop { background: rgba(0, 0, 0, 0.28); }
     .archived-dialog-head {
       height: 52px;
       padding: 0 12px 0 16px;
@@ -1792,6 +1935,23 @@ export function renderAppHtml(): string {
     .dialog-error { min-height: 18px; color: var(--danger); font-size: 12px; line-height: 1.5; }
     .dialog-actions { display: flex; justify-content: flex-end; gap: 8px; }
     .dialog-actions button { min-width: 78px; }
+    .world-manager-body { max-height: min(750px, calc(100vh - 86px)); padding: 16px; overflow: auto; display: grid; gap: 16px; }
+    .world-manager-picker { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 8px; }
+    .world-form,
+    .world-place-form { display: grid; gap: 14px; }
+    .world-form-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+    .world-form-grid .full { grid-column: 1 / -1; }
+    .world-form-grid label { display: grid; gap: 6px; color: var(--muted); font-size: 12px; }
+    .world-form-grid textarea { min-height: 86px; resize: vertical; }
+    #worldRules { min-height: 128px; }
+    .world-places-section { padding-top: 16px; border-top: 1px solid var(--line); display: grid; gap: 14px; }
+    .world-place-row { grid-template-columns: minmax(0, 1fr) auto; align-items: center; }
+    .world-place-row-copy { min-width: 0; display: grid; gap: 4px; }
+    .world-place-row-actions { display: flex; gap: 6px; }
+    .capability-fieldset { margin: 0; padding: 10px 12px 12px; border: 1px solid var(--line); }
+    .capability-fieldset legend { padding: 0 4px; color: var(--muted); font-size: 11px; }
+    .world-capability-options { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px 10px; }
+    .world-capability-options label { display: flex; align-items: center; gap: 6px; color: #424b46; font-size: 11px; }
     .session-actions-desktop { display: flex; align-items: center; gap: 6px; }
     .session-actions-desktop .icon-button { width: 34px; height: 34px; }
     .mobile-session-actions { position: relative; display: none; }
@@ -1838,6 +1998,13 @@ export function renderAppHtml(): string {
       box-shadow: var(--shadow);
       font-size: 12px;
       font-weight: 700;
+    }
+    button.message-avatar { padding: 0; cursor: pointer; }
+    .character-profile-trigger:hover,
+    .character-profile-trigger:focus-visible {
+      border-color: rgba(7, 168, 82, 0.48);
+      box-shadow: 0 0 0 3px rgba(7, 168, 82, 0.1);
+      outline: none;
     }
     .message-row.user .message-avatar { background: #dff8d1; color: #176d3a; }
     .message-row.tool .message-avatar { background: #fff3ca; color: #8b6400; }
@@ -2423,6 +2590,19 @@ export function renderAppHtml(): string {
       .character-detail-head { min-height: 0; padding: 12px 14px; align-items: stretch; flex-direction: column; }
       .character-tabs { width: 100%; }
       .character-panel { padding: 16px 14px 18px; }
+      .life-world-binding { align-items: stretch; flex-direction: column; }
+      .life-world-binding label { grid-template-columns: minmax(0, 1fr); }
+      .life-runtime-band { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+      .life-runtime-band > div:nth-child(2) { border-right: 0; }
+      .life-runtime-band > div:nth-child(-n + 2) { border-bottom: 1px solid var(--line); }
+      .life-settings-grid,
+      .life-detail-grid,
+      .world-form-grid { grid-template-columns: minmax(0, 1fr); }
+      .world-form-grid .full { grid-column: auto; }
+      .life-actions { display: grid; grid-template-columns: minmax(0, 1fr); }
+      .world-capability-options { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+      .world-manager-dialog { width: calc(100vw - 16px); max-height: calc(100vh - 16px); }
+      .world-manager-body { padding: 12px; }
       .relationship-overview { grid-template-columns: minmax(0, 1fr); gap: 14px; }
       .relationship-event { grid-template-columns: minmax(0, 1fr); }
       .relationship-delta { justify-content: flex-start; max-width: none; }
@@ -2435,10 +2615,114 @@ export function renderAppHtml(): string {
       .workspace-section { padding: 16px 14px 18px; }
       .profile-markdown,
       .character-soul-markdown { min-height: 260px; height: 42vh; }
-      .debug-workspace { grid-template-rows: 112px minmax(0, 1fr); }
-      .trace-index { max-height: 112px; }
-      .trace-detail-head { padding: 9px 10px; }
-      .trace-content { padding: 10px 10px 24px; }
+      body[data-ui-mode="debug"] .app {
+        grid-template-rows: 0 minmax(0, 1fr) 60px;
+      }
+      body[data-ui-mode="debug"] .header-right { display: none; }
+      body[data-ui-mode="debug"] #debugPane .side-head {
+        min-height: 44px;
+        padding: 6px 8px;
+        display: block;
+      }
+      body[data-ui-mode="debug"] #debugPane .side-head > div:first-child { display: none; }
+      body[data-ui-mode="debug"] #debugPane .side-head > .trace-actions {
+        width: 100%;
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) 34px;
+        gap: 6px;
+      }
+      body[data-ui-mode="debug"] #debugPane .side-head .trace-view-tabs {
+        min-width: 0;
+        flex-wrap: nowrap;
+        overflow: hidden;
+        scrollbar-width: none;
+      }
+      body[data-ui-mode="debug"] #debugPane .side-head .trace-view-tabs::-webkit-scrollbar { display: none; }
+      body[data-ui-mode="debug"] #debugPane .side-head .trace-view-tabs button {
+        flex: 1 1 0;
+        min-width: 0;
+        height: 28px;
+        padding-inline: 3px;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+        font-size: 10px;
+      }
+      body[data-ui-mode="debug"] #refreshLogsBtn {
+        width: 34px;
+        min-width: 34px;
+        height: 34px;
+      }
+      body[data-ui-mode="debug"] .debug-workspace {
+        width: 100%;
+        max-width: 100vw;
+        grid-template-columns: minmax(0, 1fr);
+        grid-template-rows: 48px minmax(0, 1fr);
+      }
+      body[data-ui-mode="debug"] #debugPane,
+      body[data-ui-mode="debug"] .trace-inspector,
+      body[data-ui-mode="debug"] .trace-detail,
+      body[data-ui-mode="debug"] .trace-detail-head {
+        min-width: 0;
+        width: 100%;
+        max-width: 100vw;
+        box-sizing: border-box;
+      }
+      body[data-ui-mode="debug"] .trace-inspector { grid-column: 1; }
+      body[data-ui-mode="debug"] .mobile-trace-select {
+        display: block;
+        align-self: center;
+        width: calc(100% - 16px);
+        height: 36px;
+        margin: 6px 8px;
+        padding-inline: 9px 30px;
+        font-size: 12px;
+      }
+      body[data-ui-mode="debug"] .trace-index { display: none; }
+      body[data-ui-mode="debug"] .trace-detail-head {
+        padding: 7px 8px 6px;
+        display: grid;
+        grid-template-columns: minmax(0, 1fr);
+        gap: 6px;
+        overflow: hidden;
+      }
+      body[data-ui-mode="debug"] .trace-detail-head > .trace-actions {
+        min-width: 0;
+        width: 100%;
+        max-width: 100%;
+        display: grid;
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+        gap: 6px;
+        overflow: visible;
+      }
+      body[data-ui-mode="debug"] .trace-detail-head .trace-view-tabs {
+        min-width: 0;
+        width: 100%;
+        max-width: 100%;
+        grid-column: 1 / -1;
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+      }
+      body[data-ui-mode="debug"] .trace-detail-head .trace-view-tabs button,
+      body[data-ui-mode="debug"] .trace-detail-head .secondary {
+        min-width: 0;
+        width: 100%;
+        padding-inline: 5px;
+        white-space: nowrap;
+      }
+      body[data-ui-mode="debug"] .trace-detail-head .secondary { height: 32px; font-size: 11px; }
+      body[data-ui-mode="debug"] .trace-detail-title {
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+      body[data-ui-mode="debug"] .trace-detail-meta {
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+      body[data-ui-mode="debug"] .trace-content { padding: 8px 8px 20px; }
+      body[data-ui-mode="debug"] .trace-block summary { min-height: 34px; padding-block: 6px; }
       .scene-editor-form .character-grid,
       .memory-editor-form .character-grid { grid-template-columns: minmax(0, 1fr); }
       .scene-editor-form .character-grid .full,
@@ -2570,7 +2854,8 @@ export function renderAppHtml(): string {
       line-height: 1.55;
     }
     .composer {
-      grid-template-columns: minmax(0, 1fr) 38px 38px 38px auto;
+      position: relative;
+      grid-template-columns: minmax(0, 1fr) 38px 38px 38px 38px auto;
     }
     .attachment-queue {
       grid-column: 1 / -1;
@@ -2615,9 +2900,72 @@ export function renderAppHtml(): string {
     }
     .attachment-remove:hover { background: #eeeeee; color: var(--danger); }
     .composer #attachFileBtn { grid-column: 2; }
-    .composer #cancelMessageBtn { grid-column: 3; }
-    .composer #retryMessageBtn { grid-column: 4; }
-    .composer #sendBtn { grid-column: 5; }
+    .composer #emojiPickerBtn { grid-column: 3; }
+    .composer #cancelMessageBtn { grid-column: 4; }
+    .composer #retryMessageBtn { grid-column: 5; }
+    .composer #sendBtn { grid-column: 6; }
+    .emoji-picker {
+      position: absolute;
+      z-index: 30;
+      left: 18px;
+      bottom: calc(100% - 2px);
+      width: min(344px, calc(100vw - 36px));
+      max-height: min(300px, calc(var(--app-height, 100dvh) - 180px));
+      overflow: hidden;
+      border: 1px solid #d5d7da;
+      border-radius: 8px;
+      background: #ffffff;
+      box-shadow: 0 12px 34px rgba(0, 0, 0, 0.18);
+      display: grid;
+      grid-template-rows: 42px minmax(0, 1fr);
+    }
+    .emoji-picker[hidden] { display: none; }
+    .emoji-category-tabs {
+      min-width: 0;
+      padding: 4px 6px;
+      border-bottom: 1px solid #ececec;
+      background: #f7f7f7;
+      display: grid;
+      grid-template-columns: repeat(5, minmax(0, 1fr));
+      gap: 3px;
+    }
+    .emoji-category-button,
+    .emoji-option {
+      min-width: 0;
+      padding: 0;
+      border: 0;
+      background: transparent;
+      cursor: pointer;
+      font-family: "Apple Color Emoji", "Segoe UI Emoji", "Noto Color Emoji", "Noto Emoji", sans-serif;
+      touch-action: manipulation;
+    }
+    .emoji-category-button {
+      height: 33px;
+      border-radius: 5px;
+      color: #62676d;
+      font-size: 18px;
+    }
+    .emoji-category-button:hover { background: #eceeef; }
+    .emoji-category-button.active { background: #dff4e8; color: #087d45; }
+    .emoji-grid {
+      min-height: 0;
+      padding: 8px;
+      overflow-y: auto;
+      overscroll-behavior: contain;
+      display: grid;
+      grid-template-columns: repeat(8, minmax(32px, 1fr));
+      grid-auto-rows: 38px;
+      gap: 2px;
+    }
+    .emoji-option {
+      width: 100%;
+      height: 38px;
+      border-radius: 6px;
+      font-size: 23px;
+      line-height: 1;
+    }
+    .emoji-option:hover,
+    .emoji-option:focus-visible { background: #f0f1f2; outline: 0; }
     .workspace-file-head {
       display: flex;
       align-items: center;
@@ -2703,7 +3051,8 @@ export function renderAppHtml(): string {
       .settings-head { align-items: flex-start; }
       .management-tabs,
       .settings-tabs { width: 100%; }
-      .composer { grid-template-columns: minmax(0, 1fr) 36px 36px 36px auto; }
+      .composer { grid-template-columns: minmax(0, 1fr) 36px 36px 36px 36px auto; }
+      .emoji-picker { left: 10px; width: min(344px, calc(100vw - 20px)); }
       .workspace-file-row { grid-template-columns: 30px minmax(0, 1fr) auto; }
       .workspace-file-meta { display: none; }
       .message-image-thumb,
@@ -2712,6 +3061,14 @@ export function renderAppHtml(): string {
       .message-image-grid.multiple .message-image-thumb { width: 112px; }
       .chat-image-dialog { width: calc(100vw - 16px); max-height: calc(100vh - 16px); }
       .chat-image-stage { height: calc(100vh - 84px); padding: 8px; }
+      .character-profile-dialog {
+        width: calc(100vw - 16px);
+        height: calc(100dvh - 16px);
+        max-height: calc(100dvh - 16px);
+      }
+      .character-profile-identity { min-height: 116px; padding: 20px 18px; grid-template-columns: 72px minmax(0, 1fr); gap: 14px; }
+      .character-profile-avatar { width: 72px; height: 72px; font-size: 24px; }
+      .character-profile-soul { padding: 16px 18px max(24px, env(safe-area-inset-bottom, 0px)); }
       .workspace-file-row-actions { grid-column: 2 / -1; justify-content: flex-start; }
       .workspace-file-head { align-items: flex-start; }
       .workspace-file-actions { width: 100%; }
@@ -2750,6 +3107,13 @@ export function renderAppHtml(): string {
       color: #ffffff;
       font-size: 13px;
       font-weight: 700;
+    }
+    button.conversation-header-avatar { padding: 0; border: 0; cursor: pointer; }
+    button.conversation-header-avatar:disabled { cursor: default; }
+    button.conversation-header-avatar:not(:disabled):hover,
+    button.conversation-header-avatar:not(:disabled):focus-visible {
+      box-shadow: 0 0 0 3px rgba(7, 168, 82, 0.14);
+      outline: none;
     }
     .conversation-header-avatar img { width: 100%; height: 100%; object-fit: cover; display: block; }
     .conversation-heading-copy { min-width: 0; display: grid; gap: 3px; }
@@ -2839,6 +3203,10 @@ export function renderAppHtml(): string {
       .conversation-header-actions { gap: 4px; }
       .conversation-header-actions > .icon-button,
       .mobile-session-actions > .icon-button { width: 32px; height: 32px; }
+      .message-row.interaction { padding-inline: 8px; }
+      .interaction-event { flex-wrap: wrap; gap: 6px; }
+      .interaction-event::before,
+      .interaction-event::after { width: 18px; }
       main { grid-column: 1; grid-row: 2; }
       .header-left { height: calc(60px + env(safe-area-inset-bottom, 0px)); padding-bottom: env(safe-area-inset-bottom, 0px); }
       .composer { padding-bottom: max(9px, env(safe-area-inset-bottom, 0px)); }
@@ -2867,13 +3235,15 @@ export function renderAppHtml(): string {
       <div class="header-right">
         <div class="conversation-heading">
           <button id="conversationListToggle" class="secondary icon-button conversation-list-toggle" type="button" title="会话列表" aria-label="会话列表"><i data-lucide="chevron-left" aria-hidden="true"></i></button>
-          <span id="conversationHeaderAvatar" class="conversation-header-avatar" aria-hidden="true">角</span>
+          <button id="conversationHeaderAvatar" class="conversation-header-avatar" type="button" title="查看角色资料" aria-label="查看角色资料" disabled>角</button>
           <span class="conversation-heading-copy">
             <span class="conversation-title-line"><strong id="conversationCharacter">未选择角色</strong><span id="conversationMode" class="conversation-mode-badge">角色私聊</span></span>
             <span id="conversationScene" class="conversation-scene" hidden></span>
           </span>
         </div>
         <div class="conversation-header-actions">
+          <button id="interactionToggleBtn" class="secondary icon-button" type="button" title="发起见面" aria-label="发起见面" hidden><i data-lucide="map-pin" aria-hidden="true"></i></button>
+          <button id="interactionUndoBtn" class="secondary icon-button" type="button" title="撤销上次状态切换" aria-label="撤销上次状态切换" hidden><i data-lucide="undo-2" aria-hidden="true"></i></button>
           <button id="sceneInfoBtn" class="secondary icon-button" type="button" title="场景信息" aria-label="场景信息" hidden><i data-lucide="map-pin" aria-hidden="true"></i></button>
           <div class="mobile-session-actions">
             <button id="sessionActionsMenuBtn" class="secondary icon-button" type="button" title="会话操作" aria-label="会话操作" aria-expanded="false" aria-controls="sessionActionsMenu"><i data-lucide="ellipsis" aria-hidden="true"></i></button>
@@ -2913,8 +3283,13 @@ export function renderAppHtml(): string {
             <form id="composer" class="composer">
               <div id="attachmentQueue" class="attachment-queue" hidden></div>
               <textarea id="textInput" placeholder="输入消息，例如：5分钟后提醒我喝水"></textarea>
+              <div id="emojiPicker" class="emoji-picker" role="dialog" aria-label="选择表情" hidden>
+                <div id="emojiPickerCategories" class="emoji-category-tabs" role="tablist" aria-label="表情分类"></div>
+                <div id="emojiPickerGrid" class="emoji-grid" role="group" aria-label="表情列表"></div>
+              </div>
               <input id="chatAttachmentInput" type="file" multiple hidden />
               <button id="attachFileBtn" class="secondary icon-button" type="button" title="上传附件" aria-label="上传附件"><i data-lucide="paperclip" aria-hidden="true"></i></button>
+              <button id="emojiPickerBtn" class="secondary icon-button" type="button" title="选择表情" aria-label="选择表情" aria-expanded="false" aria-controls="emojiPicker"><i data-lucide="smile" aria-hidden="true"></i></button>
               <button id="cancelMessageBtn" class="secondary icon-button" type="button" title="停止生成" aria-label="停止" disabled><i data-lucide="square" aria-hidden="true"></i></button>
               <button id="retryMessageBtn" class="secondary icon-button" type="button" title="重试失败消息" aria-label="重试" disabled><i data-lucide="rotate-ccw" aria-hidden="true"></i></button>
               <button id="sendBtn" class="primary send-button" type="submit"><i data-lucide="send-horizontal" aria-hidden="true"></i><span>发送</span></button>
@@ -3025,6 +3400,7 @@ export function renderAppHtml(): string {
                 <button id="characterSettingsTabBtn" class="active" type="button" role="tab" aria-selected="true" aria-controls="characterSettingsPanel">角色设定</button>
                 <button id="characterMemoryTabBtn" type="button" role="tab" aria-selected="false" aria-controls="characterMemoryPanel">长期记忆</button>
                 <button id="characterRelationshipTabBtn" type="button" role="tab" aria-selected="false" aria-controls="characterRelationshipPanel">关系</button>
+                <button id="characterLifeTabBtn" type="button" role="tab" aria-selected="false" aria-controls="characterLifePanel">生活</button>
               </div>
             </div>
             <div id="characterSettingsPanel" class="character-panel" role="tabpanel">
@@ -3074,6 +3450,47 @@ export function renderAppHtml(): string {
                 <h5>变化记录</h5>
                 <div id="relationshipEventList" class="relationship-event-list"></div>
               </section>
+            </div>
+            <div id="characterLifePanel" class="character-panel character-life-panel" role="tabpanel" hidden>
+              <div class="character-life-head">
+                <div><h4>共享世界与自主生活</h4><span id="characterLifeState" class="muted"></span></div>
+                <button id="openWorldManagerBtn" class="secondary" type="button"><i data-lucide="map" aria-hidden="true"></i><span>管理世界</span></button>
+              </div>
+              <div class="life-world-binding">
+                <label>所在世界<select id="characterWorldSelect"><option value="">不加入共享世界</option></select></label>
+                <button id="saveCharacterWorldBtn" class="secondary" type="button"><i data-lucide="link" aria-hidden="true"></i><span>保存归属</span></button>
+              </div>
+              <div id="characterLifeEmpty" class="relationship-empty">选择一个共享世界后，可设置地点、日程和主动消息。</div>
+              <div id="characterLifeContent" hidden>
+                <section class="life-runtime-band" aria-label="角色当前状态">
+                  <div><span>当前位置</span><strong id="lifeCurrentPlace">未设置</strong></div>
+                  <div><span>正在做</span><strong id="lifeCurrentActivity">自由活动</strong></div>
+                  <div><span>状态</span><strong id="lifeAvailability">空闲</strong></div>
+                  <div><span>精力</span><strong id="lifeEnergy">70</strong></div>
+                </section>
+                <section class="life-settings-band">
+                  <div class="life-settings-grid">
+                    <label>常驻地点<select id="lifeHomePlace"></select></label>
+                    <label>当前位置<select id="lifeRuntimePlace"></select></label>
+                    <label>每日主动消息上限<input id="lifeDailyMessageLimit" type="number" min="0" max="5" step="1" /></label>
+                    <label>安静时段开始<input id="lifeQuietStart" type="time" /></label>
+                    <label>安静时段结束<input id="lifeQuietEnd" type="time" /></label>
+                    <div class="life-toggle-stack">
+                      <label class="toggle"><span>自主安排日程</span><input id="lifeAutonomyEnabled" type="checkbox" /></label>
+                      <label class="toggle"><span>允许主动发消息</span><input id="lifeProactiveEnabled" type="checkbox" /></label>
+                    </div>
+                  </div>
+                  <div class="settings-actions life-actions">
+                    <button id="saveCharacterLifeBtn" class="primary" type="button">保存生活设置</button>
+                    <button id="planCharacterLifeBtn" class="secondary" type="button"><i data-lucide="calendar-plus" aria-hidden="true"></i><span>安排今日</span></button>
+                    <button id="simulateCharacterMomentBtn" class="secondary" type="button"><i data-lucide="sparkles" aria-hidden="true"></i><span>模拟生活片段</span></button>
+                  </div>
+                </section>
+                <section class="life-detail-grid">
+                  <div class="life-detail-section"><h5>地点能力</h5><div id="lifePlaceList" class="life-place-list"></div></div>
+                  <div class="life-detail-section"><h5>近期事件</h5><div id="lifeEventList" class="life-event-list"></div></div>
+                </section>
+              </div>
             </div>
           </section>
         </div>
@@ -3255,10 +3672,11 @@ export function renderAppHtml(): string {
               <button id="debugEconomicsBtn" type="button" role="tab" aria-selected="false">Context Economics</button>
               <button id="debugFeatureTestsBtn" type="button" role="tab" aria-selected="false">功能测试</button>
             </div>
-            <button id="refreshLogsBtn" class="secondary" type="button">刷新</button>
+            <button id="refreshLogsBtn" class="secondary icon-button" type="button" title="刷新日志" aria-label="刷新日志"><i data-lucide="refresh-cw" aria-hidden="true"></i></button>
           </div>
         </div>
         <div id="debugWorkspace" class="debug-workspace">
+          <select id="mobileTraceSelect" class="mobile-trace-select" aria-label="选择模型调用记录"></select>
           <nav id="traceIndex" class="trace-index" aria-label="模型调用记录"></nav>
           <section class="trace-inspector">
             <div id="traceEmpty" class="trace-empty">选择一条记录查看上下文。</div>
@@ -3616,6 +4034,60 @@ export function renderAppHtml(): string {
         </div>
       </form>
     </dialog>
+    <dialog id="worldManagerDialog" class="world-manager-dialog" aria-labelledby="worldManagerTitle">
+      <div class="archived-dialog-head">
+        <h2 id="worldManagerTitle">共享世界</h2>
+        <button id="closeWorldManagerBtn" class="secondary icon-button" type="button" title="关闭" aria-label="关闭世界管理"><i data-lucide="x" aria-hidden="true"></i></button>
+      </div>
+      <div class="world-manager-body">
+        <div class="world-manager-picker">
+          <select id="worldManagerWorldSelect" aria-label="选择世界"><option value="">新建世界</option></select>
+          <button id="newWorldBtn" class="secondary" type="button"><i data-lucide="plus" aria-hidden="true"></i><span>新建</span></button>
+        </div>
+        <form id="worldForm" class="world-form">
+          <div class="world-form-grid">
+            <label>名称<input id="worldName" required maxlength="80" /></label>
+            <label>时区<input id="worldTimezone" value="Asia/Shanghai" /></label>
+            <label class="full">简介<textarea id="worldDescription" maxlength="1200"></textarea></label>
+            <label class="full">世界规则与常识<textarea id="worldRules" maxlength="6000" spellcheck="false"></textarea></label>
+          </div>
+          <div class="settings-actions">
+            <span id="worldManagerState" class="muted"></span>
+            <button id="saveWorldBtn" class="primary" type="submit">创建世界</button>
+          </div>
+        </form>
+        <section id="worldPlacesSection" class="world-places-section" hidden>
+          <div class="schedule-head"><h3>地点与功能</h3><span id="worldPlaceCount" class="muted"></span></div>
+          <div id="worldPlaceList" class="world-place-list"></div>
+          <form id="worldPlaceForm" class="world-place-form">
+            <div class="world-form-grid">
+              <label>地点名称<input id="worldPlaceName" required maxlength="80" /></label>
+              <label class="full">地点说明<textarea id="worldPlaceDescription" maxlength="800"></textarea></label>
+              <fieldset class="full capability-fieldset">
+                <legend>可用功能</legend>
+                <div id="worldCapabilityOptions" class="world-capability-options">
+                  <label><input type="checkbox" value="rest" />休息</label>
+                  <label><input type="checkbox" value="work" />工作</label>
+                  <label><input type="checkbox" value="study" />学习</label>
+                  <label><input type="checkbox" value="socialize" />社交</label>
+                  <label><input type="checkbox" value="eat" />用餐</label>
+                  <label><input type="checkbox" value="shop" />购物</label>
+                  <label><input type="checkbox" value="exercise" />运动</label>
+                  <label><input type="checkbox" value="travel" />出行</label>
+                  <label><input type="checkbox" value="create" />创作</label>
+                  <label><input type="checkbox" value="observe" />观察</label>
+                  <label><input type="checkbox" value="communicate" />通信</label>
+                </div>
+              </fieldset>
+            </div>
+            <div class="settings-actions">
+              <button id="cancelPlaceEditBtn" class="secondary" type="button">清空</button>
+              <button id="saveWorldPlaceBtn" class="primary" type="submit">添加地点</button>
+            </div>
+          </form>
+        </section>
+      </div>
+    </dialog>
     <dialog id="sessionActionDialog" class="session-action-dialog" aria-labelledby="sessionActionTitle" aria-describedby="sessionActionDescription">
       <div class="archived-dialog-head">
         <h2 id="sessionActionTitle">确认操作</h2>
@@ -3641,6 +4113,22 @@ export function renderAppHtml(): string {
         <div id="messageEditError" class="dialog-error" role="alert"></div>
         <div class="dialog-actions"><button id="cancelMessageEditBtn" class="secondary" type="button">取消</button><button id="submitMessageEditBtn" class="primary" type="submit">保存并重新发送</button></div>
       </form>
+    </dialog>
+    <dialog id="characterProfileDialog" class="character-profile-dialog" aria-labelledby="characterProfileTitle">
+      <div class="archived-dialog-head">
+        <h2 id="characterProfileTitle">角色资料</h2>
+        <button id="closeCharacterProfileBtn" class="secondary icon-button" type="button" title="关闭" aria-label="关闭角色资料"><i data-lucide="x" aria-hidden="true"></i></button>
+      </div>
+      <div class="character-profile-content">
+        <div class="character-profile-identity">
+          <span id="characterProfileAvatar" class="character-profile-avatar">角</span>
+          <div class="character-profile-name"><h3 id="characterProfileName">角色</h3><span id="characterProfileMeta"></span></div>
+        </div>
+        <section class="character-profile-soul" aria-labelledby="characterProfileSoulTitle">
+          <h3 id="characterProfileSoulTitle">角色设定</h3>
+          <div id="characterProfileSoul" class="markdown-body"></div>
+        </section>
+      </div>
     </dialog>
     <dialog id="moduleDetailDialog" class="module-detail-dialog" aria-labelledby="moduleDetailTitle">
       <div class="archived-dialog-head">
@@ -3696,6 +4184,12 @@ export function renderAppHtml(): string {
       workspaceCharacterId: "",
       characterTab: "settings",
       relationship: null,
+      worlds: [],
+      characterLife: null,
+      worldEditorId: "",
+      placeEditorId: "",
+      worldEditorPlaces: [],
+      unreadProactiveMessages: [],
       newConversationMode: "sms",
       newConversationKind: "direct",
       newConversationPreferredCharacterId: "",
@@ -3720,6 +4214,10 @@ export function renderAppHtml(): string {
       pendingAttachments: [],
       attachmentUploadQueue: [],
       uploadingAttachments: false,
+      privateInboxSource: null,
+      privateInboxSessionId: "",
+      privateInboxMessages: [],
+      privateInboxRunning: false,
       okfImportFile: null,
       okfImportPreview: null,
       workspaceFileDirectory: "",
@@ -3744,10 +4242,47 @@ export function renderAppHtml(): string {
       collapsedConversationGroups: new Set(),
       composingMessage: false,
       compositionEndedAt: 0,
+      emojiCategory: "faces",
       selectedTraceIndex: 0,
       selectedEconomicsIndex: 0,
       traceView: "semantic",
-      traceWrap: true
+      traceWrap: true,
+      interactionState: null,
+      interactionEvents: [],
+      interactionCanUndo: false,
+      interactionLocations: []
+    };
+    const worldCapabilityLabels = {
+      rest: "休息", work: "工作", study: "学习", socialize: "社交", eat: "用餐",
+      shop: "购物", exercise: "运动", travel: "出行", create: "创作",
+      observe: "观察", communicate: "通信"
+    };
+    const emojiGroups = {
+      faces: {
+        label: "笑脸与情绪",
+        icon: "😊",
+        values: ["😀", "😃", "😄", "😁", "😆", "😊", "🙂", "😉", "🥰", "😍", "🤩", "😘", "😋", "😎", "🤗", "🤔", "🫡", "🤭", "🫢", "😶", "😐", "🙄", "😮", "😴", "🥺", "😢", "😭", "😤", "😠", "😳", "🤯", "🥳", "😇", "🤓", "😏", "😌", "😅", "😂", "🤣", "🙃"]
+      },
+      gestures: {
+        label: "手势与人物",
+        icon: "👋",
+        values: ["👋", "👍", "👎", "👌", "✌️", "🤞", "🤟", "🤘", "👏", "🙌", "🫶", "🙏", "💪", "🤝", "🫰", "👉", "👈", "☝️", "✋", "🖐️", "🤚", "🫂", "🙋", "🙆", "🙅", "🤷", "🤦", "💁", "🧑‍💻", "🧑‍🎨", "🧑‍🍳", "🧑‍🔬"]
+      },
+      hearts: {
+        label: "爱心与关系",
+        icon: "❤️",
+        values: ["❤️", "🧡", "💛", "💚", "💙", "💜", "🖤", "🤍", "🤎", "🩷", "🩵", "🩶", "💔", "❤️‍🔥", "❤️‍🩹", "💕", "💞", "💓", "💗", "💖", "💘", "💝", "💟", "💌", "💋", "🌹", "🌷", "🌸"]
+      },
+      activities: {
+        label: "活动与物品",
+        icon: "🎉",
+        values: ["🎉", "✨", "🌟", "🔥", "💯", "🎁", "🎂", "🎈", "🎵", "🎧", "📷", "💡", "📌", "⏰", "💤", "☕", "🍵", "🍻", "🍰", "🍜", "🍓", "🍀", "🌙", "☀️", "🌧️", "❄️", "🌈", "🚗", "✈️", "🏠", "💻", "📚"]
+      },
+      symbols: {
+        label: "符号",
+        icon: "✅",
+        values: ["✅", "❌", "⚠️", "❗", "❓", "‼️", "⁉️", "⭕", "💬", "💭", "💢", "💥", "💫", "💦", "💨", "🎶", "🔔", "🔕", "📣", "🔒", "🔑", "🔗", "📍", "➡️", "⬅️", "⬆️", "⬇️", "🔄", "▶️", "⏸️"]
+      }
     };
     const nodes = {
       normalBtn: document.getElementById("normalBtn"),
@@ -3840,6 +4375,7 @@ export function renderAppHtml(): string {
       featureTestList: document.getElementById("featureTestList"),
       featureTestResults: document.getElementById("featureTestResults"),
       traceIndex: document.getElementById("traceIndex"),
+      mobileTraceSelect: document.getElementById("mobileTraceSelect"),
       traceEmpty: document.getElementById("traceEmpty"),
       traceDetail: document.getElementById("traceDetail"),
       traceDetailTitle: document.getElementById("traceDetailTitle"),
@@ -3856,6 +4392,10 @@ export function renderAppHtml(): string {
       messages: document.getElementById("messages"),
       composer: document.getElementById("composer"),
       textInput: document.getElementById("textInput"),
+      emojiPicker: document.getElementById("emojiPicker"),
+      emojiPickerBtn: document.getElementById("emojiPickerBtn"),
+      emojiPickerCategories: document.getElementById("emojiPickerCategories"),
+      emojiPickerGrid: document.getElementById("emojiPickerGrid"),
       attachmentQueue: document.getElementById("attachmentQueue"),
       chatAttachmentInput: document.getElementById("chatAttachmentInput"),
       attachFileBtn: document.getElementById("attachFileBtn"),
@@ -3868,6 +4408,8 @@ export function renderAppHtml(): string {
       conversationScene: document.getElementById("conversationScene"),
       conversationHeaderAvatar: document.getElementById("conversationHeaderAvatar"),
       sceneInfoBtn: document.getElementById("sceneInfoBtn"),
+      interactionToggleBtn: document.getElementById("interactionToggleBtn"),
+      interactionUndoBtn: document.getElementById("interactionUndoBtn"),
       conversationListToggle: document.getElementById("conversationListToggle"),
       chatWorkspace: document.getElementById("chatWorkspace"),
       conversationList: document.getElementById("conversationList"),
@@ -3934,6 +4476,12 @@ export function renderAppHtml(): string {
       closeMessageEditBtn: document.getElementById("closeMessageEditBtn"),
       cancelMessageEditBtn: document.getElementById("cancelMessageEditBtn"),
       submitMessageEditBtn: document.getElementById("submitMessageEditBtn"),
+      characterProfileDialog: document.getElementById("characterProfileDialog"),
+      characterProfileAvatar: document.getElementById("characterProfileAvatar"),
+      characterProfileName: document.getElementById("characterProfileName"),
+      characterProfileMeta: document.getElementById("characterProfileMeta"),
+      characterProfileSoul: document.getElementById("characterProfileSoul"),
+      closeCharacterProfileBtn: document.getElementById("closeCharacterProfileBtn"),
       moduleDetailDialog: document.getElementById("moduleDetailDialog"),
       moduleDetailTitle: document.getElementById("moduleDetailTitle"),
       moduleDetailContent: document.getElementById("moduleDetailContent"),
@@ -3996,9 +4544,53 @@ export function renderAppHtml(): string {
       characterSettingsTabBtn: document.getElementById("characterSettingsTabBtn"),
       characterMemoryTabBtn: document.getElementById("characterMemoryTabBtn"),
       characterRelationshipTabBtn: document.getElementById("characterRelationshipTabBtn"),
+      characterLifeTabBtn: document.getElementById("characterLifeTabBtn"),
       characterSettingsPanel: document.getElementById("characterSettingsPanel"),
       characterMemoryPanel: document.getElementById("characterMemoryPanel"),
       characterRelationshipPanel: document.getElementById("characterRelationshipPanel"),
+      characterLifePanel: document.getElementById("characterLifePanel"),
+      characterLifeState: document.getElementById("characterLifeState"),
+      openWorldManagerBtn: document.getElementById("openWorldManagerBtn"),
+      characterWorldSelect: document.getElementById("characterWorldSelect"),
+      saveCharacterWorldBtn: document.getElementById("saveCharacterWorldBtn"),
+      characterLifeEmpty: document.getElementById("characterLifeEmpty"),
+      characterLifeContent: document.getElementById("characterLifeContent"),
+      lifeCurrentPlace: document.getElementById("lifeCurrentPlace"),
+      lifeCurrentActivity: document.getElementById("lifeCurrentActivity"),
+      lifeAvailability: document.getElementById("lifeAvailability"),
+      lifeEnergy: document.getElementById("lifeEnergy"),
+      lifeHomePlace: document.getElementById("lifeHomePlace"),
+      lifeRuntimePlace: document.getElementById("lifeRuntimePlace"),
+      lifeDailyMessageLimit: document.getElementById("lifeDailyMessageLimit"),
+      lifeQuietStart: document.getElementById("lifeQuietStart"),
+      lifeQuietEnd: document.getElementById("lifeQuietEnd"),
+      lifeAutonomyEnabled: document.getElementById("lifeAutonomyEnabled"),
+      lifeProactiveEnabled: document.getElementById("lifeProactiveEnabled"),
+      saveCharacterLifeBtn: document.getElementById("saveCharacterLifeBtn"),
+      planCharacterLifeBtn: document.getElementById("planCharacterLifeBtn"),
+      simulateCharacterMomentBtn: document.getElementById("simulateCharacterMomentBtn"),
+      lifePlaceList: document.getElementById("lifePlaceList"),
+      lifeEventList: document.getElementById("lifeEventList"),
+      worldManagerDialog: document.getElementById("worldManagerDialog"),
+      closeWorldManagerBtn: document.getElementById("closeWorldManagerBtn"),
+      worldManagerWorldSelect: document.getElementById("worldManagerWorldSelect"),
+      newWorldBtn: document.getElementById("newWorldBtn"),
+      worldForm: document.getElementById("worldForm"),
+      worldName: document.getElementById("worldName"),
+      worldTimezone: document.getElementById("worldTimezone"),
+      worldDescription: document.getElementById("worldDescription"),
+      worldRules: document.getElementById("worldRules"),
+      worldManagerState: document.getElementById("worldManagerState"),
+      saveWorldBtn: document.getElementById("saveWorldBtn"),
+      worldPlacesSection: document.getElementById("worldPlacesSection"),
+      worldPlaceCount: document.getElementById("worldPlaceCount"),
+      worldPlaceList: document.getElementById("worldPlaceList"),
+      worldPlaceForm: document.getElementById("worldPlaceForm"),
+      worldPlaceName: document.getElementById("worldPlaceName"),
+      worldPlaceDescription: document.getElementById("worldPlaceDescription"),
+      worldCapabilityOptions: document.getElementById("worldCapabilityOptions"),
+      cancelPlaceEditBtn: document.getElementById("cancelPlaceEditBtn"),
+      saveWorldPlaceBtn: document.getElementById("saveWorldPlaceBtn"),
       relationshipState: document.getElementById("relationshipState"),
       relationshipOverview: document.getElementById("relationshipOverview"),
       relationshipEventList: document.getElementById("relationshipEventList"),
@@ -4167,6 +4759,7 @@ export function renderAppHtml(): string {
     nodes.selectAllFeatureTestsBtn.addEventListener("click", toggleAllFeatureTests);
     nodes.runFeatureTestsBtn.addEventListener("click", runSelectedFeatureTests);
     nodes.traceIndex.addEventListener("click", selectTraceFromIndex);
+    nodes.mobileTraceSelect.addEventListener("change", selectTraceFromMobile);
     nodes.traceSemanticBtn.addEventListener("click", () => setTraceView("semantic"));
     nodes.traceRawBtn.addEventListener("click", () => setTraceView("raw"));
     nodes.traceExpandBtn.addEventListener("click", toggleAllTraceBlocks);
@@ -4225,12 +4818,15 @@ export function renderAppHtml(): string {
     nodes.newConversationDirectBtn.addEventListener("click", () => setNewConversationKind("direct"));
     nodes.newConversationGroupBtn.addEventListener("click", () => setNewConversationKind("group"));
     nodes.newConversationMembers.addEventListener("change", updateNewGroupControls);
+    nodes.newConversationCharacter.addEventListener("change", updateNewConversationSubmit);
     nodes.newConversationSmsBtn.addEventListener("click", () => setNewConversationMode("sms"));
     nodes.newConversationRpBtn.addEventListener("click", () => setNewConversationMode("rp"));
     nodes.closeNewConversationBtn.addEventListener("click", closeNewConversationDialog);
     nodes.cancelNewConversationBtn.addEventListener("click", closeNewConversationDialog);
     nodes.newConversationDialog.addEventListener("cancel", (event) => { event.preventDefault(); closeNewConversationDialog(); });
     nodes.sceneInfoBtn.addEventListener("click", openSceneInfoDialog);
+    nodes.interactionToggleBtn.addEventListener("click", openInteractionControl);
+    nodes.interactionUndoBtn.addEventListener("click", undoInteractionTransition);
     nodes.closeSceneInfoBtn.addEventListener("click", closeSceneInfoDialog);
     nodes.dismissSceneInfoBtn.addEventListener("click", dismissSceneInfoDialog);
     nodes.sceneInfoDialog.addEventListener("cancel", (event) => { event.preventDefault(); dismissSceneInfoDialog(); });
@@ -4246,6 +4842,9 @@ export function renderAppHtml(): string {
     nodes.closeMessageEditBtn.addEventListener("click", closeMessageEditDialog);
     nodes.cancelMessageEditBtn.addEventListener("click", closeMessageEditDialog);
     nodes.messageEditDialog.addEventListener("cancel", (event) => { event.preventDefault(); closeMessageEditDialog(); });
+    nodes.closeCharacterProfileBtn.addEventListener("click", closeCharacterProfile);
+    nodes.characterProfileDialog.addEventListener("cancel", (event) => { event.preventDefault(); closeCharacterProfile(); });
+    nodes.characterProfileDialog.addEventListener("click", (event) => { if (event.target === nodes.characterProfileDialog) closeCharacterProfile(); });
     nodes.closeModuleDetailBtn.addEventListener("click", () => nodes.moduleDetailDialog.close());
     nodes.closeWorkspaceFilePreviewBtn.addEventListener("click", () => nodes.workspaceFilePreviewDialog.close());
     nodes.workspaceFilePreviewDialog.addEventListener("cancel", (event) => { event.preventDefault(); nodes.workspaceFilePreviewDialog.close(); });
@@ -4257,6 +4856,7 @@ export function renderAppHtml(): string {
     nodes.workspaceFileUploadBtn.addEventListener("click", () => nodes.workspaceFileUploadInput.click());
     nodes.workspaceFileUploadInput.addEventListener("change", uploadWorkspaceManagerFiles);
     nodes.workspaceFileList.addEventListener("click", handleWorkspaceFileAction);
+    nodes.conversationHeaderAvatar.addEventListener("click", handleCharacterProfileClick);
     document.addEventListener("click", closeSessionActionsMenuFromOutside);
     document.addEventListener("keydown", closeSessionActionsMenuOnEscape);
     nodes.modeSelect.addEventListener("change", () => {
@@ -4296,7 +4896,21 @@ export function renderAppHtml(): string {
     nodes.characterSettingsTabBtn.addEventListener("click", () => setCharacterTab("settings"));
     nodes.characterMemoryTabBtn.addEventListener("click", () => setCharacterTab("memory"));
     nodes.characterRelationshipTabBtn.addEventListener("click", () => setCharacterTab("relationship"));
+    nodes.characterLifeTabBtn.addEventListener("click", () => setCharacterTab("life"));
     nodes.resetRelationshipBtn.addEventListener("click", resetRelationship);
+    nodes.openWorldManagerBtn.addEventListener("click", openWorldManager);
+    nodes.saveCharacterWorldBtn.addEventListener("click", saveCharacterWorld);
+    nodes.saveCharacterLifeBtn.addEventListener("click", saveCharacterLife);
+    nodes.planCharacterLifeBtn.addEventListener("click", planCharacterLife);
+    nodes.simulateCharacterMomentBtn.addEventListener("click", simulateCharacterMoment);
+    nodes.closeWorldManagerBtn.addEventListener("click", closeWorldManager);
+    nodes.worldManagerDialog.addEventListener("cancel", (event) => { event.preventDefault(); closeWorldManager(); });
+    nodes.worldManagerWorldSelect.addEventListener("change", selectWorldEditor);
+    nodes.newWorldBtn.addEventListener("click", resetWorldEditor);
+    nodes.worldForm.addEventListener("submit", saveWorld);
+    nodes.worldPlaceForm.addEventListener("submit", saveWorldPlace);
+    nodes.cancelPlaceEditBtn.addEventListener("click", resetPlaceEditor);
+    nodes.worldPlaceList.addEventListener("click", handleWorldPlaceAction);
     nodes.characterForm.addEventListener("submit", saveCharacter);
     nodes.characterName.addEventListener("input", renderCharacterAvatarPreview);
     nodes.characterSoulMarkdown.addEventListener("input", updateCharacterSoulCount);
@@ -4314,6 +4928,13 @@ export function renderAppHtml(): string {
     nodes.cancelMessageBtn.addEventListener("click", cancelMessage);
     nodes.retryMessageBtn.addEventListener("click", retryMessage);
     nodes.attachFileBtn.addEventListener("click", () => nodes.chatAttachmentInput.click());
+    nodes.emojiPickerBtn.addEventListener("pointerdown", (event) => event.preventDefault());
+    nodes.emojiPickerBtn.addEventListener("click", toggleEmojiPicker);
+    nodes.emojiPickerCategories.addEventListener("click", selectEmojiCategory);
+    nodes.emojiPickerGrid.addEventListener("pointerdown", (event) => {
+      if (event.target.closest("button")) event.preventDefault();
+    });
+    nodes.emojiPickerGrid.addEventListener("click", insertSelectedEmoji);
     nodes.chatAttachmentInput.addEventListener("change", uploadChatAttachments);
     nodes.attachmentQueue.addEventListener("click", removeQueuedAttachment);
     nodes.composer.addEventListener("submit", async (event) => {
@@ -4324,6 +4945,8 @@ export function renderAppHtml(): string {
     nodes.messages.addEventListener("click", handleSystemEventAction);
     nodes.messages.addEventListener("click", handleMessageAction);
     nodes.messages.addEventListener("click", handleMessageMediaClick);
+    nodes.messages.addEventListener("click", handleCharacterProfileClick);
+    nodes.messages.addEventListener("click", handleInteractionEventAction);
     nodes.textInput.addEventListener("compositionstart", () => {
       state.composingMessage = true;
     });
@@ -4342,6 +4965,14 @@ export function renderAppHtml(): string {
         await sendMessage();
       }
     });
+    document.addEventListener("pointerdown", (event) => {
+      if (!nodes.emojiPicker.hidden && !nodes.composer.contains(event.target)) closeEmojiPicker();
+    });
+    document.addEventListener("keydown", (event) => {
+      if (event.key !== "Escape" || nodes.emojiPicker.hidden) return;
+      event.preventDefault();
+      closeEmojiPicker(true);
+    });
     nodes.modelSettingsTabBtn.addEventListener("click", () => setSettingsTab("model"));
     nodes.visionSettingsTabBtn.addEventListener("click", () => setSettingsTab("vision"));
     nodes.searchSettingsTabBtn.addEventListener("click", () => setSettingsTab("search"));
@@ -4357,6 +4988,7 @@ export function renderAppHtml(): string {
     if (window.marked) {
       window.marked.setOptions({ gfm: true, breaks: true });
     }
+    renderEmojiPicker();
     renderMessages();
     refreshIcons();
     updateRpControls();
@@ -4371,6 +5003,54 @@ export function renderAppHtml(): string {
         void refreshSessionMessages(true);
       }
     }, 3000);
+    window.setInterval(() => void pollProactiveMessages(), 6000);
+
+    function renderEmojiPicker() {
+      nodes.emojiPickerCategories.innerHTML = Object.entries(emojiGroups).map(([id, group]) =>
+        '<button class="emoji-category-button' + (id === state.emojiCategory ? ' active' : '') + '" type="button" role="tab"' +
+          ' aria-selected="' + (id === state.emojiCategory ? 'true' : 'false') + '" aria-label="' + escapeHtml(group.label) + '"' +
+          ' title="' + escapeHtml(group.label) + '" data-emoji-category="' + escapeHtml(id) + '">' + escapeHtml(group.icon) + '</button>'
+      ).join("");
+      const group = emojiGroups[state.emojiCategory] || emojiGroups.faces;
+      nodes.emojiPickerGrid.innerHTML = group.values.map((emoji) =>
+        '<button class="emoji-option" type="button" data-emoji-value="' + escapeHtml(emoji) + '"' +
+          ' aria-label="插入表情 ' + escapeHtml(emoji) + '" title="' + escapeHtml(emoji) + '">' + escapeHtml(emoji) + '</button>'
+      ).join("");
+      nodes.emojiPickerGrid.scrollTop = 0;
+    }
+
+    function toggleEmojiPicker() {
+      const open = nodes.emojiPicker.hidden;
+      nodes.emojiPicker.hidden = !open;
+      nodes.emojiPickerBtn.setAttribute("aria-expanded", open ? "true" : "false");
+      if (open) renderEmojiPicker();
+    }
+
+    function closeEmojiPicker(restoreFocus) {
+      nodes.emojiPicker.hidden = true;
+      nodes.emojiPickerBtn.setAttribute("aria-expanded", "false");
+      if (restoreFocus) nodes.textInput.focus({ preventScroll: true });
+    }
+
+    function selectEmojiCategory(event) {
+      const button = event.target.closest("[data-emoji-category]");
+      if (!button || !emojiGroups[button.dataset.emojiCategory]) return;
+      state.emojiCategory = button.dataset.emojiCategory;
+      renderEmojiPicker();
+    }
+
+    function insertSelectedEmoji(event) {
+      const button = event.target.closest("[data-emoji-value]");
+      if (!button) return;
+      const emoji = button.dataset.emojiValue || "";
+      const start = Number.isInteger(nodes.textInput.selectionStart)
+        ? nodes.textInput.selectionStart
+        : nodes.textInput.value.length;
+      const end = Number.isInteger(nodes.textInput.selectionEnd) ? nodes.textInput.selectionEnd : start;
+      nodes.textInput.setRangeText(emoji, start, end, "end");
+      nodes.textInput.dispatchEvent(new Event("input", { bubbles: true }));
+      nodes.textInput.focus({ preventScroll: true });
+    }
 
     function scheduleMobileViewportSync() {
       if (mobileViewportFrame) cancelAnimationFrame(mobileViewportFrame);
@@ -4415,6 +5095,8 @@ export function renderAppHtml(): string {
 
     function setUiMode(mode) {
       state.uiMode = mode;
+      document.body.dataset.uiMode = mode;
+      updateInteractionChrome();
       nodes.normalBtn.classList.toggle("active", mode === "normal");
       nodes.scheduleBtn.classList.toggle("active", mode === "schedule");
       nodes.charactersBtn.classList.toggle("active", mode === "characters");
@@ -5233,6 +5915,57 @@ export function renderAppHtml(): string {
       await Promise.all([loadModelProfiles(), loadUserAvatarState()]);
       await loadCharacters();
       await loadSessions();
+      await pollProactiveMessages();
+    }
+
+    async function refreshConversationMetadata() {
+      const response = await fetch("/api/v1/sessions");
+      const body = await response.json();
+      if (!response.ok) throw new Error(body.error || "会话状态刷新失败");
+      state.sessions = Array.isArray(body.sessions)
+        ? body.sessions.slice().sort((left, right) => String(right.updatedAt || "").localeCompare(String(left.updatedAt || "")))
+        : [];
+      renderSessionOptions();
+      renderConversationList();
+      renderCharacterCards();
+    }
+
+    async function pollProactiveMessages() {
+      try {
+        const response = await fetch("/api/v1/proactive-messages?unreadOnly=1&limit=100");
+        const body = await response.json();
+        if (!response.ok) throw new Error(body.error || "主动消息状态加载失败");
+        const previous = new Set(state.unreadProactiveMessages.map((message) => message.id));
+        state.unreadProactiveMessages = Array.isArray(body.messages) ? body.messages : [];
+        const added = state.unreadProactiveMessages.filter((message) => !previous.has(message.id));
+        if (added.length) {
+          await refreshConversationMetadata();
+          const latest = added[0];
+          const character = state.characters.find((entry) => entry.id === latest.characterId);
+          if (state.activeConversationKind === "direct" && latest.sessionId === state.activeSessionId && !state.busy) {
+            await refreshSessionMessages(true);
+            await markProactiveMessagesRead(state.activeSessionId);
+          } else {
+            setStatus((character?.name || "角色") + " 发来一条新消息");
+          }
+        } else {
+          renderConversationList();
+        }
+      } catch {
+        // Background polling must not replace the current UI status with a transient network error.
+      }
+    }
+
+    async function markProactiveMessagesRead(sessionId) {
+      if (!sessionId || !state.unreadProactiveMessages.some((message) => message.sessionId === sessionId)) return;
+      const response = await fetch("/api/v1/proactive-messages/read", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ sessionId })
+      });
+      if (!response.ok) return;
+      state.unreadProactiveMessages = state.unreadProactiveMessages.filter((message) => message.sessionId !== sessionId);
+      renderConversationList();
     }
 
     async function loadSessions() {
@@ -5281,11 +6014,15 @@ export function renderAppHtml(): string {
 
     function startNewSession() {
       if (state.busy) return;
+      closePrivateInboxEvents();
       state.activeConversationKind = "direct";
       state.activeGroupId = "";
       state.activeSessionId = generateSessionId();
       state.sessionDraft = true;
       state.messages = [];
+      state.privateInboxMessages = [];
+      state.privateInboxRunning = false;
+      clearInteractionState();
       state.lastTurnStatus = null;
       state.lastTurnCanRetry = false;
       updateRetryState();
@@ -5343,6 +6080,7 @@ export function renderAppHtml(): string {
       state.newConversationMode = mode;
       nodes.newConversationSmsBtn.classList.toggle("active", mode === "sms");
       nodes.newConversationRpBtn.classList.toggle("active", mode === "rp");
+      updateNewConversationSubmit();
     }
 
     function setNewConversationKind(kind) {
@@ -5353,6 +6091,17 @@ export function renderAppHtml(): string {
       nodes.newConversationCharacterField.hidden = group;
       nodes.newConversationGroupFields.hidden = !group;
       updateNewGroupControls();
+      updateNewConversationSubmit();
+    }
+
+    function updateNewConversationSubmit() {
+      if (state.newConversationKind === "group") {
+        nodes.createConversationBtn.textContent = "创建群聊";
+        return;
+      }
+      nodes.createConversationBtn.textContent = state.newConversationMode === "sms"
+        ? "打开私聊"
+        : "新建剧情";
     }
 
     function updateNewGroupControls() {
@@ -5411,6 +6160,28 @@ export function renderAppHtml(): string {
       state.newConversationPreferredCharacterId = "";
       nodes.chatCharacterSelect.value = characterId;
       nodes.modeSelect.value = state.newConversationMode;
+      if (state.newConversationMode === "sms") {
+        nodes.createConversationBtn.disabled = true;
+        try {
+          const response = await fetch("/api/v1/direct-conversations", {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify({ characterId })
+          });
+          const body = await response.json();
+          if (!response.ok) throw new Error(body.error || "私聊打开失败");
+          await refreshConversationMetadata();
+          const session = state.sessions.find((entry) => entry.id === body.session?.id);
+          if (!session) throw new Error("私聊会话未出现在会话列表中");
+          closeNewConversationDialog();
+          await applySession(session);
+          requestAnimationFrame(() => nodes.textInput.focus());
+        } catch (error) {
+          nodes.newConversationError.textContent = error.message || String(error);
+          nodes.createConversationBtn.disabled = false;
+        }
+        return;
+      }
       startNewSession();
       closeNewConversationDialog();
       requestAnimationFrame(() => nodes.textInput.focus());
@@ -5423,6 +6194,8 @@ export function renderAppHtml(): string {
     }
 
     async function applySession(session) {
+      const changedSession = state.activeSessionId !== session.id || state.activeConversationKind !== "direct";
+      if (changedSession) closePrivateInboxEvents();
       state.activeConversationKind = "direct";
       state.activeGroupId = "";
       state.activeSessionId = session.id;
@@ -5432,6 +6205,12 @@ export function renderAppHtml(): string {
       updateRetryState();
       nodes.modeSelect.value = session.mode === "rp" ? "rp" : "sms";
       state.selectedCharacterId = session.characterId || "";
+      state.interactionState = session.interactionPresence ? {
+        presence: session.interactionPresence,
+        location: session.interactionLocation || "",
+        continuity: session.mode === "rp" ? "sandbox" : "canonical",
+        lens: session.interactionPresence === "co_present" ? "observable_scene" : "message"
+      } : null;
       nodes.chatCharacterSelect.value = state.selectedCharacterId;
       setSessionControlsLocked(true);
       nodes.attachFileBtn.disabled = false;
@@ -5440,7 +6219,9 @@ export function renderAppHtml(): string {
       updateChatIdentity();
       setConversationListOpen(false);
       renderConversationList();
+      if (session.characterId) openPrivateInboxEvents(session.id);
       await refreshSessionMessages(false);
+      await markProactiveMessagesRead(session.id);
       await loadConversationScene();
       if (!session.characterId) {
         setStatus("这是未绑定角色的旧会话，仅供查看；请新建会话后继续。", true);
@@ -5448,11 +6229,15 @@ export function renderAppHtml(): string {
     }
 
     async function applyGroupChat(group) {
+      closePrivateInboxEvents();
       state.activeConversationKind = "group";
       state.activeGroupId = group.id;
       state.activeSessionId = "";
       state.sessionDraft = false;
       state.selectedCharacterId = "";
+      state.privateInboxMessages = [];
+      state.privateInboxRunning = false;
+      clearInteractionState();
       state.lastTurnStatus = null;
       state.lastTurnCanRetry = false;
       nodes.modeSelect.value = group.mode === "rp" ? "rp" : "sms";
@@ -5616,10 +6401,17 @@ export function renderAppHtml(): string {
       const lifecycle = session.sleepState === "sleeping"
         ? "休息中"
         : session.sleepState === "tired" ? "有些困了" : "";
+      const interaction = session.interactionPresence === "co_present"
+        ? "正在一起" + (session.interactionLocation ? " · " + session.interactionLocation : "")
+        : session.interactionPresence === "meeting_pending"
+          ? "约好见面" + (session.interactionLocation ? " · " + session.interactionLocation : "")
+          : "";
       const previewText = session.preview && session.preview !== title ? mode + " · " + session.preview : mode;
-      const preview = [lifecycle, previewText].filter(Boolean).join(" · ");
+      const preview = [interaction, lifecycle, previewText].filter(Boolean).join(" · ");
+      const unreadCount = state.unreadProactiveMessages.filter((message) => message.sessionId === session.id).length;
+      const unread = unreadCount ? '<span class="conversation-unread" aria-label="' + unreadCount + ' 条未读消息">' + Math.min(unreadCount, 99) + '</span>' : '';
       const content = '<span class="conversation-mode-icon' + (rp ? ' rp' : '') + '"><i data-lucide="' + (rp ? 'drama' : 'message-circle') + '" aria-hidden="true"></i></span>' +
-        '<span class="conversation-copy"><span class="conversation-line"><strong>' + escapeHtml(title) + '</strong>' + (session.sleepState === "sleeping" ? '<i data-lucide="moon" aria-label="角色正在休息"></i>' : '') + '<span class="conversation-time">' + escapeHtml(time) + '</span></span>' +
+        '<span class="conversation-copy"><span class="conversation-line"><strong>' + escapeHtml(title) + '</strong>' + (session.sleepState === "sleeping" ? '<i data-lucide="moon" aria-label="角色正在休息"></i>' : '') + unread + '<span class="conversation-time">' + escapeHtml(time) + '</span></span>' +
         '<span class="conversation-preview">' + escapeHtml(preview) + '</span></span>';
       if (!state.conversationBatchMode) {
         return '<button class="conversation-item' + (active ? ' active' : '') + '" type="button" data-session-id="' + escapeHtml(session.id) + '"' +
@@ -5835,13 +6627,14 @@ export function renderAppHtml(): string {
     function updateSessionActionState() {
       const groupActive = state.activeConversationKind === "group" && Boolean(state.activeGroupId);
       const directActive = state.activeConversationKind === "direct" && !state.sessionDraft && Boolean(state.activeSessionId);
+      const privatePending = directActive && (state.privateInboxRunning || state.privateInboxMessages.length > 0);
       nodes.renameSessionBtn.disabled = !directActive;
-      nodes.archiveSessionBtn.disabled = !directActive && !groupActive;
-      nodes.deleteSessionBtn.disabled = !directActive && !groupActive;
+      nodes.archiveSessionBtn.disabled = (!directActive && !groupActive) || privatePending;
+      nodes.deleteSessionBtn.disabled = (!directActive && !groupActive) || privatePending;
       nodes.mobileRenameSessionBtn.disabled = !directActive;
       nodes.mobileRenameSessionBtn.hidden = groupActive;
-      nodes.mobileArchiveSessionBtn.disabled = !directActive && !groupActive;
-      nodes.mobileDeleteSessionBtn.disabled = !directActive && !groupActive;
+      nodes.mobileArchiveSessionBtn.disabled = (!directActive && !groupActive) || privatePending;
+      nodes.mobileDeleteSessionBtn.disabled = (!directActive && !groupActive) || privatePending;
       nodes.mobileArchiveSessionBtn.querySelector("span").textContent = groupActive ? "归档群聊" : "归档会话";
       nodes.mobileDeleteSessionBtn.querySelector("span").textContent = groupActive ? "永久删除群聊" : "永久删除会话";
       nodes.sessionActionsMenuBtn.hidden = !directActive && !groupActive;
@@ -5857,7 +6650,7 @@ export function renderAppHtml(): string {
     }
 
     async function archiveCurrentSession() {
-      if (state.busy || state.sessionDraft) return;
+      if (state.busy || state.privateInboxRunning || state.privateInboxMessages.length || state.sessionDraft) return;
       if (state.activeConversationKind === "group") {
         const group = state.groupChats.find((entry) => entry.id === state.activeGroupId);
         if (!group) return;
@@ -6013,7 +6806,7 @@ export function renderAppHtml(): string {
     }
 
     async function deleteCurrentSession() {
-      if (state.busy || state.sessionDraft) return;
+      if (state.busy || state.privateInboxRunning || state.privateInboxMessages.length || state.sessionDraft) return;
       if (state.activeConversationKind === "group") {
         const group = state.groupChats.find((entry) => entry.id === state.activeGroupId);
         if (!group || !await permanentlyDeleteGroup(group)) return;
@@ -6197,6 +6990,20 @@ export function renderAppHtml(): string {
       updateChatIdentity();
     }
 
+    function setHeaderCharacterProfileTarget(character) {
+      const available = Boolean(character?.id);
+      nodes.conversationHeaderAvatar.disabled = !available;
+      if (available) {
+        nodes.conversationHeaderAvatar.dataset.characterProfileId = character.id;
+        nodes.conversationHeaderAvatar.title = "查看" + character.name + "的资料";
+        nodes.conversationHeaderAvatar.setAttribute("aria-label", "查看" + character.name + "的资料");
+      } else {
+        delete nodes.conversationHeaderAvatar.dataset.characterProfileId;
+        nodes.conversationHeaderAvatar.title = "";
+        nodes.conversationHeaderAvatar.setAttribute("aria-label", "当前没有可查看的角色资料");
+      }
+    }
+
     function updateChatIdentity() {
       if (state.uiMode === "schedule") {
         updateScheduleHeaderContext();
@@ -6211,8 +7018,10 @@ export function renderAppHtml(): string {
         nodes.conversationMode.textContent = (group?.mode === "rp" ? "群体剧情" : "角色群聊") + " · " + members.length + " 人";
         nodes.conversationHeaderAvatar.classList.add("group");
         nodes.conversationHeaderAvatar.innerHTML = groupAvatarCluster(group);
+        setHeaderCharacterProfileTarget(null);
         nodes.conversationScene.hidden = true;
         nodes.sceneInfoBtn.hidden = true;
+        updateInteractionChrome();
         renderConversationList();
         renderMessages();
         return;
@@ -6223,8 +7032,163 @@ export function renderAppHtml(): string {
       nodes.conversationMode.textContent = nodes.modeSelect.value === "rp" ? "剧情演绎" : "角色私聊";
       nodes.conversationHeaderAvatar.style.setProperty("--avatar-hue", avatarHue(character?.name || "角色"));
       nodes.conversationHeaderAvatar.innerHTML = avatarImageOrInitial(character?.avatarUrl, character?.name, "角");
+      setHeaderCharacterProfileTarget(character);
+      updateInteractionChrome();
       renderConversationList();
       renderMessages();
+    }
+
+    function clearInteractionState() {
+      state.interactionState = null;
+      state.interactionEvents = [];
+      state.interactionCanUndo = false;
+      state.interactionLocations = [];
+      updateInteractionChrome();
+    }
+
+    function updateInteractionChrome() {
+      const available = state.uiMode === "normal" && state.activeConversationKind === "direct" &&
+        !state.sessionDraft && nodes.modeSelect.value === "sms" && Boolean(state.interactionState);
+      nodes.interactionToggleBtn.hidden = !available;
+      nodes.interactionUndoBtn.hidden = !available || !state.interactionCanUndo;
+      if (!available) {
+        nodes.textInput.placeholder = nodes.modeSelect.value === "rp" ? "继续当前剧情" : "发消息";
+        return;
+      }
+      const interaction = state.interactionState;
+      const location = interaction.location || "地点待定";
+      if (interaction.presence === "co_present") {
+        nodes.conversationMode.textContent = "见面中";
+        nodes.conversationScene.textContent = "正在一起 · " + location;
+        nodes.conversationScene.title = nodes.conversationScene.textContent;
+        nodes.conversationScene.hidden = false;
+        nodes.interactionToggleBtn.innerHTML = '<i data-lucide="log-out" aria-hidden="true"></i>';
+        nodes.interactionToggleBtn.title = "结束见面";
+        nodes.interactionToggleBtn.setAttribute("aria-label", "结束见面");
+        nodes.textInput.placeholder = "描述你说的话或正在做的事";
+      } else if (interaction.presence === "meeting_pending") {
+        nodes.conversationMode.textContent = "约好见面";
+        nodes.conversationScene.textContent = "约好见面 · " + location;
+        nodes.conversationScene.title = nodes.conversationScene.textContent;
+        nodes.conversationScene.hidden = false;
+        nodes.interactionToggleBtn.innerHTML = '<i data-lucide="map-pin-check" aria-hidden="true"></i>';
+        nodes.interactionToggleBtn.title = "确认已经到达";
+        nodes.interactionToggleBtn.setAttribute("aria-label", "确认已经到达");
+        nodes.textInput.placeholder = "发消息，或告诉她你到了";
+      } else {
+        nodes.conversationMode.textContent = "角色私聊";
+        nodes.conversationScene.textContent = "";
+        nodes.conversationScene.title = "";
+        nodes.conversationScene.hidden = true;
+        nodes.interactionToggleBtn.innerHTML = '<i data-lucide="map-pin" aria-hidden="true"></i>';
+        nodes.interactionToggleBtn.title = "发起见面";
+        nodes.interactionToggleBtn.setAttribute("aria-label", "发起见面");
+        nodes.textInput.placeholder = "发消息";
+      }
+      nodes.interactionToggleBtn.disabled = state.busy || state.privateInboxRunning;
+      nodes.interactionUndoBtn.disabled = state.busy || state.privateInboxRunning;
+      refreshIcons();
+    }
+
+    async function openInteractionControl() {
+      const interaction = state.interactionState;
+      if (!interaction || state.busy || state.privateInboxRunning || state.sessionDraft) return;
+      if (interaction.presence === "remote") {
+        const suggested = state.interactionLocations[0]?.name || "";
+        await openActionDialog({
+          title: "约见",
+          description: "记录你们约定的见面地点。确认到达前，对话仍会保持消息形式。",
+          fieldLabel: "见面地点",
+          value: suggested,
+          selectInput: Boolean(suggested),
+          confirmLabel: "约好",
+          validate: (value) => value.trim() ? "" : "请输入见面地点。",
+          onConfirm: (value) => runInteractionAction("propose", { location: value.trim() })
+        });
+        return;
+      }
+      if (interaction.presence === "meeting_pending") {
+        await openActionDialog({
+          title: "确认已经到达",
+          description: "确认你已经到达“" + (interaction.location || "约定地点") + "”，接下来的回复会呈现现场可见的动作、表情和环境。",
+          confirmLabel: "我到了",
+          onConfirm: () => runInteractionAction("begin", {
+            location: interaction.location || undefined,
+            placeId: interaction.placeId || undefined,
+            userConfirmed: true
+          })
+        });
+        return;
+      }
+      await openActionDialog({
+        title: "结束见面",
+        description: "结束后，你们会回到消息交流。",
+        confirmLabel: "结束见面",
+        onConfirm: () => runInteractionAction("end", { userConfirmed: true })
+      });
+    }
+
+    async function undoInteractionTransition() {
+      if (!state.interactionCanUndo || state.busy || state.privateInboxRunning) return;
+      try {
+        await runInteractionAction("undo", {});
+      } catch {
+        // runInteractionAction already presents the API error in the shared status area.
+      }
+    }
+
+    async function handleInteractionEventAction(event) {
+      const button = event.target.closest("button[data-interaction-action]");
+      if (!button || state.busy || state.privateInboxRunning) return;
+      const action = button.dataset.interactionAction;
+      if (action === "begin") {
+        try {
+          await runInteractionAction("begin", {
+            location: state.interactionState?.location || undefined,
+            placeId: state.interactionState?.placeId || undefined,
+            userConfirmed: true
+          });
+        } catch {
+          // runInteractionAction already presents the API error in the shared status area.
+        }
+      } else if (action === "cancel") {
+        try {
+          await runInteractionAction("cancel", {});
+        } catch {
+          // runInteractionAction already presents the API error in the shared status area.
+        }
+      }
+    }
+
+    async function runInteractionAction(action, payload) {
+      if (state.busy || state.privateInboxRunning || !state.activeSessionId) return;
+      state.busy = true;
+      updateInteractionChrome();
+      try {
+        const response = await fetch(
+          "/api/v1/sessions/" + encodeURIComponent(state.activeSessionId) + "/interaction",
+          {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify({ action, ...(payload || {}) })
+          }
+        );
+        const body = await response.json();
+        if (!response.ok) throw new Error(body.error || "互动状态更新失败");
+        state.interactionState = body.state || null;
+        state.interactionEvents = Array.isArray(body.events) ? body.events : [];
+        state.interactionCanUndo = Boolean(body.canUndo);
+        state.interactionLocations = Array.isArray(body.suggestedLocations) ? body.suggestedLocations : [];
+        await refreshSessionMessages(true);
+        await refreshConversationMetadata();
+        setStatus(action === "begin" ? "已经见面" : action === "end" ? "已回到消息交流" : "互动状态已更新");
+      } catch (error) {
+        setStatus(error.message || String(error), true);
+        throw error;
+      } finally {
+        state.busy = false;
+        updateInteractionChrome();
+      }
     }
 
     function updateScheduleHeaderContext() {
@@ -6238,6 +7202,7 @@ export function renderAppHtml(): string {
       nodes.conversationHeaderAvatar.innerHTML = characterMode
         ? avatarImageOrInitial(character?.avatarUrl, character?.name, "角")
         : avatarImageOrInitial(state.userAvatarUrl, "我", "我");
+      setHeaderCharacterProfileTarget(characterMode ? character : null);
       nodes.conversationScene.hidden = true;
       nodes.sceneInfoBtn.hidden = true;
       nodes.conversationListToggle.hidden = true;
@@ -6246,6 +7211,13 @@ export function renderAppHtml(): string {
     }
 
     async function loadConversationScene(preserveDialog = false) {
+      if (nodes.modeSelect.value !== "rp") {
+        state.currentScene = null;
+        nodes.sceneInfoBtn.hidden = true;
+        if (!preserveDialog && nodes.sceneInfoDialog.open) nodes.sceneInfoDialog.close();
+        updateInteractionChrome();
+        return;
+      }
       clearConversationScene(!preserveDialog);
       if (
         state.activeConversationKind === "group" ||
@@ -6290,6 +7262,7 @@ export function renderAppHtml(): string {
       nodes.conversationScene.hidden = true;
       nodes.sceneInfoBtn.hidden = true;
       if (closeDialog && nodes.sceneInfoDialog.open) nodes.sceneInfoDialog.close();
+      if (nodes.modeSelect.value !== "rp") updateInteractionChrome();
     }
 
     function openSceneInfoDialog() {
@@ -6448,7 +7421,9 @@ export function renderAppHtml(): string {
       nodes.saveCharacterBtn.textContent = "保存角色";
       nodes.characterMemoryTabBtn.disabled = false;
       nodes.characterRelationshipTabBtn.disabled = false;
+      nodes.characterLifeTabBtn.disabled = false;
       state.relationship = null;
+      state.characterLife = null;
       setCharacterTab("settings");
     }
 
@@ -6468,6 +7443,7 @@ export function renderAppHtml(): string {
       nodes.memoryState.textContent = "";
       nodes.characterMemoryTabBtn.disabled = true;
       nodes.characterRelationshipTabBtn.disabled = true;
+      nodes.characterLifeTabBtn.disabled = true;
       renderCharacterCards();
       renderCharacterAvatarPreview();
       updateCharacterSoulCount();
@@ -6480,6 +7456,7 @@ export function renderAppHtml(): string {
       nodes.characterDetail.hidden = true;
       nodes.characterMemoryTabBtn.disabled = true;
       nodes.characterRelationshipTabBtn.disabled = true;
+      nodes.characterLifeTabBtn.disabled = true;
       state.characterTab = "settings";
     }
 
@@ -6489,17 +7466,378 @@ export function renderAppHtml(): string {
       const settings = tab === "settings";
       const memory = tab === "memory";
       const relationship = tab === "relationship";
+      const life = tab === "life";
       nodes.characterSettingsTabBtn.classList.toggle("active", settings);
       nodes.characterMemoryTabBtn.classList.toggle("active", memory);
       nodes.characterRelationshipTabBtn.classList.toggle("active", relationship);
+      nodes.characterLifeTabBtn.classList.toggle("active", life);
       nodes.characterSettingsTabBtn.setAttribute("aria-selected", String(settings));
       nodes.characterMemoryTabBtn.setAttribute("aria-selected", String(memory));
       nodes.characterRelationshipTabBtn.setAttribute("aria-selected", String(relationship));
+      nodes.characterLifeTabBtn.setAttribute("aria-selected", String(life));
       nodes.characterSettingsPanel.hidden = !settings;
       nodes.characterMemoryPanel.hidden = !memory;
       nodes.characterRelationshipPanel.hidden = !relationship;
+      nodes.characterLifePanel.hidden = !life;
       if (memory) void loadMemories();
       if (relationship) void loadRelationship();
+      if (life) void loadCharacterLife();
+    }
+
+    async function loadWorlds() {
+      const response = await fetch("/api/v1/worlds");
+      const body = await response.json();
+      if (!response.ok) throw new Error(body.error || "世界加载失败");
+      state.worlds = Array.isArray(body.worlds) ? body.worlds : [];
+      renderWorldOptions();
+      return state.worlds;
+    }
+
+    function renderWorldOptions() {
+      const characterWorldBefore = state.characterLife?.membership?.worldId || nodes.characterWorldSelect.value;
+      const managerBefore = state.worldEditorId || nodes.worldManagerWorldSelect.value;
+      const options = state.worlds.map((world) =>
+        '<option value="' + escapeHtml(world.id) + '">' + escapeHtml(world.name) + '</option>'
+      ).join("");
+      nodes.characterWorldSelect.innerHTML = '<option value="">不加入共享世界</option>' + options;
+      nodes.characterWorldSelect.value = state.worlds.some((world) => world.id === characterWorldBefore)
+        ? characterWorldBefore
+        : "";
+      nodes.worldManagerWorldSelect.innerHTML = '<option value="">新建世界</option>' + options;
+      nodes.worldManagerWorldSelect.value = state.worlds.some((world) => world.id === managerBefore)
+        ? managerBefore
+        : "";
+    }
+
+    async function loadCharacterLife() {
+      if (!state.workspaceCharacterId) return;
+      nodes.characterLifeState.textContent = "加载中...";
+      try {
+        await loadWorlds();
+        const response = await fetch("/api/v1/characters/" + encodeURIComponent(state.workspaceCharacterId) + "/life");
+        const body = await response.json();
+        if (!response.ok) throw new Error(body.error || "角色生活状态加载失败");
+        state.characterLife = body.life || null;
+        nodes.characterLifeState.textContent = "";
+        renderCharacterLife();
+      } catch (error) {
+        nodes.characterLifeState.textContent = error.message || String(error);
+      }
+    }
+
+    function renderCharacterLife() {
+      const life = state.characterLife;
+      const assigned = Boolean(life?.membership && life?.world);
+      renderWorldOptions();
+      nodes.characterWorldSelect.value = life?.membership?.worldId || "";
+      nodes.characterLifeEmpty.hidden = assigned;
+      nodes.characterLifeContent.hidden = !assigned;
+      if (!assigned) return;
+      const placeMap = new Map((life.places || []).map((place) => [place.id, place]));
+      const runtimePlace = placeMap.get(life.runtime?.placeId);
+      const availabilityLabels = { free: "空闲", busy: "忙碌", resting: "休息中", traveling: "在路上" };
+      nodes.lifeCurrentPlace.textContent = runtimePlace?.name || "未设置";
+      nodes.lifeCurrentActivity.textContent = life.runtime?.activity || "自由活动";
+      nodes.lifeAvailability.textContent = availabilityLabels[life.runtime?.availability] || "未知";
+      nodes.lifeEnergy.textContent = String(life.runtime?.energy ?? 70);
+      const placeOptions = (life.places || []).map((place) =>
+        '<option value="' + escapeHtml(place.id) + '">' + escapeHtml(place.name) + '</option>'
+      ).join("");
+      nodes.lifeHomePlace.innerHTML = '<option value="">未设置</option>' + placeOptions;
+      nodes.lifeRuntimePlace.innerHTML = '<option value="">未设置</option>' + placeOptions;
+      nodes.lifeHomePlace.value = life.membership?.homePlaceId || "";
+      nodes.lifeRuntimePlace.value = life.runtime?.placeId || "";
+      nodes.lifeAutonomyEnabled.checked = Boolean(life.policy?.enabled);
+      nodes.lifeProactiveEnabled.checked = Boolean(life.policy?.proactiveEnabled);
+      nodes.lifeDailyMessageLimit.value = String(life.policy?.dailyMessageLimit ?? 1);
+      nodes.lifeQuietStart.value = life.policy?.quietStart || "23:00";
+      nodes.lifeQuietEnd.value = life.policy?.quietEnd || "08:00";
+      nodes.planCharacterLifeBtn.disabled = !life.policy?.enabled || !(life.places || []).length;
+      nodes.simulateCharacterMomentBtn.disabled = !(life.places || []).length;
+      nodes.lifePlaceList.innerHTML = (life.places || []).length
+        ? life.places.map((place) => '<div class="life-place-row"><strong>' + escapeHtml(place.name) + '</strong>' +
+            (place.description ? '<p>' + escapeHtml(place.description) + '</p>' : '') +
+            '<div class="life-capabilities">' + (place.capabilityIds || []).map((id) =>
+              '<span>' + escapeHtml(worldCapabilityLabels[id] || id) + '</span>').join("") + '</div></div>').join("")
+        : '<div class="life-empty-row">这个世界还没有地点</div>';
+      nodes.lifeEventList.innerHTML = (life.events || []).length
+        ? life.events.slice(0, 8).map((event) => '<div class="life-event-row"><strong>' + escapeHtml(event.summary) + '</strong>' +
+            '<time>' + escapeHtml(new Date(event.startsAt).toLocaleString("zh-CN")) + '</time></div>').join("")
+        : '<div class="life-empty-row">还没有发生生活事件</div>';
+      refreshIcons();
+    }
+
+    async function saveCharacterWorld() {
+      if (!state.workspaceCharacterId) return;
+      nodes.characterLifeState.textContent = "保存中...";
+      try {
+        const response = await fetch("/api/v1/characters/" + encodeURIComponent(state.workspaceCharacterId) + "/life", {
+          method: "PATCH",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ worldId: nodes.characterWorldSelect.value || null })
+        });
+        const body = await response.json();
+        if (!response.ok) throw new Error(body.error || "世界归属保存失败");
+        state.characterLife = body.life;
+        nodes.characterLifeState.textContent = nodes.characterWorldSelect.value ? "已加入世界" : "已离开世界";
+        renderCharacterLife();
+      } catch (error) {
+        nodes.characterLifeState.textContent = error.message || String(error);
+      }
+    }
+
+    async function saveCharacterLife() {
+      if (!state.workspaceCharacterId || !state.characterLife?.membership) return;
+      nodes.characterLifeState.textContent = "保存中...";
+      nodes.saveCharacterLifeBtn.disabled = true;
+      try {
+        const response = await fetch("/api/v1/characters/" + encodeURIComponent(state.workspaceCharacterId) + "/life", {
+          method: "PATCH",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({
+            homePlaceId: nodes.lifeHomePlace.value || null,
+            currentPlaceId: nodes.lifeRuntimePlace.value || null,
+            policy: {
+              enabled: nodes.lifeAutonomyEnabled.checked,
+              proactiveEnabled: nodes.lifeProactiveEnabled.checked,
+              dailyMessageLimit: Number(nodes.lifeDailyMessageLimit.value || 0),
+              quietStart: nodes.lifeQuietStart.value || "23:00",
+              quietEnd: nodes.lifeQuietEnd.value || "08:00"
+            }
+          })
+        });
+        const body = await response.json();
+        if (!response.ok) throw new Error(body.error || "生活设置保存失败");
+        state.characterLife = body.life;
+        nodes.characterLifeState.textContent = "已保存";
+        renderCharacterLife();
+      } catch (error) {
+        nodes.characterLifeState.textContent = error.message || String(error);
+      } finally {
+        nodes.saveCharacterLifeBtn.disabled = false;
+      }
+    }
+
+    async function planCharacterLife() {
+      if (!state.workspaceCharacterId) return;
+      nodes.characterLifeState.textContent = "正在安排...";
+      nodes.planCharacterLifeBtn.disabled = true;
+      try {
+        const response = await fetch("/api/v1/characters/" + encodeURIComponent(state.workspaceCharacterId) + "/life/plan", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ force: false })
+        });
+        const body = await response.json();
+        if (!response.ok) throw new Error(body.error || "生活日程规划失败");
+        const completedState = "已安排 " + (body.result?.plans?.length || 0) + " 项" + (body.result?.fallbackUsed ? "（本地兜底）" : "");
+        await loadCharacterLife();
+        nodes.characterLifeState.textContent = completedState;
+      } catch (error) {
+        nodes.characterLifeState.textContent = error.message || String(error);
+      } finally {
+        nodes.planCharacterLifeBtn.disabled = !state.characterLife?.policy?.enabled;
+      }
+    }
+
+    async function simulateCharacterMoment() {
+      if (!state.workspaceCharacterId) return;
+      nodes.characterLifeState.textContent = "正在推进生活片段...";
+      nodes.simulateCharacterMomentBtn.disabled = true;
+      try {
+        const response = await fetch("/api/v1/characters/" + encodeURIComponent(state.workspaceCharacterId) + "/life/moment", { method: "POST" });
+        const body = await response.json();
+        if (!response.ok) throw new Error(body.error || "生活片段推进失败");
+        const completedState = body.result?.proactiveMessage?.status === "delivered"
+          ? "片段已发生，并已主动发出消息"
+          : "片段已发生";
+        await Promise.all([loadCharacterLife(), refreshConversationMetadata()]);
+        nodes.characterLifeState.textContent = completedState;
+      } catch (error) {
+        nodes.characterLifeState.textContent = error.message || String(error);
+      } finally {
+        nodes.simulateCharacterMomentBtn.disabled = !(state.characterLife?.places || []).length;
+      }
+    }
+
+    async function openWorldManager() {
+      nodes.worldManagerState.textContent = "加载中...";
+      nodes.worldManagerDialog.showModal();
+      setWorldManagerBusy(true);
+      refreshIcons();
+      try {
+        await loadWorlds();
+        const preferred = state.characterLife?.membership?.worldId || state.worlds[0]?.id || "";
+        if (preferred) await loadWorldEditor(preferred);
+        else resetWorldEditor();
+        nodes.worldManagerState.textContent = "";
+      } catch (error) {
+        nodes.worldManagerState.textContent = error.message || String(error);
+      } finally {
+        setWorldManagerBusy(false);
+      }
+    }
+
+    function setWorldManagerBusy(busy) {
+      nodes.worldManagerDialog.querySelectorAll(".world-manager-body input, .world-manager-body textarea, .world-manager-body select, .world-manager-body button")
+        .forEach((control) => { control.disabled = busy; });
+      nodes.worldManagerDialog.querySelector(".world-manager-body")?.setAttribute("aria-busy", String(busy));
+    }
+
+    async function closeWorldManager() {
+      if (state.workspaceCharacterId && state.characterTab === "life") await loadCharacterLife();
+      if (nodes.worldManagerDialog.open) nodes.worldManagerDialog.close();
+    }
+
+    async function selectWorldEditor() {
+      const id = nodes.worldManagerWorldSelect.value;
+      if (id) await loadWorldEditor(id);
+      else resetWorldEditor();
+    }
+
+    async function loadWorldEditor(id) {
+      const response = await fetch("/api/v1/worlds/" + encodeURIComponent(id));
+      const body = await response.json();
+      if (!response.ok) throw new Error(body.error || "世界详情加载失败");
+      state.worldEditorId = body.world.id;
+      state.worldEditorPlaces = Array.isArray(body.places) ? body.places : [];
+      state.placeEditorId = "";
+      nodes.worldManagerWorldSelect.value = state.worldEditorId;
+      nodes.worldName.value = body.world.name || "";
+      nodes.worldTimezone.value = body.world.timezone || "Asia/Shanghai";
+      nodes.worldDescription.value = body.world.description || "";
+      nodes.worldRules.value = body.world.rulesMarkdown || "";
+      nodes.saveWorldBtn.textContent = "保存世界";
+      nodes.worldPlacesSection.hidden = false;
+      resetPlaceEditor();
+      renderWorldPlaces();
+    }
+
+    function resetWorldEditor() {
+      state.worldEditorId = "";
+      state.worldEditorPlaces = [];
+      state.placeEditorId = "";
+      nodes.worldManagerWorldSelect.value = "";
+      nodes.worldForm.reset();
+      nodes.worldTimezone.value = "Asia/Shanghai";
+      nodes.saveWorldBtn.textContent = "创建世界";
+      nodes.worldPlacesSection.hidden = true;
+      nodes.worldPlaceList.innerHTML = "";
+      nodes.worldManagerState.textContent = "";
+      nodes.worldName.focus();
+    }
+
+    async function saveWorld(event) {
+      event.preventDefault();
+      nodes.saveWorldBtn.disabled = true;
+      nodes.worldManagerState.textContent = "保存中...";
+      try {
+        const editing = state.worldEditorId;
+        const response = await fetch(editing ? "/api/v1/worlds/" + encodeURIComponent(editing) : "/api/v1/worlds", {
+          method: editing ? "PATCH" : "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({
+            name: nodes.worldName.value.trim(),
+            timezone: nodes.worldTimezone.value.trim(),
+            description: nodes.worldDescription.value,
+            rulesMarkdown: nodes.worldRules.value
+          })
+        });
+        const body = await response.json();
+        if (!response.ok) throw new Error(body.error || "世界保存失败");
+        state.worldEditorId = body.world.id;
+        await loadWorlds();
+        await loadWorldEditor(body.world.id);
+        nodes.worldManagerState.textContent = editing ? "已保存" : "已创建";
+      } catch (error) {
+        nodes.worldManagerState.textContent = error.message || String(error);
+      } finally {
+        nodes.saveWorldBtn.disabled = false;
+      }
+    }
+
+    function renderWorldPlaces() {
+      nodes.worldPlaceCount.textContent = state.worldEditorPlaces.length + " 个地点";
+      nodes.worldPlaceList.innerHTML = state.worldEditorPlaces.length
+        ? state.worldEditorPlaces.map((place) => '<div class="world-place-row"><div class="world-place-row-copy"><strong>' + escapeHtml(place.name) + '</strong>' +
+            (place.description ? '<p>' + escapeHtml(place.description) + '</p>' : '') +
+            '<div class="life-capabilities">' + (place.capabilityIds || []).map((id) => '<span>' + escapeHtml(worldCapabilityLabels[id] || id) + '</span>').join("") + '</div></div>' +
+            '<div class="world-place-row-actions"><button class="secondary icon-button" type="button" data-world-place-edit="' + escapeHtml(place.id) + '" title="编辑地点" aria-label="编辑地点"><i data-lucide="pencil"></i></button>' +
+            '<button class="secondary icon-button" type="button" data-world-place-delete="' + escapeHtml(place.id) + '" title="删除地点" aria-label="删除地点"><i data-lucide="trash-2"></i></button></div></div>').join("")
+        : '<div class="life-empty-row">添加第一个地点后，角色才可以安排生活。</div>';
+      refreshIcons();
+    }
+
+    function resetPlaceEditor() {
+      state.placeEditorId = "";
+      nodes.worldPlaceForm.reset();
+      nodes.saveWorldPlaceBtn.textContent = "添加地点";
+    }
+
+    async function saveWorldPlace(event) {
+      event.preventDefault();
+      if (!state.worldEditorId) return;
+      const capabilities = [...nodes.worldCapabilityOptions.querySelectorAll('input[type="checkbox"]:checked')].map((input) => input.value);
+      if (!capabilities.length) {
+        nodes.worldManagerState.textContent = "至少选择一个地点功能";
+        return;
+      }
+      nodes.saveWorldPlaceBtn.disabled = true;
+      try {
+        const editing = state.placeEditorId;
+        const response = await fetch(editing
+          ? "/api/v1/world-places/" + encodeURIComponent(editing)
+          : "/api/v1/worlds/" + encodeURIComponent(state.worldEditorId) + "/places", {
+          method: editing ? "PATCH" : "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({
+            name: nodes.worldPlaceName.value.trim(),
+            description: nodes.worldPlaceDescription.value,
+            capabilityIds: capabilities
+          })
+        });
+        const body = await response.json();
+        if (!response.ok) throw new Error(body.error || "地点保存失败");
+        await loadWorldEditor(state.worldEditorId);
+        nodes.worldManagerState.textContent = editing ? "地点已更新" : "地点已添加";
+      } catch (error) {
+        nodes.worldManagerState.textContent = error.message || String(error);
+      } finally {
+        nodes.saveWorldPlaceBtn.disabled = false;
+      }
+    }
+
+    async function handleWorldPlaceAction(event) {
+      const edit = event.target.closest("button[data-world-place-edit]");
+      if (edit) {
+        const place = state.worldEditorPlaces.find((entry) => entry.id === edit.dataset.worldPlaceEdit);
+        if (!place) return;
+        state.placeEditorId = place.id;
+        nodes.worldPlaceName.value = place.name || "";
+        nodes.worldPlaceDescription.value = place.description || "";
+        const selected = new Set(place.capabilityIds || []);
+        nodes.worldCapabilityOptions.querySelectorAll('input[type="checkbox"]').forEach((input) => {
+          input.checked = selected.has(input.value);
+        });
+        nodes.saveWorldPlaceBtn.textContent = "保存地点";
+        nodes.worldPlaceName.focus();
+        return;
+      }
+      const remove = event.target.closest("button[data-world-place-delete]");
+      if (!remove) return;
+      const place = state.worldEditorPlaces.find((entry) => entry.id === remove.dataset.worldPlaceDelete);
+      if (!place) return;
+      const deleted = await openActionDialog({
+        title: "删除地点",
+        description: "删除“" + place.name + "”后，引用该地点的旧事件仍会保留，但角色当前位置会变为未设置。",
+        confirmLabel: "删除",
+        onConfirm: async () => {
+          const response = await fetch("/api/v1/world-places/" + encodeURIComponent(place.id), { method: "DELETE" });
+          const body = await response.json();
+          if (!response.ok) throw new Error(body.error || "地点删除失败");
+        }
+      });
+      if (deleted) await loadWorldEditor(state.worldEditorId);
     }
 
     async function loadRelationship() {
@@ -7586,17 +8924,45 @@ export function renderAppHtml(): string {
 
     async function refreshSessionMessages(silent) {
       if (!state.activeSessionId || state.sessionDraft) return;
-      const sessionId = encodeURIComponent(state.activeSessionId);
+      const requestedSessionId = state.activeSessionId;
+      const sessionId = encodeURIComponent(requestedSessionId);
       if (!silent) setStatus("加载会话...");
       try {
-        const response = await fetch("/api/v1/sessions/" + sessionId + "/messages");
-        const body = await response.json();
+        const [response, interactionResponse, inboxResponse] = await Promise.all([
+          fetch("/api/v1/sessions/" + sessionId + "/messages"),
+          fetch("/api/v1/sessions/" + sessionId + "/interaction"),
+          fetch("/api/v1/sessions/" + sessionId + "/inbox")
+        ]);
+        const [body, interactionBody, inboxBody] = await Promise.all([
+          response.json(),
+          interactionResponse.json().catch(() => ({})),
+          inboxResponse.json().catch(() => ({}))
+        ]);
         if (!response.ok) {
           throw new Error(body.error || "加载会话失败");
         }
-        const messages = Array.isArray(body)
+        if (state.activeConversationKind !== "direct" || state.activeSessionId !== requestedSessionId) return;
+        if (interactionResponse.ok) {
+          state.interactionState = interactionBody.state || null;
+          state.interactionEvents = Array.isArray(interactionBody.events) ? interactionBody.events : [];
+          state.interactionCanUndo = Boolean(interactionBody.canUndo);
+          state.interactionLocations = Array.isArray(interactionBody.suggestedLocations) ? interactionBody.suggestedLocations : [];
+        } else {
+          clearInteractionState();
+        }
+        updateInteractionChrome();
+        state.privateInboxMessages = inboxResponse.ok && Array.isArray(inboxBody.messages)
+          ? inboxBody.messages
+          : [];
+        state.privateInboxRunning = Boolean(inboxResponse.ok && inboxBody.running);
+        const storedMessages = Array.isArray(body)
           ? mergeToolResultsIntoMessages(dedupeSystemEvents(body.map(normalizeStoredMessage).filter(Boolean)))
           : [];
+        const withInbox = mergePrivateInboxMessages(storedMessages, state.privateInboxMessages);
+        const messages = mergeInteractionEvents(
+          preserveActiveBurstMessages(withInbox, state.privateInboxMessages),
+          state.interactionEvents
+        );
         const latestOutcome = [...messages].reverse().find((message) => message.status);
         if (latestOutcome) {
           state.lastTurnStatus = latestOutcome.status;
@@ -7608,6 +8974,7 @@ export function renderAppHtml(): string {
           state.messages = messages;
           renderMessages();
         }
+        updateDirectGenerationControls();
         if (!silent) setStatus("就绪");
       } catch (error) {
         if (!silent) setStatus(error.message || String(error), true);
@@ -7721,6 +9088,254 @@ export function renderAppHtml(): string {
       return (text ? text + "\\n\\n" : "") + "[附件已上传到 Workspace]\\n" + lines.join("\\n");
     }
 
+    function generateClientMessageId() {
+      if (window.crypto?.randomUUID) return window.crypto.randomUUID();
+      return "msg-" + Date.now().toString(36) + "-" + Math.random().toString(36).slice(2);
+    }
+
+    function closePrivateInboxEvents() {
+      state.privateInboxSource?.close();
+      state.privateInboxSource = null;
+      state.privateInboxSessionId = "";
+    }
+
+    function openPrivateInboxEvents(sessionId) {
+      if (!sessionId || state.activeConversationKind !== "direct") return;
+      if (state.privateInboxSource && state.privateInboxSessionId === sessionId) return;
+      closePrivateInboxEvents();
+      const source = new EventSource(
+        "/api/v1/sessions/" + encodeURIComponent(sessionId) + "/inbox/events"
+      );
+      state.privateInboxSource = source;
+      state.privateInboxSessionId = sessionId;
+      source.onmessage = (messageEvent) => {
+        if (
+          state.privateInboxSource !== source ||
+          state.activeConversationKind !== "direct" ||
+          state.activeSessionId !== sessionId
+        ) return;
+        try {
+          void handlePrivateInboxEvent(JSON.parse(messageEvent.data)).catch((error) => {
+            setStatus("消息事件处理失败：" + (error.message || String(error)), true);
+          });
+        } catch (error) {
+          setStatus("消息事件解析失败：" + (error.message || String(error)), true);
+        }
+      };
+      source.onerror = () => {
+        if (state.privateInboxSource !== source || source.readyState !== EventSource.CLOSED) return;
+        closePrivateInboxEvents();
+      };
+    }
+
+    async function handlePrivateInboxEvent(event) {
+      if (!event || typeof event !== "object") return;
+      if (event.type === "snapshot") {
+        const inbox = event.inbox || {};
+        state.privateInboxMessages = Array.isArray(inbox.messages) ? inbox.messages : [];
+        state.privateInboxRunning = Boolean(inbox.running);
+        state.privateInboxMessages.forEach(syncPrivateInboxUserBubble);
+        for (const message of state.privateInboxMessages) {
+          if (message.status === "processing" && message.burstId) {
+            ensurePrivateBurstMessage(message.burstId, message.createdAt);
+          }
+        }
+        renderMessages();
+        updateDirectGenerationControls();
+        return;
+      }
+      if (event.type === "message_queued" || event.type === "message_updated") {
+        upsertPrivateInboxMessage(event.message);
+        syncPrivateInboxUserBubble(event.message);
+        renderMessages();
+        return;
+      }
+      if (event.type === "message_retracted") {
+        state.privateInboxMessages = state.privateInboxMessages.filter((message) =>
+          message.id !== event.messageId && message.clientMessageId !== event.clientMessageId
+        );
+        state.messages = state.messages.filter((message) =>
+          message.inboxMessageId !== event.messageId && message.clientMessageId !== event.clientMessageId
+        );
+        renderMessages();
+        return;
+      }
+      if (event.type === "burst_started") {
+        const burst = event.burst || {};
+        const messages = Array.isArray(burst.messages) ? burst.messages : [];
+        messages.forEach((message) => {
+          upsertPrivateInboxMessage(message);
+          syncPrivateInboxUserBubble(message);
+        });
+        state.privateInboxRunning = true;
+        ensurePrivateBurstMessage(burst.id, messages[0]?.createdAt);
+        updateDirectGenerationControls();
+        renderMessages();
+        return;
+      }
+      if (event.type === "agent_event") {
+        applyPrivateAgentEvent(event.burstId, event.event);
+        return;
+      }
+      if (event.type === "burst_done") {
+        finishPrivateBurst(event.burstId, event.response || {});
+        state.privateInboxMessages = state.privateInboxMessages.filter((message) =>
+          !Array.isArray(event.messageIds) || !event.messageIds.includes(message.id)
+        );
+        state.privateInboxRunning = false;
+        updateDirectGenerationControls();
+        applyTurnOutcome(event.response || {});
+        await refreshSessionMessages(true);
+        await loadConversationScene();
+        void loadSessions();
+        if (state.uiMode === "debug") void loadDebugLogs();
+        return;
+      }
+      if (event.type === "burst_failed") {
+        const index = ensurePrivateBurstMessage(event.burstId);
+        const message = state.messages[index];
+        if (message) {
+          message.role = "system";
+          message.text = event.error || "模型调用失败";
+          message.status = "failed";
+          message.eventType = "operation_failed";
+          message.progress = [];
+          message.working = false;
+        }
+        const failedIds = new Set(Array.isArray(event.messageIds) ? event.messageIds : []);
+        state.privateInboxMessages = state.privateInboxMessages.filter((entry) => !failedIds.has(entry.id));
+        state.messages.forEach((entry) => {
+          if (failedIds.has(entry.inboxMessageId)) entry.queueStatus = "failed";
+        });
+        state.privateInboxRunning = false;
+        updateDirectGenerationControls();
+        renderMessages();
+        setStatus(event.error || "模型调用失败", true);
+      }
+    }
+
+    function upsertPrivateInboxMessage(message) {
+      if (!message?.id) return;
+      const index = state.privateInboxMessages.findIndex((entry) => entry.id === message.id);
+      if (index >= 0) state.privateInboxMessages[index] = message;
+      else state.privateInboxMessages.push(message);
+    }
+
+    function syncPrivateInboxUserBubble(inboxMessage) {
+      if (!inboxMessage?.id) return;
+      let message = state.messages.find((entry) =>
+        entry.inboxMessageId === inboxMessage.id ||
+        (inboxMessage.clientMessageId && entry.clientMessageId === inboxMessage.clientMessageId)
+      );
+      const normalized = normalizeInboxMessage(inboxMessage);
+      if (!message) {
+        state.messages.push(normalized);
+        return;
+      }
+      const localId = message.localId;
+      Object.assign(message, normalized, localId ? { localId } : {});
+    }
+
+    function ensurePrivateBurstMessage(burstId, createdAt) {
+      if (!burstId) return -1;
+      const localId = "private-burst:" + burstId;
+      const existing = state.messages.findIndex((message) => message.localId === localId);
+      if (existing >= 0) return existing;
+      state.messages.push(privateBurstPlaceholder(burstId, createdAt));
+      return state.messages.length - 1;
+    }
+
+    function privateBurstPlaceholder(burstId, createdAt) {
+      const parsedTimestamp = createdAt ? new Date(createdAt).getTime() : Date.now();
+      const timestampMs = Number.isFinite(parsedTimestamp) ? parsedTimestamp + 1 : Date.now();
+      return {
+        role: "assistant",
+        text: "",
+        at: new Date(timestampMs).toLocaleTimeString(),
+        timestampMs,
+        localId: "private-burst:" + burstId,
+        burstId,
+        working: true,
+        progressOpen: false,
+        progress: [
+          { key: "request", label: "已接收连续消息", status: "completed" },
+          { key: "context", label: "准备模型上下文", status: "active" }
+        ]
+      };
+    }
+
+    function privateBurstIndex(burstId) {
+      return state.messages.findIndex((message) => message.localId === "private-burst:" + burstId);
+    }
+
+    function applyPrivateAgentEvent(burstId, event) {
+      let index = privateBurstIndex(burstId);
+      if (index < 0) index = ensurePrivateBurstMessage(burstId);
+      const message = state.messages[index];
+      if (!message || !event) return;
+      if (event.type === "delta") {
+        updateMessageProgress(index, "generation", "生成回复", "active", true);
+        const current = state.messages[privateBurstIndex(burstId)];
+        if (current) current.text = String(current.text || "") + String(event.delta || "");
+        renderMessages();
+      } else if (event.type === "reasoning_status") {
+        updateMessageProgress(index, "reasoning", "模型推理",
+          event.phase === "end" ? "completed" : "active", event.phase === "end");
+      } else if (event.type === "tool_start") {
+        updateMessageProgress(index, "tool:" + event.toolCallId,
+          "调用工具：" + toolDisplayName(event.toolName), "active", false,
+          { toolName: event.toolName, toolCallId: event.toolCallId });
+        setStatus("执行工具：" + toolDisplayName(event.toolName));
+      } else if (event.type === "tool_end") {
+        updateMessageProgress(index, "tool:" + event.toolCallId,
+          "调用工具：" + toolDisplayName(event.toolName),
+          event.isError ? "failed" : "completed", false,
+          {
+            toolName: event.toolName,
+            toolCallId: event.toolCallId,
+            resultText: formatToolResult(event.result)
+          });
+      } else if (event.type === "auto_retry_start") {
+        updateMessageProgress(index, "retry:" + event.attempt,
+          "模型重试 " + event.attempt + "/" + event.maxAttempts, "active");
+      } else if (event.type === "auto_retry_end") {
+        updateMessageProgress(index, "retry:" + event.attempt, "模型重试 " + event.attempt,
+          event.success ? "completed" : "failed");
+      } else if (event.type === "lifecycle") {
+        applyLifecycleProgress(index, event.eventType);
+      }
+    }
+
+    function finishPrivateBurst(burstId, response) {
+      let index = privateBurstIndex(burstId);
+      if (index < 0) index = ensurePrivateBurstMessage(burstId);
+      const message = state.messages[index];
+      if (!message) return;
+      message.text = response.reply || message.text || "";
+      message.status = response.status;
+      message.eventType = response.eventType;
+      message.canRetry = Boolean(response.canRetry);
+      if (response.messageType === "system") {
+        message.role = "system";
+        message.progress = [];
+        message.progressOpen = false;
+        message.working = false;
+      } else {
+        completeMessageProgress(index, response.status);
+        addActionProgress(index, response.actions);
+      }
+      renderMessages();
+    }
+
+    function updateDirectGenerationControls() {
+      if (state.activeConversationKind !== "direct") return;
+      nodes.sendBtn.disabled = state.uploadingAttachments;
+      nodes.cancelMessageBtn.disabled = !state.privateInboxRunning;
+      updateRetryState();
+      updateSessionActionState();
+      updateInteractionChrome();
+    }
+
     async function sendMessage() {
       const rawText = nodes.textInput.value.trim();
       if (state.activeConversationKind === "group") {
@@ -7728,7 +9343,7 @@ export function renderAppHtml(): string {
         await sendGroupChatMessage(rawText);
         return;
       }
-      if ((!rawText && !state.pendingAttachments.length) || state.busy || state.uploadingAttachments) return;
+      if ((!rawText && !state.pendingAttachments.length) || state.uploadingAttachments) return;
       const attachments = [...state.pendingAttachments];
       const text = messageWithAttachments(rawText, attachments);
       if (!state.activeSessionId) startNewSession();
@@ -7737,31 +9352,29 @@ export function renderAppHtml(): string {
         nodes.chatCharacterSelect.focus();
         return;
       }
-      state.busy = true;
-      state.lastTurnStatus = null;
-      state.lastTurnCanRetry = false;
-      nodes.sendBtn.disabled = true;
-      nodes.cancelMessageBtn.disabled = false;
-      nodes.retryMessageBtn.disabled = true;
-      setStatus("发送中...");
+      const sessionIdValue = state.activeSessionId;
+      const clientMessageId = generateClientMessageId();
+      setStatus("已加入发送队列");
+      closeEmojiPicker();
       nodes.textInput.value = "";
       state.pendingAttachments = [];
       renderAttachmentQueue();
-      pushMessage("user", rawText, { attachments });
-      const assistantIndex = pushMessage("assistant", "", {
-        working: true,
-        progressOpen: false,
-        progress: [
-          { key: "request", label: "请求已发送", status: "completed" },
-          { key: "context", label: "准备模型上下文", status: "active" }
-        ]
+      const localId = "inbox-client:" + clientMessageId;
+      pushMessage("user", rawText, {
+        localId,
+        rawText: text,
+        attachments,
+        clientMessageId,
+        queueStatus: "queued",
+        latestUser: true,
+        timestampMs: Date.now()
       });
       try {
-        const sessionId = encodeURIComponent(state.activeSessionId);
-        const response = await fetch("/api/v1/sessions/" + sessionId + "/messages/stream", {
+        const response = await fetch("/api/v1/sessions/" + encodeURIComponent(sessionIdValue) + "/inbox", {
           method: "POST",
           headers: { "content-type": "application/json" },
           body: JSON.stringify({
+            clientMessageId,
             mode: nodes.modeSelect.value,
             text,
             characterId: nodes.chatCharacterSelect.value,
@@ -7773,124 +9386,43 @@ export function renderAppHtml(): string {
             }))
           })
         });
+        const body = await response.json().catch(() => ({}));
         if (!response.ok) {
-          const errorBody = await response.json().catch(() => ({}));
-          throw new Error(errorBody.error || "流式请求失败");
+          throw new Error(body.error || "消息入队失败");
         }
-        if (!response.body) throw new Error("流式请求失败");
-        let finalResponse;
-        await consumeEventStream(response.body, (event) => {
-          if (event.type === "delta") {
-            updateMessageProgress(assistantIndex, "generation", "生成回复", "active", true);
-            state.messages[assistantIndex].text += event.delta || "";
-            renderMessages();
+        if (state.activeConversationKind === "direct" && state.activeSessionId === sessionIdValue) {
+          const resolvedSessionId = body.message?.sessionId || sessionIdValue;
+          const localMessage = state.messages.find((message) => message.localId === localId);
+          if (localMessage && body.message) {
+            localMessage.inboxMessageId = body.message.id;
+            localMessage.queueStatus = body.message.status || "queued";
           }
-          if (event.type === "reasoning_status") {
-            updateMessageProgress(
-              assistantIndex,
-              "reasoning",
-              "模型推理",
-              event.phase === "end" ? "completed" : "active",
-              event.phase === "end"
-            );
-          }
-          if (event.type === "tool_start") {
-            updateMessageProgress(
-              assistantIndex,
-              "tool:" + event.toolCallId,
-              "调用工具：" + toolDisplayName(event.toolName),
-              "active",
-              false,
-              { toolName: event.toolName, toolCallId: event.toolCallId }
-            );
-            setStatus("执行工具：" + toolDisplayName(event.toolName));
-          }
-          if (event.type === "tool_end") {
-            updateMessageProgress(
-              assistantIndex,
-              "tool:" + event.toolCallId,
-              "调用工具：" + toolDisplayName(event.toolName),
-              event.isError ? "failed" : "completed",
-              false,
-              {
-                toolName: event.toolName,
-                toolCallId: event.toolCallId,
-                resultText: formatToolResult(event.result)
-              }
-            );
-          }
-          if (event.type === "auto_retry_start") {
-            updateMessageProgress(
-              assistantIndex,
-              "retry:" + event.attempt,
-              "模型重试 " + event.attempt + "/" + event.maxAttempts,
-              "active"
-            );
-            setStatus("模型重试 " + event.attempt + "/" + event.maxAttempts);
-          }
-          if (event.type === "auto_retry_end") {
-            updateMessageProgress(
-              assistantIndex,
-              "retry:" + event.attempt,
-              "模型重试 " + event.attempt,
-              event.success ? "completed" : "failed"
-            );
-          }
-          if (event.type === "lifecycle") {
-            applyLifecycleProgress(assistantIndex, event.eventType);
-          }
-          if (event.type === "done") finalResponse = event.response;
-          if (event.type === "error") throw new Error(event.error || "流式请求失败");
-        });
-        if (!finalResponse) throw new Error("流式响应提前结束");
-        state.messages[assistantIndex].text = finalResponse.reply || state.messages[assistantIndex].text;
-        state.messages[assistantIndex].status = finalResponse.status;
-        state.messages[assistantIndex].eventType = finalResponse.eventType;
-        state.messages[assistantIndex].canRetry = Boolean(finalResponse.canRetry);
-        if (finalResponse.messageType === "system") {
-          state.messages[assistantIndex].role = "system";
-          state.messages[assistantIndex].progress = [];
-          state.messages[assistantIndex].progressOpen = false;
-          state.messages[assistantIndex].working = false;
-        } else {
-          completeMessageProgress(assistantIndex, finalResponse.status);
-        }
-        addActionProgress(assistantIndex, finalResponse.actions);
-        renderMessages();
-        if (state.sessionDraft) await loadSessions();
-        else await loadConversationScene();
-        applyTurnOutcome(finalResponse);
-        if (state.uiMode === "debug") {
-          await loadDebugLogs();
+          state.privateInboxMessages = Array.isArray(body.inbox?.messages)
+            ? body.inbox.messages
+            : state.privateInboxMessages;
+          state.privateInboxRunning = Boolean(body.inbox?.running);
+          const wasDraft = state.sessionDraft;
+          state.activeSessionId = resolvedSessionId;
+          state.sessionDraft = false;
+          setSessionControlsLocked(true);
+          updateSessionActionState();
+          openPrivateInboxEvents(resolvedSessionId);
+          renderMessages();
+          updateDirectGenerationControls();
+          if (wasDraft || resolvedSessionId !== sessionIdValue) void loadSessions();
         }
       } catch (error) {
-        state.lastTurnStatus = "failed";
-        state.lastTurnCanRetry = false;
-        updateRetryState();
-        if (state.messages[assistantIndex]) {
-          state.messages[assistantIndex].role = "system";
-          state.messages[assistantIndex].text = error.message || String(error);
-          state.messages[assistantIndex].status = "failed";
-          state.messages[assistantIndex].eventType = "operation_failed";
-          state.messages[assistantIndex].canRetry = false;
-          state.messages[assistantIndex].progress = [];
-          state.messages[assistantIndex].working = false;
-          renderMessages();
-        }
-        if (
-          state.messages[assistantIndex] &&
-          !state.messages[assistantIndex].text &&
-          !state.messages[assistantIndex].progress?.length
-        ) {
-          state.messages.splice(assistantIndex, 1);
+        if (state.activeConversationKind === "direct" && state.activeSessionId === sessionIdValue) {
+          const localMessage = state.messages.find((message) => message.localId === localId);
+          if (localMessage) {
+            localMessage.queueStatus = "failed";
+            localMessage.queueError = error.message || String(error);
+          }
           renderMessages();
         }
         setStatus(error.message || String(error), true);
       } finally {
-        state.busy = false;
-        nodes.sendBtn.disabled = false;
-        nodes.cancelMessageBtn.disabled = true;
-        updateRetryState();
+        nodes.sendBtn.disabled = state.uploadingAttachments;
         nodes.textInput.focus();
       }
     }
@@ -7907,6 +9439,7 @@ export function renderAppHtml(): string {
       nodes.sendBtn.disabled = true;
       nodes.cancelMessageBtn.disabled = false;
       nodes.retryMessageBtn.disabled = true;
+      closeEmojiPicker();
       nodes.textInput.value = "";
       setStatus("群聊调度中...");
       pushMessage("user", text);
@@ -8020,12 +9553,13 @@ export function renderAppHtml(): string {
     }
 
     async function cancelMessage() {
-      if (!state.busy) return;
       if (state.activeConversationKind === "group") {
+        if (!state.busy) return;
         state.groupAbortController?.abort();
         setStatus("正在停止群聊生成...");
         return;
       }
+      if (!state.privateInboxRunning) return;
       const sessionId = encodeURIComponent(state.activeSessionId);
       try {
         await fetch("/api/v1/sessions/" + sessionId + "/messages/cancel", { method: "POST" });
@@ -8100,6 +9634,7 @@ export function renderAppHtml(): string {
         ? "system"
         : message.role === "toolResult" ? "tool" : message.role;
       const at = message.timestamp ? new Date(message.timestamp).toLocaleTimeString() : "";
+      const timestampMs = message.timestamp ? new Date(message.timestamp).getTime() : 0;
       const details = message.details && typeof message.details === "object" ? message.details : {};
       return {
         role,
@@ -8114,8 +9649,117 @@ export function renderAppHtml(): string {
         canRetry: Boolean(details.canRetry ?? message.canRetry),
         toolCallId: typeof message.toolCallId === "string" ? message.toolCallId : "",
         toolName: typeof message.toolName === "string" ? message.toolName : "",
-        isError: Boolean(message.isError)
+        isError: Boolean(message.isError),
+        timestampMs: Number.isFinite(timestampMs) ? timestampMs : 0
       };
+    }
+
+    function normalizeInboxMessage(message) {
+      const presentation = extractMessagePresentation(message?.text || "");
+      const explicitAttachments = Array.isArray(message?.attachments) ? message.attachments : [];
+      const attachments = presentation.attachments.length
+        ? presentation.attachments.map((entry) => {
+            const source = explicitAttachments.find((candidate) => candidate.path === entry.path);
+            return source ? { ...entry, ...source } : entry;
+          })
+        : explicitAttachments;
+      const timestampMs = message?.createdAt ? new Date(message.createdAt).getTime() : Date.now();
+      return {
+        role: "user",
+        text: presentation.text,
+        rawText: String(message?.text || ""),
+        attachments,
+        at: new Date(Number.isFinite(timestampMs) ? timestampMs : Date.now()).toLocaleTimeString(),
+        timestampMs: Number.isFinite(timestampMs) ? timestampMs : Date.now(),
+        localId: "inbox:" + String(message?.id || message?.clientMessageId || generateClientMessageId()),
+        inboxMessageId: String(message?.id || ""),
+        clientMessageId: String(message?.clientMessageId || ""),
+        queueStatus: message?.status || "queued",
+        queueError: message?.lastError || "",
+        latestUser: message?.status === "queued"
+      };
+    }
+
+    function mergePrivateInboxMessages(messages, inboxMessages) {
+      const merged = [...messages];
+      const consumedTranscriptIndexes = new Set();
+      for (const inboxMessage of Array.isArray(inboxMessages) ? inboxMessages : []) {
+        const normalized = normalizeInboxMessage(inboxMessage);
+        const transcriptIndex = inboxMessage.status === "processing"
+          ? merged.findIndex((message, index) =>
+              !consumedTranscriptIndexes.has(index) &&
+              message.role === "user" &&
+              String(message.rawText || message.text || "") === String(inboxMessage.text || "") &&
+              Math.abs((message.timestampMs || 0) - normalized.timestampMs) < 120_000
+            )
+          : -1;
+        if (transcriptIndex >= 0) {
+          consumedTranscriptIndexes.add(transcriptIndex);
+          Object.assign(merged[transcriptIndex], {
+            inboxMessageId: normalized.inboxMessageId,
+            clientMessageId: normalized.clientMessageId,
+            queueStatus: normalized.queueStatus
+          });
+        } else if (!merged.some((message) =>
+          message.inboxMessageId === normalized.inboxMessageId ||
+          (normalized.clientMessageId && message.clientMessageId === normalized.clientMessageId)
+        )) {
+          merged.push(normalized);
+        }
+      }
+      return merged
+        .map((message, index) => ({ message, index }))
+        .sort((left, right) =>
+          (left.message.timestampMs || 0) - (right.message.timestampMs || 0) || left.index - right.index
+        )
+        .map((entry) => entry.message);
+    }
+
+    function preserveActiveBurstMessages(messages, inboxMessages) {
+      const output = [...messages];
+      const burstStarts = new Map();
+      for (const message of Array.isArray(inboxMessages) ? inboxMessages : []) {
+        if (message.status === "processing" && message.burstId && !burstStarts.has(message.burstId)) {
+          burstStarts.set(message.burstId, message.createdAt);
+        }
+      }
+      for (const [burstId, createdAt] of burstStarts) {
+        const localId = "private-burst:" + burstId;
+        if (output.some((message) => message.localId === localId)) continue;
+        const existing = state.messages.find((message) => message.localId === localId);
+        output.push(existing || privateBurstPlaceholder(burstId, createdAt));
+      }
+      return output
+        .map((message, index) => ({ message, index }))
+        .sort((left, right) =>
+          (left.message.timestampMs || 0) - (right.message.timestampMs || 0) || left.index - right.index
+        )
+        .map((entry) => entry.message);
+    }
+
+    function mergeInteractionEvents(messages, events) {
+      const transitions = (Array.isArray(events) ? events : []).filter((event) =>
+        event && (event.status === "applied" || event.status === "pending")
+      ).map((event) => {
+        const timestamp = event.appliedAt || event.createdAt;
+        const timestampMs = timestamp ? new Date(timestamp).getTime() : 0;
+        return {
+          role: "interaction",
+          text: event.summary || "互动状态已更新",
+          interactionType: event.type,
+          interactionEventId: event.id,
+          interactionStatus: event.status,
+          location: event.location || "",
+          timestampMs: Number.isFinite(timestampMs) ? timestampMs : 0,
+          at: timestamp ? new Date(timestamp).toLocaleTimeString() : ""
+        };
+      });
+      return [...messages, ...transitions]
+        .map((message, index) => ({ message, index }))
+        .sort((left, right) =>
+          (left.message.timestampMs || 0) - (right.message.timestampMs || 0) || left.index - right.index
+        )
+        .map((entry) => entry.message);
     }
 
     function extractMessagePresentation(value) {
@@ -8227,6 +9871,7 @@ export function renderAppHtml(): string {
         return;
       }
       nodes.messages.innerHTML = state.messages.map((message, index) => {
+        if (message.role === "interaction") return renderInteractionEvent(message);
         if (message.role === "system") {
           return '<div class="message-row system" role="status">' +
             '<div class="system-event"><i data-lucide="' + escapeHtml(systemEventIcon(message.eventType)) + '" aria-hidden="true"></i>' +
@@ -8238,9 +9883,9 @@ export function renderAppHtml(): string {
         const hasText = Boolean(String(message.text || "").trim());
         const content = media + (hasText ? '<div class="bubble-text markdown-body">' + renderMarkdown(message.text, true) + '</div>' : '');
         const mediaOnly = media && !hasText ? " media-only" : "";
-        const meta = [roleLabel(message), message.at].filter(Boolean).join(" · ");
+        const meta = [roleLabel(message), message.at, privateQueueLabel(message)].filter(Boolean).join(" · ");
         return '<div class="message-row ' + escapeHtml(message.role) + '">' +
-          '<div class="message-avatar" aria-hidden="true">' + messageAvatar(message) + '</div>' +
+          renderMessageAvatar(message) +
           '<div class="message-stack">' +
             '<span class="meta">' + escapeHtml(meta) + '</span>' +
             '<div class="message-bubble-row"><div class="bubble ' + escapeHtml(message.role) + mediaOnly + '">' + progress + content + '</div>' +
@@ -8250,6 +9895,24 @@ export function renderAppHtml(): string {
       }).join("");
       refreshIcons();
       nodes.messages.scrollTop = nodes.messages.scrollHeight;
+    }
+
+    function renderInteractionEvent(message) {
+      const icon = message.interactionType === "begin_meeting"
+        ? "map-pin-check"
+        : message.interactionType === "end_meeting"
+          ? "message-circle"
+          : message.interactionType === "undo_transition" ? "undo-2" : "calendar-clock";
+      const pendingActions = message.interactionType === "propose_meeting" &&
+        state.interactionState?.presence === "meeting_pending" &&
+        state.interactionState?.location === message.location
+        ? '<span class="interaction-event-actions">' +
+            '<button class="primary" type="button" data-interaction-action="begin">我到了</button>' +
+            '<button type="button" data-interaction-action="cancel">取消</button></span>'
+        : "";
+      return '<div class="message-row interaction" role="status"><div class="interaction-event">' +
+        '<span class="interaction-event-copy"><i data-lucide="' + icon + '" aria-hidden="true"></i><span>' +
+        escapeHtml(message.text) + '</span></span>' + pendingActions + '</div></div>';
     }
 
     function renderMessageAttachments(attachments) {
@@ -8301,7 +9964,10 @@ export function renderAppHtml(): string {
     }
 
     function renderMessageActions(message, index) {
-      if (message.role !== "user" || !message.latestUser || !message.entryId || state.busy) return "";
+      if (message.role !== "user" || state.busy) return "";
+      const queued = message.queueStatus === "queued" && Boolean(message.inboxMessageId);
+      const storedLatest = message.latestUser && Boolean(message.entryId);
+      if (!queued && !storedLatest) return "";
       return '<span class="message-actions">' +
         (message.text ? '<button class="message-action" type="button" data-message-action="edit" data-message-index="' + index + '" title="编辑并重新发送" aria-label="编辑消息"><i data-lucide="pencil" aria-hidden="true"></i></button>' : '') +
         '<button class="message-action" type="button" data-message-action="retract" data-message-index="' + index + '" title="撤回消息" aria-label="撤回消息"><i data-lucide="undo-2" aria-hidden="true"></i></button>' +
@@ -8314,7 +9980,8 @@ export function renderAppHtml(): string {
       const button = event.target.closest("button[data-message-action]");
       if (!button || state.busy) return;
       const message = state.messages[Number(button.dataset.messageIndex)];
-      if (!message?.entryId || !message.latestUser) return;
+      const queued = message?.queueStatus === "queued" && Boolean(message?.inboxMessageId);
+      if (!queued && (!message?.entryId || !message.latestUser)) return;
       if (button.dataset.messageAction === "edit") {
         editingMessage = message;
         nodes.messageEditText.value = message.text;
@@ -8351,25 +10018,41 @@ export function renderAppHtml(): string {
     }
 
     async function reviseMessage(message, action, text) {
+      const queued = message.queueStatus === "queued" && Boolean(message.inboxMessageId);
       state.busy = true;
       nodes.submitMessageEditBtn.disabled = true;
       nodes.messageEditError.textContent = "";
-      setStatus(action === "edit" ? "正在重新生成回复..." : "正在撤回...");
+      setStatus(action === "edit"
+        ? queued ? "正在更新待发送消息..." : "正在重新生成回复..."
+        : "正在撤回...");
       try {
-        const response = await fetch(
-          "/api/v1/sessions/" + encodeURIComponent(state.activeSessionId) + "/messages/" + encodeURIComponent(message.entryId) + "/" + action,
-          {
-            method: "POST",
-            headers: { "content-type": "application/json" },
-            body: JSON.stringify(action === "edit" ? { text } : {}),
-          },
-        );
+        const response = queued
+          ? await fetch(
+              "/api/v1/sessions/" + encodeURIComponent(state.activeSessionId) +
+                "/inbox/" + encodeURIComponent(message.inboxMessageId),
+              {
+                method: action === "edit" ? "PATCH" : "DELETE",
+                headers: { "content-type": "application/json" },
+                body: action === "edit" ? JSON.stringify({ text }) : undefined,
+              },
+            )
+          : await fetch(
+              "/api/v1/sessions/" + encodeURIComponent(state.activeSessionId) +
+                "/messages/" + encodeURIComponent(message.entryId) + "/" + action,
+              {
+                method: "POST",
+                headers: { "content-type": "application/json" },
+                body: JSON.stringify(action === "edit" ? { text } : {}),
+              },
+            );
         const body = await response.json();
         if (!response.ok) throw new Error(body.error || "消息操作失败");
         closeMessageEditDialog();
         await refreshSessionMessages(true);
         await loadSessions();
-        setStatus(action === "edit" ? "消息已编辑并重新发送" : "消息已撤回");
+        setStatus(action === "edit"
+          ? queued ? "待发送消息已更新" : "消息已编辑并重新发送"
+          : "消息已撤回");
       } catch (error) {
         const messageText = error.message || String(error);
         if (nodes.messageEditDialog.open) nodes.messageEditError.textContent = messageText;
@@ -8403,6 +10086,62 @@ export function renderAppHtml(): string {
         return;
       }
       if (button.dataset.systemAction === "retry") void retryMessage();
+    }
+
+    function handleCharacterProfileClick(event) {
+      const trigger = event.target.closest("[data-character-profile-id]");
+      const characterId = trigger?.dataset.characterProfileId || "";
+      if (!characterId) return;
+      void openCharacterProfile(characterId);
+    }
+
+    async function openCharacterProfile(characterId) {
+      const cached = state.characters.find((entry) => entry.id === characterId);
+      if (!cached) return;
+      nodes.characterProfileDialog.dataset.characterId = characterId;
+      renderCharacterProfile(cached);
+      if (!nodes.characterProfileDialog.open) nodes.characterProfileDialog.showModal();
+      refreshIcons();
+      try {
+        const response = await fetch("/api/v1/characters/" + encodeURIComponent(characterId));
+        const body = await response.json();
+        if (!response.ok || !body.character) return;
+        const index = state.characters.findIndex((entry) => entry.id === characterId);
+        const character = { ...(index >= 0 ? state.characters[index] : cached), ...body.character };
+        if (index >= 0) state.characters[index] = character;
+        if (nodes.characterProfileDialog.open && nodes.characterProfileDialog.dataset.characterId === characterId) {
+          renderCharacterProfile(character);
+        }
+      } catch {
+        // Cached character data remains available when a refresh cannot be completed.
+      }
+    }
+
+    function renderCharacterProfile(character) {
+      nodes.characterProfileAvatar.style.setProperty("--avatar-hue", avatarHue(character.name || "角色"));
+      nodes.characterProfileAvatar.innerHTML = avatarImageOrInitial(character.avatarUrl, character.name, "角");
+      nodes.characterProfileName.textContent = character.name || "未命名角色";
+      nodes.characterProfileMeta.textContent = "SOUL.md · " + Number(character.soulCharacterCount || 0).toLocaleString() + " 字";
+      const soul = String(character.soulMarkdown || "").trim();
+      nodes.characterProfileSoul.innerHTML = soul
+        ? renderMarkdown(soul)
+        : '<p class="character-profile-empty">暂无角色设定</p>';
+    }
+
+    function closeCharacterProfile() {
+      if (nodes.characterProfileDialog.open) nodes.characterProfileDialog.close();
+      delete nodes.characterProfileDialog.dataset.characterId;
+    }
+
+    function renderMessageAvatar(message) {
+      const content = messageAvatar(message);
+      if (message.role !== "assistant") {
+        return '<div class="message-avatar" aria-hidden="true">' + content + '</div>';
+      }
+      const character = state.characters.find((entry) => entry.id === (message.senderId || state.selectedCharacterId));
+      if (!character) return '<div class="message-avatar" aria-hidden="true">' + content + '</div>';
+      return '<button class="message-avatar character-profile-trigger" type="button" data-character-profile-id="' + escapeHtml(character.id) +
+        '" title="查看' + escapeHtml(character.name) + '的资料" aria-label="查看' + escapeHtml(character.name) + '的资料">' + content + '</button>';
     }
 
     function messageAvatar(message) {
@@ -8648,7 +10387,16 @@ export function renderAppHtml(): string {
     }
 
     function updateRetryState() {
-      nodes.retryMessageBtn.disabled = state.activeConversationKind === "group" || state.busy || state.sessionDraft || !state.lastTurnCanRetry;
+      nodes.retryMessageBtn.disabled = state.activeConversationKind === "group" || state.busy ||
+        state.privateInboxRunning || state.privateInboxMessages.length > 0 ||
+        state.sessionDraft || !state.lastTurnCanRetry;
+    }
+
+    function privateQueueLabel(message) {
+      if (message.queueStatus === "queued") return "未读";
+      if (message.queueStatus === "processing") return "已读";
+      if (message.queueStatus === "failed") return "发送失败";
+      return "";
     }
 
     function toolDisplayName(name) {
@@ -9598,6 +11346,7 @@ export function renderAppHtml(): string {
       if (!traces.length) {
         state.selectedTraceIndex = 0;
         nodes.traceIndex.innerHTML = "";
+        renderMobileTraceSelect();
         nodes.traceDetail.hidden = true;
         nodes.traceEmpty.hidden = false;
         nodes.traceEmpty.textContent = "暂无模型请求 Trace。启用模型并发送消息后会显示记录。";
@@ -9617,6 +11366,7 @@ export function renderAppHtml(): string {
             '<span class="trace-index-meta">LCP ' + Number(entry.prefixReuseRatio || 0).toLocaleString(undefined, { style: "percent", maximumFractionDigits: 1 }) +
               ' · ' + Number(entry.memoryIds?.length || 0) + ' memories<br>' + escapeHtml(formatTraceTime(entry.createdAt)) + '</span></button>'
         ).join("");
+        renderMobileTraceSelect();
         if (!state.debugEconomics.length) showEmptyDebug("暂无 Context Economics。下一次 provider 请求后会生成记录。");
         return;
       }
@@ -9630,7 +11380,25 @@ export function renderAppHtml(): string {
             '<br>' + quantity.total + ' 条上下文 · ' + quantity.toolSchemas + ' 个 Schema · ' + escapeHtml(formatTraceTime(trace.createdAt)) + '</span>' +
         '</button>';
       }).join("");
+      renderMobileTraceSelect();
       if (!state.debugTraces.length) showEmptyDebug("暂无模型请求 Trace。启用模型并发送消息后会显示记录。");
+    }
+
+    function renderMobileTraceSelect() {
+      const economics = state.debugDataset === "economics";
+      const entries = economics ? state.debugEconomics : state.debugTraces;
+      const selectedIndex = economics ? state.selectedEconomicsIndex : state.selectedTraceIndex;
+      nodes.mobileTraceSelect.disabled = !entries.length;
+      if (!entries.length) {
+        nodes.mobileTraceSelect.innerHTML = '<option value="">暂无记录</option>';
+        return;
+      }
+      nodes.mobileTraceSelect.innerHTML = entries.map((entry, index) => {
+        const label = economics
+          ? (entry.mode + " · " + entry.estimatedInputTokens + " tokens · " + formatTraceTime(entry.createdAt))
+          : ("#" + (index + 1) + " · " + (entry.requestText || "无请求摘要") + " · " + traceContextQuantity(entry.payload).total + " 条上下文");
+        return '<option value="' + index + '"' + (index === selectedIndex ? ' selected' : '') + '>' + escapeHtml(label) + '</option>';
+      }).join("");
     }
 
     function showEmptyDebug(message) {
@@ -9643,6 +11411,16 @@ export function renderAppHtml(): string {
       const item = event.target.closest("[data-trace-index]");
       if (!item) return;
       const index = Number(item.dataset.traceIndex);
+      const entries = state.debugDataset === "economics" ? state.debugEconomics : state.debugTraces;
+      if (!Number.isInteger(index) || !entries[index]) return;
+      if (state.debugDataset === "economics") state.selectedEconomicsIndex = index;
+      else state.selectedTraceIndex = index;
+      renderTraceIndex();
+      renderSelectedTrace();
+    }
+
+    function selectTraceFromMobile() {
+      const index = Number(nodes.mobileTraceSelect.value);
       const entries = state.debugDataset === "economics" ? state.debugEconomics : state.debugTraces;
       if (!Number.isInteger(index) || !entries[index]) return;
       if (state.debugDataset === "economics") state.selectedEconomicsIndex = index;
@@ -9781,7 +11559,8 @@ export function renderAppHtml(): string {
         group_reply: "群聊回复",
         subagent: "子 Agent",
         memory_extraction: "记忆提取",
-        relationship_extraction: "关系提取"
+        relationship_extraction: "关系提取",
+        post_turn_analysis: "回合后分析"
       })[kind] || kind || "模型调用";
     }
 

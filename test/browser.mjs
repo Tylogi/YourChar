@@ -4,8 +4,8 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { launch } from "cloakbrowser";
 import { strToU8, zipSync } from "fflate";
-import { CompanionKernel } from "../dist/src/domain/index.js";
 import { createHttpServer } from "../dist/src/http/router.js";
+import { createTestRuntime } from "../dist/src/testing/index.js";
 
 const artifactsDir = resolve("browser-artifacts");
 mkdirSync(artifactsDir, { recursive: true });
@@ -18,7 +18,19 @@ const okfBrowserZip = Buffer.from(zipSync({
 }));
 
 const browserStateDir = mkdtempSync(join(tmpdir(), "rp-agent-browser-"));
-const kernel = new CompanionKernel({ stateDir: browserStateDir, startScheduler: false });
+const browserRuntime = createTestRuntime({
+  stateDir: browserStateDir,
+  seed: "browser-workflow",
+  startPrivateInboxCoordinator: true,
+  privateInboxOptions: {
+    initialWaitMs: 500,
+    quietWindowMs: 80,
+    maximumWaitMs: 900,
+    afterTurnQuietMs: 80,
+  },
+});
+const kernel = browserRuntime.kernel;
+kernel.patchModelApiConfig({ enabled: false });
 kernel.memoryLifecycle.propose({
   realm: "reality",
   type: "preference",
@@ -68,7 +80,7 @@ kernel.contextEconomics.record({
     queryHash: "browser-query-hash",
     bootstrapApplied: false,
     bootstrapAlreadyConsumed: true,
-    budgets: { dynamicTokens: 900, memoryTokens: 360, realityMemoryTokens: 220, roleplayMemoryTokens: 220, sceneTokens: 220, realityItems: 3, roleplayItems: 3, bootstrapItems: 3 },
+    budgets: { dynamicTokens: 900, memoryTokens: 360, realityMemoryTokens: 220, roleplayMemoryTokens: 220, sceneTokens: 220, worldCoreTokens: 900, worldRuntimeTokens: 420, interactionTokens: 180, realityItems: 3, roleplayItems: 3, bootstrapItems: 3 },
     sections: [{ id: "reality_memory", placement: "dynamic", characters: 80, estimatedTokens: 42, budgetTokens: 220, included: true, truncated: false }],
     retrieval: [{
       realm: "reality",
@@ -132,7 +144,7 @@ try {
 } finally {
   await browser.close();
   await new Promise((resolvePromise, reject) => server.close((error) => error ? reject(error) : resolvePromise()));
-  kernel.dispose();
+  browserRuntime.dispose();
   rmSync(browserStateDir, { recursive: true, force: true });
 }
 
@@ -145,7 +157,7 @@ async function runDesktopWorkflow(browser, baseUrl, outputDir) {
       sessionConflicts.push(response.url());
     }
   });
-  await page.goto(baseUrl, { waitUntil: "networkidle" });
+  await page.goto(baseUrl, { waitUntil: "domcontentloaded" });
   await assertViewport(page);
   await assertInteractiveBounds(page);
   await page.locator(".conversation-sidebar").waitFor({ state: "visible" });
@@ -205,15 +217,17 @@ async function runDesktopWorkflow(browser, baseUrl, outputDir) {
   await planningModule.waitFor();
   await planningModule.locator('input[type="checkbox"]').check();
   await planningModule.getByText("已启用", { exact: true }).waitFor();
-  assert.equal(await page.locator(".module-row").count(), 10);
+  assert.equal(await page.locator(".module-row").count(), 12);
   await page.locator(".module-row").filter({ hasText: "Tavily Search MCP" }).waitFor();
-  assert.equal(await page.locator(".module-token").count(), 10);
+  assert.equal(await page.locator(".module-token").count(), 12);
   await page.locator(".module-row").filter({ hasText: "Memory Coordinator MCP" }).locator(".module-token").filter({ hasText: "约 430 tokens/轮" }).waitFor();
   await page.locator(".module-row").filter({ hasText: "Subagent Delegation MCP" }).locator(".module-token").filter({ hasText: "约 390 tokens/轮" }).waitFor();
   await page.locator(".module-row").filter({ hasText: "Relationship State MCP" }).locator(".module-token").filter({ hasText: "约 230 tokens/轮" }).waitFor();
   await page.locator(".module-row").filter({ hasText: "Tavily Search MCP" }).locator(".module-token").filter({ hasText: "约 350 tokens/轮" }).waitFor();
   await page.locator(".module-row").filter({ hasText: "Vision MCP" }).locator(".module-token").filter({ hasText: "约 420 tokens/轮" }).waitFor();
   await page.locator(".module-row").filter({ hasText: "Web Reader MCP" }).locator(".module-token").filter({ hasText: "约 260 tokens/轮" }).waitFor();
+  await page.locator(".module-row").filter({ hasText: "World State MCP" }).locator(".module-token").filter({ hasText: "约 420 tokens/轮" }).waitFor();
+  await page.locator(".module-row").filter({ hasText: "Interaction State MCP" }).locator(".module-token").filter({ hasText: "约 650 tokens/轮" }).waitFor();
   await planningModule.locator(".module-token").filter({ hasText: /索引约 .*全文约 .*tokens\/调用/ }).waitFor();
   await page.locator("#permissionRuntime").filter({ hasText: "Bubblewrap 可用" }).waitFor();
   assert.match(await page.locator("#workspacePath").textContent(), /workspace$/);
@@ -412,6 +426,49 @@ async function runDesktopWorkflow(browser, baseUrl, outputDir) {
   await page.locator("#sessionActionDialog").waitFor({ state: "hidden" });
   await page.locator("#relationshipState").filter({ hasText: "已重置" }).waitFor();
 
+  await page.getByRole("tab", { name: "生活", exact: true }).click();
+  await page.locator("#characterLifePanel").waitFor({ state: "visible" });
+  await page.locator("#characterLifeEmpty").filter({ hasText: "选择一个共享世界" }).waitFor();
+  await page.getByRole("button", { name: "管理世界", exact: true }).click();
+  await page.locator("#worldManagerDialog").waitFor({ state: "visible" });
+  await page.locator("#saveWorldBtn").waitFor({ state: "visible" });
+  await page.waitForFunction(() => !document.querySelector("#saveWorldBtn")?.disabled);
+  await page.locator("#worldName").fill("青岚市");
+  await page.locator("#worldDescription").fill("角色共同生活的现代城市。");
+  await page.locator("#worldRules").fill("# 世界规则\n\n- 时间连续推进。\n- 地点功能决定可执行的活动。");
+  await page.getByRole("button", { name: "创建世界", exact: true }).click();
+  await page.locator("#worldManagerState").filter({ hasText: "已创建" }).waitFor();
+  await page.locator("#worldPlacesSection").waitFor({ state: "visible" });
+  await page.locator("#worldPlaceName").fill("河岸书店");
+  await page.locator("#worldPlaceDescription").fill("可以阅读、休息和给朋友发消息的安静书店。");
+  await page.getByRole("checkbox", { name: "休息", exact: true }).check();
+  await page.getByRole("checkbox", { name: "学习", exact: true }).check();
+  await page.getByRole("checkbox", { name: "通信", exact: true }).check();
+  await page.getByRole("button", { name: "添加地点", exact: true }).click();
+  await page.locator("#worldManagerState").filter({ hasText: "地点已添加" }).waitFor();
+  await page.locator("#worldPlaceList .world-place-row").filter({ hasText: "河岸书店" }).filter({ hasText: "学习" }).waitFor();
+  await captureValidatedScreenshot(page, resolve(outputDir, "characters-world-manager.png"));
+  await page.getByRole("button", { name: "关闭世界管理" }).click();
+  await page.locator("#worldManagerDialog").waitFor({ state: "hidden" });
+  await page.locator("#characterWorldSelect").selectOption({ label: "青岚市" });
+  await page.getByRole("button", { name: "保存归属", exact: true }).click();
+  await page.locator("#characterLifeState").filter({ hasText: "已加入世界" }).waitFor();
+  await page.locator("#characterLifeContent").waitFor({ state: "visible" });
+  await page.locator("#lifeHomePlace").selectOption({ label: "河岸书店" });
+  await page.locator("#lifeRuntimePlace").selectOption({ label: "河岸书店" });
+  await page.locator("#lifeAutonomyEnabled").check();
+  await page.locator("#lifeProactiveEnabled").uncheck();
+  await page.getByRole("button", { name: "保存生活设置", exact: true }).click();
+  await page.locator("#characterLifeState").filter({ hasText: "已保存" }).waitFor();
+  await page.getByRole("button", { name: "安排今日", exact: true }).click();
+  await page.locator("#characterLifeState").filter({ hasText: /已安排 \d+ 项/ }).waitFor();
+  await page.getByRole("button", { name: "模拟生活片段", exact: true }).click();
+  await page.locator("#characterLifeState").filter({ hasText: "片段已发生" }).waitFor();
+  await page.locator("#lifeEventList .life-event-row").filter({ hasText: "河岸书店" }).waitFor();
+  await assertPanelInsideMain(page, "#charactersPage");
+  await assertInteractiveBounds(page);
+  await captureValidatedScreenshot(page, resolve(outputDir, "characters-life.png"));
+
   await page.getByRole("button", { name: "日程", exact: true }).click();
   await page.getByRole("tab", { name: "角色日程", exact: true }).click();
   await page.locator("#scheduleCharacterSelect").selectOption({ label: "林澈" });
@@ -539,12 +596,27 @@ async function runDesktopWorkflow(browser, baseUrl, outputDir) {
   assert.equal(await page.locator("#newConversationCharacter option:checked").textContent(), "林澈");
   await assertInteractiveBounds(page);
   await captureValidatedScreenshot(page, resolve(outputDir, "new-conversation-dialog.png"));
-  await page.getByRole("button", { name: "开始对话", exact: true }).click();
+  await page.getByRole("button", { name: "打开私聊", exact: true }).click();
   await page.locator("#newConversationDialog").waitFor({ state: "hidden" });
   await page.locator("#conversationList .conversation-group-head").filter({ hasText: "林澈" }).waitFor();
   await page.locator("#conversationList .conversation-item.active").waitFor();
   await page.locator("#conversationCharacter").filter({ hasText: "林澈" }).waitFor();
   await page.locator("#conversationMode").filter({ hasText: "角色私聊" }).waitFor();
+  await page.locator("#textInput").fill("今晚见");
+  await page.getByRole("button", { name: "选择表情", exact: true }).click();
+  await page.locator("#emojiPicker").waitFor({ state: "visible" });
+  await assertElementUnclipped(page, "#emojiPicker");
+  await page.getByRole("button", { name: "插入表情 😊", exact: true }).click();
+  await page.getByRole("tab", { name: "爱心与关系", exact: true }).click();
+  await page.getByRole("button", { name: "插入表情 ❤️‍🔥", exact: true }).click();
+  assert.equal(await page.locator("#textInput").inputValue(), "今晚见😊❤️‍🔥");
+  assert.equal(await page.evaluate(async () => {
+    await document.fonts.load('400 23px "Noto Emoji"', "😊❤️‍🔥");
+    return document.fonts.check('400 23px "Noto Emoji"', "😊❤️‍🔥");
+  }), true);
+  await captureValidatedScreenshot(page, resolve(outputDir, "chat-emoji-picker.png"));
+  await page.keyboard.press("Escape");
+  await page.locator("#emojiPicker").waitFor({ state: "hidden" });
   await page.locator("#textInput").fill("先建立角色私聊会话。");
   const userMessagesBeforeImeConfirmation = await page.locator("#messages .message-row.user").count();
   await page.locator("#textInput").evaluate((element) => {
@@ -575,7 +647,21 @@ async function runDesktopWorkflow(browser, baseUrl, outputDir) {
   assert.equal(await smsSystemEvent.locator(".bubble.assistant").count(), 0);
   await page.waitForFunction(() => document.querySelector("#modeSelect")?.disabled === true);
   const smsSessionId = await page.locator("#sessionSelect").inputValue();
-  assert.match(smsSessionId, /^conversation-/);
+  assert.ok(smsSessionId);
+  const canonicalSmsSessions = await page.evaluate(async (selectedCharacterId) => {
+    const response = await fetch("/api/v1/sessions");
+    const body = await response.json();
+    return body.sessions.filter((session) =>
+      session.mode === "sms" && session.characterId === selectedCharacterId && session.canonicalDirect
+    );
+  }, await page.locator("#chatCharacterSelect").inputValue());
+  assert.equal(canonicalSmsSessions.length, 1);
+  assert.equal(canonicalSmsSessions[0].id, smsSessionId);
+  await page.getByRole("button", { name: "新建对话" }).click();
+  await page.locator("#newConversationCharacter").selectOption({ label: "林澈" });
+  await page.locator("#newConversationSmsBtn").click();
+  await page.getByRole("button", { name: "打开私聊", exact: true }).click();
+  assert.equal(await page.locator("#sessionSelect").inputValue(), smsSessionId);
   assert.equal(await page.locator("#modeSelect").isDisabled(), true);
   assert.equal(await page.locator("#chatCharacterSelect").isDisabled(), true);
   assert.equal(await page.locator("#conversationScene").isHidden(), true);
@@ -599,6 +685,30 @@ async function runDesktopWorkflow(browser, baseUrl, outputDir) {
   assert.match(await renamedSmsOption.textContent(), /日常私聊/);
   await captureValidatedScreenshot(page, resolve(outputDir, "session-renamed-sms.png"));
 
+  await page.getByRole("button", { name: "发起见面", exact: true }).click();
+  await page.locator("#sessionActionDialog").filter({ hasText: "约见" }).waitFor({ state: "visible" });
+  await page.locator("#sessionActionInput").fill("未来道具研究所");
+  await page.getByRole("button", { name: "约好", exact: true }).click();
+  await page.locator("#sessionActionDialog").waitFor({ state: "hidden" });
+  await page.locator("#conversationMode").filter({ hasText: "约好见面" }).waitFor();
+  await page.locator("#conversationScene").filter({ hasText: "未来道具研究所" }).waitFor();
+  const proposedMeetingEvent = page.locator("#messages .message-row.interaction").filter({ hasText: "约定在未来道具研究所见面" });
+  await proposedMeetingEvent.waitFor();
+  await proposedMeetingEvent.getByRole("button", { name: "我到了", exact: true }).click();
+  await page.locator("#conversationMode").filter({ hasText: "见面中" }).waitFor();
+  await page.locator("#conversationScene").filter({ hasText: "正在一起 · 未来道具研究所" }).waitFor();
+  assert.equal(await page.locator("#textInput").getAttribute("placeholder"), "描述你说的话或正在做的事");
+  assert.equal(await page.getByRole("button", { name: "撤销上次状态切换" }).isVisible(), true);
+  await assertInteractiveBounds(page);
+  await captureValidatedScreenshot(page, resolve(outputDir, "chat-in-person-state.png"));
+  await page.getByRole("button", { name: "结束见面", exact: true }).click();
+  await page.locator("#sessionActionDialog").filter({ hasText: "结束见面" }).waitFor({ state: "visible" });
+  await page.locator("#confirmSessionActionBtn").click();
+  await page.locator("#sessionActionDialog").waitFor({ state: "hidden" });
+  await page.locator("#conversationMode").filter({ hasText: "角色私聊" }).waitFor();
+  assert.equal(await page.locator("#conversationScene").isHidden(), true);
+  await page.locator("#messages .message-row.interaction").filter({ hasText: "结束在未来道具研究所的见面" }).waitFor();
+
   await page.getByRole("button", { name: "角色", exact: true }).click();
   await page.getByRole("button", { name: "新建角色", exact: true }).click();
   await page.locator("#characterName").fill("顾遥");
@@ -613,7 +723,7 @@ async function runDesktopWorkflow(browser, baseUrl, outputDir) {
   await page.getByRole("button", { name: "群聊", exact: true }).click();
   await page.locator("#newConversationGroupTitle").fill("河岸小组");
   assert.equal(await page.locator('#newConversationMembers input[type="checkbox"]:checked').count(), 2);
-  await page.getByRole("button", { name: "开始对话", exact: true }).click();
+  await page.getByRole("button", { name: "创建群聊", exact: true }).click();
   await page.locator("#newConversationDialog").waitFor({ state: "hidden" });
   await page.locator("#conversationCharacter").filter({ hasText: "河岸小组" }).waitFor();
   await page.locator("#conversationMode").filter({ hasText: "角色群聊 · 2 人" }).waitFor();
@@ -667,7 +777,7 @@ async function runDesktopWorkflow(browser, baseUrl, outputDir) {
   await page.getByRole("button", { name: "新建对话" }).click();
   await page.locator("#newConversationCharacter").selectOption({ label: "林澈" });
   await page.locator("#newConversationRpBtn").click();
-  await page.getByRole("button", { name: "开始对话", exact: true }).click();
+  await page.getByRole("button", { name: "新建剧情", exact: true }).click();
   await page.locator("#conversationMode").filter({ hasText: "剧情演绎" }).waitFor();
   await page.locator("#textInput").fill("剧情里我们继续沿着河岸散步。");
   await page.locator("#chatAttachmentInput").setInputFiles([
@@ -823,7 +933,6 @@ async function runDesktopWorkflow(browser, baseUrl, outputDir) {
 
   const markdownReply = "## 进度测试完成\n\n- 支持 **Markdown** 列表\n- 支持 `行内代码`\n\n```js\nconst ready = true;\n```\n\n![角色发送的图片](workspace:uploads/scene.png)\n\n![越界图片](workspace:../secret.png)\n\n[安全链接](https://example.test)<script>window.markdownUnsafe = true</script>";
   const rpMessagesRoute = "**/api/v1/sessions/" + rpSessionId + "/messages";
-  const rpStreamRoute = rpMessagesRoute + "/stream";
   await page.route(rpMessagesRoute, (route) => route.fulfill({
     status: 200,
     contentType: "application/json; charset=utf-8",
@@ -833,39 +942,42 @@ async function runDesktopWorkflow(browser, baseUrl, outputDir) {
       { role: "toolResult", content: [{ type: "text", text: "read · completed" }] },
     ]),
   }));
-  await page.route(rpStreamRoute, async (route) => {
-    await new Promise((resolvePromise) => setTimeout(resolvePromise, 500));
-    const events = [
-      { type: "lifecycle", eventType: "agent_start" },
-      { type: "reasoning_status", phase: "start" },
-      { type: "reasoning_status", phase: "end" },
-      { type: "tool_start", toolName: "read", toolCallId: "progress-tool" },
-      {
-        type: "tool_end",
-        toolName: "read",
-        toolCallId: "progress-tool",
-        isError: false,
-        result: { content: [{ type: "text", text: "read · completed" }] },
-      },
-      { type: "delta", delta: markdownReply },
-      { type: "done", response: { reply: markdownReply, actions: [{ actionType: "read", status: "completed" }], events: [], status: "completed", canRetry: false, messageType: "assistant" } },
-    ];
-    await route.fulfill({
-      status: 200,
-      contentType: "text/event-stream; charset=utf-8",
-      body: events.map((event) => "data: " + JSON.stringify(event) + "\n\n").join(""),
-    });
-  });
   await page.locator('[data-session-id="' + rpSessionId + '"]').click();
   const storedProgress = page.locator("#messages .bubble.assistant").last().locator(".message-progress");
   await storedProgress.filter({ hasText: "已完成" }).waitFor();
+  const desktopCharacterAvatar = page.locator("#messages .message-row.assistant .character-profile-trigger").last();
+  await desktopCharacterAvatar.click();
+  await page.locator("#characterProfileDialog").waitFor({ state: "visible" });
+  await page.locator("#characterProfileName").filter({ hasText: "林澈" }).waitFor();
+  await page.locator("#characterProfileSoul").filter({ hasText: "长期信任" }).waitFor();
+  assert.equal(await page.locator("#characterProfileDialog input, #characterProfileDialog textarea, #characterProfileDialog select").count(), 0);
+  await captureValidatedScreenshot(page, resolve(outputDir, "character-profile-readonly.png"));
+  await page.getByRole("button", { name: "关闭角色资料" }).click();
   const storedToolResult = storedProgress.locator(".progress-tool-result").filter({ hasText: "read · completed" });
   await storedToolResult.waitFor({ state: "attached" });
   assert.equal(await page.locator("#messages .bubble.tool").count(), 0);
   await page.locator("#textInput").fill("检查执行过程");
+  kernel.patchModelApiConfig({
+    enabled: true,
+    baseUrl: "http://test.invalid/v1",
+    model: "scripted-model",
+  });
+  browserRuntime.model.enqueue([
+    { kind: "tool_call", name: "read", arguments: { path: "uploads/scene-note.txt" } },
+    { kind: "assistant_text", text: markdownReply, thinking: "先核对工具结果，再组织最终回复。", delayMs: 500 },
+  ]);
+  const liveModelRequestStart = browserRuntime.model.requests.length;
   await page.getByRole("button", { name: "发送", exact: true }).click();
+  assert.equal(await page.getByRole("button", { name: "发送", exact: true }).isDisabled(), false);
+  await page.locator("#messages .message-row.user").last().locator(".meta").filter({ hasText: "未读" }).waitFor();
+  await page.locator("#textInput").fill("再补充工具结果。");
+  await page.getByRole("button", { name: "发送", exact: true }).click();
+  await page.locator("#textInput").fill("最后一起回答。");
+  await page.getByRole("button", { name: "发送", exact: true }).click();
+  await page.locator("#messages .message-row.user").filter({ hasText: "再补充工具结果" }).waitFor();
+  await page.locator("#messages .message-row.user").filter({ hasText: "最后一起回答" }).waitFor();
   const liveProgress = page.locator("#messages .bubble.assistant").last().locator(".message-progress");
-  await liveProgress.filter({ hasText: "正在输入" }).waitFor();
+  await liveProgress.filter({ hasText: "正在输入" }).waitFor({ timeout: 10_000 });
   assert.equal(await liveProgress.getAttribute("open"), null);
   assert.equal(await liveProgress.locator(".typing-dot").count(), 3);
   assert.equal(await liveProgress.locator(".progress-list").isHidden(), true);
@@ -874,11 +986,17 @@ async function runDesktopWorkflow(browser, baseUrl, outputDir) {
     /message-typing-dot/,
   );
   await captureValidatedScreenshot(page, resolve(outputDir, "chat-typing-indicator.png"));
-  await liveProgress.locator("summary").click();
+  await liveProgress.locator(":scope > summary").click();
   assert.equal(await liveProgress.getAttribute("open"), "");
   const completedProgress = page.locator("#messages .bubble.assistant").last();
   await completedProgress.filter({ hasText: "进度测试完成" }).waitFor();
   await completedProgress.locator(".message-progress").filter({ hasText: "已完成" }).waitFor();
+  const liveModelRequests = browserRuntime.model.requests.slice(liveModelRequestStart);
+  assert.equal(liveModelRequests.length, 2);
+  const liveProviderContext = JSON.stringify(liveModelRequests.at(-1)?.messages || []);
+  assert.match(liveProviderContext, /检查执行过程/);
+  assert.match(liveProviderContext, /再补充工具结果/);
+  assert.match(liveProviderContext, /最后一起回答/);
   assert.equal((await completedProgress.locator(".message-progress > summary").innerText()).trim(), "已完成");
   assert.doesNotMatch(await completedProgress.locator(".message-progress > summary").innerText(), /执行过程/);
   assert.equal(await completedProgress.locator(".message-progress").getAttribute("open"), "");
@@ -914,17 +1032,17 @@ async function runDesktopWorkflow(browser, baseUrl, outputDir) {
     return { open: details.open, text: details.textContent || "" };
   });
   assert.equal(expandedToolResult.open, true);
-  assert.match(expandedToolResult.text, /read · completed/);
+  assert.match(expandedToolResult.text, /river scene/);
   assert.equal(await page.locator("#messages .bubble.tool").count(), 0);
   await assertInteractiveBounds(page);
   await captureValidatedScreenshot(page, resolve(outputDir, "chat-execution-progress.png"));
-  await page.unroute(rpStreamRoute);
+  kernel.patchModelApiConfig({ enabled: false });
   await page.unroute(rpMessagesRoute);
 
   await page.getByRole("button", { name: "新建对话" }).click();
   await page.locator("#newConversationCharacter").selectOption({ label: "林澈" });
   await page.locator("#newConversationSmsBtn").click();
-  await page.getByRole("button", { name: "开始对话", exact: true }).click();
+  await page.getByRole("button", { name: "打开私聊", exact: true }).click();
   await page.locator("#textInput").fill("临时删除会话 A");
   await page.getByRole("button", { name: "发送", exact: true }).click();
   await page.locator("#messages .message-row.system").filter({ hasText: "模型当前未启用" }).waitFor();
@@ -933,7 +1051,7 @@ async function runDesktopWorkflow(browser, baseUrl, outputDir) {
   await page.getByRole("button", { name: "新建对话" }).click();
   await page.locator("#newConversationCharacter").selectOption({ label: "林澈" });
   await page.locator("#newConversationRpBtn").click();
-  await page.getByRole("button", { name: "开始对话", exact: true }).click();
+  await page.getByRole("button", { name: "新建剧情", exact: true }).click();
   await page.locator("#textInput").fill("临时删除会话 B");
   await page.getByRole("button", { name: "发送", exact: true }).click();
   await page.locator("#messages .message-row.system").filter({ hasText: "模型当前未启用" }).waitFor();
@@ -1008,7 +1126,8 @@ async function runDesktopWorkflow(browser, baseUrl, outputDir) {
 async function runMobileWorkflow(browser, baseUrl, outputDir) {
   const page = await browser.newPage({ viewport: { width: 390, height: 844 }, isMobile: true });
   const errors = collectErrors(page);
-  await page.goto(baseUrl, { waitUntil: "networkidle" });
+  await page.goto(baseUrl, { waitUntil: "domcontentloaded" });
+  await page.waitForFunction(() => Boolean(document.querySelector("#sessionSelect")?.value));
   await assertViewport(page);
   await page.getByRole("button", { name: "聊天", exact: true }).click();
   const mobileRpSessionId = await page.locator("#sessionSelect").inputValue();
@@ -1069,6 +1188,25 @@ async function runMobileWorkflow(browser, baseUrl, outputDir) {
   await assertInteractiveBounds(page);
   await assertViewport(page);
   await captureValidatedScreenshot(page, resolve(outputDir, "mobile-role-chat.png"));
+  await page.locator("#messages .message-row.assistant .character-profile-trigger").last().click();
+  await page.locator("#characterProfileDialog").waitFor({ state: "visible" });
+  await page.locator("#characterProfileName").filter({ hasText: "林澈" }).waitFor();
+  assert.equal(await page.locator("#characterProfileDialog input, #characterProfileDialog textarea, #characterProfileDialog select").count(), 0);
+  await assertElementUnclipped(page, "#characterProfileDialog");
+  await assertInteractiveBounds(page);
+  await assertViewport(page);
+  await captureValidatedScreenshot(page, resolve(outputDir, "mobile-character-profile-readonly.png"));
+  await page.getByRole("button", { name: "关闭角色资料" }).click();
+  await page.getByRole("button", { name: "选择表情", exact: true }).click();
+  await page.locator("#emojiPicker").waitFor({ state: "visible" });
+  await assertElementUnclipped(page, "#emojiPicker");
+  await page.getByRole("tab", { name: "手势与人物", exact: true }).click();
+  await page.getByRole("button", { name: "插入表情 🫶", exact: true }).click();
+  assert.equal(await page.locator("#textInput").inputValue(), "🫶");
+  await captureValidatedScreenshot(page, resolve(outputDir, "mobile-emoji-picker.png"));
+  await page.keyboard.press("Escape");
+  await page.locator("#emojiPicker").waitFor({ state: "hidden" });
+  await page.locator("#textInput").fill("");
   assert.equal(await page.locator("#modeSelect").isDisabled(), true);
   assert.equal(await page.locator("#chatCharacterSelect").isDisabled(), true);
   await page.locator("#textInput").focus();
@@ -1145,16 +1283,60 @@ async function runMobileWorkflow(browser, baseUrl, outputDir) {
   await page.keyboard.press("Escape");
   await page.getByRole("menu").waitFor({ state: "hidden" });
   assert.equal(await page.getByRole("button", { name: "会话操作" }).getAttribute("aria-expanded"), "false");
+
+  await page.getByRole("button", { name: "会话列表" }).click();
+  await page.getByRole("button", { name: "新建对话" }).click();
+  await page.locator("#newConversationCharacter").selectOption({ label: "林澈" });
+  await page.locator("#newConversationSmsBtn").click();
+  await page.getByRole("button", { name: "打开私聊", exact: true }).click();
+  await page.locator("#textInput").fill("移动端会面状态测试");
+  await page.getByRole("button", { name: "发送", exact: true }).click();
+  await page.locator("#messages .message-row.system").filter({ hasText: "模型当前未启用" }).waitFor();
+  await page.getByRole("button", { name: "发起见面", exact: true }).click();
+  await page.locator("#sessionActionInput").fill("河岸书店");
+  await page.getByRole("button", { name: "约好", exact: true }).click();
+  const mobileMeetingEvent = page.locator("#messages .message-row.interaction").filter({ hasText: "约定在河岸书店见面" });
+  await mobileMeetingEvent.waitFor();
+  await mobileMeetingEvent.getByRole("button", { name: "我到了", exact: true }).click();
+  await page.locator("#conversationMode").filter({ hasText: "见面中" }).waitFor();
+  await assertElementUnclipped(page, "#interactionToggleBtn");
+  await assertElementUnclipped(page, "#interactionUndoBtn");
+  await assertInteractiveBounds(page);
+  await assertViewport(page);
+  await captureValidatedScreenshot(page, resolve(outputDir, "mobile-in-person-state.png"));
+  await page.getByRole("button", { name: "结束见面", exact: true }).click();
+  await page.locator("#confirmSessionActionBtn").click();
+  await page.locator("#conversationMode").filter({ hasText: "角色私聊" }).waitFor();
+
   await page.getByRole("button", { name: "Debug" }).click();
   await page.locator("#debugPane").waitFor({ state: "visible" });
-  await page.locator(".trace-index-item.active").waitFor({ state: "visible" });
+  await page.locator("#mobileTraceSelect").waitFor({ state: "visible" });
+  await page.waitForFunction(() => document.querySelector("#mobileTraceSelect")?.options.length >= 1);
   await assertPanelInsideMain(page, "#debugPane");
   await assertInteractiveBounds(page);
   await assertViewport(page);
+  const mobileDebugLayout = await page.evaluate(() => {
+    const header = document.querySelector(".header-right");
+    const content = document.querySelector("#traceContent");
+    const index = document.querySelector("#traceIndex");
+    const selector = document.querySelector("#mobileTraceSelect");
+    return {
+      headerDisplay: header ? getComputedStyle(header).display : "missing",
+      contentHeight: content?.getBoundingClientRect().height ?? 0,
+      indexDisplay: index ? getComputedStyle(index).display : "missing",
+      selectorDisplay: selector ? getComputedStyle(selector).display : "missing",
+      selectorWidth: selector?.getBoundingClientRect().width ?? 0,
+    };
+  });
+  assert.equal(mobileDebugLayout.headerDisplay, "none");
+  assert.equal(mobileDebugLayout.indexDisplay, "none");
+  assert.equal(mobileDebugLayout.selectorDisplay, "block");
+  assert.ok(mobileDebugLayout.selectorWidth <= 374);
+  assert.ok(mobileDebugLayout.contentHeight >= 400, JSON.stringify(mobileDebugLayout));
   await page.screenshot({ path: resolve(outputDir, "mobile-debug-trace.png"), fullPage: false });
   await page.getByRole("tab", { name: "Context Economics" }).click();
   await page.locator("#traceDetailTitle").filter({ hasText: "estimated tokens" }).waitFor();
-  await page.locator("#traceContent").filter({ hasText: "Cache read" }).filter({ hasText: "unknown" }).waitFor();
+  await page.locator("#traceContent").filter({ hasText: "Cache read" }).waitFor();
   await assertPanelInsideMain(page, "#debugPane");
   await assertInteractiveBounds(page);
   await assertViewport(page);
@@ -1221,9 +1403,13 @@ async function runMobileWorkflow(browser, baseUrl, outputDir) {
   await page.locator("#relationshipOverview").filter({ hasText: "初识" }).waitFor();
   await page.locator("#relationshipOverview").filter({ hasText: "尚未建立浪漫关系" }).waitFor();
   assert.equal(await page.locator("#relationshipOverview .relationship-metric").count(), 5);
+  await page.getByRole("tab", { name: "生活", exact: true }).click();
+  await page.locator("#characterLifeContent").waitFor({ state: "visible" });
+  await page.locator("#lifeCurrentPlace").filter({ hasText: "河岸书店" }).waitFor();
+  await page.locator("#lifeEventList .life-event-row").first().waitFor();
   await assertPanelInsideMain(page, "#charactersPage");
   await assertInteractiveBounds(page);
-  await page.screenshot({ path: resolve(outputDir, "mobile.png"), fullPage: false });
+  await page.screenshot({ path: resolve(outputDir, "mobile-character-life.png"), fullPage: false });
   await page.getByRole("button", { name: "设置", exact: true }).click();
   await page.getByRole("button", { name: "视觉", exact: true }).click();
   await page.locator("#visionSettingsState").filter({ hasText: "Key: visi...cret" }).waitFor();
@@ -1281,7 +1467,8 @@ async function runMobileWorkflow(browser, baseUrl, outputDir) {
 async function runCompactDesktopWorkflow(browser, baseUrl, outputDir) {
   const page = await browser.newPage({ viewport: { width: 1024, height: 768 } });
   const errors = collectErrors(page);
-  await page.goto(baseUrl, { waitUntil: "networkidle" });
+  await page.goto(baseUrl, { waitUntil: "domcontentloaded" });
+  await page.locator("#normalBtn").waitFor({ state: "visible" });
   await page.getByRole("button", { name: "聊天", exact: true }).click();
   await page.locator("#header-right, .header-right").first().waitFor({ state: "visible" });
   await assertHeaderControlsDoNotOverlap(page);

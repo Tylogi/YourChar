@@ -87,7 +87,7 @@ test("an offline delivery stays in one frozen outbox entry and retries without d
   }
 });
 
-test("an archived source session receives a neutral reminder without transcript mutation", async () => {
+test("an archived character source is restored as the canonical private thread for its reminder", async () => {
   const runtime = createTestRuntime({ now: "2026-07-20T11:00:00.000Z", seed: "archived-reminder" });
   try {
     const character = runtime.kernel.createCharacter({ name: "归档角色" });
@@ -106,15 +106,20 @@ test("an archived source session receives a neutral reminder without transcript 
     });
     const before = await runtime.kernel.getSession("archived-source");
     runtime.kernel.archiveConversation("archived-source");
+    runtime.model.enqueue([{ kind: "assistant_text", text: "到时间了，先停一下手头的事。" }]);
     runtime.clock.advance(60_000);
 
     assert.deepEqual(await runtime.schedulerTick(), { claimed: 1, delivered: 1, failed: 0 });
-    assert.equal(runtime.model.requests.length, 1);
-    assert.equal(runtime.notifications[0].body, "提醒时间到了：归档来源提醒");
-    assert.equal(runtime.notifications[0].agentGenerated, false);
+    assert.equal(runtime.model.requests.length, 2);
+    assert.equal(runtime.notifications[0].body, "到时间了，先停一下手头的事。");
+    assert.equal(runtime.notifications[0].agentGenerated, true);
+    assert.equal(runtime.notifications[0].sourceSessionId, "archived-source");
     const after = await runtime.kernel.getSession("archived-source");
-    assert.equal(after.messages.length, before.messages.length);
-    assert.equal(runtime.kernel.store.allActions().some((action) => action.actionType === "compose_reminder_message"), false);
+    assert.ok(after.messages.length > before.messages.length);
+    const metadata = runtime.kernel.listConversationMetadata().find((entry) => entry.id === "archived-source");
+    assert.equal(metadata?.archivedAt, undefined);
+    assert.equal(metadata?.canonicalDirect, true);
+    assert.equal(runtime.kernel.store.allActions().some((action) => action.actionType === "compose_reminder_message"), true);
   } finally {
     runtime.dispose();
   }

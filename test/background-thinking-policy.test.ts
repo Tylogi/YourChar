@@ -22,6 +22,7 @@ test("MLX deterministic background calls disable thinking and use compact budget
   assert.equal(backgroundThinkingPolicy(config, "group_gate").maxTokens, 256);
   assert.equal(backgroundThinkingPolicy(config, "memory_extraction").maxTokens, 1_024);
   assert.equal(backgroundThinkingPolicy(config, "relationship_extraction").maxTokens, 1_024);
+  assert.equal(backgroundThinkingPolicy(config, "post_turn_analysis").maxTokens, 1_024);
 
   const payload = applyBackgroundThinkingPolicy({
     model: config.model,
@@ -46,6 +47,7 @@ test("unknown compatible providers keep fallback budgets and receive no vendor f
   });
   assert.equal(backgroundThinkingPolicy(config, "memory_extraction").maxTokens, 2_400);
   assert.equal(backgroundThinkingPolicy(config, "relationship_extraction").maxTokens, 2_400);
+  assert.equal(backgroundThinkingPolicy(config, "post_turn_analysis").maxTokens, 2_400);
 
   const payload = applyBackgroundThinkingPolicy({ model: config.model }, config, "memory_extraction") as Record<string, unknown>;
   assert.equal(payload.max_tokens, 2_400);

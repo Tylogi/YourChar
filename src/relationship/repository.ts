@@ -157,13 +157,25 @@ export class RelationshipRepository {
   }
 
   cancelOutstandingJobs(characterId: string, now: string): number {
-    return Number(this.database.connection.prepare(`
+    const skipped = Number(this.database.connection.prepare(`
       UPDATE relationship_extraction_jobs
       SET status = 'skipped', trigger_reason = trigger_reason || ':relationship_reset',
-          result_count = 0, last_error = NULL, owner_id = NULL, claim_token = NULL,
+          result_count = 0, relationship_result_count = 0, interaction_result_count = 0,
+          last_error = NULL, owner_id = NULL, claim_token = NULL,
           lease_expires_at = NULL, updated_at = ?
       WHERE character_id = ? AND status IN ('pending', 'running', 'failed')
+        AND analysis_kinds_json NOT LIKE '%"interaction"%'
     `).run(now, characterId).changes);
+    const interactionOnly = Number(this.database.connection.prepare(`
+      UPDATE relationship_extraction_jobs
+      SET analysis_kinds_json = '["interaction"]',
+          relationship_result_count = 0,
+          trigger_reason = trigger_reason || ':relationship_reset', updated_at = ?
+      WHERE character_id = ? AND status IN ('pending', 'running', 'failed')
+        AND analysis_kinds_json LIKE '%"relationship"%'
+        AND analysis_kinds_json LIKE '%"interaction"%'
+    `).run(now, characterId).changes);
+    return skipped + interactionOnly;
   }
 
   fenceReviewHistory(characterId: string, now: string): number {
@@ -178,9 +190,11 @@ export class RelationshipRepository {
     this.database.connection.prepare(`
       INSERT INTO relationship_extraction_jobs(
         id, idempotency_key, source_context_log_id, session_id, character_id,
-        mode, trigger_reason, status, attempts, max_attempts, input_token_estimate,
-        duration_ms, result_count, last_error, available_at, created_at, updated_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        mode, trigger_reason, analysis_kinds_json, interaction_presence, interaction_revision,
+        status, attempts, max_attempts, input_token_estimate,
+        duration_ms, result_count, relationship_result_count, interaction_result_count,
+        last_error, available_at, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT(idempotency_key) DO NOTHING
     `).run(
       job.id,
@@ -190,12 +204,17 @@ export class RelationshipRepository {
       job.characterId,
       job.mode,
       job.triggerReason,
+      JSON.stringify(job.analysisKinds),
+      job.interactionPresence ?? null,
+      job.interactionRevision ?? null,
       job.status,
       job.attempts,
       job.maxAttempts,
       job.inputTokenEstimate,
       job.durationMs ?? null,
       job.resultCount,
+      job.relationshipResultCount,
+      job.interactionResultCount,
       job.lastError ?? null,
       job.availableAt,
       job.createdAt,
@@ -271,13 +290,21 @@ export class RelationshipRepository {
   finish(
     id: string,
     status: Exclude<RelationshipJobStatus, "pending" | "running">,
-    patch: { durationMs?: number; resultCount?: number; lastError?: string },
+    patch: {
+      durationMs?: number;
+      resultCount?: number;
+      relationshipResultCount?: number;
+      interactionResultCount?: number;
+      lastError?: string;
+    },
     now: string,
     claim?: { ownerId: string; claimToken: string },
   ): boolean {
     const result = this.database.connection.prepare(`
       UPDATE relationship_extraction_jobs
-      SET status = ?, duration_ms = ?, result_count = ?, last_error = ?, updated_at = ?,
+      SET status = ?, duration_ms = ?, result_count = ?,
+          relationship_result_count = ?, interaction_result_count = ?,
+          last_error = ?, updated_at = ?,
           owner_id = NULL, claim_token = NULL, lease_expires_at = NULL
       WHERE id = ?
         AND (? IS NULL OR (status = 'running' AND owner_id = ? AND claim_token = ?))
@@ -285,6 +312,8 @@ export class RelationshipRepository {
       status,
       patch.durationMs ?? null,
       patch.resultCount ?? 0,
+      patch.relationshipResultCount ?? 0,
+      patch.interactionResultCount ?? 0,
       patch.lastError ?? null,
       now,
       id,
@@ -417,12 +446,19 @@ function mapJob(row: Row): RelationshipExtractionJob {
     characterId: String(row.character_id),
     mode: row.mode as Mode,
     triggerReason: String(row.trigger_reason),
+    analysisKinds: parseAnalysisKinds(row.analysis_kinds_json),
+    ...(row.interaction_presence === "co_present" ? { interactionPresence: "co_present" as const } : {}),
+    ...(typeof row.interaction_revision === "number"
+      ? { interactionRevision: Number(row.interaction_revision) }
+      : {}),
     status: row.status as RelationshipJobStatus,
     attempts: Number(row.attempts),
     maxAttempts: Number(row.max_attempts),
     inputTokenEstimate: Number(row.input_token_estimate),
     ...(typeof row.duration_ms === "number" ? { durationMs: Number(row.duration_ms) } : {}),
     resultCount: Number(row.result_count),
+    relationshipResultCount: Number(row.relationship_result_count ?? row.result_count ?? 0),
+    interactionResultCount: Number(row.interaction_result_count ?? 0),
     ...(typeof row.last_error === "string" && row.last_error ? { lastError: row.last_error } : {}),
     ...(typeof row.owner_id === "string" && row.owner_id ? { ownerId: row.owner_id } : {}),
     ...(typeof row.claim_token === "string" && row.claim_token ? { claimToken: row.claim_token } : {}),
@@ -431,6 +467,18 @@ function mapJob(row: Row): RelationshipExtractionJob {
     createdAt: String(row.created_at),
     updatedAt: String(row.updated_at),
   };
+}
+
+function parseAnalysisKinds(value: unknown): Array<"relationship" | "interaction"> {
+  try {
+    const parsed = JSON.parse(String(value));
+    if (!Array.isArray(parsed)) return ["relationship"];
+    const kinds = parsed.filter((entry): entry is "relationship" | "interaction" =>
+      entry === "relationship" || entry === "interaction");
+    return [...new Set(kinds)];
+  } catch {
+    return ["relationship"];
+  }
 }
 
 function parseLabels(value: unknown): AffectLabel[] {

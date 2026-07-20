@@ -7,6 +7,9 @@ export type ContextPlannerBudgets = {
   realityMemoryTokens: number;
   roleplayMemoryTokens: number;
   sceneTokens: number;
+  worldCoreTokens: number;
+  worldRuntimeTokens: number;
+  interactionTokens: number;
   realityItems: number;
   roleplayItems: number;
   bootstrapItems: number;
@@ -57,7 +60,8 @@ export type MemoryRetrievalPlan = {
 
 export type ContextSectionManifest = {
   id: "stable_rules" | "profile" | "soul" | "skills" | "capabilities" | "tools" |
-    "latest_time" | "relationship" | "scene" | "reality_memory" | "rp_memory";
+    "world_core" | "latest_time" | "interaction" | "relationship" | "world_runtime" | "scene" |
+    "reality_memory" | "rp_memory";
   placement: "stable" | "dynamic" | "provider";
   characters: number;
   estimatedTokens: number;

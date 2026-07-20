@@ -18,8 +18,17 @@ import {
   MessageRevisionError,
   GroupChatNotFoundError,
   GroupChatValidationError,
+  WorldNotFoundError,
+  WorldValidationError,
+  InteractionValidationError,
+  PrivateInboxMutationError,
 } from "../domain/index.js";
-import type { MessageRequest, ModelApiConfigPatch, ModelApiProfilePatch } from "../domain/index.js";
+import type {
+  MessageRequest,
+  ModelApiConfigPatch,
+  ModelApiProfilePatch,
+  PrivateInboxEvent,
+} from "../domain/index.js";
 import type {
   CreateScheduleItemInput,
   ScheduleItemKind,
@@ -70,6 +79,16 @@ import {
   WorkspaceFileError,
   type WorkspaceFileAsset,
 } from "../workspace/file-service.js";
+import type {
+  CharacterAutonomyPolicyPatch,
+  CharacterRuntimePatch,
+  CharacterWorldAssignmentInput,
+  CreatePlaceInput,
+  CreateWorldInput,
+  UpdatePlaceInput,
+  UpdateWorldInput,
+  WorldCapabilityId,
+} from "../world/index.js";
 
 export type HttpServerOptions = {
   kernel?: CompanionKernel;
@@ -118,6 +137,8 @@ export function createHttpServer(options: HttpServerOptions = {}) {
         sendJson(response, 409, { code: error.code, error: error.message });
       } else if (error instanceof MessageRevisionError) {
         sendJson(response, 409, { code: error.code, error: error.message });
+      } else if (error instanceof PrivateInboxMutationError) {
+        sendJson(response, 409, { code: error.code, error: error.message });
       } else if (error instanceof SessionCharacterMismatchError) {
         sendJson(response, 409, { code: "SESSION_CHARACTER_MISMATCH", error: error.message });
       } else if (error instanceof CharacterBindingRequiredError) {
@@ -126,6 +147,13 @@ export function createHttpServer(options: HttpServerOptions = {}) {
         sendJson(response, 404, { code: "GROUP_CHAT_NOT_FOUND", error: error.message });
       } else if (error instanceof GroupChatValidationError) {
         sendJson(response, 400, { code: "GROUP_CHAT_INVALID", error: error.message });
+      } else if (error instanceof WorldNotFoundError) {
+        sendJson(response, 404, { code: "WORLD_NOT_FOUND", error: error.message });
+      } else if (error instanceof WorldValidationError) {
+        sendJson(response, 400, { code: error.code, error: error.message });
+      } else if (error instanceof InteractionValidationError) {
+        const conflict = error.code === "INTERACTION_CONFLICT" || error.code === "INTERACTION_UNDO_UNAVAILABLE";
+        sendJson(response, conflict ? 409 : 422, { code: error.code, error: error.message });
       } else if (error instanceof TimeResolutionError) {
         sendJson(response, 422, {
           code: error.code,
@@ -285,6 +313,7 @@ async function route(input: {
       status: "ok",
       ui: "/ui",
       messageEndpoint: "POST /api/v1/sessions/{id}/messages",
+      directConversation: "POST /api/v1/direct-conversations",
       debugContextLogs: "GET /api/debug/context-logs",
       debugModelTraces: "GET /api/debug/model-traces",
       debugContextEconomics: "GET /api/debug/context-economics",
@@ -295,6 +324,7 @@ async function route(input: {
       tavilySettings: "GET/PATCH /api/settings/tavily",
       visionSettings: "GET/PATCH /api/settings/vision",
       traceArchiveSettings: "GET/PATCH /api/settings/trace-archive",
+      interactionState: "GET/POST /api/v1/sessions/{id}/interaction",
     });
     return;
   }
@@ -308,18 +338,30 @@ async function route(input: {
         id: record.id,
         mode: metadata.get(record.id)?.mode,
         characterId: metadata.get(record.id)?.characterId,
+        canonicalDirect: metadata.get(record.id)?.canonicalDirect ?? false,
         title: metadata.get(record.id)?.title,
         archivedAt: metadata.get(record.id)?.archivedAt,
         lastTurnStatus: metadata.get(record.id)?.lastTurnStatus,
         lastTurnCanRetry: metadata.get(record.id)?.lastTurnCanRetry ?? false,
         sleepState: metadata.get(record.id)?.sleepState ?? "awake",
         sleepCheckpointAt: metadata.get(record.id)?.sleepCheckpointAt,
+        interactionPresence: kernel.interactionService.get(record.id)?.presence,
+        interactionLocation: kernel.interactionService.get(record.id)?.location,
         messageCount: visibleConversationMessages(record.messages).length,
         preview: latestConversationPreview(record.messages),
         createdAt: record.createdAt,
         updatedAt: record.updatedAt,
       })),
     });
+    return;
+  }
+
+  if (method === "POST" && pathname === "/api/v1/direct-conversations") {
+    const body = asRecord(await readJson(input.request));
+    const session = await kernel.openCanonicalPrivateConversation(
+      requiredString(body.characterId, "characterId"),
+    );
+    sendJson(input.response, 200, { session });
     return;
   }
 
@@ -445,6 +487,29 @@ async function route(input: {
     return;
   }
 
+  const interactionMatch = pathname.match(/^\/api\/v1\/sessions\/([^/]+)\/interaction$/);
+  if (interactionMatch) {
+    const sessionId = decodeURIComponent(interactionMatch[1]);
+    assertCharacterBoundSession(kernel, sessionId);
+    if (method === "GET") {
+      sendJson(input.response, 200, kernel.getConversationInteraction(sessionId));
+      return;
+    }
+    if (method === "POST") {
+      const body = asRecord(await readJson(input.request));
+      const action = requiredInteractionAction(body.action);
+      sendJson(input.response, 200, await kernel.transitionConversationInteraction(sessionId, {
+        action,
+        ...(optionalString(body.placeId) ? { placeId: optionalString(body.placeId) } : {}),
+        ...(optionalString(body.location) ? { location: optionalString(body.location) } : {}),
+        ...(optionalString(body.note) ? { note: optionalString(body.note) } : {}),
+        ...(optionalString(body.summary) ? { summary: optionalString(body.summary) } : {}),
+        ...(body.userConfirmed === undefined ? {} : { userConfirmed: requiredBoolean(body.userConfirmed, "userConfirmed") }),
+      }));
+      return;
+    }
+  }
+
   if (pathname === "/api/v1/group-chats") {
     if (method === "GET") {
       sendJson(input.response, 200, {
@@ -544,12 +609,108 @@ async function route(input: {
     return;
   }
 
+  const privateInboxMatch = pathname.match(/^\/api\/v1\/sessions\/([^/]+)\/inbox$/);
+  if (privateInboxMatch && method === "POST") {
+    const sessionId = decodeURIComponent(privateInboxMatch[1]);
+    const rawBody = asRecord(await readJson(input.request));
+    const body = requireCharacterBoundMessage(kernel, sessionId, rawBody);
+    const message = await kernel.enqueuePrivateMessage(
+      sessionId,
+      body,
+      requiredString(rawBody.clientMessageId, "clientMessageId"),
+    );
+    sendJson(input.response, 202, {
+      message,
+      inbox: kernel.privateInboxSnapshot(message.sessionId),
+    });
+    return;
+  }
+
+  if (privateInboxMatch && method === "GET") {
+    sendJson(
+      input.response,
+      200,
+      kernel.privateInboxSnapshot(decodeURIComponent(privateInboxMatch[1])),
+    );
+    return;
+  }
+
+  const privateInboxMessageMatch = pathname.match(
+    /^\/api\/v1\/sessions\/([^/]+)\/inbox\/([^/]+)$/,
+  );
+  if (privateInboxMessageMatch && method === "PATCH") {
+    const sessionId = decodeURIComponent(privateInboxMessageMatch[1]);
+    const body = asRecord(await readJson(input.request));
+    const message = kernel.updateQueuedPrivateMessage(
+      sessionId,
+      decodeURIComponent(privateInboxMessageMatch[2]),
+      {
+        text: requiredString(body.text, "text"),
+        ...(body.attachments === undefined
+          ? {}
+          : { attachments: requireMessageAttachments(body.attachments) }),
+      },
+    );
+    sendJson(input.response, 200, { message });
+    return;
+  }
+
+  if (privateInboxMessageMatch && method === "DELETE") {
+    const message = kernel.retractQueuedPrivateMessage(
+      decodeURIComponent(privateInboxMessageMatch[1]),
+      decodeURIComponent(privateInboxMessageMatch[2]),
+    );
+    sendJson(input.response, 200, { message });
+    return;
+  }
+
+  const privateInboxEventsMatch = pathname.match(
+    /^\/api\/v1\/sessions\/([^/]+)\/inbox\/events$/,
+  );
+  if (privateInboxEventsMatch && method === "GET") {
+    const sessionId = decodeURIComponent(privateInboxEventsMatch[1]);
+    kernel.privateInboxSnapshot(sessionId);
+    input.response.writeHead(200, {
+      "content-type": "text/event-stream; charset=utf-8",
+      "cache-control": "no-cache, no-transform",
+      connection: "keep-alive",
+      "x-accel-buffering": "no",
+    });
+    input.response.write(": connected\n\n");
+    const unsubscribe = kernel.subscribePrivateInbox(sessionId, (event) => {
+      const payload = privateInboxEventPayload(event);
+      if (payload) sendStreamEvent(input.response, payload);
+    });
+    sendStreamEvent(input.response, {
+      type: "snapshot",
+      inbox: kernel.privateInboxSnapshot(sessionId),
+    });
+    const heartbeat = setInterval(() => {
+      if (!input.response.destroyed && !input.response.writableEnded) {
+        input.response.write(": heartbeat\n\n");
+      }
+    }, 15_000);
+    heartbeat.unref?.();
+    let closed = false;
+    const close = () => {
+      if (closed) return;
+      closed = true;
+      clearInterval(heartbeat);
+      unsubscribe();
+      if (!input.response.writableEnded) input.response.end();
+    };
+    input.request.once("aborted", close);
+    input.response.once("close", close);
+    return;
+  }
+
   const messageMatch = pathname.match(/^\/api(?:\/v1)?\/sessions\/([^/]+)\/messages$/);
   if (messageMatch && method === "POST") {
     const sessionId = decodeURIComponent(messageMatch[1]);
     const body = requireCharacterBoundMessage(kernel, sessionId, await readJson(input.request));
-    const result = await kernel.sendMessage(sessionId, body);
-    sendJson(input.response, 200, result);
+    const targetSessionId = await kernel.resolveConversationTarget(sessionId, body);
+    const result = await kernel.sendMessage(targetSessionId, body);
+    sendJson(input.response, 200, { ...result, sessionId: targetSessionId });
     return;
   }
 
@@ -580,6 +741,7 @@ async function route(input: {
   if (streamMatch && method === "POST") {
     const sessionId = decodeURIComponent(streamMatch[1]);
     const body = requireCharacterBoundMessage(kernel, sessionId, await readJson(input.request));
+    const targetSessionId = await kernel.resolveConversationTarget(sessionId, body);
     const abortController = new AbortController();
     input.response.on("close", () => {
       if (!input.response.writableEnded) abortController.abort();
@@ -589,11 +751,12 @@ async function route(input: {
       "cache-control": "no-cache, no-transform",
       connection: "keep-alive",
       "x-accel-buffering": "no",
+      "x-rp-session-id": targetSessionId,
     });
     input.response.write(": connected\n\n");
     try {
       const result = await kernel.streamMessage(
-        sessionId,
+        targetSessionId,
         body,
         (event) => {
           const payload = streamEventPayload(event);
@@ -601,7 +764,10 @@ async function route(input: {
         },
         abortController.signal,
       );
-      sendStreamEvent(input.response, { type: "done", response: result });
+      sendStreamEvent(input.response, {
+        type: "done",
+        response: { ...result, sessionId: targetSessionId },
+      });
     } catch (error) {
       sendStreamEvent(input.response, {
         type: "error",
@@ -895,6 +1061,11 @@ async function route(input: {
     return;
   }
 
+  if (pathname === "/api/v1/post-turn-coordinator/status" && method === "GET") {
+    sendJson(input.response, 200, { coordinator: kernel.getPostTurnCoordinatorStatus() });
+    return;
+  }
+
   if (pathname === "/api/v1/memory-coordinator/memories" && method === "GET") {
     const stats = new Map(kernel.memoryRetrievalStats().map((entry) => [entry.memoryId, entry]));
     sendJson(input.response, 200, {
@@ -946,6 +1117,14 @@ async function route(input: {
   if (relationshipJobRetryMatch && method === "POST") {
     sendJson(input.response, 200, {
       job: kernel.retryRelationshipExtractionJob(decodeURIComponent(relationshipJobRetryMatch[1])),
+    });
+    return;
+  }
+
+  const postTurnJobRetryMatch = pathname.match(/^\/api\/v1\/post-turn-coordinator\/jobs\/([^/]+)\/retry$/);
+  if (postTurnJobRetryMatch && method === "POST") {
+    sendJson(input.response, 200, {
+      job: kernel.retryPostTurnAnalysisJob(decodeURIComponent(postTurnJobRetryMatch[1])),
     });
     return;
   }
@@ -1030,6 +1209,121 @@ async function route(input: {
     return;
   }
 
+  if (pathname === "/api/v1/worlds") {
+    if (method === "GET") {
+      sendJson(input.response, 200, {
+        worlds: kernel.listWorlds(url.searchParams.get("includeArchived") === "1"),
+      });
+      return;
+    }
+    if (method === "POST") {
+      const body = asRecord(await readJson(input.request));
+      const world = kernel.createWorld({
+        name: requiredString(body.name, "name"),
+        timezone: optionalString(body.timezone),
+        description: optionalDocumentString(body.description, "description"),
+        rulesMarkdown: optionalDocumentString(body.rulesMarkdown, "rulesMarkdown"),
+      } satisfies CreateWorldInput);
+      sendJson(input.response, 201, { world });
+      return;
+    }
+  }
+
+  const worldPlacesMatch = pathname.match(/^\/api\/v1\/worlds\/([^/]+)\/places$/);
+  if (worldPlacesMatch && method === "POST") {
+    const body = asRecord(await readJson(input.request));
+    const place = kernel.createWorldPlace({
+      worldId: decodeURIComponent(worldPlacesMatch[1]),
+      name: requiredString(body.name, "name"),
+      description: optionalDocumentString(body.description, "description"),
+      capabilityIds: body.capabilityIds === undefined
+        ? undefined
+        : optionalStringArray(body.capabilityIds) as WorldCapabilityId[],
+    } satisfies CreatePlaceInput);
+    sendJson(input.response, 201, { place });
+    return;
+  }
+
+  const worldMatch = pathname.match(/^\/api\/v1\/worlds\/([^/]+)$/);
+  if (worldMatch) {
+    const id = decodeURIComponent(worldMatch[1]);
+    if (method === "GET") {
+      sendJson(input.response, 200, kernel.getWorld(id));
+      return;
+    }
+    if (method === "PATCH") {
+      const body = asRecord(await readJson(input.request));
+      const patch: UpdateWorldInput = {
+        ...(body.name === undefined ? {} : { name: requiredString(body.name, "name") }),
+        ...(body.timezone === undefined ? {} : { timezone: requiredString(body.timezone, "timezone") }),
+        ...(body.description === undefined ? {} : { description: optionalDocumentString(body.description, "description")! }),
+        ...(body.rulesMarkdown === undefined ? {} : { rulesMarkdown: optionalDocumentString(body.rulesMarkdown, "rulesMarkdown")! }),
+        ...(body.status === undefined ? {} : { status: requiredString(body.status, "status") as UpdateWorldInput["status"] }),
+      };
+      sendJson(input.response, 200, { world: kernel.updateWorld(id, patch) });
+      return;
+    }
+    if (method === "DELETE") {
+      const body = asRecord(await readJson(input.request));
+      const world = kernel.getWorld(id).world;
+      const confirmation = requiredString(body.confirmation, "confirmation");
+      if (confirmation !== world.id && confirmation !== world.name) {
+        throw new WorldValidationError("world deletion requires the exact world name or id");
+      }
+      sendJson(input.response, 200, { deleted: kernel.deleteWorld(id) });
+      return;
+    }
+  }
+
+  const worldPlaceMatch = pathname.match(/^\/api\/v1\/world-places\/([^/]+)$/);
+  if (worldPlaceMatch) {
+    const id = decodeURIComponent(worldPlaceMatch[1]);
+    if (method === "PATCH") {
+      const body = asRecord(await readJson(input.request));
+      const patch: UpdatePlaceInput = {
+        ...(body.name === undefined ? {} : { name: requiredString(body.name, "name") }),
+        ...(body.description === undefined ? {} : { description: optionalDocumentString(body.description, "description")! }),
+        ...(body.capabilityIds === undefined
+          ? {}
+          : { capabilityIds: optionalStringArray(body.capabilityIds) as WorldCapabilityId[] }),
+      };
+      sendJson(input.response, 200, { place: kernel.updateWorldPlace(id, patch) });
+      return;
+    }
+    if (method === "DELETE") {
+      sendJson(input.response, 200, { deleted: kernel.deleteWorldPlace(id) });
+      return;
+    }
+  }
+
+  if (pathname === "/api/v1/world-autonomy/tick" && method === "POST") {
+    const body = asRecord(await readJson(input.request));
+    sendJson(input.response, 200, {
+      result: await kernel.tickWorldAutonomy(optionalString(body.characterId)),
+    });
+    return;
+  }
+
+  if (pathname === "/api/v1/proactive-messages" && method === "GET") {
+    sendJson(input.response, 200, {
+      messages: kernel.listProactiveMessages({
+        characterId: optionalString(url.searchParams.get("characterId")),
+        sessionId: optionalString(url.searchParams.get("sessionId")),
+        unreadOnly: url.searchParams.get("unreadOnly") === "1",
+        limit: optionalPositiveInteger(url.searchParams.get("limit")) ?? 100,
+      }),
+    });
+    return;
+  }
+
+  if (pathname === "/api/v1/proactive-messages/read" && method === "POST") {
+    const body = asRecord(await readJson(input.request));
+    sendJson(input.response, 200, {
+      read: kernel.markProactiveMessagesRead(requiredString(body.sessionId, "sessionId")),
+    });
+    return;
+  }
+
   if (pathname === "/api/v1/avatars/user") {
     if (method === "GET") {
       const avatar = kernel.getUserAvatar();
@@ -1093,6 +1387,76 @@ async function route(input: {
         boundaries: optionalStringArray(body.boundaries),
       });
       sendJson(input.response, 201, { character: withCharacterAvatar(kernel, character) });
+      return;
+    }
+  }
+
+  const characterLifePlanMatch = pathname.match(/^\/api\/v1\/characters\/([^/]+)\/life\/plan$/);
+  if (characterLifePlanMatch && method === "POST") {
+    const body = asRecord(await readJson(input.request));
+    sendJson(input.response, 200, {
+      result: await kernel.planCharacterLife(
+        decodeURIComponent(characterLifePlanMatch[1]),
+        body.force === undefined ? false : requiredBoolean(body.force, "force"),
+      ),
+    });
+    return;
+  }
+
+  const characterLifeMomentMatch = pathname.match(/^\/api\/v1\/characters\/([^/]+)\/life\/moment$/);
+  if (characterLifeMomentMatch && method === "POST") {
+    sendJson(input.response, 200, {
+      result: await kernel.simulateCharacterMoment(decodeURIComponent(characterLifeMomentMatch[1])),
+    });
+    return;
+  }
+
+  const characterLifeMatch = pathname.match(/^\/api\/v1\/characters\/([^/]+)\/life$/);
+  if (characterLifeMatch) {
+    const characterId = decodeURIComponent(characterLifeMatch[1]);
+    if (method === "GET") {
+      sendJson(input.response, 200, { life: kernel.getCharacterLife(characterId) });
+      return;
+    }
+    if (method === "PATCH") {
+      const body = asRecord(await readJson(input.request));
+      if (body.worldId !== undefined || body.homePlaceId !== undefined || body.currentPlaceId !== undefined) {
+        kernel.assignCharacterWorld(characterId, {
+          worldId: optionalNullableString(body.worldId, "worldId"),
+          homePlaceId: optionalNullableString(body.homePlaceId, "homePlaceId"),
+          currentPlaceId: optionalNullableString(body.currentPlaceId, "currentPlaceId"),
+        } satisfies CharacterWorldAssignmentInput);
+      }
+      if (body.policy !== undefined) {
+        const policy = asRecord(body.policy);
+        const patch: CharacterAutonomyPolicyPatch = {};
+        if (policy.enabled !== undefined) patch.enabled = requiredBoolean(policy.enabled, "policy.enabled");
+        if (policy.proactiveEnabled !== undefined) {
+          patch.proactiveEnabled = requiredBoolean(policy.proactiveEnabled, "policy.proactiveEnabled");
+        }
+        if (policy.dailyMessageLimit !== undefined) {
+          patch.dailyMessageLimit = requiredNumber(policy.dailyMessageLimit, "policy.dailyMessageLimit");
+        }
+        if (policy.quietStart !== undefined) patch.quietStart = requiredString(policy.quietStart, "policy.quietStart");
+        if (policy.quietEnd !== undefined) patch.quietEnd = requiredString(policy.quietEnd, "policy.quietEnd");
+        kernel.updateCharacterAutonomyPolicy(characterId, patch);
+      }
+      if (body.runtime !== undefined) {
+        const runtime = asRecord(body.runtime);
+        const patch: CharacterRuntimePatch = {
+          ...(runtime.placeId === undefined ? {} : { placeId: requiredString(runtime.placeId, "runtime.placeId") }),
+          ...(runtime.activity === undefined ? {} : { activity: requiredString(runtime.activity, "runtime.activity") }),
+          ...(runtime.availability === undefined
+            ? {}
+            : { availability: requiredString(runtime.availability, "runtime.availability") as CharacterRuntimePatch["availability"] }),
+          ...(runtime.energy === undefined ? {} : { energy: requiredNumber(runtime.energy, "runtime.energy") }),
+          ...(runtime.expectedUntil === undefined
+            ? {}
+            : { expectedUntil: optionalNullableString(runtime.expectedUntil, "expectedUntil") }),
+        };
+        kernel.updateCharacterRuntime(characterId, patch);
+      }
+      sendJson(input.response, 200, { life: kernel.getCharacterLife(characterId) });
       return;
     }
   }
@@ -1553,6 +1917,11 @@ async function routeTestControl(input: {
     sendJson(input.response, 200, await runtime.schedulerTick());
     return true;
   }
+  if (suffix === "/world/tick" && input.method === "POST") {
+    const body = asRecord(await readJson(input.request));
+    sendJson(input.response, 200, await runtime.worldTick(optionalString(body.characterId)));
+    return true;
+  }
   if (suffix === "/notifications" && input.method === "GET") {
     sendJson(input.response, 200, { notifications: runtime.notifications });
     return true;
@@ -1815,11 +2184,19 @@ function requiredMode(value: unknown): "sms" | "rp" {
   throw new SyntaxError("mode must be sms or rp");
 }
 
+function requiredInteractionAction(value: unknown): "propose" | "begin" | "end" | "cancel" | "undo" {
+  if (value === "propose" || value === "begin" || value === "end" || value === "cancel" || value === "undo") {
+    return value;
+  }
+  throw new SyntaxError("interaction action must be propose, begin, end, cancel, or undo");
+}
+
 function contextPlannerBudgets(search: URLSearchParams) {
   const output: Record<string, number> = {};
   for (const key of [
     "dynamicTokens", "memoryTokens", "realityMemoryTokens", "roleplayMemoryTokens",
-    "sceneTokens", "realityItems", "roleplayItems", "bootstrapItems",
+    "sceneTokens", "worldCoreTokens", "worldRuntimeTokens", "interactionTokens",
+    "realityItems", "roleplayItems", "bootstrapItems",
   ]) {
     const value = optionalPositiveInteger(search.get(key));
     if (value !== undefined) output[key] = value;
@@ -1987,7 +2364,8 @@ function latestConversationPreview(messages: readonly AgentMessage[]): string {
     if (message.role === "custom" && message.display === false) continue;
     const content = typeof message.content === "string"
       ? message.content
-      : message.content.filter((entry) => entry.type === "text").map((entry) => entry.text).join(" ");
+      : message.content.flatMap((entry) =>
+          entry?.type === "text" && typeof entry.text === "string" ? [entry.text] : []).join(" ");
     const preview = content.replace(/\s+/gu, " ").trim();
     if (preview) return preview.slice(0, 80);
   }
@@ -2101,4 +2479,15 @@ function streamEventPayload(event: AgentSessionEvent): Record<string, unknown> |
     return { ...event };
   }
   return { type: "lifecycle", eventType: event.type };
+}
+
+function privateInboxEventPayload(event: PrivateInboxEvent): Record<string, unknown> | undefined {
+  if (event.type === "burst_done") {
+    return { ...event, response: { ...event.response, events: [] } };
+  }
+  if (event.type !== "agent_event") return event;
+  const payload = streamEventPayload(event.event);
+  return payload
+    ? { type: "agent_event", burstId: event.burstId, event: payload }
+    : undefined;
 }

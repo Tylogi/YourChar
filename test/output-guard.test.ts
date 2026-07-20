@@ -493,6 +493,48 @@ test("output guard never regenerates after a tool side effect completes", async 
   }
 });
 
+test("a serialized provider tool call is hidden and safely replaced after the real tool succeeds", async () => {
+  const runtime = createTestRuntime({ seed: "tool-protocol-leak" });
+  try {
+    const character = runtime.kernel.createCharacter({ name: "苏言" });
+    runtime.model.enqueue([
+      {
+        kind: "tool_call",
+        name: "propose_meeting",
+        arguments: { location: "酒店" },
+      },
+      {
+        kind: "stream_chunks",
+        chunks: ["call:propose_", "meeting{location:<|\"|>酒店<|\"|>}"],
+      },
+      { kind: "assistant_text", text: "好，那我们就在酒店见。" },
+    ]);
+
+    const streamedText: string[] = [];
+    const response = await runtime.kernel.streamMessage("tool-protocol-leak", {
+      mode: "sms",
+      characterId: character.id,
+      text: "我们去酒店见吧。",
+    }, (event) => {
+      if (event.type === "message_update" && event.message.role === "assistant") {
+        const content = typeof event.message.content === "string" ? [] : event.message.content;
+        streamedText.push(content.filter((block) => block.type === "text").map((block) => block.text).join(""));
+      }
+    });
+
+    assert.equal(response.status, "completed");
+    assert.equal(response.reply, "好，那我们就在酒店见。");
+    assert.equal(runtime.model.requests.length, 3);
+    assert.equal(streamedText.some((text) => text.includes("call:propose_meeting")), false);
+    assert.equal(response.actions.filter((action) => action.actionType === "propose_meeting").length, 1);
+    assert.equal(response.actions.some((action) => action.actionType === "recover_tool_protocol_output"), true);
+    const transcript = JSON.stringify((await runtime.kernel.getSession("tool-protocol-leak")).messages);
+    assert.equal(transcript.includes("call:propose_meeting"), false);
+  } finally {
+    runtime.dispose();
+  }
+});
+
 test("roleplay compaction creates a deterministic untrusted-data checkpoint", async () => {
   const runtime = createTestRuntime({ seed: "roleplay-compaction" });
   try {

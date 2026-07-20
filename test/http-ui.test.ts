@@ -37,6 +37,9 @@ test("server serves chat UI and debug model traces", async () => {
     assert.match(html, /id="systemPromptCustom"/);
     assert.match(html, /id="workspaceFilesPanel"/);
     assert.match(html, /id="chatAttachmentInput"/);
+    assert.match(html, /id="emojiPickerBtn"/);
+    assert.match(html, /id="emojiPicker"/);
+    assert.match(html, /function insertSelectedEmoji/);
     assert.match(html, /addEventListener\("paste", pasteChatAttachments\)/);
     assert.match(html, /function clipboardFileExtension/);
     assert.match(html, /id="okfImportInput"/);
@@ -45,6 +48,12 @@ test("server serves chat UI and debug model traces", async () => {
     assert.match(html, /api\/settings\/trace-archive/);
     assert.match(html, /function renderOkfImportPreview/);
     assert.match(html, /id="chatImageDialog"/);
+    assert.match(html, /id="characterProfileDialog"/);
+    assert.match(html, /data-character-profile-id/);
+    assert.match(html, /function openCharacterProfile/);
+    const characterProfileDialog = html.match(/<dialog id="characterProfileDialog"[\s\S]*?<\/dialog>/)?.[0] ?? "";
+    assert.doesNotMatch(characterProfileDialog, /<(?:input|textarea|select|form)\b/);
+    assert.doesNotMatch(characterProfileDialog, /保存|编辑/);
     assert.match(html, /data-message-image/);
     assert.match(html, /workspaceImagePath/);
     assert.match(html, /compositionEndedAt/);
@@ -112,6 +121,7 @@ test("server serves chat UI and debug model traces", async () => {
     assert.match(html, /模型推理/);
     assert.match(html, /\/assets\/marked\.umd\.js/);
     assert.match(html, /\/assets\/purify\.min\.js/);
+    assert.match(html, /\/assets\/noto-emoji\/400\.css/);
     assert.match(html, /renderMarkdown/);
     assert.match(html, /markdown-body/);
     assert.match(html, /<option value="sms">角色私聊<\/option>/);
@@ -129,6 +139,14 @@ test("server serves chat UI and debug model traces", async () => {
       assert.match(response.headers.get("content-type") ?? "", /text\/javascript/);
       assert.ok((await response.arrayBuffer()).byteLength > 10_000);
     }
+    const emojiCss = await fetch(`${baseUrl}/assets/noto-emoji/400.css`);
+    assert.equal(emojiCss.status, 200);
+    assert.match(emojiCss.headers.get("content-type") ?? "", /text\/css/);
+    assert.match(await emojiCss.text(), /font-family: 'Noto Emoji'/);
+    const emojiFont = await fetch(`${baseUrl}/assets/noto-emoji/files/noto-emoji-9-400-normal.woff2`);
+    assert.equal(emojiFont.status, 200);
+    assert.equal(emojiFont.headers.get("content-type"), "font/woff2");
+    assert.ok((await emojiFont.arrayBuffer()).byteLength > 50_000);
 
     const pageWithSlash = await fetch(`${baseUrl}/ui/`);
     assert.equal(pageWithSlash.status, 200);
@@ -238,6 +256,9 @@ test("server serves chat UI and debug model traces", async () => {
       "snooze_reminder",
       "get_user_profile",
       "update_user_profile",
+      "propose_meeting",
+      "begin_meeting",
+      "end_meeting",
       "search_memory",
     ]);
 

@@ -725,6 +725,327 @@ const migrations: Migration[] = [
         ON relationship_events(character_id, created_at DESC, id DESC);
     `,
   },
+  {
+    version: 19,
+    sql: `
+      CREATE TABLE role_worlds (
+        id TEXT PRIMARY KEY,
+        name TEXT NOT NULL,
+        timezone TEXT NOT NULL,
+        description TEXT NOT NULL DEFAULT '',
+        rules_markdown TEXT NOT NULL DEFAULT '',
+        status TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active', 'archived')),
+        revision INTEGER NOT NULL DEFAULT 1 CHECK (revision >= 1),
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      );
+
+      CREATE TABLE role_places (
+        id TEXT PRIMARY KEY,
+        world_id TEXT NOT NULL REFERENCES role_worlds(id) ON DELETE CASCADE,
+        name TEXT NOT NULL,
+        description TEXT NOT NULL DEFAULT '',
+        capability_ids_json TEXT NOT NULL DEFAULT '[]',
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      );
+      CREATE INDEX role_places_world_idx ON role_places(world_id, name, id);
+
+      CREATE TABLE character_world_memberships (
+        character_id TEXT PRIMARY KEY REFERENCES characters(id) ON DELETE CASCADE,
+        world_id TEXT NOT NULL REFERENCES role_worlds(id) ON DELETE CASCADE,
+        home_place_id TEXT REFERENCES role_places(id) ON DELETE SET NULL,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      );
+      CREATE INDEX character_world_memberships_world_idx
+        ON character_world_memberships(world_id, character_id);
+
+      CREATE TABLE character_autonomy_policies (
+        character_id TEXT PRIMARY KEY REFERENCES characters(id) ON DELETE CASCADE,
+        enabled INTEGER NOT NULL DEFAULT 0,
+        proactive_enabled INTEGER NOT NULL DEFAULT 0,
+        daily_message_limit INTEGER NOT NULL DEFAULT 1 CHECK (daily_message_limit BETWEEN 0 AND 5),
+        quiet_start TEXT NOT NULL DEFAULT '23:00',
+        quiet_end TEXT NOT NULL DEFAULT '08:00',
+        last_planned_date TEXT,
+        last_proactive_at TEXT,
+        updated_at TEXT NOT NULL
+      );
+
+      CREATE TABLE character_runtime_states (
+        character_id TEXT PRIMARY KEY REFERENCES characters(id) ON DELETE CASCADE,
+        world_id TEXT NOT NULL REFERENCES role_worlds(id) ON DELETE CASCADE,
+        place_id TEXT REFERENCES role_places(id) ON DELETE SET NULL,
+        activity TEXT NOT NULL DEFAULT '自由活动',
+        availability TEXT NOT NULL DEFAULT 'free'
+          CHECK (availability IN ('free', 'busy', 'resting', 'traveling')),
+        energy INTEGER NOT NULL DEFAULT 70 CHECK (energy BETWEEN 0 AND 100),
+        state_since TEXT NOT NULL,
+        expected_until TEXT,
+        world_revision INTEGER NOT NULL DEFAULT 1,
+        updated_at TEXT NOT NULL
+      );
+      CREATE INDEX character_runtime_states_world_place_idx
+        ON character_runtime_states(world_id, place_id, updated_at DESC);
+
+      CREATE TABLE character_activity_plans (
+        id TEXT PRIMARY KEY,
+        schedule_item_id TEXT NOT NULL UNIQUE REFERENCES schedule_items(id) ON DELETE CASCADE,
+        world_id TEXT NOT NULL REFERENCES role_worlds(id) ON DELETE CASCADE,
+        character_id TEXT NOT NULL REFERENCES characters(id) ON DELETE CASCADE,
+        place_id TEXT REFERENCES role_places(id) ON DELETE SET NULL,
+        capability_id TEXT NOT NULL,
+        summary TEXT NOT NULL,
+        salience REAL NOT NULL DEFAULT 0.5 CHECK (salience BETWEEN 0 AND 1),
+        status TEXT NOT NULL DEFAULT 'planned' CHECK (status IN ('planned', 'settled', 'cancelled')),
+        idempotency_key TEXT NOT NULL UNIQUE,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        settled_at TEXT
+      );
+      CREATE INDEX character_activity_plans_due_idx
+        ON character_activity_plans(status, character_id, updated_at);
+
+      CREATE TABLE world_events (
+        id TEXT PRIMARY KEY,
+        world_id TEXT NOT NULL REFERENCES role_worlds(id) ON DELETE CASCADE,
+        place_id TEXT REFERENCES role_places(id) ON DELETE SET NULL,
+        event_type TEXT NOT NULL CHECK (event_type IN ('activity', 'interaction', 'travel', 'world_change')),
+        summary TEXT NOT NULL,
+        salience REAL NOT NULL DEFAULT 0.5 CHECK (salience BETWEEN 0 AND 1),
+        source TEXT NOT NULL CHECK (source IN ('autonomy', 'agent_tool', 'manual', 'system')),
+        starts_at TEXT NOT NULL,
+        ends_at TEXT,
+        idempotency_key TEXT NOT NULL UNIQUE,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      );
+      CREATE INDEX world_events_world_time_idx
+        ON world_events(world_id, starts_at DESC, id DESC);
+
+      CREATE TABLE world_event_participants (
+        event_id TEXT NOT NULL REFERENCES world_events(id) ON DELETE CASCADE,
+        character_id TEXT NOT NULL REFERENCES characters(id) ON DELETE CASCADE,
+        perspective_summary TEXT,
+        PRIMARY KEY(event_id, character_id)
+      );
+      CREATE INDEX world_event_participants_character_idx
+        ON world_event_participants(character_id, event_id);
+
+      CREATE TABLE proactive_messages (
+        id TEXT PRIMARY KEY,
+        character_id TEXT NOT NULL REFERENCES characters(id) ON DELETE CASCADE,
+        world_event_id TEXT NOT NULL UNIQUE REFERENCES world_events(id) ON DELETE CASCADE,
+        session_id TEXT,
+        text TEXT,
+        status TEXT NOT NULL DEFAULT 'pending'
+          CHECK (status IN ('pending', 'delivered', 'skipped', 'failed')),
+        attempts INTEGER NOT NULL DEFAULT 0,
+        last_error TEXT,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        delivered_at TEXT,
+        read_at TEXT
+      );
+      CREATE INDEX proactive_messages_pending_idx
+        ON proactive_messages(status, created_at, id);
+      CREATE INDEX proactive_messages_session_idx
+        ON proactive_messages(session_id, delivered_at DESC, id DESC);
+
+      DROP INDEX model_context_traces_session_idx;
+      ALTER TABLE model_context_traces RENAME TO model_context_traces_legacy;
+      CREATE TABLE model_context_traces (
+        sequence INTEGER PRIMARY KEY AUTOINCREMENT,
+        id TEXT NOT NULL UNIQUE,
+        session_id TEXT NOT NULL,
+        mode TEXT NOT NULL CHECK (mode IN ('sms', 'rp')),
+        turn_kind TEXT NOT NULL CHECK (turn_kind IN (
+          'user', 'reminder_due', 'group_gate', 'group_reply', 'subagent',
+          'memory_extraction', 'relationship_extraction',
+          'world_planning', 'proactive_message'
+        )),
+        request_text TEXT NOT NULL,
+        payload_json TEXT NOT NULL,
+        created_at TEXT NOT NULL
+      );
+      INSERT INTO model_context_traces(
+        sequence, id, session_id, mode, turn_kind, request_text, payload_json, created_at
+      )
+      SELECT sequence, id, session_id, mode, turn_kind, request_text, payload_json, created_at
+      FROM model_context_traces_legacy;
+      DROP TABLE model_context_traces_legacy;
+      CREATE INDEX model_context_traces_session_idx
+        ON model_context_traces(session_id, sequence DESC);
+    `,
+  },
+  {
+    version: 20,
+    sql: `
+      CREATE TABLE conversation_interaction_states (
+        session_id TEXT PRIMARY KEY REFERENCES role_sessions(app_session_id) ON DELETE CASCADE,
+        character_id TEXT NOT NULL REFERENCES characters(id) ON DELETE CASCADE,
+        continuity TEXT NOT NULL CHECK (continuity IN ('canonical', 'sandbox')),
+        presence TEXT NOT NULL CHECK (presence IN ('remote', 'meeting_pending', 'co_present')),
+        narrative_lens TEXT NOT NULL CHECK (narrative_lens IN ('message', 'observable_scene', 'close_third')),
+        place_id TEXT REFERENCES role_places(id) ON DELETE SET NULL,
+        location_text TEXT,
+        meeting_note TEXT,
+        pending_event_id TEXT,
+        revision INTEGER NOT NULL DEFAULT 1 CHECK (revision >= 1),
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      );
+      CREATE UNIQUE INDEX conversation_interaction_single_meeting_idx
+        ON conversation_interaction_states(character_id)
+        WHERE continuity = 'canonical' AND presence = 'co_present';
+
+      CREATE TABLE interaction_transition_events (
+        id TEXT PRIMARY KEY,
+        session_id TEXT NOT NULL REFERENCES role_sessions(app_session_id) ON DELETE CASCADE,
+        character_id TEXT NOT NULL REFERENCES characters(id) ON DELETE CASCADE,
+        event_type TEXT NOT NULL CHECK (event_type IN (
+          'propose_meeting', 'begin_meeting', 'end_meeting', 'cancel_meeting', 'undo_transition'
+        )),
+        source TEXT NOT NULL CHECK (source IN ('agent_tool', 'user_control', 'system')),
+        status TEXT NOT NULL CHECK (status IN ('pending', 'applied', 'reverted', 'cancelled')),
+        evidence_kind TEXT NOT NULL CHECK (evidence_kind IN (
+          'user_message', 'ui_confirmation', 'character_action', 'system'
+        )),
+        from_presence TEXT NOT NULL CHECK (from_presence IN ('remote', 'meeting_pending', 'co_present')),
+        to_presence TEXT NOT NULL CHECK (to_presence IN ('remote', 'meeting_pending', 'co_present')),
+        place_id TEXT REFERENCES role_places(id) ON DELETE SET NULL,
+        location_text TEXT,
+        summary TEXT NOT NULL,
+        before_state_json TEXT NOT NULL,
+        after_state_json TEXT NOT NULL,
+        idempotency_key TEXT UNIQUE,
+        created_at TEXT NOT NULL,
+        applied_at TEXT,
+        reverted_at TEXT
+      );
+      CREATE INDEX interaction_transition_events_session_idx
+        ON interaction_transition_events(session_id, created_at DESC, id DESC);
+      CREATE INDEX interaction_transition_events_pending_idx
+        ON interaction_transition_events(status, created_at, id);
+    `,
+  },
+  {
+    version: 21,
+    sql: `
+      CREATE TABLE private_message_inbox (
+        id TEXT PRIMARY KEY,
+        client_message_id TEXT NOT NULL,
+        session_id TEXT NOT NULL REFERENCES role_sessions(app_session_id) ON DELETE CASCADE,
+        character_id TEXT NOT NULL REFERENCES characters(id) ON DELETE CASCADE,
+        mode TEXT NOT NULL CHECK (mode IN ('sms', 'rp')),
+        text TEXT NOT NULL,
+        timezone TEXT NOT NULL,
+        attachments_json TEXT NOT NULL DEFAULT '[]',
+        status TEXT NOT NULL DEFAULT 'queued'
+          CHECK (status IN ('queued', 'processing', 'completed', 'failed', 'cancelled')),
+        burst_id TEXT,
+        last_error TEXT,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        completed_at TEXT,
+        UNIQUE(session_id, client_message_id)
+      );
+      CREATE INDEX private_message_inbox_queue_idx
+        ON private_message_inbox(session_id, status, created_at, id);
+      CREATE INDEX private_message_inbox_burst_idx
+        ON private_message_inbox(burst_id, status);
+    `,
+  },
+  {
+    version: 22,
+    sql: `
+      ALTER TABLE relationship_extraction_jobs
+        ADD COLUMN analysis_kinds_json TEXT NOT NULL DEFAULT '["relationship"]';
+      ALTER TABLE relationship_extraction_jobs
+        ADD COLUMN interaction_presence TEXT CHECK (interaction_presence IN ('co_present'));
+      ALTER TABLE relationship_extraction_jobs
+        ADD COLUMN interaction_revision INTEGER CHECK (interaction_revision >= 1);
+      ALTER TABLE relationship_extraction_jobs
+        ADD COLUMN relationship_result_count INTEGER NOT NULL DEFAULT 0;
+      ALTER TABLE relationship_extraction_jobs
+        ADD COLUMN interaction_result_count INTEGER NOT NULL DEFAULT 0;
+      UPDATE relationship_extraction_jobs
+        SET relationship_result_count = result_count;
+
+      DROP INDEX interaction_transition_events_session_idx;
+      DROP INDEX interaction_transition_events_pending_idx;
+      ALTER TABLE interaction_transition_events RENAME TO interaction_transition_events_legacy;
+      CREATE TABLE interaction_transition_events (
+        id TEXT PRIMARY KEY,
+        session_id TEXT NOT NULL REFERENCES role_sessions(app_session_id) ON DELETE CASCADE,
+        character_id TEXT NOT NULL REFERENCES characters(id) ON DELETE CASCADE,
+        event_type TEXT NOT NULL CHECK (event_type IN (
+          'propose_meeting', 'begin_meeting', 'end_meeting', 'cancel_meeting', 'undo_transition'
+        )),
+        source TEXT NOT NULL CHECK (source IN (
+          'agent_tool', 'user_control', 'system', 'post_turn_coordinator'
+        )),
+        status TEXT NOT NULL CHECK (status IN ('pending', 'applied', 'reverted', 'cancelled')),
+        evidence_kind TEXT NOT NULL CHECK (evidence_kind IN (
+          'user_message', 'ui_confirmation', 'character_action', 'system', 'post_turn_analysis'
+        )),
+        from_presence TEXT NOT NULL CHECK (from_presence IN ('remote', 'meeting_pending', 'co_present')),
+        to_presence TEXT NOT NULL CHECK (to_presence IN ('remote', 'meeting_pending', 'co_present')),
+        place_id TEXT REFERENCES role_places(id) ON DELETE SET NULL,
+        location_text TEXT,
+        summary TEXT NOT NULL,
+        before_state_json TEXT NOT NULL,
+        after_state_json TEXT NOT NULL,
+        idempotency_key TEXT UNIQUE,
+        created_at TEXT NOT NULL,
+        applied_at TEXT,
+        reverted_at TEXT
+      );
+      INSERT INTO interaction_transition_events(
+        id, session_id, character_id, event_type, source, status, evidence_kind,
+        from_presence, to_presence, place_id, location_text, summary,
+        before_state_json, after_state_json, idempotency_key,
+        created_at, applied_at, reverted_at
+      )
+      SELECT
+        id, session_id, character_id, event_type, source, status, evidence_kind,
+        from_presence, to_presence, place_id, location_text, summary,
+        before_state_json, after_state_json, idempotency_key,
+        created_at, applied_at, reverted_at
+      FROM interaction_transition_events_legacy;
+      DROP TABLE interaction_transition_events_legacy;
+      CREATE INDEX interaction_transition_events_session_idx
+        ON interaction_transition_events(session_id, created_at DESC, id DESC);
+      CREATE INDEX interaction_transition_events_pending_idx
+        ON interaction_transition_events(status, created_at, id);
+
+      DROP INDEX model_context_traces_session_idx;
+      ALTER TABLE model_context_traces RENAME TO model_context_traces_legacy;
+      CREATE TABLE model_context_traces (
+        sequence INTEGER PRIMARY KEY AUTOINCREMENT,
+        id TEXT NOT NULL UNIQUE,
+        session_id TEXT NOT NULL,
+        mode TEXT NOT NULL CHECK (mode IN ('sms', 'rp')),
+        turn_kind TEXT NOT NULL CHECK (turn_kind IN (
+          'user', 'reminder_due', 'group_gate', 'group_reply', 'subagent',
+          'memory_extraction', 'relationship_extraction', 'post_turn_analysis',
+          'world_planning', 'proactive_message'
+        )),
+        request_text TEXT NOT NULL,
+        payload_json TEXT NOT NULL,
+        created_at TEXT NOT NULL
+      );
+      INSERT INTO model_context_traces(
+        sequence, id, session_id, mode, turn_kind, request_text, payload_json, created_at
+      )
+      SELECT sequence, id, session_id, mode, turn_kind, request_text, payload_json, created_at
+      FROM model_context_traces_legacy;
+      DROP TABLE model_context_traces_legacy;
+      CREATE INDEX model_context_traces_session_idx
+        ON model_context_traces(session_id, sequence DESC);
+    `,
+  },
 ];
 
 export class AppDatabase {
