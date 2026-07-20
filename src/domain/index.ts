@@ -11,3 +11,4 @@ export * from "../world/index.js";
 export * from "../interaction/index.js";
 export * from "../inbox/index.js";
 export * from "../post-turn/index.js";
+export * from "../user-insight/index.js";

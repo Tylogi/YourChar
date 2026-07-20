@@ -7,13 +7,14 @@ contract is strict JSON:
 
 | Scenario | Current MLX ceiling | Unknown-provider fallback |
 |---|---:|---:|
-| group participation gate | 256 | 768 |
+| World Director | 1,200 | 2,400 |
+| World post-turn Analyzer | 1,400 | 2,800 |
 | daily memory extraction | 1,024 | 2,400 |
 | relationship event extraction | 1,024 | 2,400 |
 
-Character replies, private SMS/RP turns, group actor replies, subagents, and
-vision analysis are outside this policy. Their output quality may depend on
-reasoning or multimodal processing and must be evaluated separately.
+Character replies, private SMS turns, World actor calls, subagents, and vision
+analysis are outside this policy. Their output quality may depend on reasoning
+or multimodal processing and must be evaluated separately.
 
 For the current MLX model, private interactive turns explicitly send
 `enable_thinking: true` and `preserve_thinking: true` on every provider request.
@@ -22,7 +23,7 @@ selection. Bounded background classifiers continue to use the disabled policy
 below.
 
 `enable_thinking` is a capability switch, not a guarantee that the model will
-emit a substantive thinking block. For ordinary private SMS/RP dialogue, the
+emit a substantive thinking block. For ordinary private SMS dialogue, the
 runtime therefore requires at least 16 non-whitespace thinking characters. A
 draft that does not meet the threshold is removed before streaming or active
 session persistence, the session is rewound to the same real user message, and

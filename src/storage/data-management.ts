@@ -46,6 +46,15 @@ export class DataManagementRepository {
         DELETE FROM notification_outbox;
         DELETE FROM reminder_occurrences;
         DELETE FROM proactive_messages;
+        DELETE FROM proactive_topic_policies;
+        DELETE FROM world_story_event_transitions;
+        DELETE FROM world_character_observations;
+        DELETE FROM world_character_relationships;
+        DELETE FROM world_story_event_participants;
+        DELETE FROM world_story_events;
+        DELETE FROM world_conversation_messages;
+        DELETE FROM world_conversation_turns;
+        DELETE FROM world_conversations;
         DELETE FROM world_event_participants;
         DELETE FROM world_events;
         DELETE FROM character_activity_plans;
@@ -55,6 +64,7 @@ export class DataManagementRepository {
         DELETE FROM role_places;
         DELETE FROM role_worlds;
         DELETE FROM schedule_items;
+        DELETE FROM user_insight_observations;
         DELETE FROM pending_real_mutations;
         DELETE FROM group_chats;
         DELETE FROM private_message_inbox;

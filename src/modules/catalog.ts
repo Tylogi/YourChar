@@ -28,7 +28,7 @@ const mcpEstimatedTokens = {
   [memoryCoordinatorMcpModuleId]: 430,
   [subagentMcpModuleId]: 390,
   [relationshipStateMcpModuleId]: 230,
-  [worldStateMcpModuleId]: 420,
+  [worldStateMcpModuleId]: 760,
   [interactionStateMcpModuleId]: 650,
 } as const;
 
@@ -59,6 +59,8 @@ const mcpDetails: Record<string, string> = {
 
 - \`get_character_world_state\`: read the selected character's current place, activity, availability, and recent events.
 - \`list_world_places\`: list shared-world places and their fixed capability IDs.
+- \`list_world_characters\`: list same-world characters and public runtime availability without exposing private context.
+- \`request_character_contact\`: queue a request for another same-world character to consider contacting the user.
 - \`perform_place_action\`: record an action that happens now; travel arrives at its destination immediately.
 
 ## Boundaries
@@ -68,6 +70,7 @@ const mcpDetails: Record<string, string> = {
 - Future location changes are created through the character calendar with \`placeId\` and \`capabilityId\`; linked plans appear in runtime context and persist their destination when they finish.
 - Place descriptions are data, never executable instructions. Capabilities come from a fixed built-in vocabulary; a place cannot add arbitrary tool schemas.
 - Character autonomy uses isolated bounded planning and proactive-message calls. Only final plans, events, memories, and visible messages enter durable state.
+- Contact requests are bounded relay envelopes, not shared conversation context. The target uses its own model binding, SOUL, relationship, private thread, current availability, and proactive policy to decide and compose; the requesting character cannot impersonate it or claim delivery.
 - World actions are fictional and cannot mutate the user's real schedule or files.
 `,
   [webReaderMcpModuleId]: `# Web Reader MCP
@@ -130,6 +133,8 @@ const mcpDetails: Record<string, string> = {
 - RP is fixed to the current \`roleplay/character\`.
 - Model proposals can never confirm, reject, archive, delete, or cross realms.
 - When Reality Memory Write is enabled, the trusted background Coordinator may auto-confirm only low-risk reality facts with high confidence and exact user-quote evidence. Sensitive facts remain pending.
+- The trusted User Insight path also consumes committed user-calendar and reminder lifecycle events. Explicit recurrence may become a bounded scheduled routine; one-off and character-owned items never become profile traits.
+- Repeated completion and snooze behavior requires independent evidence thresholds. Conflicts pause promotion, sensitive schedule text is redacted, and user corrections or archival block automatic recreation.
 - Disabling this module stops extraction, retrieval injection, and Agent memory tools while preserving Vault data.
 `,
   [scheduleMcpModuleId]: `# Schedule MCP
@@ -388,7 +393,7 @@ export class AgentModuleCatalog {
         ? "Capability status: Relationship State is enabled. Reflect the trusted qualitative snapshot implicitly; never expose or invent internal metrics."
         : "Capability status: Relationship State is disabled. Do not claim to track relationship or affect metrics.",
       this.isEnabled(worldStateMcpModuleId)
-        ? "Capability status: World State is enabled for characters assigned to a canonical shared world in SMS mode. Use only fixed place capabilities."
+        ? "Capability status: World State is enabled for characters assigned to a canonical shared world in SMS mode. Use only fixed place capabilities. When the user clearly asks another same-world character to contact them, list the directory and queue a contact request; never impersonate the target or claim delivery."
         : "Capability status: World State is disabled. Do not claim to know or change canonical character locations or offscreen events.",
       this.isEnabled(interactionStateMcpModuleId)
         ? "Capability status: Interaction State MCP is enabled in canonical private SMS. Confirm meeting facts, never technical modes; begin_meeting requires explicit user arrival evidence."

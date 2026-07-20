@@ -93,3 +93,13 @@ export type ScheduleMutationResult = {
   occurrence?: ReminderOccurrence;
   warnings: string[];
 };
+
+export type ScheduleMutationEvent = {
+  type: "created" | "updated" | "completed" | "cancelled" | "snoozed";
+  item: ScheduleItem;
+  previousItem?: ScheduleItem;
+  occurrence?: ReminderOccurrence;
+  snoozeMinutes?: number;
+};
+
+export type ScheduleMutationListener = (event: ScheduleMutationEvent) => void;

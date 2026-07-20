@@ -106,6 +106,36 @@ export type ActualProviderUsage = {
   cacheWriteTokens: number | null;
 };
 
+export type ContextBudgetSnapshot = {
+  sessionId: string;
+  modelProfileId: string;
+  model: string;
+  contextWindowTokens: number;
+  contextWindowSource: "configured" | "assumed";
+  maxOutputTokens: number;
+  safetyReserveTokens: number;
+  usableInputTokens: number;
+  estimatedInputTokens: number;
+  actualInputTokens: number | null;
+  usedInputTokens: number;
+  usageSource: "measured" | "estimated";
+  remainingTokens: number;
+  remainingRatio: number;
+  utilizationRatio: number;
+  level: "healthy" | "warning" | "critical";
+  shouldCompact: boolean;
+  lifecycleState: "awake" | "tired" | "sleeping";
+  lastCompaction?: {
+    at: string;
+    reason: string;
+    status: "completed" | "failed";
+    estimatedTokensBefore?: number;
+    estimatedTokensAfter?: number;
+    error?: string;
+  };
+  updatedAt: string;
+};
+
 export type ContextEconomics = {
   id: string;
   sessionId: string;

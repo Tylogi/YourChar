@@ -190,7 +190,9 @@ Automated tests must preserve these invariants:
 - retries and restarts cannot apply one source turn twice;
 - state is isolated between characters and shared across private sessions;
 - affect decays against the trusted clock;
-- group chat reads but does not write state;
+- a World actor may read the character-user state; ordinary post-turn policy may
+  update it only from source-verifiable user interaction, while the World
+  Analyzer writes separate directional character-to-character state;
 - completed state mutations block message revision;
 - reset requires trusted user confirmation;
 - Debug Trace labels new background calls as `post_turn_analysis`.
@@ -206,7 +208,7 @@ trusted policy/configuration layers:
 - per-character sensitivity and baseline coefficients;
 - user-approved manual calibration without deleting the event ledger;
 - event correction or rollback with compensating events;
-- explicit group-chat attribution rules;
+- richer World attribution and correction rules;
 - Markdown/OKF projection for portable relationship history;
 - user correction through compensating semantic events;
 - a dedicated low-cost classifier model profile;

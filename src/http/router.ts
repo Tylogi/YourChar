@@ -6,6 +6,7 @@ import {
   CompanionKernel,
   ConversationArchivedError,
   ConversationDeletionConfirmationError,
+  ConversationCompactionUnavailableError,
   ConversationNotFoundError,
   ConversationTitleValidationError,
   RpMemoryValidationError,
@@ -20,6 +21,7 @@ import {
   GroupChatValidationError,
   WorldNotFoundError,
   WorldValidationError,
+  WorldConversationValidationError,
   InteractionValidationError,
   PrivateInboxMutationError,
 } from "../domain/index.js";
@@ -54,6 +56,7 @@ import { TestRunRegistry, type ScriptedModelResponse } from "../testing/index.js
 import { renderAppHtml } from "./ui.js";
 import type { AgentSessionEvent } from "@earendil-works/pi-coding-agent";
 import { UserProfileValidationError } from "../profile/service.js";
+import { profileManualSection } from "../profile/managed-memory.js";
 import { AvatarValidationError, type AvatarAsset } from "../profile/avatar-service.js";
 import { SystemPromptValidationError } from "../profile/system-prompt-service.js";
 import { CharacterSoulValidationError } from "../rp/soul.js";
@@ -68,6 +71,7 @@ import type { AgentMessage } from "@earendil-works/pi-agent-core";
 import { MemoryVaultError } from "../memory-vault/errors.js";
 import { MemoryLifecycleError } from "../memory-coordinator/lifecycle.js";
 import type { MemoryControlPlaneEdit } from "../memory-coordinator/types.js";
+import { UserInsightControlError } from "../user-insight/index.js";
 import {
   MAX_OKF_ARCHIVE_BYTES,
   OkfBundleError,
@@ -87,6 +91,8 @@ import type {
   CreateWorldInput,
   UpdatePlaceInput,
   UpdateWorldInput,
+  ProactiveFeedbackType,
+  ProactiveMessageStatus,
   WorldCapabilityId,
 } from "../world/index.js";
 
@@ -131,6 +137,8 @@ export function createHttpServer(options: HttpServerOptions = {}) {
         sendJson(response, 400, { code: "SESSION_TITLE_INVALID", error: error.message });
       } else if (error instanceof ConversationDeletionConfirmationError) {
         sendJson(response, 400, { code: "SESSION_DELETE_CONFIRMATION_REQUIRED", error: error.message });
+      } else if (error instanceof ConversationCompactionUnavailableError) {
+        sendJson(response, 409, { code: error.code, error: error.message });
       } else if (error instanceof SessionBatchValidationError) {
         sendJson(response, 400, { code: "SESSION_BATCH_INVALID", error: error.message });
       } else if (error instanceof TurnRetryUnavailableError) {
@@ -151,6 +159,8 @@ export function createHttpServer(options: HttpServerOptions = {}) {
         sendJson(response, 404, { code: "WORLD_NOT_FOUND", error: error.message });
       } else if (error instanceof WorldValidationError) {
         sendJson(response, 400, { code: error.code, error: error.message });
+      } else if (error instanceof WorldConversationValidationError) {
+        sendJson(response, 409, { code: error.code, error: error.message });
       } else if (error instanceof InteractionValidationError) {
         const conflict = error.code === "INTERACTION_CONFLICT" || error.code === "INTERACTION_UNDO_UNAVAILABLE";
         sendJson(response, conflict ? 409 : 422, { code: error.code, error: error.message });
@@ -186,6 +196,11 @@ export function createHttpServer(options: HttpServerOptions = {}) {
           code: error.code,
           error: error.message,
         });
+      } else if (error instanceof UserInsightControlError) {
+        const status = error.code === "USER_INSIGHT_NOT_FOUND"
+          ? 404
+          : error.code === "USER_INSIGHT_SENSITIVE" ? 422 : 409;
+        sendJson(response, status, { code: error.code, error: error.message });
       } else if (error instanceof OkfBundleError) {
         sendJson(response, 422, { code: error.code, error: error.message });
       } else if (error instanceof AgentPermissionValidationError) {
@@ -314,17 +329,23 @@ async function route(input: {
       ui: "/ui",
       messageEndpoint: "POST /api/v1/sessions/{id}/messages",
       directConversation: "POST /api/v1/direct-conversations",
+      conversationUnread: "GET /api/v1/conversation-unread",
+      markConversationRead: "POST /api/v1/sessions/{id}/read",
       debugContextLogs: "GET /api/debug/context-logs",
       debugModelTraces: "GET /api/debug/model-traces",
       debugContextEconomics: "GET /api/debug/context-economics",
       agentModules: "GET /api/v1/agent-modules",
       agentPermissions: "GET/PATCH /api/v1/agent-permissions",
       userProfile: "GET/PATCH /api/v1/user-profile",
+      userInsights: "GET /api/v1/user-insights",
+      userInsightControl: "POST /api/v1/user-insights/{id}/{confirm|reject|unlock}",
       modelApiSettings: "GET/PATCH /api/settings/model-api",
       tavilySettings: "GET/PATCH /api/settings/tavily",
       visionSettings: "GET/PATCH /api/settings/vision",
       traceArchiveSettings: "GET/PATCH /api/settings/trace-archive",
       interactionState: "GET/POST /api/v1/sessions/{id}/interaction",
+      contextBudget: "GET /api/v1/sessions/{id}/context-budget",
+      compactContext: "POST /api/v1/sessions/{id}/compact",
     });
     return;
   }
@@ -341,6 +362,9 @@ async function route(input: {
         canonicalDirect: metadata.get(record.id)?.canonicalDirect ?? false,
         title: metadata.get(record.id)?.title,
         archivedAt: metadata.get(record.id)?.archivedAt,
+        unreadCount: metadata.get(record.id)?.unreadCount ?? 0,
+        lastUnreadAt: metadata.get(record.id)?.lastUnreadAt,
+        lastReadAt: metadata.get(record.id)?.lastReadAt,
         lastTurnStatus: metadata.get(record.id)?.lastTurnStatus,
         lastTurnCanRetry: metadata.get(record.id)?.lastTurnCanRetry ?? false,
         sleepState: metadata.get(record.id)?.sleepState ?? "awake",
@@ -353,6 +377,11 @@ async function route(input: {
         updatedAt: record.updatedAt,
       })),
     });
+    return;
+  }
+
+  if (method === "GET" && pathname === "/api/v1/conversation-unread") {
+    sendJson(input.response, 200, { conversations: kernel.listUnreadConversations() });
     return;
   }
 
@@ -468,6 +497,12 @@ async function route(input: {
     return;
   }
 
+  const readSessionMatch = pathname.match(/^\/api\/v1\/sessions\/([^/]+)\/read$/);
+  if (readSessionMatch && method === "POST") {
+    sendJson(input.response, 200, kernel.markConversationRead(decodeURIComponent(readSessionMatch[1])));
+    return;
+  }
+
   const sessionMetadataMatch = pathname.match(/^\/api\/v1\/sessions\/([^/]+)$/);
   if (sessionMetadataMatch && method === "PATCH") {
     const body = asRecord(await readJson(input.request));
@@ -508,6 +543,22 @@ async function route(input: {
       }));
       return;
     }
+  }
+
+  const contextBudgetMatch = pathname.match(/^\/api\/v1\/sessions\/([^/]+)\/context-budget$/);
+  if (contextBudgetMatch && method === "GET") {
+    const sessionId = decodeURIComponent(contextBudgetMatch[1]);
+    assertCharacterBoundSession(kernel, sessionId);
+    sendJson(input.response, 200, { budget: await kernel.getConversationContextBudget(sessionId) });
+    return;
+  }
+
+  const compactContextMatch = pathname.match(/^\/api\/v1\/sessions\/([^/]+)\/compact$/);
+  if (compactContextMatch && method === "POST") {
+    const sessionId = decodeURIComponent(compactContextMatch[1]);
+    assertCharacterBoundSession(kernel, sessionId);
+    sendJson(input.response, 200, { result: await kernel.compactConversationContext(sessionId) });
+    return;
   }
 
   if (pathname === "/api/v1/group-chats") {
@@ -631,6 +682,18 @@ async function route(input: {
       input.response,
       200,
       kernel.privateInboxSnapshot(decodeURIComponent(privateInboxMatch[1])),
+    );
+    return;
+  }
+
+  const privateInboxTypingMatch = pathname.match(
+    /^\/api\/v1\/sessions\/([^/]+)\/inbox\/typing$/,
+  );
+  if (privateInboxTypingMatch && method === "POST") {
+    sendJson(
+      input.response,
+      200,
+      kernel.notePrivateInboxTyping(decodeURIComponent(privateInboxTypingMatch[1])),
     );
     return;
   }
@@ -998,8 +1061,10 @@ async function route(input: {
 
   if (pathname === "/api/v1/user-profile") {
     if (method === "GET") {
+      const profile = kernel.getUserProfile();
       sendJson(input.response, 200, {
-        profile: kernel.getUserProfile(),
+        profile,
+        manualMarkdown: profileManualSection(profile.markdown),
         avatarUrl: avatarUrl("/api/v1/avatars/user", kernel.getUserAvatar()),
       });
       return;
@@ -1007,9 +1072,38 @@ async function route(input: {
     if (method === "PATCH") {
       const body = asRecord(await readJson(input.request));
       if (typeof body.markdown !== "string") throw new Error("markdown must be a string");
-      sendJson(input.response, 200, { profile: kernel.updateUserProfile(body.markdown) });
+      const profile = kernel.updateUserProfileManual(body.markdown);
+      sendJson(input.response, 200, {
+        profile,
+        manualMarkdown: profileManualSection(profile.markdown),
+      });
       return;
     }
+  }
+
+  if (pathname === "/api/v1/user-insights" && method === "GET") {
+    sendJson(input.response, 200, {
+      insights: kernel.getUserInsightStatus(
+        optionalPositiveInteger(url.searchParams.get("limit")) ?? 30,
+      ),
+    });
+    return;
+  }
+
+  const userInsightControlMatch = pathname.match(
+    /^\/api\/v1\/user-insights\/([^/]+)\/(confirm|reject|unlock)$/,
+  );
+  if (userInsightControlMatch && method === "POST") {
+    const id = decodeURIComponent(userInsightControlMatch[1]);
+    const action = userInsightControlMatch[2];
+    const observation = action === "confirm"
+      ? kernel.confirmUserInsight(id)
+      : action === "reject" ? kernel.rejectUserInsight(id) : kernel.unlockUserInsight(id);
+    sendJson(input.response, 200, {
+      observation,
+      insights: kernel.getUserInsightStatus(50),
+    });
+    return;
   }
 
   if (pathname === "/api/v1/system-prompts") {
@@ -1223,10 +1317,118 @@ async function route(input: {
         timezone: optionalString(body.timezone),
         description: optionalDocumentString(body.description, "description"),
         rulesMarkdown: optionalDocumentString(body.rulesMarkdown, "rulesMarkdown"),
+        directorModelProfileId: optionalString(body.directorModelProfileId),
+        analystModelProfileId: optionalString(body.analystModelProfileId),
       } satisfies CreateWorldInput);
       sendJson(input.response, 201, { world });
       return;
     }
+  }
+
+  if (pathname === "/api/v1/world-conversations" && method === "GET") {
+    sendJson(input.response, 200, { conversations: kernel.listWorldConversations() });
+    return;
+  }
+
+  const worldConversationMatch = pathname.match(/^\/api\/v1\/worlds\/([^/]+)\/conversation$/);
+  if (worldConversationMatch && method === "GET") {
+    sendJson(input.response, 200, {
+      conversation: kernel.getWorldConversation(decodeURIComponent(worldConversationMatch[1])),
+    });
+    return;
+  }
+
+  const worldConversationMessagesMatch = pathname.match(
+    /^\/api\/v1\/worlds\/([^/]+)\/conversation\/messages$/,
+  );
+  if (worldConversationMessagesMatch && method === "GET") {
+    const limit = Number(url.searchParams.get("limit") ?? "200");
+    sendJson(input.response, 200, {
+      messages: kernel.listWorldConversationMessages(
+        decodeURIComponent(worldConversationMessagesMatch[1]),
+        limit,
+      ),
+    });
+    return;
+  }
+  if (worldConversationMessagesMatch && method === "POST") {
+    const body = asRecord(await readJson(input.request));
+    sendJson(input.response, 200, await kernel.sendWorldMessage(
+      decodeURIComponent(worldConversationMessagesMatch[1]),
+      optionalString(body.text) ?? "",
+      optionalString(body.timezone) ?? "Asia/Shanghai",
+      requireMessageAttachments(body.attachments),
+    ));
+    return;
+  }
+
+  const worldConversationStreamMatch = pathname.match(
+    /^\/api\/v1\/worlds\/([^/]+)\/conversation\/messages\/stream$/,
+  );
+  if (worldConversationStreamMatch && method === "POST") {
+    const body = asRecord(await readJson(input.request));
+    const abortController = new AbortController();
+    input.response.on("close", () => {
+      if (!input.response.writableEnded) abortController.abort();
+    });
+    input.response.writeHead(200, {
+      "content-type": "text/event-stream; charset=utf-8",
+      "cache-control": "no-cache, no-transform",
+      connection: "keep-alive",
+      "x-accel-buffering": "no",
+    });
+    input.response.write(": connected\n\n");
+    try {
+      const result = await kernel.sendWorldMessage(
+        decodeURIComponent(worldConversationStreamMatch[1]),
+        optionalString(body.text) ?? "",
+        optionalString(body.timezone) ?? "Asia/Shanghai",
+        requireMessageAttachments(body.attachments),
+        (event) => sendStreamEvent(input.response, event),
+        abortController.signal,
+      );
+      sendStreamEvent(input.response, { type: "done", response: result });
+    } catch (error) {
+      sendStreamEvent(input.response, {
+        type: "error",
+        error: error instanceof Error ? error.message : String(error),
+      });
+    } finally {
+      input.response.end();
+    }
+    return;
+  }
+
+  const worldConversationReadMatch = pathname.match(
+    /^\/api\/v1\/worlds\/([^/]+)\/conversation\/read$/,
+  );
+  if (worldConversationReadMatch && method === "POST") {
+    sendJson(input.response, 200, {
+      conversation: kernel.markWorldConversationRead(decodeURIComponent(worldConversationReadMatch[1])),
+    });
+    return;
+  }
+
+  const worldStoryEventMatch = pathname.match(
+    /^\/api\/v1\/worlds\/([^/]+)\/conversation\/event$/,
+  );
+  if (worldStoryEventMatch && method === "POST") {
+    const body = asRecord(await readJson(input.request));
+    const action = requiredWorldStoryAction(body.action);
+    const worldId = decodeURIComponent(worldStoryEventMatch[1]);
+    const event = action === "undo"
+      ? kernel.undoWorldStoryEvent(worldId)
+      : kernel.transitionWorldStoryEvent(worldId, {
+          action,
+          source: "user_control",
+          ...(optionalString(body.title) ? { title: optionalString(body.title) } : {}),
+          ...(optionalString(body.summary) ? { summary: optionalString(body.summary) } : {}),
+          ...(optionalString(body.objective) ? { objective: optionalString(body.objective) } : {}),
+          ...(optionalString(body.placeId) ? { placeId: optionalString(body.placeId) } : {}),
+          participantIds: optionalStringArray(body.participantIds),
+        });
+    sendJson(input.response, 200, { event, conversation: kernel.getWorldConversation(worldId) });
+    return;
   }
 
   const worldPlacesMatch = pathname.match(/^\/api\/v1\/worlds\/([^/]+)\/places$/);
@@ -1258,6 +1460,12 @@ async function route(input: {
         ...(body.timezone === undefined ? {} : { timezone: requiredString(body.timezone, "timezone") }),
         ...(body.description === undefined ? {} : { description: optionalDocumentString(body.description, "description")! }),
         ...(body.rulesMarkdown === undefined ? {} : { rulesMarkdown: optionalDocumentString(body.rulesMarkdown, "rulesMarkdown")! }),
+        ...(body.directorModelProfileId === undefined
+          ? {}
+          : { directorModelProfileId: optionalString(body.directorModelProfileId) ?? null }),
+        ...(body.analystModelProfileId === undefined
+          ? {}
+          : { analystModelProfileId: optionalString(body.analystModelProfileId) ?? null }),
         ...(body.status === undefined ? {} : { status: requiredString(body.status, "status") as UpdateWorldInput["status"] }),
       };
       sendJson(input.response, 200, { world: kernel.updateWorld(id, patch) });
@@ -1309,6 +1517,7 @@ async function route(input: {
       messages: kernel.listProactiveMessages({
         characterId: optionalString(url.searchParams.get("characterId")),
         sessionId: optionalString(url.searchParams.get("sessionId")),
+        status: optionalProactiveMessageStatus(url.searchParams.get("status")),
         unreadOnly: url.searchParams.get("unreadOnly") === "1",
         limit: optionalPositiveInteger(url.searchParams.get("limit")) ?? 100,
       }),
@@ -1321,6 +1530,16 @@ async function route(input: {
     sendJson(input.response, 200, {
       read: kernel.markProactiveMessagesRead(requiredString(body.sessionId, "sessionId")),
     });
+    return;
+  }
+
+  const proactiveFeedbackMatch = pathname.match(/^\/api\/v1\/proactive-messages\/([^/]+)\/feedback$/);
+  if (proactiveFeedbackMatch && method === "POST") {
+    const body = asRecord(await readJson(input.request));
+    sendJson(input.response, 200, kernel.recordProactiveMessageFeedback(
+      decodeURIComponent(proactiveFeedbackMatch[1]),
+      requiredString(body.feedbackType, "feedbackType") as ProactiveFeedbackType,
+    ));
     return;
   }
 
@@ -1411,6 +1630,27 @@ async function route(input: {
     return;
   }
 
+  const characterLifeResumeMatch = pathname.match(/^\/api\/v1\/characters\/([^/]+)\/life\/proactive\/resume$/);
+  if (characterLifeResumeMatch && method === "POST") {
+    sendJson(input.response, 200, {
+      policy: kernel.resumeCharacterProactiveMessages(decodeURIComponent(characterLifeResumeMatch[1])),
+    });
+    return;
+  }
+
+  const characterLifeTopicResetMatch = pathname.match(
+    /^\/api\/v1\/characters\/([^/]+)\/life\/proactive-topics\/([^/]+)\/reset$/,
+  );
+  if (characterLifeTopicResetMatch && method === "POST") {
+    sendJson(input.response, 200, {
+      topicPolicy: kernel.resetCharacterProactiveTopic(
+        decodeURIComponent(characterLifeTopicResetMatch[1]),
+        decodeURIComponent(characterLifeTopicResetMatch[2]),
+      ),
+    });
+    return;
+  }
+
   const characterLifeMatch = pathname.match(/^\/api\/v1\/characters\/([^/]+)\/life$/);
   if (characterLifeMatch) {
     const characterId = decodeURIComponent(characterLifeMatch[1]);
@@ -1437,8 +1677,20 @@ async function route(input: {
         if (policy.dailyMessageLimit !== undefined) {
           patch.dailyMessageLimit = requiredNumber(policy.dailyMessageLimit, "policy.dailyMessageLimit");
         }
+        if (policy.proactiveCooldownMinutes !== undefined) {
+          patch.proactiveCooldownMinutes = requiredNumber(
+            policy.proactiveCooldownMinutes,
+            "policy.proactiveCooldownMinutes",
+          );
+        }
         if (policy.quietStart !== undefined) patch.quietStart = requiredString(policy.quietStart, "policy.quietStart");
         if (policy.quietEnd !== undefined) patch.quietEnd = requiredString(policy.quietEnd, "policy.quietEnd");
+        if (policy.proactivePausedUntil !== undefined) {
+          patch.proactivePausedUntil = optionalNullableString(
+            policy.proactivePausedUntil,
+            "policy.proactivePausedUntil",
+          );
+        }
         kernel.updateCharacterAutonomyPolicy(characterId, patch);
       }
       if (body.runtime !== undefined) {
@@ -2376,6 +2628,21 @@ function optionalPositiveInteger(value: unknown): number | undefined {
   if (value === undefined || value === null || value === "") return undefined;
   const number = Number(value);
   return Number.isInteger(number) && number > 0 ? number : undefined;
+}
+
+function optionalProactiveMessageStatus(value: unknown): ProactiveMessageStatus | undefined {
+  return value === "pending" || value === "delivered" || value === "skipped" || value === "failed"
+    ? value
+    : undefined;
+}
+
+function requiredWorldStoryAction(
+  value: unknown,
+): "propose" | "begin" | "resolve" | "cancel" | "undo" {
+  if (value === "propose" || value === "begin" || value === "resolve" || value === "cancel" || value === "undo") {
+    return value;
+  }
+  throw new SyntaxError("action must be propose, begin, resolve, cancel, or undo");
 }
 
 function sendJson(response: ServerResponse, statusCode: number, payload: unknown): void {

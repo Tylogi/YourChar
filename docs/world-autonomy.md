@@ -1,8 +1,8 @@
 # Shared World and Character Autonomy
 
-Status: implemented MVP / trial baseline
+Status: implemented trial baseline with controlled initiative
 Audience: maintainers, coding agents, reviewers, and test agents
-Last updated: 2026-07-19
+Last updated: 2026-07-20
 
 ## 1. Product Contract
 
@@ -14,12 +14,12 @@ This feature gives characters a small canonical life outside the current chat:
 - the background Coordinator may create character calendar events, settle completed activities into world events and RP memories, and send a bounded proactive SMS;
 - the Agent can inspect and mutate its own fictional state through a fixed MCP.
 
-The canonical world is available only in private `sms` conversations. `rp`
-sessions remain independent scenes and do not read or write this state. This is
-intentional: SMS represents the character speaking in first person from an
-ongoing life, while RP may stage an unrelated third-person story. A future
-explicit scene-to-world link must be opt-in and must not silently change this
-boundary.
+Canonical world state has two projections. A private `sms` thread lets one
+character speak in first person from its ongoing life. The world's shared
+timeline lets the Director and selected actors stage third-person events against
+the same places, runtime, observations, and event lifecycle. Standalone RP and
+ad hoc group sessions are retired. See
+[`world-conversation-mode.md`](./world-conversation-mode.md).
 
 World actions are fictional. They cannot mutate the user's schedule, reminders,
 files, profile, permissions, or real-world state.
@@ -29,11 +29,11 @@ files, profile, permissions, or real-world state.
 ```text
 Character UI / HTTP API
         |
-    WorldService -------------------- World State MCP
-        |                                   |
-    WorldRepository                    private SMS Pi session
+    WorldService -------------------- World State MCP ------ private SMS Pi session
         |
- SQLite schema 19
+    WorldRepository -------- WorldConversationService ----- World timeline
+        |
+ SQLite schema 19 + initiative schema 25 + conversation schema 26
         |
  WorldAutonomyCoordinator (60 s tick)
         |             |                 |
@@ -58,12 +58,18 @@ SQLite migration 19 adds:
 | `role_worlds` | world name, timezone, description, Markdown rules, status, revision |
 | `role_places` | world-owned place and fixed capability IDs |
 | `character_world_memberships` | one canonical world and optional home per character |
-| `character_autonomy_policies` | enable flags, daily message limit, quiet hours, planning checkpoint |
+| `character_autonomy_policies` | enable flags, daily message limit, global cooldown, quiet hours, optional pause, planning checkpoint |
 | `character_runtime_states` | current place, activity, availability, energy, expected end |
 | `character_activity_plans` | link from an autonomous or foreground-Agent world plan to a character schedule item |
 | `world_events` | settled or explicit fictional events with idempotency keys |
 | `world_event_participants` | character participants; supports future shared encounters |
-| `proactive_messages` | durable pending/delivered/skipped/failed delivery queue |
+| `proactive_messages` | durable candidate score, topic, decision, delivery, retry and feedback record |
+| `proactive_topic_policies` | per-character normal, reduced or muted topic preference derived from direct feedback |
+
+Migration 26 adds the canonical shared timeline, story-event transitions,
+observer-scoped knowledge, and directional inter-character relationships. Its
+storage contract is defined in `world-conversation-mode.md` rather than
+duplicated here.
 
 Character deletion cascades through its world state. Deleting a world requires
 removing all memberships first. Moving or removing a character from a world
@@ -129,22 +135,41 @@ is newer than the stored runtime state advances the character to its final
 place. This does not replay every missed minute and never overrides a newer
 manual/meeting state.
 
-Proactive delivery additionally requires:
+Proactive delivery uses a deterministic candidate policy before the isolated
+message model is called:
 
 - the character policy enables proactive messages;
-- event salience is at least `0.65`;
+- the source event has salience of at least `0.45` and the resulting candidate score is at least `0.70`;
 - the character has a canonical private SMS session, created lazily when the first proactive message is ready;
 - the local time is outside quiet hours;
 - the per-character local-day limit has not been reached;
-- a configured character model can produce non-empty final text.
+- global and same-topic cooldowns have elapsed;
+- the user has not spoken in the last ten minutes;
+- the private inbox and model session are idle;
+- proactive delivery is not paused and the topic is not reduced beyond its current cadence or muted;
+- a configured character model can produce non-empty final text;
 - the selected private session is not currently in confirmed physical co-presence with the user.
+
+The score combines salience, timeliness, novelty, event source/type, and direct
+topic feedback. Eligible records sort by score, event time, then stable ID. One
+message model call is allowed per character tick. Same-topic duplicates are
+superseded; lower-ranked candidates for other topics remain pending. Normal
+topics have a minimum six-hour cadence. Reduced topics use 48 hours. The default
+global cooldown is 120 minutes and is configurable between 15 and 1440 minutes.
 
 Only the final first-person SMS is appended to Pi history. The call receives the
 stable character context, latest bounded runtime/relationship/memory context,
 the triggering event, and the last four visible messages. It receives no tools.
-Failures retry after ten minutes and become `failed` after three attempts.
+Failures retry after ten minutes using a dedicated last-attempt timestamp and
+become `failed` after three attempts.
 Disabling proactive delivery skips existing pending work so re-enabling it does
 not unexpectedly send stale events.
+
+Delivered-message feedback supports `helpful`, `less_often`, `mute_topic`, and
+`pause_24h`. Feedback, topic policy, pause state, and pending-topic suppression
+commit in one transaction. Users can restore a topic to normal or resume all
+messages explicitly. Relationship state may shape final wording but does not
+directly enqueue a message.
 
 Confirmed co-presence temporarily owns the character runtime projection. The
 Coordinator still settles due work and may plan future activities, but it does
@@ -154,7 +179,8 @@ projection resumes.
 
 `POST /api/v1/characters/{id}/life/moment` is an explicit user-facing simulation
 hook. It creates one valid event at the current/home/first place and immediately
-attempts proactive delivery while still respecting the daily limit.
+attempts proactive delivery while still respecting the daily limit, global
+pause, topic mute, co-presence, and active conversation ownership.
 
 ## 6. Context and Token Economics
 
@@ -183,8 +209,9 @@ The `World State MCP` schema is loaded only when all conditions are true:
 - the module is enabled;
 - that character has a world membership.
 
-It is not sent to unrelated SMS sessions, RP sessions, or group actors. The UI
-estimate is approximately 420 tokens per loaded turn. Background MLX planning
+It is not sent to unrelated SMS sessions or World actors. World actors receive a
+bounded service projection without an MCP schema or tools. The UI estimate is
+approximately 760 tokens per loaded private turn. Background MLX planning
 and proactive calls explicitly disable thinking and use 1,200 and 640 output
 tokens respectively; providers without the MLX control use conservative 2,400
 and 1,200 fallbacks.
@@ -195,6 +222,8 @@ and 1,200 fallbacks.
 
 - `get_character_world_state`: read the bound character's runtime and recent events;
 - `list_world_places`: read places and their fixed capabilities;
+- `list_world_characters`: list same-world character identity and public runtime availability without private context;
+- `request_character_contact`: queue a bounded request for another same-world character to consider contacting the user;
 - `perform_place_action`: record an action that happens now; travel means immediate arrival at its destination.
 
 The MCP is character-bound by the application session. The model cannot submit
@@ -202,6 +231,24 @@ a different `characterId` or `worldId`. `perform_place_action` uses the Pi tool
 call ID as its idempotency key, writes an audited action, and may create a
 salient RP memory. It never creates a proactive message from the same foreground
 turn.
+
+`request_character_contact` is available only from a character-bound SMS
+thread. Source and target must be different characters in the same canonical
+world, and the target must have proactive messages enabled. The source Agent
+submits only a 500-character quoted request envelope; it cannot read the
+target's SOUL, relationship, memory, model configuration, or private thread and
+cannot write the target's final message. The request becomes one shared-world
+interaction event with both characters as participants and one proactive
+candidate owned by the target.
+
+The target then uses its own bound model profile, SOUL, relationship, current
+world runtime and canonical private-thread context to return a structured
+`send` or `decline` decision. A sent message is appended only to the target's
+private thread and remains unread until that thread is opened. A decline is
+stored as `character_declined` and creates no visible message. Quiet hours,
+daily budget, pause, global/topic cooldown, recent activity, busy-thread and
+co-presence gates continue to apply. Tool success means only that the request
+was queued; the source character must never claim that the target replied.
 
 Future location changes do not add another MCP schema. The existing Schedule
 MCP accepts optional `placeId` and `capabilityId` only for
@@ -235,10 +282,13 @@ GET    /api/v1/characters/{id}/life
 PATCH  /api/v1/characters/{id}/life
 POST   /api/v1/characters/{id}/life/plan
 POST   /api/v1/characters/{id}/life/moment
+POST   /api/v1/characters/{id}/life/proactive/resume
+POST   /api/v1/characters/{id}/life/proactive-topics/{topicKey}/reset
 
 POST   /api/v1/world-autonomy/tick
 GET    /api/v1/proactive-messages
 POST   /api/v1/proactive-messages/read
+POST   /api/v1/proactive-messages/{id}/feedback
 ```
 
 Example character update:
@@ -252,6 +302,7 @@ Example character update:
     "enabled": true,
     "proactiveEnabled": true,
     "dailyMessageLimit": 1,
+    "proactiveCooldownMinutes": 120,
     "quietStart": "23:00",
     "quietEnd": "08:00"
   }
@@ -277,10 +328,17 @@ they must not sleep for real timer intervals.
 4. Enable **自主安排日程** and optionally **允许主动发消息**.
 5. Use **安排今日** to inspect generated entries in the character calendar.
 6. Use **模拟生活片段** to verify runtime, event memory, and optional proactive SMS.
-7. Open the character's private SMS conversation and inspect Debug Trace for
-   `world_planning`, `proactive_message`, `world_core`, and `world_runtime`
-   records. If no private conversation existed, successful proactive delivery
-   creates it automatically.
+7. Open the character's private SMS conversation to send direct feedback, then
+   inspect Debug > 主动决策 for score and deferral reasons. Provider Trace still
+   exposes `world_planning`, `proactive_message`, `world_core`, and
+   `world_runtime`. If no private conversation existed, successful proactive
+   delivery creates it automatically.
+8. To test cross-character relay, assign two characters to the same world,
+   enable proactive messages for the target, and ask the current character to
+   have the target contact you. The target thread uses the same completion-time
+   unread counter as ordinary character replies. A red badge appears on the
+   Characters section and target private thread only after the target actually
+   sends, and remains until that visible, focused conversation is opened.
 
 ## 10. Required Invariants and Tests
 
@@ -295,34 +353,34 @@ Automated coverage must preserve these rules:
 - immediate activities expire, and legacy open-ended non-free states recover;
 - character Schedule MCP location fields create one linked world plan and reject partial/cross-world bindings;
 - settlement creates one event and at most one memory across retries;
-- quiet hours, daily limits, retry cooldown, and attempt limits are deterministic;
+- score ranking, same-topic deduplication, quiet hours, recent-user/busy/co-presence gates, daily limits, pauses, cooldowns, retries, and attempt limits are deterministic;
+- feedback atomically updates topic policy and can reset or resume without resurrecting stale candidates;
+- contact requests reject self/cross-world targets, preserve quoted request metadata across ranking, and use the target model binding;
+- a target decline creates no transcript message, while a send enters only the target thread and remains unread until opened;
 - same-world setting updates preserve runtime state;
 - switching worlds cancels old plans and pending proactive work;
 - module disable removes tools and both context sections;
-- schema 19 survives backup/restore and delete-all;
+- schemas 19, 25, and 26 survive backup/restore and delete-all;
 - desktop and mobile browser workflows can create, bind, plan, and simulate.
 
-The focused suite is `test/world-autonomy.test.ts`; the full browser workflow is
-`test/browser.mjs`.
+The focused suites are `test/world-autonomy.test.ts` and
+`test/character-contact.test.ts`; the full browser workflow is `test/browser.mjs`.
 
 ## 11. Deferred Extensions
 
 The following are not part of this MVP:
 
-- autonomous multi-character encounter synthesis;
+- autonomous World turns without a user or trusted scheduled trigger;
 - travel graphs, duration, economy, inventory, or location-specific custom code;
-- character-to-character proactive messages;
-- a canonical-world link for selected RP scenes;
 - weather or external real-world feeds;
 - a dedicated low-cost planner/message model profile;
 - user-editable event correction and replay UI;
 - simulation of every missed minute during long downtime.
 
-`world_event_participants` and shared world IDs are intentionally present so a
-later encounter Coordinator can add one event with per-character perspectives.
-That extension must keep one canonical event, write separate character memories,
-and inject only the current character's perspective. It must not create
-long-running per-character agents or copy all world history into every prompt.
+Any future autonomous trigger must reuse one canonical event, write separate
+observer-scoped character memories, and inject only the current character's
+perspective. It must not create long-running per-character agents or copy all
+world history into every prompt.
 
 ## 12. Implementation Map
 
@@ -330,8 +388,12 @@ long-running per-character agents or copy all world history into every prompt.
 - `src/world/repository.ts`: schema-19 persistence
 - `src/world/service.ts`: validation, assignment, actions, context projection
 - `src/world/coordinator.ts`: planning, settlement, memory, proactive delivery
+- `src/world/proactive-policy.ts`: deterministic topic, scoring, gating, cooldown and ranking policy
+- `src/world/conversation-repository.ts`: schema-26 World timeline persistence
+- `src/world/conversation-service.ts`: events, observations, relationships, and unread state
+- `src/world/conversation-prompts.ts`: Director, actor, and Analyzer output contracts
 - `src/mcp/world-server.ts`: fixed character-bound MCP
 - `src/context/planner.ts`: stable/dynamic placement and budgets
 - `src/domain/kernel.ts`: model calls, lifecycle wiring, public control plane
 - `src/http/router.ts`: production and test HTTP routes
-- `src/http/ui.ts`: character Life tab and world manager
+- `src/http/ui.ts`: character Life tab, world manager, and Worlds/Characters chat hierarchy

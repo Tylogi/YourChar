@@ -91,6 +91,8 @@ test("canonical world context and fixed tools enter SMS only and do not accumula
     const sms = runtime.model.requests.at(-1)!;
     assert.equal(sms.toolNames.includes("get_character_world_state"), true);
     assert.equal(sms.toolNames.includes("list_world_places"), true);
+    assert.equal(sms.toolNames.includes("list_world_characters"), true);
+    assert.equal(sms.toolNames.includes("request_character_contact"), true);
     assert.match(sms.systemPrompt, /<world_core[^>]*>/);
     assert.match(JSON.stringify(sms.messages), /WORLD_RUNTIME_CONTEXT/);
     assert.match(JSON.stringify(sms.messages), /中央车站/);
@@ -103,6 +105,7 @@ test("canonical world context and fixed tools enter SMS only and do not accumula
     });
     const rp = runtime.model.requests.at(-1)!;
     assert.equal(rp.toolNames.includes("get_character_world_state"), false);
+    assert.equal(rp.toolNames.includes("request_character_contact"), false);
     assert.doesNotMatch(rp.systemPrompt, /<world_core[^>]*>/);
     assert.doesNotMatch(JSON.stringify(rp.messages), /WORLD_RUNTIME_CONTEXT/);
   } finally {

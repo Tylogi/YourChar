@@ -133,6 +133,9 @@ export class MemoryLifecycleService {
     const replacement: RpMemory = {
       ...edited,
       id: this.idGenerator.next("memory"),
+      tags: current.tags.includes("user-insight")
+        ? [...new Set([...edited.tags, "user-corrected"])]
+        : edited.tags,
       validity: "active",
       confirmed: true,
       confirmationProvenance: {
@@ -162,6 +165,46 @@ export class MemoryLifecycleService {
 
   archive(id: string, reason = "archived_by_user"): RpMemory {
     return this.transition(id, "archived", reason);
+  }
+
+  archiveActiveRealityByKey(key: string, reason: string): RpMemory | undefined {
+    this.vault.syncIfChanged();
+    const current = this.repository.findActiveMemoryByKeyInRealm(key, REALITY_MEMORY_REALM);
+    if (
+      !current ||
+      !current.tags.includes("user-insight") ||
+      current.tags.includes("user-corrected")
+    ) return undefined;
+    return this.transition(current.id, "archived", reason);
+  }
+
+  activeRealityByKey(key: string): RpMemory | undefined {
+    this.vault.syncIfChanged();
+    return this.repository.findActiveMemoryByKeyInRealm(key, REALITY_MEMORY_REALM);
+  }
+
+  refreshRealityProfileProjection(): void {
+    if (!this.profileAutoWriteEnabled()) return;
+    this.vault.syncIfChanged();
+    const active = this.repository.listAllMemories().filter(
+      (memory) =>
+        memory.realm === REALITY_MEMORY_REALM &&
+        memory.validity === "active" &&
+        memory.confirmed,
+    );
+    const current = this.vault.getProfile()?.markdown ?? "# 用户画像\n";
+    const projected = projectRealityMemoriesIntoProfile(current, active);
+    if (projected !== current) this.vault.writeProfile(projected);
+  }
+
+  updateRealityProfileManual(markdown: string) {
+    const active = this.repository.listAllMemories().filter(
+      (memory) =>
+        memory.realm === REALITY_MEMORY_REALM &&
+        memory.validity === "active" &&
+        memory.confirmed,
+    );
+    return this.vault.writeProfile(projectRealityMemoriesIntoProfile(markdown, active));
   }
 
   forget(id: string, reason = "forgotten_by_user"): RpMemory {

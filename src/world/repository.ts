@@ -6,7 +6,9 @@ import {
   type CharacterRuntimeState,
   type CharacterWorldMembership,
   type ProactiveMessage,
+  type ProactiveFeedbackType,
   type ProactiveMessageStatus,
+  type ProactiveTopicPolicy,
   type RoleWorld,
   type WorldCapabilityId,
   type WorldEvent,
@@ -25,14 +27,18 @@ export class WorldRepository {
   createWorld(world: RoleWorld): RoleWorld {
     this.database.connection.prepare(`
       INSERT INTO role_worlds(
-        id, name, timezone, description, rules_markdown, status, revision, created_at, updated_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        id, name, timezone, description, rules_markdown,
+        director_model_profile_id, analyst_model_profile_id,
+        status, revision, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       world.id,
       world.name,
       world.timezone,
       world.description,
       world.rulesMarkdown,
+      world.directorModelProfileId ?? null,
+      world.analystModelProfileId ?? null,
       world.status,
       world.revision,
       world.createdAt,
@@ -59,6 +65,7 @@ export class WorldRepository {
     this.database.connection.prepare(`
       UPDATE role_worlds SET
         name = ?, timezone = ?, description = ?, rules_markdown = ?,
+        director_model_profile_id = ?, analyst_model_profile_id = ?,
         status = ?, revision = ?, updated_at = ?
       WHERE id = ?
     `).run(
@@ -66,6 +73,8 @@ export class WorldRepository {
       world.timezone,
       world.description,
       world.rulesMarkdown,
+      world.directorModelProfileId ?? null,
+      world.analystModelProfileId ?? null,
       world.status,
       world.revision,
       world.updatedAt,
@@ -178,14 +187,17 @@ export class WorldRepository {
     this.database.connection.prepare(`
       INSERT INTO character_autonomy_policies(
         character_id, enabled, proactive_enabled, daily_message_limit,
-        quiet_start, quiet_end, last_planned_date, last_proactive_at, updated_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        proactive_cooldown_minutes, quiet_start, quiet_end, proactive_paused_until,
+        last_planned_date, last_proactive_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT(character_id) DO UPDATE SET
         enabled = excluded.enabled,
         proactive_enabled = excluded.proactive_enabled,
         daily_message_limit = excluded.daily_message_limit,
+        proactive_cooldown_minutes = excluded.proactive_cooldown_minutes,
         quiet_start = excluded.quiet_start,
         quiet_end = excluded.quiet_end,
+        proactive_paused_until = excluded.proactive_paused_until,
         last_planned_date = excluded.last_planned_date,
         last_proactive_at = excluded.last_proactive_at,
         updated_at = excluded.updated_at
@@ -194,8 +206,10 @@ export class WorldRepository {
       policy.enabled ? 1 : 0,
       policy.proactiveEnabled ? 1 : 0,
       policy.dailyMessageLimit,
+      policy.proactiveCooldownMinutes,
       policy.quietStart,
       policy.quietEnd,
+      policy.proactivePausedUntil ?? null,
       policy.lastPlannedDate ?? null,
       policy.lastProactiveAt ?? null,
       policy.updatedAt,
@@ -414,23 +428,33 @@ export class WorldRepository {
   createProactiveMessage(message: ProactiveMessage): ProactiveMessage {
     this.database.connection.prepare(`
       INSERT INTO proactive_messages(
-        id, character_id, world_event_id, session_id, text, status, attempts,
-        last_error, created_at, updated_at, delivered_at, read_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        id, character_id, world_event_id, topic_key, topic_label, candidate_score,
+        decision_code, decision_json, session_id, text, status, attempts,
+        last_attempt_at, last_error, created_at, updated_at, delivered_at, read_at,
+        feedback_type, feedback_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT(world_event_id) DO NOTHING
     `).run(
       message.id,
       message.characterId,
       message.worldEventId,
+      message.topicKey,
+      message.topicLabel,
+      message.candidateScore,
+      message.decisionCode,
+      JSON.stringify(message.decisionDetails),
       message.sessionId ?? null,
       message.text ?? null,
       message.status,
       message.attempts,
+      message.lastAttemptAt ?? null,
       message.lastError ?? null,
       message.createdAt,
       message.updatedAt,
       message.deliveredAt ?? null,
       message.readAt ?? null,
+      message.feedbackType ?? null,
+      message.feedbackAt ?? null,
     );
     return this.getProactiveMessageByEvent(message.worldEventId)!;
   }
@@ -484,28 +508,51 @@ export class WorldRepository {
   updateProactiveMessage(message: ProactiveMessage): ProactiveMessage {
     this.database.connection.prepare(`
       UPDATE proactive_messages SET
-        session_id = ?, text = ?, status = ?, attempts = ?, last_error = ?,
-        updated_at = ?, delivered_at = ?, read_at = ?
+        topic_key = ?, topic_label = ?, candidate_score = ?, decision_code = ?, decision_json = ?,
+        session_id = ?, text = ?, status = ?, attempts = ?, last_attempt_at = ?, last_error = ?,
+        updated_at = ?, delivered_at = ?, read_at = ?, feedback_type = ?, feedback_at = ?
       WHERE id = ?
     `).run(
+      message.topicKey,
+      message.topicLabel,
+      message.candidateScore,
+      message.decisionCode,
+      JSON.stringify(message.decisionDetails),
       message.sessionId ?? null,
       message.text ?? null,
       message.status,
       message.attempts,
+      message.lastAttemptAt ?? null,
       message.lastError ?? null,
       message.updatedAt,
       message.deliveredAt ?? null,
       message.readAt ?? null,
+      message.feedbackType ?? null,
+      message.feedbackAt ?? null,
       message.id,
     );
     return this.getProactiveMessage(message.id)!;
   }
 
-  skipPendingProactiveMessages(characterId: string, now: string): number {
+  skipPendingProactiveMessages(
+    characterId: string,
+    now: string,
+    decisionCode: "policy_disabled" | "world_changed" = "policy_disabled",
+  ): number {
     return Number(this.database.connection.prepare(`
-      UPDATE proactive_messages SET status = 'skipped', updated_at = ?
+      UPDATE proactive_messages
+      SET status = 'skipped', decision_code = ?, decision_json = '{}', updated_at = ?
       WHERE character_id = ? AND status = 'pending'
-    `).run(now, characterId).changes);
+    `).run(decisionCode, now, characterId).changes);
+  }
+
+  skipPendingProactiveMessagesByTopic(characterId: string, topicKey: string, now: string): number {
+    return Number(this.database.connection.prepare(`
+      UPDATE proactive_messages
+      SET status = 'skipped', decision_code = 'topic_muted',
+        decision_json = '{"feedbackPolicy":"muted"}', updated_at = ?
+      WHERE character_id = ? AND topic_key = ? AND status = 'pending'
+    `).run(now, characterId, topicKey).changes);
   }
 
   markProactiveMessagesRead(sessionId: string, readAt: string): number {
@@ -513,6 +560,48 @@ export class WorldRepository {
       UPDATE proactive_messages SET read_at = ?, updated_at = ?
       WHERE session_id = ? AND status = 'delivered' AND read_at IS NULL
     `).run(readAt, readAt, sessionId).changes);
+  }
+
+  getProactiveTopicPolicy(characterId: string, topicKey: string): ProactiveTopicPolicy | undefined {
+    const row = this.database.connection.prepare(`
+      SELECT * FROM proactive_topic_policies WHERE character_id = ? AND topic_key = ?
+    `).get(characterId, topicKey) as Row | undefined;
+    return row ? mapProactiveTopicPolicy(row) : undefined;
+  }
+
+  listProactiveTopicPolicies(characterId: string): ProactiveTopicPolicy[] {
+    return (this.database.connection.prepare(`
+      SELECT * FROM proactive_topic_policies
+      WHERE character_id = ?
+      ORDER BY CASE mode WHEN 'muted' THEN 0 WHEN 'reduced' THEN 1 ELSE 2 END,
+        updated_at DESC, topic_key
+    `).all(characterId) as Row[]).map(mapProactiveTopicPolicy);
+  }
+
+  upsertProactiveTopicPolicy(policy: ProactiveTopicPolicy): ProactiveTopicPolicy {
+    this.database.connection.prepare(`
+      INSERT INTO proactive_topic_policies(
+        character_id, topic_key, topic_label, mode, helpful_count, less_often_count,
+        last_feedback_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(character_id, topic_key) DO UPDATE SET
+        topic_label = excluded.topic_label,
+        mode = excluded.mode,
+        helpful_count = excluded.helpful_count,
+        less_often_count = excluded.less_often_count,
+        last_feedback_at = excluded.last_feedback_at,
+        updated_at = excluded.updated_at
+    `).run(
+      policy.characterId,
+      policy.topicKey,
+      policy.topicLabel,
+      policy.mode,
+      policy.helpfulCount,
+      policy.lessOftenCount,
+      policy.lastFeedbackAt ?? null,
+      policy.updatedAt,
+    );
+    return this.getProactiveTopicPolicy(policy.characterId, policy.topicKey)!;
   }
 
   private mapEvent(row: Row): WorldEvent {
@@ -544,6 +633,12 @@ function mapWorld(row: Row): RoleWorld {
     timezone: String(row.timezone),
     description: String(row.description),
     rulesMarkdown: String(row.rules_markdown),
+    ...(nullableString(row.director_model_profile_id)
+      ? { directorModelProfileId: nullableString(row.director_model_profile_id) }
+      : {}),
+    ...(nullableString(row.analyst_model_profile_id)
+      ? { analystModelProfileId: nullableString(row.analyst_model_profile_id) }
+      : {}),
     status: String(row.status) as RoleWorld["status"],
     revision: Number(row.revision),
     createdAt: String(row.created_at),
@@ -577,13 +672,16 @@ function mapMembership(row: Row): CharacterWorldMembership {
 function mapPolicy(row: Row): CharacterAutonomyPolicy {
   const lastPlannedDate = nullableString(row.last_planned_date);
   const lastProactiveAt = nullableString(row.last_proactive_at);
+  const proactivePausedUntil = nullableString(row.proactive_paused_until);
   return {
     characterId: String(row.character_id),
     enabled: Boolean(row.enabled),
     proactiveEnabled: Boolean(row.proactive_enabled),
     dailyMessageLimit: Number(row.daily_message_limit),
+    proactiveCooldownMinutes: Number(row.proactive_cooldown_minutes),
     quietStart: String(row.quiet_start),
     quietEnd: String(row.quiet_end),
+    ...(proactivePausedUntil ? { proactivePausedUntil } : {}),
     ...(lastPlannedDate ? { lastPlannedDate } : {}),
     ...(lastProactiveAt ? { lastProactiveAt } : {}),
     updatedAt: String(row.updated_at),
@@ -630,23 +728,59 @@ function mapActivityPlan(row: Row): CharacterActivityPlan {
 function mapProactiveMessage(row: Row): ProactiveMessage {
   const sessionId = nullableString(row.session_id);
   const text = nullableString(row.text);
+  const lastAttemptAt = nullableString(row.last_attempt_at);
   const lastError = nullableString(row.last_error);
   const deliveredAt = nullableString(row.delivered_at);
   const readAt = nullableString(row.read_at);
+  const feedbackType = nullableString(row.feedback_type) as ProactiveFeedbackType | undefined;
+  const feedbackAt = nullableString(row.feedback_at);
   return {
     id: String(row.id),
     characterId: String(row.character_id),
     worldEventId: String(row.world_event_id),
+    topicKey: String(row.topic_key),
+    topicLabel: String(row.topic_label),
+    candidateScore: Number(row.candidate_score),
+    decisionCode: String(row.decision_code) as ProactiveMessage["decisionCode"],
+    decisionDetails: parseRecord(row.decision_json),
     ...(sessionId ? { sessionId } : {}),
     ...(text ? { text } : {}),
     status: String(row.status) as ProactiveMessageStatus,
     attempts: Number(row.attempts),
+    ...(lastAttemptAt ? { lastAttemptAt } : {}),
     ...(lastError ? { lastError } : {}),
     createdAt: String(row.created_at),
     updatedAt: String(row.updated_at),
     ...(deliveredAt ? { deliveredAt } : {}),
     ...(readAt ? { readAt } : {}),
+    ...(feedbackType ? { feedbackType } : {}),
+    ...(feedbackAt ? { feedbackAt } : {}),
   };
+}
+
+function mapProactiveTopicPolicy(row: Row): ProactiveTopicPolicy {
+  const lastFeedbackAt = nullableString(row.last_feedback_at);
+  return {
+    characterId: String(row.character_id),
+    topicKey: String(row.topic_key),
+    topicLabel: String(row.topic_label),
+    mode: String(row.mode) as ProactiveTopicPolicy["mode"],
+    helpfulCount: Number(row.helpful_count),
+    lessOftenCount: Number(row.less_often_count),
+    ...(lastFeedbackAt ? { lastFeedbackAt } : {}),
+    updatedAt: String(row.updated_at),
+  };
+}
+
+function parseRecord(value: unknown): Record<string, unknown> {
+  try {
+    const parsed = JSON.parse(String(value ?? "{}"));
+    return parsed && typeof parsed === "object" && !Array.isArray(parsed)
+      ? parsed as Record<string, unknown>
+      : {};
+  } catch {
+    return {};
+  }
 }
 
 function parseStringArray(value: unknown): string[] {

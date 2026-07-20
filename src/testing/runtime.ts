@@ -253,6 +253,7 @@ export class TestRuntime {
       interactionEvents: interactionStates.flatMap((state) =>
         this.kernel.interactionService.listEvents(state.sessionId, 200)),
       memories: this.kernel.rpService.listAllMemories().sort(byId),
+      userInsights: this.kernel.getUserInsightStatus(200),
       pendingRealMutations: this.kernel.rpService.repository.listPendingMutations(),
       actions: [...this.kernel.store.actions].sort(byId),
       notifications: [...this.notifications],

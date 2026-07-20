@@ -98,6 +98,10 @@ export class CompanionStore {
     return log;
   }
 
+  persistContextLog(log: ContextLogEntry): void {
+    this.observability?.recordContextLog(log);
+  }
+
   recentContextLogs(limit = 20): ContextLogEntry[] {
     const bounded = Math.max(1, Math.min(limit, 100));
     return this.contextLogs.length ? this.contextLogs.slice(0, bounded) : this.observability?.recentContextLogs(bounded) ?? [];
@@ -332,6 +336,9 @@ function normalizeStoredModelApiConfig(value: unknown): StoredModelApiConfig {
   if (typeof input.maxTokens === "number") {
     config.maxTokens = Math.max(1, Math.floor(input.maxTokens));
   }
+  if (typeof input.contextWindowTokens === "number") {
+    config.contextWindowTokens = boundedContextWindow(input.contextWindowTokens);
+  }
   return config;
 }
 
@@ -407,7 +414,15 @@ function applyModelProfilePatch(
   else if (typeof patch.temperature === "number") profile.temperature = patch.temperature;
   if (patch.maxTokens === null) delete profile.maxTokens;
   else if (typeof patch.maxTokens === "number") profile.maxTokens = Math.max(1, Math.floor(patch.maxTokens));
+  if (patch.contextWindowTokens === null) delete profile.contextWindowTokens;
+  else if (typeof patch.contextWindowTokens === "number") {
+    profile.contextWindowTokens = boundedContextWindow(patch.contextWindowTokens);
+  }
   profile.updatedAt = updatedAt;
+}
+
+function boundedContextWindow(value: number): number {
+  return Math.max(8_192, Math.min(2_000_000, Math.floor(value)));
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

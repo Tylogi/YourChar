@@ -138,6 +138,51 @@ test("private inbox gives the first message an accumulation grace period", async
   }
 });
 
+test("active composer typing extends a private burst beyond the normal maximum wait", async () => {
+  const runtime = createTestRuntime({
+    seed: "private-inbox-typing",
+    startPrivateInboxCoordinator: true,
+    privateInboxOptions: {
+      initialWaitMs: 40,
+      quietWindowMs: 20,
+      typingQuietWindowMs: 120,
+      maximumWaitMs: 60,
+      afterTurnQuietMs: 20,
+    },
+  });
+  try {
+    const character = runtime.kernel.createCharacter({ name: "输入感知角色" });
+    runtime.model.enqueue([{ kind: "assistant_text", text: "这次听完整了。" }]);
+    await runtime.kernel.enqueuePrivateMessage("private-inbox-typing", {
+      mode: "sms",
+      characterId: character.id,
+      text: "第一条。",
+    }, "typing-first");
+
+    await new Promise((resolve) => setTimeout(resolve, 25));
+    const heartbeat = runtime.kernel.notePrivateInboxTyping("private-inbox-typing");
+    assert.ok(new Date(heartbeat.typingUntil).getTime() > Date.now());
+    await new Promise((resolve) => setTimeout(resolve, 55));
+    assert.equal(runtime.model.requests.length, 0, "typing must hold the burst past its ordinary 60 ms cap");
+
+    await runtime.kernel.enqueuePrivateMessage("private-inbox-typing", {
+      mode: "sms",
+      characterId: character.id,
+      text: "补充完整。",
+    }, "typing-second");
+    await waitFor(() => runtime.model.requests.length === 1);
+    await runtime.kernel.flushPrivateMessageInbox("private-inbox-typing");
+    const users = runtime.model.requests[0].messages
+      .filter((message): message is Record<string, unknown> =>
+        Boolean(message && typeof message === "object" && (message as { role?: unknown }).role === "user"))
+      .map(modelMessageText)
+      .filter((text) => !text.includes("RP_AGENT_RUNTIME_CONTEXT"));
+    assert.equal(users.at(-1), "第一条。\n补充完整。");
+  } finally {
+    runtime.dispose();
+  }
+});
+
 test("queued private messages survive a service restart", async () => {
   const stateDir = mkdtempSync(join(tmpdir(), "rp-agent-private-inbox-"));
   try {

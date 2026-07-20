@@ -28,7 +28,7 @@ test("module toggles rebuild Pi capabilities and profile context without losing 
     ]);
     assert.deepEqual(
       modules.filter((entry) => entry.type === "mcp").map((entry) => [entry.name, entry.estimatedTokens]),
-      [["Interaction State MCP", 650], ["Memory Coordinator MCP", 430], ["Relationship State MCP", 230], ["Schedule MCP", 960], ["Subagent Delegation MCP", 390], ["Tavily Search MCP", 350], ["User Profile MCP", 270], ["Vision MCP", 420], ["Web Reader MCP", 260], ["World State MCP", 420]],
+      [["Interaction State MCP", 650], ["Memory Coordinator MCP", 430], ["Relationship State MCP", 230], ["Schedule MCP", 960], ["Subagent Delegation MCP", 390], ["Tavily Search MCP", 350], ["User Profile MCP", 270], ["Vision MCP", 420], ["Web Reader MCP", 260], ["World State MCP", 760]],
     );
     assert.match(runtime.kernel.getAgentModuleDetail("mcp:interaction-state").content, /begin_meeting/);
     assert.match(runtime.kernel.getAgentModuleDetail("mcp:interaction-state").content, /semantic evidence/);

@@ -58,6 +58,7 @@ export type ModelApiConfig = {
   apiKeyMasked: string;
   temperature?: number;
   maxTokens?: number;
+  contextWindowTokens?: number;
   updatedAt?: string;
 };
 
@@ -70,6 +71,7 @@ export type ModelApiConfigPatch = {
   clearApiKey?: boolean;
   temperature?: number | null;
   maxTokens?: number | null;
+  contextWindowTokens?: number | null;
 };
 
 export type ModelApiProfile = ModelApiConfig & {
@@ -107,7 +109,7 @@ export type ModelContextTrace = {
   id: string;
   sessionId: string;
   mode: Mode;
-  turnKind: "user" | "reminder_due" | "group_gate" | "group_reply" | "subagent" | "memory_extraction" | "relationship_extraction" | "post_turn_analysis" | "world_planning" | "proactive_message";
+  turnKind: "user" | "reminder_due" | "group_gate" | "group_reply" | "subagent" | "memory_extraction" | "relationship_extraction" | "post_turn_analysis" | "world_planning" | "proactive_message" | "world_director" | "world_actor" | "world_analysis";
   requestText: string;
   payload: Record<string, unknown>;
   createdAt: string;

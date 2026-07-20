@@ -14,6 +14,7 @@ import type {
   MemoryExtractionJob,
   MemoryExtractor,
   MemoryTargetRealm,
+  TrustedRealityMemoryObserver,
 } from "./types.js";
 
 export class MemoryCoordinator {
@@ -30,6 +31,7 @@ export class MemoryCoordinator {
     private readonly idGenerator: IdGenerator,
     private readonly extractor: MemoryExtractor,
     private readonly autoCaptureRealityEnabled: () => boolean = () => false,
+    private readonly observeTrustedReality?: TrustedRealityMemoryObserver,
   ) {
     this.repository.recoverExpired(this.now());
     this.schedule();
@@ -226,15 +228,24 @@ export class MemoryCoordinator {
           return;
         }
         for (const [index, candidate] of candidates.entries()) {
-          const trustedEvidence = job.realm === "reality" && this.autoCaptureRealityEnabled()
+          const trustedEvidence = job.realm === "reality"
             ? trustedDailyEvidence(candidate, input.userText)
             : undefined;
+          const trustedKey = trustedEvidence
+            ? candidate.key ?? `reality.daily.${candidate.type}.${shortHash(trustedEvidence)}`
+            : undefined;
+          const trustedTags = trustedEvidence
+            ? [...new Set([
+                ...(candidate.tags ?? []),
+                ...dailySemanticTags(candidate.type, trustedEvidence),
+                "daily-auto-capture",
+                "user-quote-evidence",
+              ])]
+            : candidate.tags;
           const memoryInput = {
             realm: job.realm,
             type: candidate.type,
-            key: trustedEvidence
-              ? candidate.key ?? `reality.daily.${candidate.type}.${shortHash(trustedEvidence)}`
-              : candidate.key,
+            key: trustedKey ?? candidate.key,
             content: trustedEvidence ?? candidate.content,
             ...(job.characterId ? { characterId: job.characterId } : {}),
             sourceSessionId: job.sessionId,
@@ -243,18 +254,26 @@ export class MemoryCoordinator {
               ? Math.max(candidate.salience ?? 0, dailyAutoSalience(candidate.type))
               : candidate.salience,
             confidence: candidate.confidence,
-            tags: trustedEvidence
-              ? [...new Set([
-                  ...(candidate.tags ?? []),
-                  ...dailySemanticTags(candidate.type, trustedEvidence),
-                  "daily-auto-capture",
-                  "user-quote-evidence",
-                ])]
-              : candidate.tags,
+            tags: trustedTags,
             idempotencyKey: `${job.idempotencyKey}:candidate:${index}`,
           };
-          if (trustedEvidence) this.lifecycle.createControlPlane(memoryInput);
-          else this.lifecycle.propose(memoryInput);
+          if (trustedEvidence && trustedKey && this.observeTrustedReality) {
+            this.observeTrustedReality({
+              sourceSessionId: job.sessionId,
+              sourceMessageId: job.sourceMessageId,
+              candidateIndex: index,
+              claimKey: trustedKey,
+              claimType: candidate.type as RealityMemoryType,
+              exactQuote: trustedEvidence,
+              confidence: candidate.confidence ?? 0,
+              ...(candidate.salience === undefined ? {} : { salience: candidate.salience }),
+              ...(trustedTags?.length ? { tags: trustedTags } : {}),
+            });
+          } else if (trustedEvidence && this.autoCaptureRealityEnabled()) {
+            this.lifecycle.createControlPlane(memoryInput);
+          } else {
+            this.lifecycle.propose(memoryInput);
+          }
           resultCount += 1;
         }
       }
@@ -323,9 +342,14 @@ export function hasDurableSignal(text: string, mode: Mode): boolean {
     const normalized = text.replace(/\s+/gu, " ").trim();
     if (!normalized) return false;
     const durable = /(?:我(?:叫|的名字|是|住在|来自|喜欢|爱吃|常吃|不吃|不喝|不喜欢|讨厌|偏好|习惯|通常|一般|平时|每天|每周|工作日|周末|一直|正在|最近在|打算|计划|希望|目标|家人|家里|有个|认识|妹妹|姐姐|哥哥|弟弟|父母|朋友|同事|导师)|我的(?:目标|项目|课题|习惯|偏好|边界|家人|朋友|同事|导师)|对我来说|以后(?:请)?不要|回复我时|回答我时|跟我说话时|请(?:先|尽量|不要)|I\s+(?:am|live|come from|prefer|usually|normally|always|like|dislike|avoid|work on|plan|hope|know|have))/iu.test(normalized);
-    if (!durable) return false;
     const onlyTransient = /^(?:我)?(?:今天|现在|刚刚|刚才|这会儿|今晚|这次|临时|today|right now|just now).{0,40}(?:累|困|饿|忙|开心|难过|生气|在下雨|有事|tired|busy|happy|sad|hungry)[。！？.!?]?$/iu.test(normalized);
-    return !onlyTransient;
+    if (onlyTransient) return false;
+    if (durable) return true;
+    if (/^(?:嗯+|哦+|好(?:的|呀|啊)?|行|可以|知道了|收到|谢谢|早|晚安|hi|hello|ok(?:ay)?|thanks?)[。！？.!?~～]*$/iu.test(normalized)) {
+      return false;
+    }
+    const selfDisclosure = /(?:^|[，。！？,.!?\s])(?:我|我的|我们|咱们|家里|家人|I\b|I'm\b|I've\b|my\b)/iu.test(normalized);
+    return selfDisclosure && [...normalized].length >= 5;
   }
   return /(?:我们约定|世界观|剧情里|从此|关系变成|角色知道|秘密是|边界是|誓言|线索)/u.test(text);
 }

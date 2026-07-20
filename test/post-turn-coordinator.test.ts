@@ -232,7 +232,7 @@ test("relationship reset suppresses only that consumer while an in-flight depart
   }
 });
 
-test("schema 21 upgrades existing coordinator jobs, interaction events, and traces to schema 22", () => {
+test("schema 21 upgrades coordinator state through schema 26 world conversations", () => {
   const directory = mkdtempSync(join(tmpdir(), "rp-agent-post-turn-migration-"));
   const path = join(directory, "state.sqlite");
   const legacy = new DatabaseSync(path);
@@ -242,9 +242,26 @@ test("schema 21 upgrades existing coordinator jobs, interaction events, and trac
       CREATE TABLE schema_migrations(version INTEGER PRIMARY KEY, applied_at TEXT NOT NULL);
       CREATE TABLE characters(id TEXT PRIMARY KEY);
       CREATE TABLE role_sessions(app_session_id TEXT PRIMARY KEY);
+      CREATE TABLE role_worlds(id TEXT PRIMARY KEY);
       CREATE TABLE role_places(id TEXT PRIMARY KEY);
+      CREATE TABLE rp_memories(id TEXT PRIMARY KEY);
+      CREATE TABLE group_chats(id TEXT PRIMARY KEY);
+      CREATE TABLE character_autonomy_policies(
+        character_id TEXT PRIMARY KEY, enabled INTEGER NOT NULL,
+        proactive_enabled INTEGER NOT NULL, daily_message_limit INTEGER NOT NULL,
+        quiet_start TEXT NOT NULL, quiet_end TEXT NOT NULL,
+        last_planned_date TEXT, last_proactive_at TEXT, updated_at TEXT NOT NULL
+      );
+      CREATE TABLE world_events(id TEXT PRIMARY KEY, salience REAL NOT NULL DEFAULT 0);
+      CREATE TABLE proactive_messages(
+        id TEXT PRIMARY KEY, character_id TEXT NOT NULL, world_event_id TEXT NOT NULL UNIQUE,
+        session_id TEXT, text TEXT, status TEXT NOT NULL, attempts INTEGER NOT NULL,
+        last_error TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL,
+        delivered_at TEXT, read_at TEXT
+      );
       INSERT INTO characters(id) VALUES ('character');
       INSERT INTO role_sessions(app_session_id) VALUES ('session');
+      INSERT INTO group_chats(id) VALUES ('legacy-group');
       CREATE TABLE relationship_extraction_jobs (
         id TEXT PRIMARY KEY, idempotency_key TEXT NOT NULL UNIQUE,
         source_context_log_id TEXT NOT NULL UNIQUE, session_id TEXT NOT NULL,
@@ -313,7 +330,14 @@ test("schema 21 upgrades existing coordinator jobs, interaction events, and trac
   try {
     assert.equal(
       Number((upgraded.connection.prepare("SELECT MAX(version) AS version FROM schema_migrations").get() as { version: number }).version),
-      22,
+      26,
+    );
+    assert.equal(
+      (upgraded.connection.prepare(`
+        SELECT name FROM sqlite_master
+        WHERE type = 'table' AND name = 'user_insight_observations'
+      `).get() as { name?: string } | undefined)?.name,
+      "user_insight_observations",
     );
     const job = upgraded.connection.prepare(`
       SELECT analysis_kinds_json, relationship_result_count, interaction_result_count
@@ -325,6 +349,10 @@ test("schema 21 upgrades existing coordinator jobs, interaction events, and trac
     assert.equal(
       (upgraded.connection.prepare("SELECT source FROM interaction_transition_events WHERE id = 'legacy-event'").get() as { source: string }).source,
       "system",
+    );
+    assert.equal(
+      Number((upgraded.connection.prepare("SELECT COUNT(*) AS count FROM group_chats").get() as { count: number }).count),
+      0,
     );
     upgraded.connection.prepare(`
       INSERT INTO model_context_traces(id, session_id, mode, turn_kind, request_text, payload_json, created_at)

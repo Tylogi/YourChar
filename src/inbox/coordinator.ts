@@ -7,6 +7,7 @@ import type { PrivateInboxEvent, PrivateInboxMessage, PrivateInboxSnapshot, Priv
 export type PrivateInboxCoordinatorOptions = {
   initialWaitMs?: number;
   quietWindowMs?: number;
+  typingQuietWindowMs?: number;
   maximumWaitMs?: number;
   afterTurnQuietMs?: number;
   maximumMessagesPerBurst?: number;
@@ -21,6 +22,7 @@ type Processor = (
 export class PrivateInboxCoordinator {
   private readonly initialWaitMs: number;
   private readonly quietWindowMs: number;
+  private readonly typingQuietWindowMs: number;
   private readonly maximumWaitMs: number;
   private readonly afterTurnQuietMs: number;
   private readonly maximumMessagesPerBurst: number;
@@ -28,6 +30,7 @@ export class PrivateInboxCoordinator {
   private readonly timers = new Map<string, NodeJS.Timeout>();
   private readonly firstQueuedAt = new Map<string, number>();
   private readonly lastQueuedAt = new Map<string, number>();
+  private readonly typingUntil = new Map<string, number>();
   private readonly running = new Map<string, Promise<void>>();
   private readonly listeners = new Map<string, Set<(event: PrivateInboxEvent) => void>>();
   private started = false;
@@ -39,8 +42,9 @@ export class PrivateInboxCoordinator {
     private readonly processor: Processor,
     options: PrivateInboxCoordinatorOptions = {},
   ) {
-    this.initialWaitMs = boundedDelay(options.initialWaitMs, 5_000);
-    this.quietWindowMs = boundedDelay(options.quietWindowMs, 1_000);
+    this.initialWaitMs = boundedDelay(options.initialWaitMs, 1_500);
+    this.quietWindowMs = boundedDelay(options.quietWindowMs, 1_200);
+    this.typingQuietWindowMs = boundedDelay(options.typingQuietWindowMs, 1_500);
     this.maximumWaitMs = Math.max(
       this.initialWaitMs,
       this.quietWindowMs,
@@ -64,7 +68,15 @@ export class PrivateInboxCoordinator {
     this.timers.clear();
     this.firstQueuedAt.clear();
     this.lastQueuedAt.clear();
+    this.typingUntil.clear();
     this.listeners.clear();
+  }
+
+  noteTyping(sessionId: string): string {
+    const until = Date.now() + this.typingQuietWindowMs;
+    this.typingUntil.set(sessionId, until);
+    this.schedule(sessionId);
+    return new Date(until).toISOString();
   }
 
   enqueue(input: {
@@ -153,8 +165,11 @@ export class PrivateInboxCoordinator {
       await run;
     } finally {
       if (this.running.get(sessionId) === run) this.running.delete(sessionId);
-      if (this.started && this.repository.listQueued(sessionId).length) {
+      const queued = this.repository.listQueued(sessionId);
+      if (this.started && queued.length) {
         this.schedule(sessionId, this.afterTurnQuietMs);
+      } else if (!queued.length) {
+        this.typingUntil.delete(sessionId);
       }
     }
   }
@@ -168,6 +183,7 @@ export class PrivateInboxCoordinator {
       this.timers.delete(sessionId);
       this.firstQueuedAt.delete(sessionId);
       this.lastQueuedAt.delete(sessionId);
+      this.typingUntil.delete(sessionId);
       return;
     }
     const now = Date.now();
@@ -180,7 +196,11 @@ export class PrivateInboxCoordinator {
     const initialRemaining = Math.max(0, this.initialWaitMs - (now - first));
     const quietRemaining = Math.max(0, minimumDelay - (now - last));
     const maximumRemaining = Math.max(0, this.maximumWaitMs - (now - first));
-    const delay = capReached ? 0 : Math.min(Math.max(initialRemaining, quietRemaining), maximumRemaining);
+    const storedTypingUntil = this.typingUntil.get(sessionId) ?? 0;
+    if (storedTypingUntil <= now) this.typingUntil.delete(sessionId);
+    const typingRemaining = Math.max(0, storedTypingUntil - now);
+    const normalDelay = Math.min(Math.max(initialRemaining, quietRemaining), maximumRemaining);
+    const delay = capReached ? 0 : Math.max(normalDelay, typingRemaining);
     const timer = setTimeout(() => {
       this.timers.delete(sessionId);
       void this.flush(sessionId).catch(() => undefined);

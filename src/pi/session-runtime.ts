@@ -63,18 +63,17 @@ import type { WorldService } from "../world/service.js";
 import type { WorldAutonomyCoordinator } from "../world/coordinator.js";
 import type { InteractionService } from "../interaction/service.js";
 import type { ContextEconomicsRepository } from "../context/economics-repository.js";
+import { assumedContextWindowTokens, buildContextBudget } from "../context/budget.js";
 import { normalizeActualProviderUsage } from "../context/provider-usage.js";
 import { memoryContextVersion } from "../context/memory-version.js";
 import { estimateTokens, roundMetric, stableHash } from "../context/tokens.js";
-import type { ContextEconomicsPlan, ContextPlan } from "../context/types.js";
+import type { ContextBudgetSnapshot, ContextEconomicsPlan, ContextPlan } from "../context/types.js";
 import { createSandboxedShellTool } from "./sandboxed-shell-tool.js";
 import { createSkillReadTool } from "./skill-read-tool.js";
 import { createWorkspaceTools } from "./workspace-tools.js";
 import { classifyAssistantOutput, classifyToolProtocolOutput } from "./output-guard.js";
 import { createTurnContextMessage, TURN_CONTEXT_CUSTOM_TYPE } from "./turn-context.js";
 
-const roleplayContextWindow = 131_072;
-const roleplayAutoCompactionTriggerTokens = 98_304;
 // Pi's generic estimator uses characters/4, while Chinese dialogue is much denser.
 // 4k estimated tokens retains roughly 8-16k real conversational tokens here.
 const roleplayRecentContextTokens = 4_096;
@@ -99,12 +98,21 @@ export type ConversationMetadata = {
   canonicalDirect?: boolean;
   title?: string;
   archivedAt?: string;
+  unreadCount?: number;
+  lastUnreadAt?: string;
+  lastReadAt?: string;
   lastTurnStatus?: TurnStatus;
   lastTurnCanRetry?: boolean;
   sleepState?: ConversationSleepState;
   tiredAt?: string;
   sleepSuggestedAt?: string;
   sleepCheckpointAt?: string;
+  lastCompactionAt?: string;
+  lastCompactionReason?: string;
+  lastCompactionStatus?: "completed" | "failed";
+  lastCompactionEstimatedTokensBefore?: number;
+  lastCompactionEstimatedTokensAfter?: number;
+  lastCompactionError?: string;
   piSessionId?: string;
   piSessionFile?: string;
   createdAt: string;
@@ -145,6 +153,9 @@ export type PiModelResolver = (
 export type ProviderPayloadOptions = {
   temperature?: number;
   maxTokens?: number;
+  contextWindowTokens?: number;
+  modelProfileId?: string;
+  model?: string;
   chatTemplateKwargs?: Record<string, string | number | boolean | null>;
   requireThinking?: boolean;
 };
@@ -187,6 +198,13 @@ export type PiSessionHandle = {
   modelFingerprint?: string;
 };
 
+export type ConversationCompactionResult = {
+  compacted: boolean;
+  reason: string;
+  budgetBefore: ContextBudgetSnapshot;
+  budgetAfter: ContextBudgetSnapshot;
+};
+
 type StoredConversationIndex = {
   version: 1;
   conversations: ConversationMetadata[];
@@ -224,6 +242,15 @@ export class ConversationDeletionConfirmationError extends Error {
   constructor() {
     super("permanent deletion requires the exact session title or session id as confirmation");
     this.name = "ConversationDeletionConfirmationError";
+  }
+}
+
+export class ConversationCompactionUnavailableError extends Error {
+  readonly code = "CONTEXT_COMPACTION_UNAVAILABLE";
+
+  constructor(message: string) {
+    super(message);
+    this.name = "ConversationCompactionUnavailableError";
   }
 }
 
@@ -371,6 +398,67 @@ export class PiSessionRuntime {
     this.touch(handle.metadata);
   }
 
+  async getContextBudget(sessionId: string): Promise<ContextBudgetSnapshot> {
+    const metadata = this.metadata.get(normalizeSessionId(sessionId));
+    if (!metadata) throw new ConversationNotFoundError(sessionId);
+    const handle = await this.getOrCreate(metadata.id, metadata.mode, metadata.characterId);
+    return this.contextBudgetForHandle(handle);
+  }
+
+  async compactConversation(
+    sessionId: string,
+    reason = "manual",
+  ): Promise<ConversationCompactionResult> {
+    const metadata = this.metadata.get(normalizeSessionId(sessionId));
+    if (!metadata) throw new ConversationNotFoundError(sessionId);
+    if (metadata.archivedAt) throw new ConversationArchivedError(sessionId);
+    const handle = await this.getOrCreate(metadata.id, metadata.mode, metadata.characterId);
+    if (handle.session.isStreaming) {
+      throw new ConversationCompactionUnavailableError("当前回复仍在生成，暂时不能整理上下文");
+    }
+    return this.compactHandle(handle, reason);
+  }
+
+  async compactBeforeTurnIfNeeded(
+    handle: PiSessionHandle,
+    userText: string,
+    allowed: boolean,
+    beforeCompact?: () => Promise<void>,
+  ): Promise<ConversationCompactionResult | undefined> {
+    const projected = this.contextBudgetForHandle(handle, estimateTokens(userText) + 1_024);
+    if (projected.level !== "critical") return undefined;
+    if (!allowed) {
+      throw new ConversationCompactionUnavailableError(
+        "上下文即将超出模型窗口，但仍有待处理消息，无法安全整理",
+      );
+    }
+    if (!this.canCompactAgain(handle, projected)) {
+      throw new ConversationCompactionUnavailableError(
+        "上下文基础开销已接近模型窗口，请增大模型上下文窗口或减少启用工具",
+      );
+    }
+    await beforeCompact?.();
+    const result = await this.compactHandle(handle, "budget_preflight");
+    if (result.budgetAfter.level === "critical") {
+      throw new ConversationCompactionUnavailableError(
+        "整理后固定提示词与工具仍接近模型窗口，请增大上下文窗口或减少启用工具",
+      );
+    }
+    return result;
+  }
+
+  requiresDurableFlushBeforeLifecycleFinish(
+    handle: PiSessionHandle,
+    lifecycle: ConversationLifecycleDecision,
+    options: { completedSideEffect: boolean; allowProactiveCompaction: boolean },
+  ): boolean {
+    if (options.completedSideEffect) return false;
+    if (lifecycle.shouldSleepAfterTurn) return true;
+    if (!options.allowProactiveCompaction) return false;
+    const budget = this.contextBudgetForHandle(handle);
+    return budget.shouldCompact && this.canCompactAgain(handle, budget);
+  }
+
   refreshResidentMemoryContext(handle: PiSessionHandle): void {
     this.contextEconomics.replaceResidentMemories(
       handle.metadata.id,
@@ -444,8 +532,19 @@ export class PiSessionRuntime {
   async finishConversationLifecycle(
     handle: PiSessionHandle,
     decision: ConversationLifecycleDecision,
-    options: { completed: boolean; completedSideEffect: boolean; assistantText: string },
-  ): Promise<{ compacted: boolean; woke: boolean }> {
+    options: {
+      completed: boolean;
+      completedSideEffect: boolean;
+      assistantText: string;
+      allowProactiveCompaction?: boolean;
+    },
+  ): Promise<{
+    compacted: boolean;
+    woke: boolean;
+    reason?: string;
+    budgetBefore?: ContextBudgetSnapshot;
+    budgetAfter?: ContextBudgetSnapshot;
+  }> {
     if (!options.completed) return { compacted: false, woke: false };
     const metadata = handle.metadata;
     if (decision.wakePending) {
@@ -463,19 +562,31 @@ export class PiSessionRuntime {
       metadata.sleepSuggestedAt = this.clock.now().toISOString();
       this.touch(metadata);
     }
-    if (!decision.shouldSleepAfterTurn || options.completedSideEffect) {
+    const budget = this.contextBudgetForHandle(handle);
+    const proactive = options.allowProactiveCompaction !== false && budget.shouldCompact &&
+      this.canCompactAgain(handle, budget);
+    if ((!decision.shouldSleepAfterTurn && !proactive) || options.completedSideEffect) {
       return { compacted: false, woke: false };
     }
 
-    await handle.session.compact(
-      "Preserve role and relationship continuity, promises, unresolved threads, important user facts, and the latest complete exchanges. Exclude hidden reasoning and operational status events.",
-    );
-    metadata.sleepState = "sleeping";
-    metadata.sleepCheckpointAt = this.clock.now().toISOString();
+    const reason = decision.shouldSleepAfterTurn ? "conversation_sleep" : "budget_planned";
+    const compaction = await this.compactHandle(handle, reason);
+    if (decision.shouldSleepAfterTurn) {
+      metadata.sleepState = "sleeping";
+      metadata.sleepCheckpointAt = this.clock.now().toISOString();
+    } else {
+      metadata.sleepState = "awake";
+    }
     delete metadata.tiredAt;
     delete metadata.sleepSuggestedAt;
     this.touch(metadata);
-    return { compacted: true, woke: false };
+    return {
+      compacted: true,
+      woke: false,
+      reason,
+      budgetBefore: compaction.budgetBefore,
+      budgetAfter: compaction.budgetAfter,
+    };
   }
 
   appendMessages(handle: PiSessionHandle, messages: AgentMessage[]): void {
@@ -585,6 +696,11 @@ export class PiSessionRuntime {
     return true;
   }
 
+  isConversationBusy(sessionId: string): boolean {
+    const id = normalizeSessionId(sessionId);
+    return this.loading.has(id) || Boolean(this.handles.get(id)?.session.isStreaming);
+  }
+
   getConversationMetadata(): ConversationMetadata[] {
     return [...this.metadata.values()]
       .map((entry) => ({ ...entry }))
@@ -673,6 +789,23 @@ export class PiSessionRuntime {
     metadata.lastTurnStatus = status;
     metadata.lastTurnCanRetry = canRetry;
     this.touch(metadata);
+  }
+
+  recordIncomingMessage(sessionId: string): ConversationMetadata {
+    const metadata = this.requireMetadata(sessionId);
+    metadata.unreadCount = Math.min(9_999, Math.max(0, metadata.unreadCount ?? 0) + 1);
+    metadata.lastUnreadAt = this.clock.now().toISOString();
+    this.touch(metadata);
+    return { ...metadata };
+  }
+
+  markConversationRead(sessionId: string): ConversationMetadata {
+    const metadata = this.requireMetadata(sessionId);
+    if ((metadata.unreadCount ?? 0) < 1) return { ...metadata };
+    metadata.unreadCount = 0;
+    metadata.lastReadAt = this.clock.now().toISOString();
+    this.touch(metadata);
+    return { ...metadata };
   }
 
   annotateLastAssistantTurn(handle: PiSessionHandle, status: TurnStatus, canRetry: boolean): void {
@@ -764,11 +897,17 @@ export class PiSessionRuntime {
     const sessionManager = this.createSessionManager(metadata);
     const authStorage = AuthStorage.inMemory();
     const modelRegistry = ModelRegistry.inMemory(authStorage);
+    const payloadOptions = this.providerPayloadOptions?.(metadata.id) ?? {};
+    const contextWindow = payloadOptions.contextWindowTokens ?? assumedContextWindowTokens;
+    const autoCompactionReserve = Math.min(
+      Math.max(4_096, contextWindow - 4_096),
+      Math.max(payloadOptions.maxTokens ?? 4_096, Math.floor(contextWindow * 0.2)),
+    );
     const settingsManager = SettingsManager.inMemory({
       compaction: {
         enabled: true,
-        reserveTokens: roleplayContextWindow - roleplayAutoCompactionTriggerTokens,
-        keepRecentTokens: roleplayRecentContextTokens,
+        reserveTokens: autoCompactionReserve,
+        keepRecentTokens: Math.min(roleplayRecentContextTokens, Math.max(1_024, Math.floor(contextWindow * 0.1))),
       },
     });
     const toolState: CompanionToolRuntimeState = {
@@ -1719,6 +1858,97 @@ export class PiSessionRuntime {
     });
   }
 
+  private contextBudgetForHandle(
+    handle: PiSessionHandle,
+    projectedAdditionalTokens = 0,
+  ): ContextBudgetSnapshot {
+    const metadata = handle.metadata;
+    const latest = this.contextEconomics.latestForSession(metadata.id);
+    const options = this.providerPayloadOptions?.(metadata.id) ?? {};
+    const latestAfterCompaction = !metadata.lastCompactionAt ||
+      Boolean(latest && latest.createdAt > metadata.lastCompactionAt);
+    const historyEstimate = estimateConversationHistoryTokens(handle.session.messages);
+    const estimatedBase = latest && latestAfterCompaction
+      ? latest.estimatedInputTokens
+      : metadata.lastCompactionEstimatedTokensAfter ?? historyEstimate;
+    const actualInputTokens = projectedAdditionalTokens === 0 && latest && latestAfterCompaction
+      ? latest.actual.inputTokens
+      : null;
+    return buildContextBudget({
+      sessionId: metadata.id,
+      modelProfileId: options.modelProfileId ?? "default",
+      model: options.model ?? "",
+      contextWindowTokens: options.contextWindowTokens,
+      maxOutputTokens: options.maxTokens,
+      estimatedInputTokens: estimatedBase + Math.max(0, projectedAdditionalTokens),
+      actualInputTokens,
+      lifecycleState: metadata.sleepState ?? "awake",
+      ...(metadata.lastCompactionAt && metadata.lastCompactionStatus && metadata.lastCompactionReason
+        ? {
+            lastCompaction: {
+              at: metadata.lastCompactionAt,
+              reason: metadata.lastCompactionReason,
+              status: metadata.lastCompactionStatus,
+              ...(metadata.lastCompactionEstimatedTokensBefore === undefined
+                ? {}
+                : { estimatedTokensBefore: metadata.lastCompactionEstimatedTokensBefore }),
+              ...(metadata.lastCompactionEstimatedTokensAfter === undefined
+                ? {}
+                : { estimatedTokensAfter: metadata.lastCompactionEstimatedTokensAfter }),
+              ...(metadata.lastCompactionError ? { error: metadata.lastCompactionError } : {}),
+            },
+          }
+        : {}),
+      updatedAt: latest && latestAfterCompaction ? latest.createdAt : metadata.updatedAt,
+    });
+  }
+
+  private canCompactAgain(handle: PiSessionHandle, budget: ContextBudgetSnapshot): boolean {
+    const metadata = handle.metadata;
+    if (metadata.lastCompactionStatus !== "completed") return true;
+    const previous = metadata.lastCompactionEstimatedTokensAfter;
+    if (previous === undefined) return true;
+    const minimumGrowth = Math.max(4_096, Math.floor(budget.usableInputTokens * 0.06));
+    return budget.estimatedInputTokens - previous >= minimumGrowth;
+  }
+
+  private async compactHandle(
+    handle: PiSessionHandle,
+    reason: string,
+  ): Promise<ConversationCompactionResult> {
+    const metadata = handle.metadata;
+    const budgetBefore = this.contextBudgetForHandle(handle);
+    const historyBefore = estimateConversationHistoryTokens(handle.session.messages);
+    const nonHistoryEstimate = Math.max(0, budgetBefore.estimatedInputTokens - historyBefore);
+    try {
+      await handle.session.compact(
+        "Preserve role and relationship continuity, promises, unresolved threads, important user facts, and the latest complete exchanges. Exclude hidden reasoning and operational status events.",
+      );
+      const after = nonHistoryEstimate + estimateConversationHistoryTokens(handle.session.messages);
+      metadata.lastCompactionAt = this.clock.now().toISOString();
+      metadata.lastCompactionReason = reason;
+      metadata.lastCompactionStatus = "completed";
+      metadata.lastCompactionEstimatedTokensBefore = budgetBefore.estimatedInputTokens;
+      metadata.lastCompactionEstimatedTokensAfter = after;
+      delete metadata.lastCompactionError;
+      this.touch(metadata);
+      return {
+        compacted: true,
+        reason,
+        budgetBefore,
+        budgetAfter: this.contextBudgetForHandle(handle),
+      };
+    } catch (error) {
+      metadata.lastCompactionAt = this.clock.now().toISOString();
+      metadata.lastCompactionReason = reason;
+      metadata.lastCompactionStatus = "failed";
+      metadata.lastCompactionEstimatedTokensBefore = budgetBefore.estimatedInputTokens;
+      metadata.lastCompactionError = (error instanceof Error ? error.message : String(error)).slice(0, 1_000);
+      this.touch(metadata);
+      throw error;
+    }
+  }
+
   private touch(metadata: ConversationMetadata): void {
     metadata.updatedAt = this.clock.now().toISOString();
     this.persistConversationIndex();
@@ -1750,16 +1980,37 @@ export class PiSessionRuntime {
       if (!isRecord(parsed) || parsed.version !== 1 || !Array.isArray(parsed.conversations)) {
         return;
       }
+      let changed = false;
       for (const entry of parsed.conversations) {
         const normalized = normalizeMetadata(entry);
-        if (normalized) {
-          this.metadata.set(normalized.id, normalized);
+        if (!normalized) continue;
+        if (normalized.mode === "rp") {
+          this.purgeRetiredRoleplayConversation(normalized);
+          changed = true;
+          continue;
         }
+        this.metadata.set(normalized.id, normalized);
       }
-      if (this.migrateLegacyDirectConversations()) this.persistConversationIndex();
+      if (this.migrateLegacyDirectConversations()) changed = true;
+      if (changed) this.persistConversationIndex();
     } catch {
       // A corrupt index is ignored; existing Pi JSONL files remain untouched.
     }
+  }
+
+  private purgeRetiredRoleplayConversation(metadata: ConversationMetadata): void {
+    if (metadata.piSessionFile && this.piSessionDir && isPathInside(this.piSessionDir, metadata.piSessionFile)) {
+      rmSync(metadata.piSessionFile, { force: true });
+    }
+    this.rpService.deleteSessionData(metadata.id);
+    const database = this.rpService.repository.database.connection;
+    database.prepare("DELETE FROM memory_extraction_jobs WHERE session_id = ?").run(metadata.id);
+    database.prepare("DELETE FROM relationship_extraction_jobs WHERE session_id = ?").run(metadata.id);
+    database.prepare("DELETE FROM context_economics WHERE session_id = ?").run(metadata.id);
+    database.prepare("DELETE FROM memory_context_sessions WHERE session_id = ?").run(metadata.id);
+    database.prepare("DELETE FROM memory_context_items WHERE session_id = ?").run(metadata.id);
+    database.prepare("DELETE FROM model_context_traces WHERE session_id = ?").run(metadata.id);
+    database.prepare("DELETE FROM context_log_summaries WHERE session_id = ?").run(metadata.id);
   }
 
   private async createCanonicalDirect(
@@ -2243,6 +2494,7 @@ const mutatingTools = new Set([
   "bash",
   "tavily_search",
   "delegate_task",
+  "request_character_contact",
   "propose_meeting",
   "begin_meeting",
   "end_meeting",
@@ -2293,6 +2545,11 @@ function normalizeMetadata(value: unknown): ConversationMetadata | undefined {
       ? value.title.trim().slice(0, 60)
       : undefined,
     archivedAt: typeof value.archivedAt === "string" ? value.archivedAt : undefined,
+    unreadCount: typeof value.unreadCount === "number" && Number.isFinite(value.unreadCount)
+      ? Math.max(0, Math.min(9_999, Math.floor(value.unreadCount)))
+      : undefined,
+    lastUnreadAt: typeof value.lastUnreadAt === "string" ? value.lastUnreadAt : undefined,
+    lastReadAt: typeof value.lastReadAt === "string" ? value.lastReadAt : undefined,
     lastTurnStatus: normalizeTurnStatus(value.lastTurnStatus),
     lastTurnCanRetry: typeof value.lastTurnCanRetry === "boolean" ? value.lastTurnCanRetry : undefined,
     sleepState: value.sleepState === "tired" || value.sleepState === "sleeping" || value.sleepState === "awake"

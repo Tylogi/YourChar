@@ -14,11 +14,39 @@ export const worldCapabilities = {
 
 export type WorldCapabilityId = keyof typeof worldCapabilities;
 export type WorldStatus = "active" | "archived";
+export type WorldConversationTurnStatus = "running" | "completed" | "partial" | "failed" | "cancelled";
+export type WorldStoryEventStatus = "planned" | "active" | "resolved" | "cancelled";
+export type WorldStoryTransitionType = "propose" | "begin" | "resolve" | "cancel" | "undo";
+export type WorldObservationKnowledge = "direct" | "heard" | "inferred";
 export type CharacterAvailability = "free" | "busy" | "resting" | "traveling";
 export type WorldEventType = "activity" | "interaction" | "travel" | "world_change";
 export type WorldEventSource = "autonomy" | "agent_tool" | "manual" | "system";
 export type ActivityPlanStatus = "planned" | "settled" | "cancelled";
 export type ProactiveMessageStatus = "pending" | "delivered" | "skipped" | "failed";
+export type ProactiveFeedbackType = "helpful" | "less_often" | "mute_topic" | "pause_24h";
+export type ProactiveTopicMode = "normal" | "reduced" | "muted";
+export type ProactiveDecisionCode =
+  | "queued"
+  | "candidate_ready"
+  | "ranked_behind"
+  | "quiet_hours"
+  | "daily_limit"
+  | "global_cooldown"
+  | "topic_cooldown"
+  | "recent_user_activity"
+  | "conversation_busy"
+  | "co_present"
+  | "paused"
+  | "retry_cooldown"
+  | "low_score"
+  | "topic_muted"
+  | "stale"
+  | "event_missing"
+  | "policy_disabled"
+  | "world_changed"
+  | "character_declined"
+  | "model_failed"
+  | "delivered";
 
 export type RoleWorld = {
   id: string;
@@ -26,6 +54,8 @@ export type RoleWorld = {
   timezone: string;
   description: string;
   rulesMarkdown: string;
+  directorModelProfileId?: string;
+  analystModelProfileId?: string;
   status: WorldStatus;
   revision: number;
   createdAt: string;
@@ -55,8 +85,10 @@ export type CharacterAutonomyPolicy = {
   enabled: boolean;
   proactiveEnabled: boolean;
   dailyMessageLimit: number;
+  proactiveCooldownMinutes: number;
   quietStart: string;
   quietEnd: string;
+  proactivePausedUntil?: string;
   lastPlannedDate?: string;
   lastProactiveAt?: string;
   updatedAt: string;
@@ -111,15 +143,34 @@ export type ProactiveMessage = {
   id: string;
   characterId: string;
   worldEventId: string;
+  topicKey: string;
+  topicLabel: string;
+  candidateScore: number;
+  decisionCode: ProactiveDecisionCode;
+  decisionDetails: Record<string, unknown>;
   sessionId?: string;
   text?: string;
   status: ProactiveMessageStatus;
   attempts: number;
+  lastAttemptAt?: string;
   lastError?: string;
   createdAt: string;
   updatedAt: string;
   deliveredAt?: string;
   readAt?: string;
+  feedbackType?: ProactiveFeedbackType;
+  feedbackAt?: string;
+};
+
+export type ProactiveTopicPolicy = {
+  characterId: string;
+  topicKey: string;
+  topicLabel: string;
+  mode: ProactiveTopicMode;
+  helpfulCount: number;
+  lessOftenCount: number;
+  lastFeedbackAt?: string;
+  updatedAt: string;
 };
 
 export type CharacterLifeSnapshot = {
@@ -131,6 +182,7 @@ export type CharacterLifeSnapshot = {
   plans: CharacterActivityPlan[];
   events: WorldEvent[];
   proactiveMessages: ProactiveMessage[];
+  proactiveTopicPolicies: ProactiveTopicPolicy[];
 };
 
 export type CreateWorldInput = {
@@ -138,11 +190,167 @@ export type CreateWorldInput = {
   timezone?: string;
   description?: string;
   rulesMarkdown?: string;
+  directorModelProfileId?: string;
+  analystModelProfileId?: string;
 };
 
 export type UpdateWorldInput = Partial<
   Pick<RoleWorld, "name" | "timezone" | "description" | "rulesMarkdown" | "status">
->;
+> & {
+  directorModelProfileId?: string | null;
+  analystModelProfileId?: string | null;
+};
+
+export type WorldConversation = {
+  worldId: string;
+  unreadCount: number;
+  lastUnreadAt?: string;
+  lastReadAt?: string;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type WorldConversationTurn = {
+  id: string;
+  worldId: string;
+  status: WorldConversationTurnStatus;
+  modelCalls: number;
+  actorCount: number;
+  startedAt: string;
+  completedAt?: string;
+};
+
+export type WorldConversationAttachment = {
+  path: string;
+  name?: string;
+  contentType?: string;
+  size?: number;
+};
+
+export type WorldConversationMessage = {
+  id: string;
+  worldId: string;
+  turnId: string;
+  sequence: number;
+  senderType: "user" | "director" | "character" | "system";
+  senderId?: string;
+  content: string;
+  attachments: WorldConversationAttachment[];
+  createdAt: string;
+};
+
+export type WorldStoryEvent = {
+  id: string;
+  worldId: string;
+  placeId?: string;
+  title: string;
+  summary: string;
+  objective: string;
+  status: WorldStoryEventStatus;
+  revision: number;
+  participantIds: string[];
+  createdAt: string;
+  updatedAt: string;
+  startedAt?: string;
+  endedAt?: string;
+};
+
+export type WorldStoryTransition = {
+  id: string;
+  worldId: string;
+  eventId?: string;
+  turnId?: string;
+  eventType: WorldStoryTransitionType;
+  source: "world_director" | "world_analyzer" | "user_control" | "system";
+  status: "applied" | "reverted";
+  summary: string;
+  beforeState?: WorldStoryEvent;
+  afterState?: WorldStoryEvent;
+  createdAt: string;
+  revertedAt?: string;
+};
+
+export type WorldCharacterObservation = {
+  id: string;
+  worldId: string;
+  eventId?: string;
+  turnId?: string;
+  characterId: string;
+  knowledge: WorldObservationKnowledge;
+  summary: string;
+  salience: number;
+  createdAt: string;
+};
+
+export type WorldCharacterRelationship = {
+  worldId: string;
+  subjectCharacterId: string;
+  objectCharacterId: string;
+  affinity: number;
+  trust: number;
+  tension: number;
+  intimacy: number;
+  summary: string;
+  revision: number;
+  updatedAt: string;
+};
+
+export type WorldDirectorPlan = {
+  placeId?: string;
+  openingNarration: string;
+  participants: Array<{ characterId: string; cue: string }>;
+};
+
+export type WorldAnalysis = {
+  event: {
+    action: "none" | "propose" | "begin" | "resolve" | "cancel";
+    title?: string;
+    summary?: string;
+    objective?: string;
+    placeId?: string;
+    participantIds: string[];
+    confidence: number;
+  };
+  runtimeUpdates: Array<{
+    characterId: string;
+    placeId?: string;
+    activity?: string;
+    availability?: CharacterAvailability;
+    energy?: number;
+    confidence: number;
+  }>;
+  observations: Array<{
+    characterId: string;
+    knowledge: WorldObservationKnowledge;
+    summary: string;
+    salience: number;
+    remember: boolean;
+  }>;
+  relationships: Array<{
+    subjectCharacterId: string;
+    objectCharacterId: string;
+    affinityDelta: number;
+    trustDelta: number;
+    tensionDelta: number;
+    intimacyDelta: number;
+    summary: string;
+    confidence: number;
+  }>;
+};
+
+export type WorldTurnEvent =
+  | { type: "director_state"; phase: "planning" | "writing" | "failed" }
+  | { type: "participant_state"; characterId: string; phase: "typing" | "silent" | "failed"; reasonCode?: string }
+  | { type: "message"; message: WorldConversationMessage }
+  | { type: "analysis_state"; phase: "analyzing" | "applied" | "failed" }
+  | { type: "turn_done"; turn: WorldConversationTurn };
+
+export type WorldTurnResult = {
+  turn: WorldConversationTurn;
+  userMessage: WorldConversationMessage;
+  messages: WorldConversationMessage[];
+  activeEvent?: WorldStoryEvent;
+};
 
 export type CreatePlaceInput = {
   worldId: string;
@@ -164,9 +372,10 @@ export type CharacterWorldAssignmentInput = {
 export type CharacterAutonomyPolicyPatch = Partial<
   Pick<
     CharacterAutonomyPolicy,
-    "enabled" | "proactiveEnabled" | "dailyMessageLimit" | "quietStart" | "quietEnd"
+    "enabled" | "proactiveEnabled" | "dailyMessageLimit" | "proactiveCooldownMinutes" |
+      "quietStart" | "quietEnd"
   >
->;
+> & { proactivePausedUntil?: string | null };
 
 export type CharacterRuntimePatch = Partial<
   Pick<CharacterRuntimeState, "placeId" | "activity" | "availability" | "energy">
@@ -212,19 +421,45 @@ export type ProactiveMessageInput = {
   characterName: string;
   sessionId: string;
   event: WorldEvent;
+  candidate: ProactiveMessage;
   world: RoleWorld;
   place?: WorldPlace;
   recentConversation: Array<{ role: "user" | "assistant"; text: string }>;
 };
 
-export type ProactiveMessageDelivery = {
-  sessionId: string;
-  text: string;
-};
+export type ProactiveMessageDelivery =
+  | { sessionId: string; text: string; declined?: false }
+  | { sessionId: string; declined: true; reason?: string };
 
 export type ProactiveMessenger = (
   input: ProactiveMessageInput,
 ) => Promise<ProactiveMessageDelivery | undefined>;
+
+export type WorldCharacterDirectoryEntry = {
+  characterId: string;
+  name: string;
+  self: boolean;
+  placeId?: string;
+  placeName?: string;
+  activity: string;
+  availability: CharacterAvailability;
+  contactable: boolean;
+};
+
+export type CharacterContactRequest = {
+  sourceCharacterId: string;
+  targetCharacterId: string;
+  sourceSessionId: string;
+  requestText: string;
+  idempotencyKey: string;
+};
+
+export type CharacterContactRequestResult = {
+  accepted: boolean;
+  reason?: "target_proactive_disabled";
+  event?: WorldEvent;
+  proactiveMessage?: ProactiveMessage;
+};
 
 export type WorldAutonomyTickResult = {
   characters: number;

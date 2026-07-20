@@ -3,11 +3,19 @@ import type { IdGenerator } from "../app/id-generator.js";
 import type { RpService } from "../rp/service.js";
 import type { ScheduleService } from "../schedule/service.js";
 import type { ScheduleItem } from "../schedule/types.js";
+import {
+  deriveProactiveTopic,
+  evaluateProactiveCandidate,
+  scoreProactiveCandidate,
+  type ProactiveBlockReason,
+} from "./proactive-policy.js";
 import { WorldValidationError, type WorldService } from "./service.js";
 import {
   worldCapabilities,
   type CharacterActivityPlan,
   type CharacterAutonomyPolicy,
+  type CharacterContactRequest,
+  type CharacterContactRequestResult,
   type ProactiveMessage,
   type ProactiveMessenger,
   type WorldActivityProposal,
@@ -20,13 +28,14 @@ import {
 type ConversationSnapshot = {
   sessionId: string;
   recentConversation: Array<{ role: "user" | "assistant"; text: string }>;
+  lastUserAt?: string;
 };
 
 export type WorldAutonomyCoordinatorOptions = {
   planner?: WorldPlanner;
   messenger?: ProactiveMessenger;
   conversationForCharacter?: (characterId: string) => Promise<ConversationSnapshot | undefined>;
-  canDeliverProactive?: (sessionId: string, characterId: string) => boolean;
+  proactiveBlockReason?: (sessionId: string, characterId: string) => ProactiveBlockReason | undefined;
   canProjectRuntime?: (characterId: string) => boolean;
   intervalMs?: number;
 };
@@ -34,6 +43,7 @@ export type WorldAutonomyCoordinatorOptions = {
 export class WorldAutonomyCoordinator {
   private timer?: NodeJS.Timeout;
   private running?: Promise<WorldAutonomyTickResult>;
+  private nudgeQueue: Promise<void> = Promise.resolve();
   private readonly intervalMs: number;
 
   constructor(
@@ -64,6 +74,16 @@ export class WorldAutonomyCoordinator {
       if (this.running === operation) this.running = undefined;
     });
     this.running = operation;
+    return operation;
+  }
+
+  nudge(characterId: string): Promise<WorldAutonomyTickResult> {
+    const operation = this.nudgeQueue.then(async () => {
+      const active = this.running;
+      if (active) await active;
+      return this.tick(characterId);
+    });
+    this.nudgeQueue = operation.then(() => undefined, () => undefined);
     return operation;
   }
 
@@ -321,6 +341,66 @@ export class WorldAutonomyCoordinator {
     return event;
   }
 
+  requestCharacterContact(input: CharacterContactRequest): CharacterContactRequestResult {
+    const sourceMembership = this.worldService.repository.getMembership(input.sourceCharacterId);
+    if (!sourceMembership) {
+      throw new WorldValidationError("the requesting character must belong to a shared world");
+    }
+    if (input.sourceCharacterId === input.targetCharacterId) {
+      throw new WorldValidationError("a character cannot request contact from themself");
+    }
+    const targetMembership = this.worldService.repository.getMembership(input.targetCharacterId);
+    if (!targetMembership || targetMembership.worldId !== sourceMembership.worldId) {
+      throw new WorldValidationError("the target character must belong to the same shared world");
+    }
+    const targetPolicy = this.worldService.repository.getPolicy(input.targetCharacterId);
+    if (!targetPolicy?.proactiveEnabled) {
+      return { accepted: false, reason: "target_proactive_disabled" };
+    }
+    const requestText = cleanString(input.requestText).replace(/\s+/gu, " ").slice(0, 500);
+    if (!requestText) throw new WorldValidationError("contact request text is required");
+    const sourceSessionId = cleanString(input.sourceSessionId);
+    if (!sourceSessionId) throw new WorldValidationError("source session id is required");
+    const idempotencyKey = cleanString(input.idempotencyKey);
+    if (!idempotencyKey) throw new WorldValidationError("contact request idempotency key is required");
+    const source = this.rpService.getCharacter(input.sourceCharacterId);
+    const target = this.rpService.getCharacter(input.targetCharacterId);
+    const now = this.clock.now().toISOString();
+
+    return this.worldService.repository.transaction(() => {
+      const event = this.worldService.repository.findEventByIdempotencyKey(idempotencyKey) ??
+        this.worldService.repository.createEvent({
+          id: this.idGenerator.next("world-event"),
+          worldId: sourceMembership.worldId,
+          type: "interaction",
+          summary: `${source.name}请${target.name}在方便时联系用户。`,
+          salience: 0.9,
+          source: "agent_tool",
+          startsAt: now,
+          idempotencyKey,
+          participantIds: [source.id, target.id],
+          createdAt: now,
+          updatedAt: now,
+        });
+      const existing = this.worldService.repository.getProactiveMessageByEvent(event.id);
+      const proactiveMessage = existing ?? this.enqueueProactive(target.id, event, {
+        topic: {
+          topicKey: `character.contact:${source.id}`,
+          topicLabel: `来自${source.name}的联系请求`,
+        },
+        decisionDetails: {
+          kind: "character_contact",
+          sourceCharacterId: source.id,
+          sourceCharacterName: source.name,
+          sourceSessionId,
+          requestText,
+        },
+      });
+      if (!proactiveMessage) return { accepted: false, reason: "target_proactive_disabled" };
+      return { accepted: true, event, proactiveMessage };
+    });
+  }
+
   async simulateMoment(characterId: string): Promise<{
     event: WorldEvent;
     proactiveMessage?: ProactiveMessage;
@@ -348,7 +428,7 @@ export class WorldAutonomyCoordinator {
       source: "manual",
       allowProactive: true,
     });
-    await this.deliverPending(characterId, true);
+    await this.deliverPending(characterId, { force: true, preferredEventId: event.id });
     return {
       event,
       proactiveMessage: this.worldService.repository.getProactiveMessageByEvent(event.id),
@@ -465,14 +545,35 @@ export class WorldAutonomyCoordinator {
     });
   }
 
-  private enqueueProactive(characterId: string, event: WorldEvent): ProactiveMessage | undefined {
+  private enqueueProactive(
+    characterId: string,
+    event: WorldEvent,
+    options: {
+      topic?: { topicKey: string; topicLabel: string };
+      decisionDetails?: Record<string, unknown>;
+    } = {},
+  ): ProactiveMessage | undefined {
     const policy = this.worldService.repository.getPolicy(characterId);
-    if (!policy?.proactiveEnabled || event.salience < 0.65) return undefined;
-    const now = this.clock.now().toISOString();
+    if (!policy?.proactiveEnabled || event.salience < 0.45) return undefined;
+    const nowDate = this.clock.now();
+    const now = nowDate.toISOString();
+    const place = event.placeId ? this.worldService.repository.getPlace(event.placeId) : undefined;
+    const topic = options.topic ?? deriveProactiveTopic(event, place);
+    const topicPolicy = this.worldService.repository.getProactiveTopicPolicy(characterId, topic.topicKey);
+    const lastTopicDeliveryAt = this.worldService.repository.listProactiveMessages({
+      characterId,
+      status: "delivered",
+      limit: 500,
+    }).find((message) => message.topicKey === topic.topicKey)?.deliveredAt;
+    const scored = scoreProactiveCandidate({ event, now: nowDate, topicPolicy, lastTopicDeliveryAt });
     return this.worldService.repository.createProactiveMessage({
       id: this.idGenerator.next("proactive"),
       characterId,
       worldEventId: event.id,
+      ...topic,
+      candidateScore: scored.score,
+      decisionCode: "queued",
+      decisionDetails: { ...options.decisionDetails, breakdown: scored.breakdown },
       status: "pending",
       attempts: 0,
       createdAt: now,
@@ -480,33 +581,121 @@ export class WorldAutonomyCoordinator {
     });
   }
 
-  private async deliverPending(characterId: string, ignoreQuietHours = false): Promise<number> {
-    const policy = this.worldService.repository.getPolicy(characterId);
-    if (!policy?.proactiveEnabled || !this.options.messenger || !this.options.conversationForCharacter) return 0;
+  private async deliverPending(
+    characterId: string,
+    options: { force?: boolean; preferredEventId?: string } = {},
+  ): Promise<number> {
+    let policy = this.worldService.repository.getPolicy(characterId);
+    if (!policy) return 0;
+    if (!policy.proactiveEnabled) {
+      this.worldService.repository.skipPendingProactiveMessages(
+        characterId,
+        this.clock.now().toISOString(),
+        "policy_disabled",
+      );
+      return 0;
+    }
+    if (!this.options.messenger || !this.options.conversationForCharacter) return 0;
     const life = this.worldService.getCharacterLife(characterId);
-    if (!life.world) return 0;
-    if (!ignoreQuietHours && inQuietHours(this.clock.now(), life.world.timezone, policy)) return 0;
-    const today = localDateKey(this.clock.now(), life.world.timezone);
-    const deliveredToday = this.worldService.repository.listProactiveMessages({
+    if (!life.world) {
+      this.worldService.repository.skipPendingProactiveMessages(
+        characterId,
+        this.clock.now().toISOString(),
+        "world_changed",
+      );
+      return 0;
+    }
+    const nowDate = this.clock.now();
+    const now = nowDate.toISOString();
+    if (policy.proactivePausedUntil && new Date(policy.proactivePausedUntil).getTime() <= nowDate.getTime()) {
+      const resumed = { ...policy, proactivePausedUntil: undefined, updatedAt: now };
+      delete resumed.proactivePausedUntil;
+      policy = this.worldService.repository.upsertPolicy(resumed);
+    }
+    const today = localDateKey(nowDate, life.world.timezone);
+    const deliveredMessages = this.worldService.repository.listProactiveMessages({
       characterId,
       status: "delivered",
-      limit: 100,
-    }).filter((message) => message.deliveredAt && localDateKey(new Date(message.deliveredAt), life.world!.timezone) === today).length;
-    if (deliveredToday >= policy.dailyMessageLimit) return 0;
-    const pending = this.worldService.repository.listProactiveMessages({
+      limit: 500,
+    });
+    const deliveredToday = deliveredMessages.filter((message) =>
+      message.deliveredAt && localDateKey(new Date(message.deliveredAt), life.world!.timezone) === today).length;
+    const pendingMessages = this.worldService.repository.listProactiveMessages({
       characterId,
       status: "pending",
-      limit: 20,
-    }).reverse().find((message) => {
-      if (!message.lastError) return true;
-      return this.clock.now().getTime() - new Date(message.updatedAt).getTime() >= 10 * 60_000;
+      limit: 100,
     });
-    if (!pending) return 0;
+    if (!pendingMessages.length) return 0;
     const conversation = await this.options.conversationForCharacter(characterId);
-    if (!conversation) return 0;
-    if (this.options.canDeliverProactive && !this.options.canDeliverProactive(conversation.sessionId, characterId)) return 0;
-    const event = this.worldService.repository.getEvent(pending.worldEventId);
-    if (!event) return 0;
+    const blockReason = conversation
+      ? this.options.proactiveBlockReason?.(conversation.sessionId, characterId)
+      : "conversation_busy";
+    const ready: Array<{ message: ProactiveMessage; event: WorldEvent }> = [];
+    for (const pending of pendingMessages) {
+      const event = this.worldService.repository.getEvent(pending.worldEventId);
+      const topicPolicy = this.worldService.repository.getProactiveTopicPolicy(characterId, pending.topicKey);
+      const evaluation = evaluateProactiveCandidate({
+        message: pending,
+        event,
+        policy,
+        topicPolicy,
+        deliveredMessages,
+        deliveredToday,
+        now: nowDate,
+        inQuietHours: inQuietHours(nowDate, life.world.timezone, policy),
+        ...(conversation?.lastUserAt ? { lastUserAt: conversation.lastUserAt } : {}),
+        ...(blockReason ? { blockReason } : {}),
+        force: options.force,
+      });
+      const evaluated = this.worldService.repository.updateProactiveMessage({
+        ...pending,
+        candidateScore: evaluation.score,
+        decisionCode: evaluation.decisionCode,
+        decisionDetails: { ...pending.decisionDetails, ...evaluation.details },
+        status: evaluation.permanent ? "skipped" : "pending",
+        updatedAt: now,
+      });
+      if (event && evaluation.decisionCode === "candidate_ready") ready.push({ message: evaluated, event });
+    }
+    if (!conversation || !ready.length) return 0;
+
+    ready.sort((left, right) => compareProactiveCandidates(left, right, options.preferredEventId));
+    const uniqueTopics = new Map<string, { message: ProactiveMessage; event: WorldEvent }>();
+    for (const candidate of ready) {
+      const winner = uniqueTopics.get(candidate.message.topicKey);
+      if (!winner) {
+        uniqueTopics.set(candidate.message.topicKey, candidate);
+        continue;
+      }
+      this.worldService.repository.updateProactiveMessage({
+        ...candidate.message,
+        status: "skipped",
+        decisionCode: "ranked_behind",
+        decisionDetails: {
+          ...candidate.message.decisionDetails,
+          duplicateOf: winner.message.id,
+          reason: "newer or higher-scoring candidate for the same topic",
+        },
+        updatedAt: now,
+      });
+    }
+    const ranked = [...uniqueTopics.values()]
+      .sort((left, right) => compareProactiveCandidates(left, right, options.preferredEventId));
+    const selected = ranked[0];
+    if (!selected) return 0;
+    for (const candidate of ranked.slice(1)) {
+      this.worldService.repository.updateProactiveMessage({
+        ...candidate.message,
+        decisionCode: "ranked_behind",
+        decisionDetails: {
+          ...candidate.message.decisionDetails,
+          selectedCandidateId: selected.message.id,
+        },
+        updatedAt: now,
+      });
+    }
+    const pending = selected.message;
+    const event = selected.event;
     const character = this.rpService.getCharacter(characterId);
     try {
       const delivery = await this.options.messenger({
@@ -514,36 +703,64 @@ export class WorldAutonomyCoordinator {
         characterName: character.name,
         sessionId: conversation.sessionId,
         event,
+        candidate: pending,
         world: life.world,
         place: event.placeId ? life.places.find((place) => place.id === event.placeId) : undefined,
         recentConversation: conversation.recentConversation,
       });
+      if (delivery?.declined) {
+        const declinedAt = this.clock.now().toISOString();
+        this.worldService.repository.updateProactiveMessage({
+          ...pending,
+          sessionId: delivery.sessionId,
+          status: "skipped",
+          attempts: pending.attempts + 1,
+          lastAttemptAt: declinedAt,
+          lastError: undefined,
+          decisionCode: "character_declined",
+          decisionDetails: {
+            ...pending.decisionDetails,
+            ...(delivery.reason ? { reason: delivery.reason } : {}),
+            declinedAt,
+          },
+          updatedAt: declinedAt,
+        });
+        return 0;
+      }
       if (!delivery?.text.trim()) throw new Error("proactive message model returned empty text");
-      const now = this.clock.now().toISOString();
+      const deliveredAt = this.clock.now().toISOString();
       this.worldService.repository.updateProactiveMessage({
         ...pending,
         sessionId: delivery.sessionId,
         text: delivery.text.trim(),
         status: "delivered",
         attempts: pending.attempts + 1,
+        lastAttemptAt: deliveredAt,
         lastError: undefined,
-        updatedAt: now,
-        deliveredAt: now,
+        decisionCode: "delivered",
+        decisionDetails: { ...pending.decisionDetails, deliveredAt },
+        updatedAt: deliveredAt,
+        deliveredAt,
       });
       this.worldService.repository.upsertPolicy({
         ...policy,
-        lastProactiveAt: now,
-        updatedAt: now,
+        lastProactiveAt: deliveredAt,
+        updatedAt: deliveredAt,
       });
       return 1;
     } catch (error) {
       const attempts = pending.attempts + 1;
+      const attemptedAt = this.clock.now().toISOString();
+      const lastError = error instanceof Error ? error.message.slice(0, 500) : String(error).slice(0, 500);
       this.worldService.repository.updateProactiveMessage({
         ...pending,
         status: attempts >= 3 ? "failed" : "pending",
         attempts,
-        lastError: error instanceof Error ? error.message.slice(0, 500) : String(error).slice(0, 500),
-        updatedAt: this.clock.now().toISOString(),
+        lastAttemptAt: attemptedAt,
+        lastError,
+        decisionCode: "model_failed",
+        decisionDetails: { ...pending.decisionDetails, error: lastError, attempts },
+        updatedAt: attemptedAt,
       });
       return 0;
     }
@@ -556,6 +773,22 @@ export class WorldAutonomyCoordinator {
       return undefined;
     }
   }
+}
+
+function compareProactiveCandidates(
+  left: { message: ProactiveMessage; event: WorldEvent },
+  right: { message: ProactiveMessage; event: WorldEvent },
+  preferredEventId?: string,
+): number {
+  if (preferredEventId) {
+    if (left.event.id === preferredEventId && right.event.id !== preferredEventId) return -1;
+    if (right.event.id === preferredEventId && left.event.id !== preferredEventId) return 1;
+  }
+  if (left.message.candidateScore !== right.message.candidateScore) {
+    return right.message.candidateScore - left.message.candidateScore;
+  }
+  const byTime = right.event.startsAt.localeCompare(left.event.startsAt);
+  return byTime || left.message.id.localeCompare(right.message.id);
 }
 
 function parsePlannerOutput(output: unknown): unknown[] {

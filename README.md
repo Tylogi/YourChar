@@ -28,7 +28,9 @@ and adds the RP companion domain on top:
 - independently authorized User Profile and character SOUL editing;
 - collapsible per-message execution progress without exposing hidden model reasoning;
 - collapsed-by-default tool results and MCP/Skill token-impact estimates;
-- RP policy that records and requires confirmation before real schedule changes;
+- one canonical private SMS thread per character and one shared timeline per world;
+- world-level Director/Analyzer profiles with per-character actor model routing;
+- fictional-state policy that separates World events from real schedule changes;
 - thin HTTP server as an adapter, not the core.
 
 ## Commands
@@ -52,8 +54,10 @@ Module lifecycle and user-profile rules are documented in
 [`docs/agent-modules-and-user-profile.md`](docs/agent-modules-and-user-profile.md).
 Character identity and migration rules are documented in
 [`docs/character-soul.md`](docs/character-soul.md).
-Multi-model profiles, per-character routing, and bounded multi-character group
-chat scheduling are documented in
+Multi-model profiles, per-character routing, canonical World timelines, and the
+retired RP/group migration policy are documented in
+[`docs/world-conversation-mode.md`](docs/world-conversation-mode.md). The old
+group contract remains only as a compatibility note in
 [`docs/group-chat-multi-model.md`](docs/group-chat-multi-model.md).
 Workspace, shell, and protected-document permissions are documented in
 [`docs/workspace-capabilities.md`](docs/workspace-capabilities.md).
@@ -115,6 +119,9 @@ history and no external command is executed.
 The scheduling API is rooted at `/api/v1/schedule-items`; notification history
 and retry use `/api/v1/notifications`. Character, scene, and memory APIs use
 `/api/v1/characters`, `/api/v1/sessions/{id}/scene`, and `/api/v1/memories`.
+Canonical private chat opens through `/api/v1/direct-conversations`; World
+timelines use `/api/v1/world-conversations` and
+`/api/v1/worlds/{id}/conversation/*`.
 Agent capability management uses `/api/v1/agent-modules` and
 `/api/v1/agent-permissions`; the user-editable
 profile Markdown uses `/api/v1/user-profile`. Roleplay memory creation remains
@@ -149,18 +156,19 @@ staged restore procedures are in
 
 ## Current Scope
 
-M0-M9 are implemented: original Pi sessions, fixed SMS/RP conversations,
-persistent scheduling, scheduler/outbox delivery, per-character SOUL.md and scene
-state, confirmed long-term memory retrieval, RP mutation confirmation, Schedule
-and Characters UI, isolated Agent test controls, SSE streaming/cancellation,
+M0-M13 baseline work is implemented: original Pi private sessions, persistent
+scheduling and reminder delivery, per-character SOUL.md, confirmed long-term
+memory, private meeting continuity, isolated Agent test controls, SSE streaming,
 diagnostics, export/deletion, persistent audit summaries, and browser automation.
-The current feature branch also adds versioned model profiles, per-character
-model selection, and persistent SMS/RP group chats with serial participation
-gates and bounded speaker turns. It also adds an optional Subagent Delegation
-MCP for isolated private-chat work without changing group-chat scheduling.
-It also adds an optional Relationship State MCP: private turns can produce
-bounded, auditable relationship events; short-term affect decays over time; group
-actors read the snapshot but do not mutate it.
+Each character has one canonical private SMS thread. Each shared world has one
+application-owned third-person timeline using a world Director, independently
+bound character actors, and a post-turn Analyzer. Legacy standalone RP sessions
+and group records are removed without transcript migration.
+
+Versioned model profiles support system, character, Director, and Analyzer
+bindings. An optional Subagent Delegation MCP remains confined to private chat.
+Relationship State MCP maintains each character's relationship with the user;
+World analysis separately maintains directional character-to-character state.
 M5 moves schedule operations behind an MCP server/client boundary and makes due
 reminders resume the originating Pi session before delivery. Debug also retains
 the latest 10 final provider request payloads, with role-colored messages and a

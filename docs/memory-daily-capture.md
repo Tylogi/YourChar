@@ -27,23 +27,25 @@ about waking at seven and not eating coriander.
 The Coordinator now separates direct Agent proposals from trusted daily capture:
 
 - `propose_memory` remains pending and can never confirm itself;
-- automatic capture runs only in SMS/reality and only when Memory Coordinator
-  and Reality Memory Write are enabled;
+- automatic observation runs only in completed SMS/reality turns while Memory
+  Coordinator is enabled; disabling Reality Memory Write keeps the observation
+  in `write_disabled` state instead of silently losing it;
 - every auto-captured item requires confidence of at least 0.88 and an exact
   user-message quote;
 - the stored content is the verified quote, not a model paraphrase;
 - secrets, credentials, identity numbers, financial, health, contact, and exact
   address data remain pending and are not projected into User Profile;
-- low-risk accepted facts use trusted-control-plane provenance and are projected
-  into the managed profile section atomically;
+- low-risk accepted facts first become schema-24 User Insight observations, then
+  use trusted-control-plane provenance and project into the managed profile atomically;
 - deterministic semantic tags such as routine, dietary restriction, and reply
   preference improve synonym retrieval across sessions;
 - a stable model key or deterministic fallback prevents exact repeated facts
   from creating duplicate active records.
 
-The gate now covers common Chinese and English routines, preferences, projects,
-goals, people, and communication boundaries while excluding transient mood,
-weather, and one-off activity examples.
+The gate now keeps the specific Chinese/English durable patterns and also sends
+substantive first-person self-disclosures to semantic extraction. Short
+acknowledgements, transient mood, weather, and one-off activity examples remain
+excluded.
 
 ## Model compatibility
 
@@ -59,7 +61,8 @@ candidate still passes the same strict schema, eight-candidate limit, and realm
 checks.
 
 Memory extraction requests are recorded as `memory_extraction` Provider Traces.
-They remain background jobs and do not block the next live conversation turn.
+They remain background jobs during ordinary turns. A turn that is about to create
+a context checkpoint drains accepted Memory and Post-turn work before compaction.
 
 ## Effectiveness tests
 

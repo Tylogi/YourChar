@@ -10,3 +10,4 @@ export * from "./context/index.js";
 export * from "./vision/index.js";
 export * from "./interaction/index.js";
 export * from "./post-turn/index.js";
+export * from "./user-insight/index.js";

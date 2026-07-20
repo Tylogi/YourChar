@@ -15,11 +15,14 @@ import {
   type CreatePlaceInput,
   type CreateWorldInput,
   type PerformWorldActionInput,
+  type ProactiveFeedbackType,
   type ProactiveMessage,
+  type ProactiveTopicPolicy,
   type RoleWorld,
   type UpdatePlaceInput,
   type UpdateWorldInput,
   type WorldCapabilityId,
+  type WorldCharacterDirectoryEntry,
   type WorldEvent,
   type WorldPlace,
 } from "./types.js";
@@ -63,6 +66,8 @@ export class WorldService {
       timezone: validTimezone(input.timezone ?? "Asia/Shanghai"),
       description: optionalText(input.description, MAX_WORLD_DESCRIPTION),
       rulesMarkdown: optionalText(input.rulesMarkdown, MAX_WORLD_RULES),
+      directorModelProfileId: optionalIdentifier(input.directorModelProfileId),
+      analystModelProfileId: optionalIdentifier(input.analystModelProfileId),
       status: "active",
       revision: 1,
       createdAt: now,
@@ -93,6 +98,12 @@ export class WorldService {
       rulesMarkdown: patch.rulesMarkdown === undefined
         ? current.rulesMarkdown
         : optionalText(patch.rulesMarkdown, MAX_WORLD_RULES),
+      directorModelProfileId: Object.prototype.hasOwnProperty.call(patch, "directorModelProfileId")
+        ? optionalIdentifier(patch.directorModelProfileId ?? undefined)
+        : current.directorModelProfileId,
+      analystModelProfileId: Object.prototype.hasOwnProperty.call(patch, "analystModelProfileId")
+        ? optionalIdentifier(patch.analystModelProfileId ?? undefined)
+        : current.analystModelProfileId,
       status: patch.status ?? current.status,
       revision: current.revision + 1,
       updatedAt: this.clock.now().toISOString(),
@@ -182,7 +193,7 @@ export class WorldService {
     if (input.worldId === null) {
       this.repository.transaction(() => {
         this.repository.cancelPlannedActivities(characterId, now);
-        this.repository.skipPendingProactiveMessages(characterId, now);
+        this.repository.skipPendingProactiveMessages(characterId, now, "world_changed");
         this.repository.deleteRuntime(characterId);
         this.repository.deleteMembership(characterId);
         const policy = this.repository.getPolicy(characterId);
@@ -228,7 +239,7 @@ export class WorldService {
     this.repository.transaction(() => {
       if (worldChanged) {
         this.repository.cancelPlannedActivities(characterId, now);
-        this.repository.skipPendingProactiveMessages(characterId, now);
+        this.repository.skipPendingProactiveMessages(characterId, now, "world_changed");
       }
       this.repository.upsertMembership(membership);
       const policy = this.repository.getPolicy(characterId) ?? defaultPolicy(characterId, now);
@@ -263,16 +274,27 @@ export class WorldService {
     }
     const now = this.clock.now().toISOString();
     const current = this.repository.getPolicy(characterId) ?? defaultPolicy(characterId, now);
+    const proactivePausedUntil = patch.proactivePausedUntil === undefined
+      ? current.proactivePausedUntil
+      : patch.proactivePausedUntil
+        ? validInstant(patch.proactivePausedUntil, "proactivePausedUntil")
+        : undefined;
     const next: CharacterAutonomyPolicy = {
       ...current,
-      ...patch,
+      enabled: patch.enabled ?? current.enabled,
+      proactiveEnabled: patch.proactiveEnabled ?? current.proactiveEnabled,
       dailyMessageLimit: patch.dailyMessageLimit === undefined
         ? current.dailyMessageLimit
         : boundedInteger(patch.dailyMessageLimit, 0, 5, "daily message limit"),
+      proactiveCooldownMinutes: patch.proactiveCooldownMinutes === undefined
+        ? current.proactiveCooldownMinutes
+        : boundedInteger(patch.proactiveCooldownMinutes, 15, 1_440, "proactive cooldown"),
       quietStart: patch.quietStart === undefined ? current.quietStart : validClockTime(patch.quietStart),
       quietEnd: patch.quietEnd === undefined ? current.quietEnd : validClockTime(patch.quietEnd),
+      ...(proactivePausedUntil ? { proactivePausedUntil } : {}),
       updatedAt: now,
     };
+    if (!proactivePausedUntil) delete next.proactivePausedUntil;
     return this.repository.transaction(() => {
       const saved = this.repository.upsertPolicy(next);
       if (current.proactiveEnabled && patch.proactiveEnabled === false) {
@@ -391,6 +413,7 @@ export class WorldService {
         plans: [],
         events: [],
         proactiveMessages: this.repository.listProactiveMessages({ characterId, limit: 20 }),
+        proactiveTopicPolicies: this.repository.listProactiveTopicPolicies(characterId),
       };
     }
     const world = this.getWorld(membership.worldId);
@@ -403,7 +426,32 @@ export class WorldService {
       plans: this.repository.listActivityPlans(characterId, 30),
       events: this.repository.listEventsForCharacter(characterId, 20),
       proactiveMessages: this.repository.listProactiveMessages({ characterId, limit: 20 }),
+      proactiveTopicPolicies: this.repository.listProactiveTopicPolicies(characterId),
     };
+  }
+
+  listWorldCharacters(characterId: string): WorldCharacterDirectoryEntry[] {
+    const membership = this.repository.getMembership(characterId);
+    if (!membership) throw new WorldValidationError("assign the character to a world before listing world characters");
+    const places = new Map(this.repository.listPlaces(membership.worldId).map((place) => [place.id, place]));
+    return this.repository.listMemberships(membership.worldId).map((entry) => {
+      const character = this.rpService.getCharacter(entry.characterId);
+      const runtime = this.repository.getRuntime(entry.characterId) ?? this.initialRuntime(
+        entry,
+        this.getWorld(entry.worldId),
+      );
+      const place = runtime.placeId ? places.get(runtime.placeId) : undefined;
+      return {
+        characterId: character.id,
+        name: character.name,
+        self: character.id === characterId,
+        ...(place ? { placeId: place.id, placeName: place.name } : {}),
+        activity: runtime.activity,
+        availability: runtime.availability,
+        contactable: this.repository.getPolicy(character.id)?.proactiveEnabled === true,
+      };
+    }).sort((left, right) => Number(right.self) - Number(left.self) ||
+      left.name.localeCompare(right.name, "zh-CN") || left.characterId.localeCompare(right.characterId));
   }
 
   stableContextFor(characterId: string): string {
@@ -475,6 +523,102 @@ export class WorldService {
     return this.repository.markProactiveMessagesRead(sessionId, this.clock.now().toISOString());
   }
 
+  recordProactiveFeedback(messageId: string, feedbackType: ProactiveFeedbackType): {
+    message: ProactiveMessage;
+    topicPolicy: ProactiveTopicPolicy;
+    policy: CharacterAutonomyPolicy;
+  } {
+    if (!["helpful", "less_often", "mute_topic", "pause_24h"].includes(feedbackType)) {
+      throw new WorldValidationError("invalid proactive message feedback");
+    }
+    const message = this.repository.getProactiveMessage(messageId);
+    if (!message) throw new WorldValidationError("proactive message not found");
+    if (message.status !== "delivered") {
+      throw new WorldValidationError("feedback is only available for delivered proactive messages");
+    }
+    if (message.feedbackType) {
+      if (message.feedbackType !== feedbackType) {
+        throw new WorldValidationError("feedback has already been recorded for this message");
+      }
+      return {
+        message,
+        topicPolicy: this.repository.getProactiveTopicPolicy(message.characterId, message.topicKey) ??
+          defaultTopicPolicy(message, message.feedbackAt ?? message.updatedAt),
+        policy: this.repository.getPolicy(message.characterId) ??
+          defaultPolicy(message.characterId, message.feedbackAt ?? message.updatedAt),
+      };
+    }
+    const nowDate = this.clock.now();
+    const now = nowDate.toISOString();
+    const currentTopic = this.repository.getProactiveTopicPolicy(message.characterId, message.topicKey) ??
+      defaultTopicPolicy(message, now);
+    const currentPolicy = this.repository.getPolicy(message.characterId) ?? defaultPolicy(message.characterId, now);
+    return this.repository.transaction(() => {
+      const topicPolicy = this.repository.upsertProactiveTopicPolicy({
+        ...currentTopic,
+        mode: feedbackType === "mute_topic"
+          ? "muted"
+          : feedbackType === "less_often"
+            ? "reduced"
+            : feedbackType === "helpful" && currentTopic.mode !== "muted"
+              ? "normal"
+              : currentTopic.mode,
+        helpfulCount: currentTopic.helpfulCount + (feedbackType === "helpful" ? 1 : 0),
+        lessOftenCount: currentTopic.lessOftenCount +
+          (feedbackType === "less_often" || feedbackType === "mute_topic" ? 1 : 0),
+        lastFeedbackAt: now,
+        updatedAt: now,
+      });
+      const policy = this.repository.upsertPolicy({
+        ...currentPolicy,
+        ...(feedbackType === "pause_24h"
+          ? { proactivePausedUntil: new Date(nowDate.getTime() + 24 * 60 * 60_000).toISOString() }
+          : {}),
+        updatedAt: now,
+      });
+      if (feedbackType === "mute_topic") {
+        this.repository.skipPendingProactiveMessagesByTopic(message.characterId, message.topicKey, now);
+      }
+      const savedMessage = this.repository.updateProactiveMessage({
+        ...message,
+        feedbackType,
+        feedbackAt: now,
+        updatedAt: now,
+      });
+      return { message: savedMessage, topicPolicy, policy };
+    });
+  }
+
+  resetProactiveTopic(characterId: string, topicKey: string): ProactiveTopicPolicy {
+    this.rpService.getCharacter(characterId);
+    const normalized = topicKey.trim();
+    if (!normalized || normalized.length > 240) throw new WorldValidationError("invalid proactive topic");
+    const current = this.repository.getProactiveTopicPolicy(characterId, normalized);
+    const message = this.repository.listProactiveMessages({ characterId, limit: 500 })
+      .find((entry) => entry.topicKey === normalized);
+    if (!current && !message) throw new WorldValidationError("proactive topic not found");
+    const now = this.clock.now().toISOString();
+    return this.repository.upsertProactiveTopicPolicy({
+      characterId,
+      topicKey: normalized,
+      topicLabel: current?.topicLabel ?? message!.topicLabel,
+      mode: "normal",
+      helpfulCount: current?.helpfulCount ?? 0,
+      lessOftenCount: current?.lessOftenCount ?? 0,
+      ...(current?.lastFeedbackAt ? { lastFeedbackAt: current.lastFeedbackAt } : {}),
+      updatedAt: now,
+    });
+  }
+
+  resumeProactiveMessages(characterId: string): CharacterAutonomyPolicy {
+    this.rpService.getCharacter(characterId);
+    const now = this.clock.now().toISOString();
+    const current = this.repository.getPolicy(characterId) ?? defaultPolicy(characterId, now);
+    const next = { ...current, proactivePausedUntil: undefined, updatedAt: now };
+    delete next.proactivePausedUntil;
+    return this.repository.upsertPolicy(next);
+  }
+
   private initialRuntime(
     membership: { characterId: string; worldId: string; homePlaceId?: string },
     world: RoleWorld,
@@ -521,8 +665,21 @@ function defaultPolicy(characterId: string, now: string): CharacterAutonomyPolic
     enabled: false,
     proactiveEnabled: false,
     dailyMessageLimit: 1,
+    proactiveCooldownMinutes: 120,
     quietStart: "23:00",
     quietEnd: "08:00",
+    updatedAt: now,
+  };
+}
+
+function defaultTopicPolicy(message: ProactiveMessage, now: string): ProactiveTopicPolicy {
+  return {
+    characterId: message.characterId,
+    topicKey: message.topicKey,
+    topicLabel: message.topicLabel,
+    mode: "normal",
+    helpfulCount: 0,
+    lessOftenCount: 0,
     updatedAt: now,
   };
 }
@@ -545,6 +702,13 @@ function optionalText(value: string | undefined, max: number): string {
   const text = String(value ?? "").trim();
   if ([...text].length > max) throw new WorldValidationError(`text exceeds ${max} characters`);
   return text;
+}
+
+function optionalIdentifier(value: string | undefined): string | undefined {
+  const normalized = String(value ?? "").trim();
+  if (!normalized) return undefined;
+  if (normalized.length > 240) throw new WorldValidationError("model profile id is too long");
+  return normalized;
 }
 
 function validTimezone(value: string): string {

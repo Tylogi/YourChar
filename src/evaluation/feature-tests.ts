@@ -7,7 +7,7 @@ import type { MemoryTargetRealm } from "../memory-coordinator/types.js";
 
 export type FeatureTestCase = {
   id: string;
-  category: "conversation" | "schedule" | "memory" | "relationship" | "search" | "workspace" | "character" | "vision" | "subagent";
+  category: "conversation" | "schedule" | "memory" | "relationship" | "initiative" | "search" | "workspace" | "character" | "vision" | "subagent";
   name: string;
   description: string;
   mode: Mode;
@@ -110,6 +110,16 @@ const cases: FeatureTestCase[] = [
     requiredPermissions: [],
   },
   {
+    id: "schedule-profile-insight",
+    category: "memory",
+    name: "重复日程形成画像",
+    description: "验证模型创建用户重复日程后，可信后台将低风险规律写入现实记忆与用户画像。",
+    mode: "sms",
+    input: "请在我的用户日历中建立每周一上午九点的功能测试例会，作为重复日程。",
+    requiredModules: ["mcp:schedule", "mcp:memory-coordinator"],
+    requiredPermissions: ["realityMemoryWriteEnabled", "userProfileWriteEnabled"],
+  },
+  {
     id: "reality-explicit-memory",
     category: "memory",
     name: "现实记忆写入",
@@ -157,6 +167,26 @@ const cases: FeatureTestCase[] = [
     mode: "sms",
     input: "谢谢你这段时间一直陪着我，我现在真的很信任你。",
     requiredModules: ["mcp:relationship-state"],
+    requiredPermissions: [],
+  },
+  {
+    id: "proactive-message-quality",
+    category: "initiative",
+    name: "主动消息筛选与口吻",
+    description: "在隔离世界推进角色生活，验证候选经过评分后送达一条不泄露内部机制的角色消息。",
+    mode: "sms",
+    input: "我先去忙一会儿，晚点再聊。",
+    requiredModules: ["mcp:world-state"],
+    requiredPermissions: [],
+  },
+  {
+    id: "cross-character-contact",
+    category: "initiative",
+    name: "同世界角色转达",
+    description: "验证当前角色把联系请求交给同世界的另一角色，并由目标角色在自己的私聊中独立决定是否发送。",
+    mode: "sms",
+    input: "请联系同一个世界里的“转达测试角色”，让她根据自己的判断给我发一条消息。",
+    requiredModules: ["mcp:world-state"],
     requiredPermissions: [],
   },
   {
@@ -253,6 +283,13 @@ export async function runFeatureTest(
       timezone: "Asia/Shanghai",
       attachments,
     });
+    if (definition.id === "proactive-message-quality") {
+      await runtime.simulateCharacterMoment(character.id);
+    }
+    if (definition.id === "cross-character-contact") {
+      const target = runtime.listCharacters().find((entry) => entry.id !== character.id);
+      if (target) await runtime.tickWorldAutonomy(target.id);
+    }
     await runtime.memoryCoordinator.drain();
     await runtime.relationshipCoordinator.drain();
     const rules = [...preflight, ...evaluateCase(runtime, definition, response, character.id)];
@@ -395,6 +432,50 @@ function setupCase(runtime: CompanionKernel, definition: FeatureTestCase, charac
     });
     return [{ path: entry.path, name: entry.name, contentType: entry.contentType, size: entry.size }];
   }
+  if (definition.id === "proactive-message-quality") {
+    const world = runtime.createWorld({ name: "功能测试世界", timezone: "Asia/Shanghai" });
+    const place = runtime.createWorldPlace({
+      worldId: world.id,
+      name: "安静的工作室",
+      capabilityIds: ["work", "create", "communicate"],
+    });
+    runtime.assignCharacterWorld(characterId, {
+      worldId: world.id,
+      homePlaceId: place.id,
+      currentPlaceId: place.id,
+    });
+    runtime.updateCharacterAutonomyPolicy(characterId, {
+      proactiveEnabled: true,
+      dailyMessageLimit: 1,
+      proactiveCooldownMinutes: 120,
+    });
+  }
+  if (definition.id === "cross-character-contact") {
+    const target = runtime.createCharacter({
+      name: "转达测试角色",
+      soulMarkdown: "# SOUL.md - 转达测试角色\n\n独立、自然，以第一人称短消息交流，并自行判断是否主动联系用户。",
+    });
+    const world = runtime.createWorld({ name: "角色转达测试世界", timezone: "Asia/Shanghai" });
+    const place = runtime.createWorldPlace({
+      worldId: world.id,
+      name: "公共休息区",
+      capabilityIds: ["socialize", "communicate"],
+    });
+    for (const id of [characterId, target.id]) {
+      runtime.assignCharacterWorld(id, {
+        worldId: world.id,
+        homePlaceId: place.id,
+        currentPlaceId: place.id,
+      });
+    }
+    runtime.updateCharacterAutonomyPolicy(target.id, {
+      proactiveEnabled: true,
+      dailyMessageLimit: 2,
+      proactiveCooldownMinutes: 15,
+      quietStart: "00:00",
+      quietEnd: "00:00",
+    });
+  }
   return [];
 }
 
@@ -468,6 +549,14 @@ function evaluateCase(
   } else if (definition.id === "rp-fictional-reminder-isolation") {
     rules.push(rule("no-real-schedule", "没有创建现实日程", runtime.listScheduleItems().length === 0, `${runtime.listScheduleItems().length} items`));
     rules.push(rule("no-schedule-action", "没有完成日程变更工具", !completedActions.some((action) => /schedule|reminder/u.test(action.actionType)), actionEvidence(completedActions)));
+  } else if (definition.id === "schedule-profile-insight") {
+    const recurring = runtime.listScheduleItems({ ownerType: "user" }).find((item) => Boolean(item.recurrenceRule));
+    const observation = runtime.getUserInsightStatus().recentObservations.find((entry) =>
+      entry.kind === "recurring_schedule" && entry.decision === "promoted"
+    );
+    rules.push(rule("recurring-schedule-tool", "创建用户重复日程", hasAction(completedActions, "create_schedule_item") && Boolean(recurring), recurring?.recurrenceRule ?? actionEvidence(completedActions)));
+    rules.push(rule("trusted-insight", "可信后台晋升日程规律", Boolean(observation), observation?.claimText ?? "missing"));
+    rules.push(rule("insight-profile-projection", "日程规律投影进入用户画像", /功能测试例会/u.test(runtime.getUserProfile().markdown), excerpt(runtime.getUserProfile().markdown)));
   } else if (definition.id === "reality-explicit-memory") {
     const memory = runtime.listMemories({ realm: "reality" }).find((entry) => /功能测试偏好/u.test(entry.content));
     rules.push(rule("confirmed-reality-memory", "创建已确认现实记忆", memory?.confirmed === true && memory.validity === "active", memory ? `${memory.validity}/${memory.confirmed}` : "missing"));
@@ -487,6 +576,48 @@ function evaluateCase(
     rules.push(rule("relationship-event", "后台生成一条关系事件", snapshot.recentEvents.length === 1, `${snapshot.recentEvents.length} events`));
     rules.push(rule("bounded-update", "关系状态发生受控变化", changed && snapshot.recentEvents.every((event) =>
       Object.values(event.delta).every((value) => Math.abs(value) <= 6)), JSON.stringify(snapshot.recentEvents[0]?.delta ?? {})));
+  } else if (definition.id === "proactive-message-quality") {
+    const message = runtime.listProactiveMessages({ characterId, limit: 10 })[0];
+    rules.push(rule(
+      "candidate-scored",
+      "候选通过确定性评分",
+      Boolean(message && message.candidateScore >= 0.7),
+      message ? `${message.candidateScore}/${message.decisionCode}` : "missing",
+    ));
+    rules.push(rule(
+      "proactive-delivered",
+      "主动消息写入角色私聊",
+      message?.status === "delivered" && Boolean(message.sessionId && message.text),
+      message ? `${message.status}/${message.sessionId ?? "missing"}` : "missing",
+    ));
+    rules.push(rule(
+      "no-internal-mechanics",
+      "文案不暴露候选、评分或后台机制",
+      Boolean(message?.text) && !/候选|评分|后台|提示词|模型|world[_ -]?event|proactive/iu.test(message!.text!),
+      excerpt(message?.text ?? "missing"),
+    ));
+  } else if (definition.id === "cross-character-contact") {
+    const target = runtime.listCharacters().find((entry) => entry.id !== characterId);
+    const message = runtime.listProactiveMessages({ characterId: target?.id, limit: 20 })
+      .find((entry) => entry.decisionDetails.kind === "character_contact");
+    rules.push(rule(
+      "contact-tool",
+      "当前角色调用联系请求工具",
+      hasAction(completedActions, "request_character_contact"),
+      actionEvidence(completedActions),
+    ));
+    rules.push(rule(
+      "target-bound-candidate",
+      "请求绑定到另一角色而非当前会话",
+      Boolean(target && message?.characterId === target.id && message.decisionDetails.sourceCharacterId === characterId),
+      message ? `${message.characterId}/${String(message.decisionDetails.sourceCharacterId)}` : "missing",
+    ));
+    rules.push(rule(
+      "target-independent-decision",
+      "目标角色完成独立发送或拒绝决策",
+      message?.status === "delivered" || message?.decisionCode === "character_declined",
+      message ? `${message.status}/${message.decisionCode}` : "missing",
+    ));
   } else if (definition.id === "tavily-search-trigger") {
     rules.push(rule("tavily-tool", "调用 tavily_search", hasAction(completedActions, "tavily_search"), actionEvidence(completedActions)));
     rules.push(rule("source-url", "回复包含来源 URL", /https?:\/\//u.test(reply), excerpt(reply)));

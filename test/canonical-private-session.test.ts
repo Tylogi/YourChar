@@ -7,7 +7,7 @@ import { VirtualClock } from "../src/app/clock.js";
 import { CompanionKernel } from "../src/domain/index.js";
 import { createHttpServer } from "../src/http/router.js";
 
-test("startup migration keeps only the latest legacy SMS session and moves queued input", async () => {
+test("startup migration keeps the latest SMS session, moves queued input, and removes legacy RP", async () => {
   const stateDir = mkdtempSync(join(tmpdir(), "rp-agent-canonical-direct-"));
   const clock = new VirtualClock("2026-07-19T01:00:00.000Z");
   try {
@@ -65,8 +65,7 @@ test("startup migration keeps only the latest legacy SMS session and moves queue
       assert.equal(old?.canonicalDirect, undefined);
       assert.equal(latest?.archivedAt, undefined);
       assert.equal(latest?.canonicalDirect, true);
-      assert.equal(rp?.archivedAt, undefined);
-      assert.equal(rp?.canonicalDirect, undefined);
+      assert.equal(rp, undefined);
 
       const queued = second.privateInbox.repository.get("legacy-queued-message");
       assert.equal(queued?.sessionId, "legacy-sms-latest");
