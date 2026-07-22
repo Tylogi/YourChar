@@ -134,9 +134,10 @@ export class PrivateInboxCoordinator {
   }
 
   snapshot(sessionId: string): PrivateInboxSnapshot {
+    const messages = this.repository.listActive(sessionId);
     return {
-      messages: this.repository.listActive(sessionId),
-      running: this.running.has(sessionId),
+      messages,
+      running: this.running.has(sessionId) && messages.some((message) => message.status === "processing"),
     };
   }
 

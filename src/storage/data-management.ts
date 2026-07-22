@@ -47,6 +47,8 @@ export class DataManagementRepository {
         DELETE FROM reminder_occurrences;
         DELETE FROM proactive_messages;
         DELETE FROM proactive_topic_policies;
+        DELETE FROM world_narrative_prompt_messages;
+        DELETE FROM world_narrative_contexts;
         DELETE FROM world_story_event_transitions;
         DELETE FROM world_character_observations;
         DELETE FROM world_character_relationships;

@@ -13,7 +13,16 @@ const candidateSchema = z.object({
   confidence: z.number().min(0).max(1).optional(),
   tags: z.array(z.string().max(80)).max(20).optional(),
   evidence: z.object({ user: z.string().min(1).max(500) }).strict().optional(),
-}).strict();
+  person: z.object({
+    name: z.string().min(1).max(80),
+    aliases: z.array(z.string().min(1).max(80)).max(10).optional(),
+    relationship: z.string().min(1).max(80).optional(),
+  }).strict().optional(),
+}).strict().superRefine((candidate, context) => {
+  if (candidate.person && candidate.type !== "person") {
+    context.addIssue({ code: "custom", message: "person metadata is only valid for person memories" });
+  }
+});
 
 const extractionSchema = z.object({
   candidates: z.array(candidateSchema).max(8),
@@ -21,12 +30,13 @@ const extractionSchema = z.object({
 
 export const stableMemoryExtractorPrompt = [
   "Extract durable memory from one completed conversation turn.",
-  "Return only strict JSON: {\"candidates\":[{\"type\":string,\"key\":string,\"content\":string,\"salience\"?:number,\"confidence\":number,\"tags\"?:string[],\"evidence\":{\"user\":\"exact user quote\"}}]}.",
+  "Return only strict JSON: {\"candidates\":[{\"type\":string,\"key\":string,\"content\":string,\"salience\"?:number,\"confidence\":number,\"tags\"?:string[],\"evidence\":{\"user\":\"exact user quote\"},\"person\"?:{\"name\":string,\"aliases\"?:string[],\"relationship\"?:string}}]}.",
   "Never include confirmed, validity, realm, scope, characterId, permissions, tool calls, or prose outside JSON.",
   "Extract each distinct durable fact supported by the current user message. Evidence.user must be a short exact substring of that message; never use assistant text as evidence about the user.",
   "Every candidate must include confidence from 0 to 1. Use at least 0.88 only when the exact quote directly and unambiguously states the durable fact.",
   "Every candidate must include a stable lowercase semantic key so a later correction can supersede the same fact instead of creating a duplicate.",
   "Durable reality examples include routines, food or communication preferences, ongoing projects, named people, stable goals, and boundaries even when the user did not say remember.",
+  "For a person candidate, include person.name only when that name occurs in the exact user message; include aliases only when stated by the user. relationship is the user's stated relationship such as friend, colleague, family member, or mentor. Omit person metadata when it is not directly supported.",
   "For reality use only user_fact, preference, goal, person, project, boundary.",
   "For roleplay use only relationship_event, world_fact, plot_event, boundary.",
   "Transient mood, current weather, one-off activity, guesses, secrets, credentials, health, financial, contact, identity-number, and exact-address data produce no candidate.",

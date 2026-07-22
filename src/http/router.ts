@@ -1177,6 +1177,31 @@ async function route(input: {
     return;
   }
 
+  if (pathname === "/api/v1/person-profiles" && method === "GET") {
+    sendJson(input.response, 200, { profiles: kernel.listPersonProfiles() });
+    return;
+  }
+
+  const personProfileMatch = pathname.match(/^\/api\/v1\/person-profiles\/([^/]+)$/);
+  if (personProfileMatch && method === "PATCH") {
+    const body = asRecord(await readJson(input.request));
+    sendJson(input.response, 200, {
+      profile: kernel.updatePersonProfile(decodeURIComponent(personProfileMatch[1]), {
+        ...(body.displayName === undefined ? {} : { displayName: requiredString(body.displayName, "displayName") }),
+        ...(body.aliases === undefined ? {} : { aliases: optionalStringArray(body.aliases) }),
+        ...(body.relationship === undefined ? {} : {
+          relationship: optionalNullableString(body.relationship, "relationship"),
+        }),
+        ...(body.visibility === undefined ? {} : { visibility: requiredPersonVisibility(body.visibility) }),
+        ...(body.visibleToCharacterIds === undefined ? {} : {
+          visibleToCharacterIds: optionalStringArray(body.visibleToCharacterIds),
+        }),
+        ...(body.markdown === undefined ? {} : { markdown: optionalDocumentString(body.markdown, "markdown")! }),
+      }),
+    });
+    return;
+  }
+
   if (
     method === "GET" &&
     (pathname === "/api/v1/context-plan/preview" || pathname === "/api/v1/memory-retrieval/preview")
@@ -1337,6 +1362,16 @@ async function route(input: {
     });
     return;
   }
+  if (worldConversationMatch && method === "DELETE") {
+    const body = asRecord(await readJson(input.request));
+    sendJson(input.response, 200, {
+      reset: await kernel.resetWorldConversation(
+        decodeURIComponent(worldConversationMatch[1]),
+        optionalString(body.confirmation) ?? "",
+      ),
+    });
+    return;
+  }
 
   const worldConversationMessagesMatch = pathname.match(
     /^\/api\/v1\/worlds\/([^/]+)\/conversation\/messages$/,
@@ -1378,6 +1413,12 @@ async function route(input: {
       "x-accel-buffering": "no",
     });
     input.response.write(": connected\n\n");
+    const heartbeat = setInterval(() => {
+      if (!input.response.destroyed && !input.response.writableEnded) {
+        input.response.write(": heartbeat\n\n");
+      }
+    }, 15_000);
+    heartbeat.unref?.();
     try {
       const result = await kernel.sendWorldMessage(
         decodeURIComponent(worldConversationStreamMatch[1]),
@@ -1394,6 +1435,7 @@ async function route(input: {
         error: error instanceof Error ? error.message : String(error),
       });
     } finally {
+      clearInterval(heartbeat);
       input.response.end();
     }
     return;
@@ -2436,6 +2478,11 @@ function requiredMode(value: unknown): "sms" | "rp" {
   throw new SyntaxError("mode must be sms or rp");
 }
 
+function requiredPersonVisibility(value: unknown): "global" | "selected_characters" {
+  if (value === "global" || value === "selected_characters") return value;
+  throw new SyntaxError("visibility must be global or selected_characters");
+}
+
 function requiredInteractionAction(value: unknown): "propose" | "begin" | "end" | "cancel" | "undo" {
   if (value === "propose" || value === "begin" || value === "end" || value === "cancel" || value === "undo") {
     return value;
@@ -2638,11 +2685,11 @@ function optionalProactiveMessageStatus(value: unknown): ProactiveMessageStatus 
 
 function requiredWorldStoryAction(
   value: unknown,
-): "propose" | "begin" | "resolve" | "cancel" | "undo" {
-  if (value === "propose" || value === "begin" || value === "resolve" || value === "cancel" || value === "undo") {
+): "propose" | "begin" | "advance" | "resolve" | "cancel" | "undo" {
+  if (value === "propose" || value === "begin" || value === "advance" || value === "resolve" || value === "cancel" || value === "undo") {
     return value;
   }
-  throw new SyntaxError("action must be propose, begin, resolve, cancel, or undo");
+  throw new SyntaxError("action must be propose, begin, advance, resolve, cancel, or undo");
 }
 
 function sendJson(response: ServerResponse, statusCode: number, payload: unknown): void {

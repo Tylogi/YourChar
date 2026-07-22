@@ -72,7 +72,12 @@ export class ContextPlanner {
     const character = input.characterId ? this.rpService.getCharacter(input.characterId) : undefined;
     const retrieval = input.includeMemory
       ? [
-          this.retriever.retrieve({ query: input.query, realm: "reality", bootstrap: bootstrapRequested }),
+          this.retriever.retrieve({
+            query: input.query,
+            realm: "reality",
+            ...(input.characterId ? { viewerCharacterId: input.characterId } : {}),
+            bootstrap: bootstrapRequested,
+          }),
           ...(input.characterId
             ? [this.retriever.retrieve({
                 query: input.query,

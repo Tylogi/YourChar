@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
+import { createServer } from "node:http";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { launch } from "cloakbrowser";
@@ -44,7 +45,26 @@ browserRuntime = createTestRuntime({
 });
 const kernel = browserRuntime.kernel;
 kernel.patchModelApiConfig({ enabled: false });
-kernel.patchAgentPermissions({ realityMemoryWriteEnabled: true });
+const browserWorldModelResponses = [];
+const browserWorldModelRequests = [];
+const browserWorldModelServer = createServer(async (request, response) => {
+  const chunks = [];
+  for await (const chunk of request) chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+  const body = Buffer.concat(chunks).toString("utf8");
+  browserWorldModelRequests.push(JSON.parse(body));
+  const content = browserWorldModelResponses.shift();
+  if (content === undefined) {
+    response.writeHead(500, { "content-type": "application/json; charset=utf-8" });
+    response.end(JSON.stringify({ error: { message: "browser world model response queue is empty" } }));
+    return;
+  }
+  writeChatCompletionStream(response, "browser-world-model", content);
+});
+await new Promise((resolvePromise) => browserWorldModelServer.listen(0, "127.0.0.1", resolvePromise));
+const browserWorldModelAddress = browserWorldModelServer.address();
+assert.ok(browserWorldModelAddress && typeof browserWorldModelAddress === "object");
+const browserWorldModelBaseUrl = `http://127.0.0.1:${browserWorldModelAddress.port}/v1`;
+kernel.patchAgentPermissions({ realityMemoryWriteEnabled: true, characterMemoryWriteEnabled: true });
 kernel.createScheduleItem({
   kind: "event",
   title: "浏览器每周复盘",
@@ -166,6 +186,7 @@ try {
 } finally {
   await browser.close();
   await new Promise((resolvePromise, reject) => server.close((error) => error ? reject(error) : resolvePromise()));
+  await new Promise((resolvePromise, reject) => browserWorldModelServer.close((error) => error ? reject(error) : resolvePromise()));
   browserRuntime.dispose();
   rmSync(browserStateDir, { recursive: true, force: true });
 }
@@ -462,7 +483,7 @@ async function runDesktopWorkflow(browser, baseUrl, outputDir) {
   await page.getByRole("tab", { name: "生活", exact: true }).click();
   await page.locator("#characterLifePanel").waitFor({ state: "visible" });
   await page.locator("#characterLifeEmpty").filter({ hasText: "选择一个共享世界" }).waitFor();
-  await page.getByRole("button", { name: "管理世界", exact: true }).click();
+  await page.locator("#newWorldCardBtn").click();
   await page.locator("#worldManagerDialog").waitFor({ state: "visible" });
   await page.locator("#saveWorldBtn").waitFor({ state: "visible" });
   await page.waitForFunction(() => !document.querySelector("#saveWorldBtn")?.disabled);
@@ -483,6 +504,10 @@ async function runDesktopWorkflow(browser, baseUrl, outputDir) {
   await captureValidatedScreenshot(page, resolve(outputDir, "characters-world-manager.png"));
   await page.getByRole("button", { name: "关闭世界管理" }).click();
   await page.locator("#worldManagerDialog").waitFor({ state: "hidden" });
+  const worldCard = page.locator("#worldCardGrid .world-card").filter({ hasText: "青岚市" }).filter({ hasText: "默认模型" });
+  await worldCard.waitFor();
+  await worldCard.scrollIntoViewIfNeeded();
+  await captureValidatedScreenshot(page, resolve(outputDir, "characters-world-cards.png"));
   await page.locator("#characterWorldSelect").selectOption({ label: "青岚市" });
   await page.getByRole("button", { name: "保存归属", exact: true }).click();
   await page.locator("#characterLifeState").filter({ hasText: "已加入世界" }).waitFor();
@@ -838,7 +863,7 @@ async function runDesktopWorkflow(browser, baseUrl, outputDir) {
   const activeWorldEvent = kernel.transitionWorldStoryEvent(sourceLife.world.id, {
     action: "begin",
     source: "user_control",
-    title: "河岸夜谈",
+    title: "河岸散步",
     summary: "林澈、顾遥和用户在河岸书店展开一段共同经历。",
     objective: "决定接下来去哪里",
     placeId: sourceLife.runtime.placeId,
@@ -846,7 +871,7 @@ async function runDesktopWorkflow(browser, baseUrl, outputDir) {
   });
   assert.equal(activeWorldEvent?.status, "active");
   await page.evaluate(() => window.loadSessions());
-  await page.locator("#conversationScene").filter({ hasText: "进行中 · 河岸夜谈" }).waitFor();
+  await page.locator("#conversationScene").filter({ hasText: "进行中 · 河岸散步" }).waitFor();
   await page.locator("#textInput").fill("我们继续沿着河岸聊聊。");
   await page.locator("#chatAttachmentInput").setInputFiles([
     { name: "scene-note.txt", mimeType: "text/plain", buffer: Buffer.from("river scene", "utf8") },
@@ -880,6 +905,32 @@ async function runDesktopWorkflow(browser, baseUrl, outputDir) {
   await page.locator("#attachmentQueue .attachment-chip").filter({ hasText: "clipboard-note.txt" }).waitFor();
   assert.equal(await page.locator("#attachmentQueue .attachment-chip").count(), 4);
   assert.equal(await page.locator("#textInput").inputValue(), "我们继续沿着河岸聊聊。");
+  kernel.patchModelApiConfig({
+    enabled: true,
+    baseUrl: browserWorldModelBaseUrl,
+    model: "browser-world-model",
+  });
+  const worldModelRequestStart = browserWorldModelRequests.length;
+  browserWorldModelResponses.push(
+    "雨后的日光映在河岸书店的玻璃上。林澈把书合上，抬眼望向窗外湿润的河岸。\n\n“走吧，雨已经小了。”她推开门。顾遥替最后一个人扶住门，望向前面的河堤：“前面那段路安静些。”",
+    JSON.stringify({
+      event: {
+        action: "advance",
+        title: "河岸散步",
+        summary: "三人离开书店，沿着雨后的河岸继续交谈。",
+        objective: "决定接下来去哪里",
+        placeId: sourceLife.runtime.placeId,
+        participantIds: [sourceCharacter.id, targetCharacter.id],
+        confidence: 0.98,
+      },
+      runtimeUpdates: [],
+      observations: [
+        { characterId: sourceCharacter.id, knowledge: "direct", summary: "用户愿意继续沿河交谈。", salience: 0.7 },
+        { characterId: targetCharacter.id, knowledge: "direct", summary: "林澈提议在雨停后继续散步。", salience: 0.65 },
+      ],
+      relationships: [],
+    }),
+  );
   await page.getByRole("button", { name: "发送", exact: true }).click();
   const uploadedMessage = page.locator("#messages .message-row.user").last();
   await uploadedMessage.locator(".message-file-attachment").filter({ hasText: "scene-note.txt" }).waitFor();
@@ -897,17 +948,46 @@ async function runDesktopWorkflow(browser, baseUrl, outputDir) {
   await page.getByRole("button", { name: "关闭图片预览" }).click();
   await page.locator("#chatImageDialog").waitFor({ state: "hidden" });
   assert.equal(await page.locator("#attachmentQueue").isHidden(), true);
-  await page.locator("#status").filter({ hasText: "本轮没有生成可展示内容" }).waitFor();
+  await page.locator("#status").filter({ hasText: "已完成" }).waitFor();
+  assert.equal(browserWorldModelRequests.length - worldModelRequestStart, 2);
+  assert.equal(browserWorldModelResponses.length, 0);
+  kernel.patchModelApiConfig({ enabled: false });
   assert.equal(await page.locator("#messages .message-row.assistant").count(), 0);
-  await page.locator("#conversationScene").filter({ hasText: "进行中 · 河岸夜谈" }).waitFor();
+  const worldSceneTurn = page.locator("#messages .world-scene-turn").last();
+  await worldSceneTurn.filter({ hasText: "雨后的日光" }).filter({ hasText: "林澈" }).filter({ hasText: "顾遥" }).waitFor();
+  assert.equal(await worldSceneTurn.locator(".world-scene-fragment").count(), 1);
+  assert.equal(await worldSceneTurn.locator(".world-scene-mini-avatar").count(), 2);
+  await page.locator("#conversationScene").filter({ hasText: "进行中 · 河岸散步" }).waitFor();
   await page.getByRole("button", { name: "场景信息" }).click();
   await page.locator("#sceneInfoDialog").waitFor({ state: "visible" });
-  await page.locator("#sceneInfoContent").filter({ hasText: "河岸夜谈" }).filter({ hasText: "决定接下来去哪里" }).filter({ hasText: "林澈、顾遥" }).waitFor();
+  await page.locator("#sceneInfoContent").filter({ hasText: "河岸散步" }).filter({ hasText: "决定接下来去哪里" }).filter({ hasText: "林澈、顾遥" }).waitFor();
   assert.equal(await page.getByRole("button", { name: "编辑场景", exact: true }).isHidden(), true);
   await captureValidatedScreenshot(page, resolve(outputDir, "world-event-info.png"));
   await page.getByRole("button", { name: "关闭场景信息" }).click();
   await assertInteractiveBounds(page);
   await captureValidatedScreenshot(page, resolve(outputDir, "world-event-active.png"));
+  await page.getByRole("button", { name: "场景信息" }).click();
+  await page.getByRole("button", { name: "结束并结算", exact: true }).click();
+  await page.locator("#status").filter({ hasText: "事件已结束并结算" }).waitFor();
+  await page.locator("#sceneInfoContent").filter({ hasText: "已结束" }).filter({ hasText: "结算 2 位角色" }).waitFor();
+  const settledWorldEvent = kernel.getWorldConversation(sourceLife.world.id).events[0];
+  assert.equal(settledWorldEvent?.status, "resolved");
+  assert.ok(settledWorldEvent?.settledAt);
+  assert.equal(kernel.searchRpMemories({
+    characterId: sourceCharacter.id,
+    type: "plot_event",
+    confirmedOnly: true,
+  }).some((entry) => entry.key === `world.event.${settledWorldEvent.id}.settlement`), true);
+  await captureValidatedScreenshot(page, resolve(outputDir, "world-event-settled.png"));
+  await page.getByRole("button", { name: "关闭场景信息" }).click();
+  await page.getByRole("button", { name: "角色", exact: true }).click();
+  const populatedWorldCard = page.locator("#worldCardGrid .world-card").filter({ hasText: "青岚市" }).filter({ hasText: "2 位角色" });
+  await populatedWorldCard.waitFor();
+  assert.equal(await populatedWorldCard.locator(".group-avatar-cluster > span").count(), 2);
+  await populatedWorldCard.scrollIntoViewIfNeeded();
+  await captureValidatedScreenshot(page, resolve(outputDir, "characters-world-card-members.png"));
+  await page.getByRole("button", { name: "聊天", exact: true }).click();
+  await page.locator("#conversationMode").filter({ hasText: "世界演绎 · 2 位角色" }).waitFor();
 
   const characterId = sourceCharacter.id;
   await page.locator(`#conversationList .conversation-item[data-session-id="${smsSessionId}"]`).click();
@@ -929,7 +1009,8 @@ async function runDesktopWorkflow(browser, baseUrl, outputDir) {
   await page.keyboard.press("Enter");
   await page.locator(`#sessionSelect option[value="${smsSessionId}"]`).waitFor({ state: "detached" });
   await page.locator("#conversationMode").filter({ hasText: "世界演绎 · 2 位角色" }).waitFor();
-  await page.locator("#conversationScene").filter({ hasText: "河岸夜谈" }).waitFor();
+  assert.equal(await page.locator("#conversationScene").isHidden(), true);
+  await page.locator("#messages .world-scene-turn").filter({ hasText: "林澈" }).filter({ hasText: "顾遥" }).waitFor();
   const archivedSessions = await page.evaluate(async () => {
     const response = await fetch("/api/v1/sessions?includeArchived=1");
     return (await response.json()).sessions;
@@ -981,7 +1062,7 @@ async function runDesktopWorkflow(browser, baseUrl, outputDir) {
   });
   browserRuntime.model.enqueue([
     { kind: "tool_call", name: "read", arguments: { path: "uploads/scene-note.txt" } },
-    { kind: "assistant_text", text: markdownReply, thinking: "先核对工具结果，再组织最终回复。", delayMs: 500 },
+    { kind: "assistant_text", text: markdownReply, thinking: "先核对工具结果，再组织最终回复。", delayMs: 1_500 },
   ]);
   const liveModelRequestStart = browserRuntime.model.requests.length;
   await page.getByRole("button", { name: "发送", exact: true }).click();
@@ -1053,6 +1134,27 @@ async function runDesktopWorkflow(browser, baseUrl, outputDir) {
   assert.equal(await page.locator("#messages .bubble.tool").count(), 0);
   await assertInteractiveBounds(page);
   await captureValidatedScreenshot(page, resolve(outputDir, "chat-execution-progress.png"));
+
+  await page.evaluate(async () => {
+    const canonical = [...state.messages].reverse().find((message) =>
+      message.role === "assistant" && String(message.text || "").includes("进度测试完成")
+    );
+    if (!canonical) throw new Error("completed assistant message is missing");
+    const staleIndex = ensurePrivateBurstMessage("missed-completion-regression", new Date().toISOString());
+    Object.assign(state.messages[staleIndex], {
+      text: canonical.text,
+      working: true,
+      progress: [{ key: "generation", label: "生成回复", status: "active" }]
+    });
+    renderMessages();
+    await handlePrivateInboxEvent({
+      type: "snapshot",
+      inbox: { messages: [], running: false }
+    });
+  });
+  assert.equal(await page.locator("#messages .message-progress").filter({ hasText: "正在输入" }).count(), 0);
+  assert.doesNotMatch(await page.locator("#status").textContent(), /正在输入/);
+  await page.locator("#messages .bubble.assistant").filter({ hasText: "进度测试完成" }).waitFor();
 
   browserRuntime.model.enqueue([
     { kind: "assistant_text", text: "这条回复会在你离开当前会话后完成。", thinking: "先完整理解，再发送回复。", delayMs: 2_000 },
@@ -1205,6 +1307,16 @@ async function runMobileWorkflow(browser, baseUrl, outputDir) {
   await assertInteractiveBounds(page);
   await assertViewport(page);
   await captureValidatedScreenshot(page, resolve(outputDir, "mobile-conversation-list.png"));
+  await page.locator('#conversationList button[data-world-id]').filter({ hasText: "青岚市" }).click();
+  await page.locator("#conversationMode").filter({ hasText: "世界演绎 · 2 位角色" }).waitFor();
+  await page.locator("#messages .world-scene-turn").filter({ hasText: "林澈" }).filter({ hasText: "顾遥" }).waitFor();
+  await assertInteractiveBounds(page);
+  await assertViewport(page);
+  await captureValidatedScreenshot(page, resolve(outputDir, "mobile-world-story.png"));
+  await page.locator("#conversationListToggle").click();
+  await page.locator(`#conversationList .conversation-item[data-session-id="${mobileSessionId}"]`).click();
+  await page.locator("#conversationMode").filter({ hasText: "角色私聊" }).waitFor();
+  await page.locator("#conversationListToggle").click();
   await page.getByRole("button", { name: "批量管理会话" }).click();
   await page.getByRole("checkbox", { name: "选择全部角色会话" }).check();
   await page.locator("#conversationBatchCount").filter({ hasText: "已选 1 项" }).waitFor();
@@ -1506,6 +1618,25 @@ async function runMobileWorkflow(browser, baseUrl, outputDir) {
   await assertPanelInsideMain(page, "#settingsPage");
   await assertInteractiveBounds(page);
   await page.screenshot({ path: resolve(outputDir, "settings-okf-mobile.png"), fullPage: false });
+  await page.getByRole("button", { name: "聊天", exact: true }).click();
+  await page.getByRole("button", { name: "会话列表" }).click();
+  const resetWorldButton = page.locator('#conversationList button[data-world-id]').filter({ hasText: "青岚市" });
+  const resetWorldId = await resetWorldButton.getAttribute("data-world-id");
+  assert.ok(resetWorldId);
+  await resetWorldButton.click();
+  await page.locator("#conversationMode").filter({ hasText: "世界演绎 · 2 位角色" }).waitFor();
+  await page.getByRole("button", { name: "会话操作" }).click();
+  await page.getByRole("menuitem", { name: "重置世界会话", exact: true }).click();
+  await page.locator("#sessionActionDialog").filter({ hasText: "重置世界会话" }).waitFor({ state: "visible" });
+  await page.getByLabel("输入世界名称确认").fill("青岚市");
+  await captureValidatedScreenshot(page, resolve(outputDir, "world-conversation-reset.png"));
+  await page.getByRole("button", { name: "重置并开始新会话", exact: true }).click();
+  await page.waitForFunction(() => document.querySelector("#status")?.textContent === "已开始新的世界会话");
+  await page.locator("#messages .chat-empty").filter({ hasText: "青岚市" }).waitFor();
+  assert.deepEqual(kernel.listWorldConversationMessages(resetWorldId), []);
+  assert.equal(kernel.getWorldConversation(resetWorldId).events.some((event) => event.status === "resolved"), true);
+  await page.getByRole("button", { name: "设置", exact: true }).click();
+  await page.getByRole("button", { name: "数据", exact: true }).click();
   const deleteAllDataButton = page.getByRole("button", { name: "删除全部数据", exact: true });
   await deleteAllDataButton.click();
   await page.locator("#sessionActionDialog").filter({ hasText: "删除全部数据" }).waitFor({ state: "visible" });
@@ -1884,4 +2015,23 @@ async function captureValidatedScreenshot(page, path) {
 function localDateTimeInput(timestamp) {
   const date = new Date(timestamp - new Date(timestamp).getTimezoneOffset() * 60_000);
   return date.toISOString().slice(0, 16);
+}
+
+function writeChatCompletionStream(response, model, content) {
+  response.writeHead(200, { "content-type": "text/event-stream; charset=utf-8" });
+  response.write(`data: ${JSON.stringify({
+    id: "chatcmpl-browser-world",
+    object: "chat.completion.chunk",
+    created: 1,
+    model,
+    choices: [{ index: 0, delta: { role: "assistant", content }, finish_reason: null }],
+  })}\n\n`);
+  response.write(`data: ${JSON.stringify({
+    id: "chatcmpl-browser-world",
+    object: "chat.completion.chunk",
+    created: 1,
+    model,
+    choices: [{ index: 0, delta: {}, finish_reason: "stop" }],
+  })}\n\n`);
+  response.end("data: [DONE]\n\n");
 }

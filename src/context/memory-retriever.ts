@@ -1,6 +1,7 @@
 import type { Clock } from "../app/clock.js";
 import { normalizeMemoryContent, type RpRepository } from "../rp/repository.js";
 import type { RpMemory } from "../rp/types.js";
+import type { MemoryVaultService } from "../memory-vault/service.js";
 import { estimateTokens, roundMetric } from "./tokens.js";
 import { memoryContextVersion } from "./memory-version.js";
 import type {
@@ -17,12 +18,14 @@ export class MemoryRetriever {
   constructor(
     private readonly repository: RpRepository,
     private readonly clock: Clock,
+    private readonly personDirectory?: Pick<MemoryVaultService, "contextualizeRealityMemories">,
   ) {}
 
   retrieve(input: {
     query: string;
     realm: "reality" | "roleplay";
     characterId?: string;
+    viewerCharacterId?: string;
     bootstrap?: boolean;
     limit?: number;
   }): MemoryRetrievalPlan {
@@ -31,7 +34,7 @@ export class MemoryRetriever {
     }
     const query = input.query.trim();
     const normalizedQuery = normalizeMemoryContent(normalizeRetrievalIntent(query));
-    const strict = this.repository.searchMemories({
+    const stored = this.repository.searchMemories({
       realm: input.realm,
       ...(input.characterId ? { characterId: input.characterId } : {}),
       validity: "active",
@@ -40,6 +43,9 @@ export class MemoryRetriever {
     }).filter((memory) => input.realm === "reality"
       ? memory.characterId === undefined
       : memory.characterId === input.characterId);
+    const strict = input.realm === "reality" && this.personDirectory
+      ? this.personDirectory.contextualizeRealityMemories(stored, input.viewerCharacterId, query)
+      : stored;
     const ftsRanks = query
       ? this.repository.rankMemoryFts({
           query,

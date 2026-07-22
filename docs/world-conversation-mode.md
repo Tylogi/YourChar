@@ -1,8 +1,8 @@
 # World Conversation Mode
 
-Status: implemented baseline
+Status: implemented event-driven baseline
 Audience: product, application, model, storage, and test maintainers
-Last updated: 2026-07-20
+Last updated: 2026-07-21
 
 ## 1. Product Boundary
 
@@ -18,8 +18,9 @@ The chat product has two visible conversation kinds:
 
 Standalone RP sessions and ad hoc group chats are retired. The UI must not offer
 either kind, and they are not migration sources for World conversations. A World
-conversation is not a renamed group chat: it has a world-level Director and
-Analyzer, a durable event lifecycle, and observer-scoped state.
+conversation is not a renamed group chat: one world-level model performs the
+entire visible simulation, a background Analyzer maintains state, and the
+timeline has a durable event lifecycle with observer-scoped knowledge.
 
 The sidebar has two top-level sections:
 
@@ -31,20 +32,28 @@ World rows are not archivable or batch-deletable as conversations. Their
 lifecycle follows the owning world. Batch chat operations apply only to private
 threads.
 
+World Cards are first-class objects in the Character and World management page,
+below Character Cards. A World Card owns rules, places, narrative/Analyzer model
+bindings, membership projection, and the current event. Character management
+only binds a character to a World Card and configures that character's private
+runtime/autonomy policy; it does not own world configuration.
+
 ## 2. Identity And Model Binding
 
 Model selection is intentionally split by responsibility:
 
 | Responsibility | Binding |
 |---|---|
-| World Director | `role_worlds.director_model_profile_id`, then default profile |
-| Character actor | the character's `modelProfileId`, then default profile |
-| Post-turn Analyzer | `role_worlds.analyst_model_profile_id`, then Director profile, then default profile |
+| World narrative | `role_worlds.director_model_profile_id`, then default profile |
+| Post-turn Analyzer | `role_worlds.analyst_model_profile_id`, then World narrative profile, then default profile |
+| Character private chat | the character's `modelProfileId`, then default profile |
 
-The Director never writes character dialogue or private thoughts. Each actor
-call controls exactly one character and receives that character's SOUL.md and
-memory. The Analyzer never writes user-visible prose. It proposes bounded state
-changes after visible output has been generated.
+`director_model_profile_id` remains the storage/API field for compatibility,
+but the product label is **World narrative model**. It generates one complete
+third-person passage, including the environment and all plausible character
+actions and dialogue. Character-bound models are never invoked by a World turn;
+they are reserved for private chats. The Analyzer never writes user-visible
+prose. It proposes bounded state changes after visible output has been generated.
 
 Deleting a model profile clears world and character bindings through the model
 profile service. A bound but disabled profile remains unavailable by intent;
@@ -55,95 +64,105 @@ that failure is isolated to the corresponding stage.
 One user submission creates one durable World turn:
 
 1. Persist the user message and attachments before any model call.
-2. Call the Director with trusted world/roster/place/event state and a bounded
-   visible timeline.
-3. Validate its strict JSON plan: optional place, optional environment-only
-   opening narration, and an ordered set of character cues.
-4. Call at most six selected actors serially. Persist each valid contribution
-   before calling the next actor, so later actors can observe earlier output.
-5. If any visible output exists, call the Analyzer once.
+2. Reuse the active event's immutable narrative System snapshot and append one
+   compact trusted turn-data/User message to its internal prompt ledger.
+3. Call the World narrative model with the exact prior User/World message prefix.
+   The model returns the complete user-visible prose directly.
+4. Validate and persist that prose as one message sent by the World and append
+   the exact assistant message to the event-local prompt ledger.
+5. If visible output exists, call the Analyzer once.
 6. Apply only Analyzer changes that pass deterministic ID, range, evidence, and
    confidence gates.
 7. Finish the turn as `completed`, `partial`, `failed`, or `cancelled` and update
    unread state.
 
-The current baseline allows one contribution per selected actor in a user turn.
-Repeated autonomous passes and unbounded character loops are not allowed.
-
-When the Director is unavailable or invalid, a deterministic fallback selects
-explicitly mentioned characters, active-event participants, co-located
-characters, then other members, capped at three. An unavailable actor is marked
-failed and does not block other actors. Analyzer failure preserves all visible
-messages and marks the turn partial; it never rolls back character output.
+There is no actor loop and no deterministic prose fallback. If the World model
+is unavailable or returns invalid/internal output, the turn fails rather than
+silently substituting a character model. Analyzer failure preserves the World
+passage and marks the turn partial; it never rolls back visible output.
 
 SSE lifecycle events are:
 
-- `director_state`: planning or failed;
-- `participant_state`: typing, silent, or failed for one character;
-- `message`: persisted Director narration or character output;
+- `director_state`: planning, writing, or failed;
+- `message`: the persisted World passage;
 - `analysis_state`: analyzing, applied, or failed;
 - `turn_done` and `done`.
 
-Director planning, silent candidates, and analysis stay in status chrome. A
-typing bubble appears only after a selected character actually enters its actor
-call.
+Planning and analysis stay in status chrome. Storage retains legacy character
+sender support for old rows, but new World turns write exactly one `director`
+message, rendered with the World Card's name in one continuous, unframed
+third-person fiction block.
 
 ## 4. Context Contract
 
-### Director
+### World narrative model
 
-The Director receives:
+The first request in a narrative context receives one fixed System prefix:
 
 - world ID, name, timezone, description, and Markdown rules;
 - valid places and fixed capability IDs;
-- member IDs, names, public runtime location/activity/availability;
-- the current open story event;
-- the latest visible World timeline, capped at 60 messages and approximately
-  20,000 serialized characters;
-- metadata for the current user attachments.
+- selected participant IDs, names, bounded SOUL.md excerpts, schedules,
+  relevant confirmed memories, observer-scoped knowledge, and relationship
+  state;
+- the bounded User Profile when its module is enabled;
+- the event state at snapshot time, a bounded Chronicle, and at most 16 prior
+  visible messages used as the event/checkpoint handoff.
 
-It receives no MCP, shell, workspace, schedule, private relationship, private
-memory, User Profile write, or SOUL write capability.
+The fixed System string is stored once and is not rebuilt as clock, runtime,
+schedule, or relationship state changes. Every turn appends one User message
+containing:
 
-### Character actor
+- a canonical latest local timestamp containing date, weekday, clock time, and
+  period such as `上午`; UTC is included only as provenance;
+- the latest open-event summary and selected participants' compact runtime;
+- full snapshots only for characters newly joining the active narrative;
+- attachment metadata and the literal User input in separately delimited blocks.
 
-Each actor receives:
+Successful assistant messages are then appended unchanged. Consequently request
+N+1 starts with the exact System/User/Assistant prefix sent in request N; only
+the tail is new. The provider can reuse KV cache without losing genuine
+multi-turn story continuity. Current turn-data blocks are trusted control data,
+not User speech, and the latest block overrides stale runtime values in the
+fixed snapshot.
 
-- the actor-only control policy;
-- the selected character's complete bounded SOUL.md;
-- the manual User Profile section when User Profile MCP is enabled;
-- relevant confirmed reality and character memory when Memory Coordinator is
-  enabled;
-- the character's user relationship state when Relationship State MCP is
-  enabled;
-- stable world rules, current runtime, relevant observations, the current event,
-  and character-to-character relationship summaries;
-- the Director cue and visible timeline including earlier output from this turn.
+A narrative context begins with an event, or with the opening beat that the
+Analyzer subsequently binds to a new event. It closes when the event resolves,
+is cancelled/replaced, the narrative model binding changes, or a context
+checkpoint is required. Before a request, the planner includes the pending turn
+in its estimate. At 32,000 input tokens, or earlier when the configured model
+window requires it, it closes the old ledger and creates a fresh snapshot with a
+bounded visible-timeline handoff. This is a deliberate cache break, not repeated
+rolling-summary rewriting.
 
-Actor calls have no tools. They cannot schedule, browse, edit files, mutate
-profiles, or claim an external action completed. The context planner currently
-uses the internal `rp` realm key for character-memory compatibility. That key is
-not a user-visible conversation mode and must not recreate standalone RP
-sessions.
+The local timestamp is authoritative for daylight, greetings, routines, and
+ambience. The World model has no MCP, shell, workspace, schedule mutation,
+profile-write, or SOUL-write capability. Schedules and memories are read-only
+state snapshots, not permissions.
 
 ### Analyzer
 
-The Analyzer receives trusted pre-turn world state, the validated Director plan,
-the user input, and generated visible messages. Its JSON output is parsed into:
+The Analyzer receives trusted pre-turn world state, the user input, and the
+generated World passage. Its JSON output is parsed into:
 
 - event lifecycle decision;
 - character runtime updates;
 - observer-scoped observations;
 - directional character-to-character relationship deltas.
 
-No hidden chain-of-thought is persisted. Provider payloads are visible in Debug
-as `world_director`, `world_actor`, and `world_analysis` traces.
+World narrative reasoning blocks may be replayed only inside the active
+event-local prompt ledger when the provider emits them; they are not visible
+story canon. The ledger is purged when its event/checkpoint context closes.
+Analyzer reasoning is neither required nor added to the narrative ledger.
+Provider request payloads are visible in Debug as `world_director` (shown as
+World narrative) and `world_analysis` traces.
 
 ## 5. State And Memory Rules
 
 Only one `planned` or `active` story event may exist per world. Legal decisions
-are `propose`, `begin`, `resolve`, `cancel`, and user-control `undo`. Every
-applied transition stores before/after state and revision provenance.
+are `propose`, `begin`, `advance`, `resolve`, `cancel`, and user-control `undo`.
+`advance` updates the rolling summary, objective, place, or participants without
+changing open status. Every applied transition stores before/after state and
+revision provenance.
 
 Analyzer application thresholds are part of the trusted policy:
 
@@ -151,8 +170,16 @@ Analyzer application thresholds are part of the trusted policy:
 - runtime update confidence: at least `0.75`;
 - stored observation salience: at least `0.35`;
 - character relationship delta confidence: at least `0.70`;
-- proposed long-term observation memory: `remember=true`, salience at least
-  `0.65`, Memory Coordinator enabled, and Character Memory Write enabled.
+- observations remain provisional while the event is open;
+- only observations attached to the current open event enter fixed character perspective context;
+- on `resolve` or `cancel`, the event receives one durable settlement checkpoint;
+- each participant or observer receives one character-scoped `plot_event`
+record containing only that character's observations when Memory Coordinator
+and Character Memory Write are enabled.
+
+After closure, raw observations leave the fixed character perspective context. The bounded World
+Chronicle carries the shared outcome, while observer-specific settlement memory
+is retrieved only when relevant to a later turn.
 
 Observations are character-scoped as `direct`, `heard`, or `inferred`. A fact is
 never copied to every world member merely because it appeared in the shared
@@ -162,6 +189,11 @@ from each character's relationship with the user.
 World state is fictional. It cannot directly mutate user schedules, reminders,
 files, credentials, permissions, or the reality-memory realm.
 
+Closing an event releases a still-`busy` participant at the event place when the
+Analyzer supplied no more specific runtime update. This prevents completed
+events from leaving character runtime permanently stuck. Explicit travel,
+resting, or Analyzer updates are preserved.
+
 ## 6. Persistence
 
 SQLite migration 26 adds:
@@ -170,7 +202,7 @@ SQLite migration 26 adds:
 |---|---|
 | `world_conversations` | one timeline identity, read state, and timestamps per world |
 | `world_conversation_turns` | aggregate turn status and model-call counts |
-| `world_conversation_messages` | ordered user, Director, character, and system messages |
+| `world_conversation_messages` | ordered user and World messages, with legacy character/system sender support |
 | `world_story_events` | current and historical event state |
 | `world_story_event_participants` | explicit event membership |
 | `world_story_event_transitions` | revisioned event provenance and undo |
@@ -182,10 +214,28 @@ Private character chats remain Pi-owned canonical sessions. Deleting a world
 cascades its World timeline and derived state. User attachments remain files in
 the confined Workspace and are referenced by validated relative metadata.
 
+SQLite migration 27 adds event settlement text/time, enables the `advance`
+transition, and adds an event/observer lookup index used by settlement. Recent
+settled summaries form a bounded World Chronicle injected as durable event
+checkpoints; raw historical observations are not copied into every character.
+
+SQLite migration 28 adds:
+
+| Table | Purpose |
+|---|---|
+| `world_narrative_contexts` | one fixed System snapshot, model/cache identity, participant set, and lifecycle per active world event/checkpoint |
+| `world_narrative_prompt_messages` | exact append-only User/assistant provider messages for the active narrative context |
+
+Migration 28 also permits `world_director` records in `context_economics`.
+Closed context metadata remains auditable, while its private prompt ledger is
+deleted. Visible World messages, event settlements, and Chronicle checkpoints
+remain durable. A full SQLite backup contains an active ledger; normal user-data
+export exposes only its safe identity/hash/count summary, not private reasoning.
+
 ## 7. Unread Semantics
 
-A World turn increments unread once when it finishes with any Director or
-character output. User-only and fully failed turns do not increment unread.
+A World turn increments unread once when it finishes with World output.
+User-only and fully failed turns do not increment unread.
 Opening the exact World timeline acknowledges it only while the chat page is
 visible and focused. The row and the Worlds section show the aggregate red
 count. Actor count and message count do not multiply the unread increment.
@@ -199,6 +249,7 @@ Characters section.
 |---|---|---|
 | `GET` | `/api/v1/world-conversations` | list one enriched timeline per active world |
 | `GET` | `/api/v1/worlds/{id}/conversation` | read event, member, and relationship state |
+| `DELETE` | `/api/v1/worlds/{id}/conversation` | reset the canonical timeline after exact World-name confirmation |
 | `GET` | `/api/v1/worlds/{id}/conversation/messages` | read ordered visible messages |
 | `POST` | `/api/v1/worlds/{id}/conversation/messages` | deterministic JSON turn endpoint |
 | `POST` | `/api/v1/worlds/{id}/conversation/messages/stream` | SSE turn endpoint |
@@ -208,6 +259,18 @@ Characters section.
 World create/update accepts optional `directorModelProfileId` and
 `analystModelProfileId`. Sending requires at least one current world member and
 either non-empty text or a validated attachment.
+
+Reset does not create a second timeline identity. It waits for the World's turn
+queue, then recreates the one canonical conversation with a fresh timestamp. It
+deletes visible messages and turns, every event-local narrative context/prompt
+ledger, bounded Debug traces/economics owned by those model sessions, and the
+current unfinished event with its provisional observations. Participants left
+busy only by that event are released. World Cards, places, memberships,
+schedules, character runtime unrelated to the event, directional relationships,
+completed-event Chronicle, settled character memories, and optional append-only
+Trace archive files remain intact. The UI exposes this as **Reset World
+conversation** in the active World's conversation-actions menu and requires the
+exact World name.
 
 ## 9. Retirement And Upgrade Policy
 
@@ -238,15 +301,27 @@ Changes must preserve:
 
 - exactly one visible private thread per character and one World timeline per
   world;
-- Director, actor, and Analyzer calls use their respective model bindings;
-- each actor receives only its own SOUL and sees prior same-turn output;
-- actor tools remain empty and malformed IDs/deltas are rejected;
-- partial actor/Analyzer failures preserve already persisted output;
+- a World turn calls only the World narrative and Analyzer bindings and never a
+  character-bound model;
+- the World request contains an explicit canonical local date/time/period plus
+  bounded character state, schedules, and event context;
+- malformed Analyzer IDs/deltas are rejected;
+- Analyzer failures preserve already persisted World output;
 - event transitions, observation scope, relationship direction, and unread
   acknowledgement survive restart;
+- open-event observations do not become long-term memory before closure, while
+  closure creates idempotent per-character settlement records;
 - migration deletes legacy group rows and startup purges legacy RP sessions;
-- backup, export, and delete-all include all schema-26 tables;
-- Debug uses the three World trace labels;
+- an event's second and later narrative requests preserve the exact prior
+  provider message prefix across process restart;
+- event/model/checkpoint transitions close the old narrative context and purge
+  its private prompt ledger;
+- reset rejects an incorrect confirmation without mutation, waits for an active
+  turn, preserves settled continuity, and leaves one empty canonical timeline;
+- Context Economics reports stable-prefix hash, longest common prefix, projected
+  reuse ratio, provider cache usage, and an explicit cache-break reason;
+- backup, export, and delete-all accept database schema 28;
+- Debug uses the two active World trace labels;
 - desktop, compact, and mobile browser workflows show the Worlds/Characters
   hierarchy without overlap, keep World rows out of batch mutation, and render
   member-avatar mosaics and event details.
@@ -257,9 +332,9 @@ Focused coverage is in `test/world-conversation.test.ts`,
 
 ## 11. Implementation Map
 
-- `src/world/conversation-repository.ts`: schema-26 persistence
+- `src/world/conversation-repository.ts`: schema-26/27/28 persistence
 - `src/world/conversation-service.ts`: timeline, event, observation, relation, and unread policy
-- `src/world/conversation-prompts.ts`: strict Director, actor, and Analyzer contracts
+- `src/world/conversation-prompts.ts`: strict World narrative and Analyzer contracts
 - `src/domain/kernel.ts`: serial model orchestration and trusted analysis application
 - `src/http/router.ts`: JSON and SSE APIs
 - `src/http/ui.ts`: Worlds/Characters sidebar and World timeline UI

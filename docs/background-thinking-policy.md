@@ -7,14 +7,15 @@ contract is strict JSON:
 
 | Scenario | Current MLX ceiling | Unknown-provider fallback |
 |---|---:|---:|
-| World Director | 1,200 | 2,400 |
 | World post-turn Analyzer | 1,400 | 2,800 |
 | daily memory extraction | 1,024 | 2,400 |
 | relationship event extraction | 1,024 | 2,400 |
 
-Character replies, private SMS turns, World actor calls, subagents, and vision
-analysis are outside this policy. Their output quality may depend on reasoning
-or multimodal processing and must be evaluated separately.
+Character replies, private SMS turns, World narrative calls, subagents, and
+vision analysis are outside this policy. World narrative is user-visible and
+uses the profile's interactive thinking behavior rather than classifier-style
+thinking suppression. Output quality may depend on reasoning or multimodal
+processing and must be evaluated separately.
 
 For the current MLX model, private interactive turns explicitly send
 `enable_thinking: true` and `preserve_thinking: true` on every provider request.
@@ -37,6 +38,13 @@ Thinking blocks remain available in the persisted session and Debug trace for
 the turn that produced them. Historical thinking blocks are removed by the
 provider-context hook before later model calls, so private reasoning is not paid
 for or reinterpreted on every subsequent turn.
+
+World narrative has a different continuity contract from private SMS. When a
+provider emits narrative thinking, the exact assistant message may be replayed
+inside that active event's append-only prompt ledger so the next request keeps
+an identical provider prefix. It is not visible story canon and is deleted with
+the private ledger when the event ends, the model changes, or a 32k context
+checkpoint is taken. The World Analyzer remains a bounded no-thinking JSON call.
 
 The guard does not regenerate assistant tool-call messages or any continuation
 after a tool action has run. This prevents schedule, file, network, profile, and

@@ -76,9 +76,10 @@ injection:
 2. Replay pending journal operations.
 3. Strictly parse the Vault and deterministically rebuild SQLite/FTS and state.
 4. Align compatibility profile/SOUL mirrors from canonical Markdown.
-5. Remove resident-memory versions that are absent, inactive, unconfirmed, or
+5. Project existing confirmed `person` memories into the reality person directory.
+6. Remove resident-memory versions that are absent, inactive, unconfirmed, or
    no longer match current document content.
-6. Recover expired Coordinator jobs, then initialize Pi session runtime.
+7. Recover expired Coordinator jobs, then initialize Pi session runtime.
 
 This ordering prevents a provider request from observing half a correction,
 forgotten content, a stale managed profile, or a stale resident snapshot.
@@ -117,6 +118,16 @@ Vault-relative paths without changing UUID IDs or strict frontmatter.
 
 - Reality/global Markdown remains under `reality/`; character continuity stays
   under `roleplay/characters/<id>/`; legacy records remain quarantined.
+- Confirmed reality `person` memories keep their original evidence records and
+  also project into `reality/people/person_<stable-hash>.md`. A person profile
+  stores a stable person key, display name, aliases, relationship label,
+  source-memory IDs, aggregate confidence, and either global or selected-character
+  visibility. Its generated fact block contains only active confirmed sources;
+  user-authored Markdown outside that block survives later source updates.
+- Person profiles remain Markdown authority and are not duplicated into SQLite
+  or FTS. Retrieval first applies the selected-character visibility policy, then
+  builds a query-relevant compact excerpt that fits the reality-memory budget.
+  The complete profile is never injected wholesale.
 - Trusted HTTP/UI and explicit-user authorization can activate or forget
   memory. Direct Agent/MCP proposals remain pending. When Reality Memory Write
   is enabled, the trusted background Coordinator may activate only low-risk

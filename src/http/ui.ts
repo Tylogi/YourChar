@@ -643,9 +643,15 @@ export function renderAppHtml(): string {
     }
     .character-head h2,
     .workspace-section h3 { margin: 0; font-size: 18px; }
+    .entity-library-section { display: grid; gap: 10px; }
+    .entity-library-section + .entity-library-section { padding-top: 16px; border-top: 1px solid var(--line); }
+    .entity-library-head { min-height: 36px; display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+    .entity-library-head h3 { margin: 0; font-size: 14px; }
+    .entity-library-head p { margin: 2px 0 0; color: var(--muted); font-size: 11px; }
     .character-picker { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
     .character-picker select { min-width: 220px; }
     .character-card-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); gap: 12px; }
+    .world-card-grid { grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); }
     .character-card {
       min-width: 0;
       min-height: 94px;
@@ -684,6 +690,9 @@ export function renderAppHtml(): string {
     .character-card-copy { min-width: 0; display: grid; gap: 5px; }
     .character-card-copy strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 14px; }
     .character-card-copy span { color: var(--muted); font-size: 11px; line-height: 1.4; }
+    .world-card .character-card-avatar { padding: 2px; background: #d9dddb; }
+    .world-card-event { color: #24744a !important; }
+    .world-card-event.planned { color: #8a650f !important; }
     .character-list-empty {
       min-height: 190px;
       border: 1px dashed #d7d7d7;
@@ -1093,6 +1102,50 @@ export function renderAppHtml(): string {
       font-weight: 700;
     }
     .memory-badge.core { border-color: #97d7ad; background: #effaf2; color: #25643b; }
+    .person-directory {
+      margin: 14px 0;
+      padding: 14px 0;
+      border-top: 1px solid var(--line);
+      border-bottom: 1px solid var(--line);
+    }
+    .person-profile-list { display: grid; gap: 8px; }
+    .person-profile {
+      border: 1px solid var(--line);
+      border-radius: 7px;
+      background: #fafbfc;
+      overflow: hidden;
+    }
+    .person-profile > summary {
+      min-height: 54px;
+      padding: 10px 12px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      cursor: pointer;
+      list-style: none;
+    }
+    .person-profile > summary::-webkit-details-marker { display: none; }
+    .person-profile-title { min-width: 0; display: grid; gap: 3px; }
+    .person-profile-title strong { overflow-wrap: anywhere; font-size: 14px; }
+    .person-profile-meta { color: var(--muted); font-size: 11px; overflow-wrap: anywhere; }
+    .person-profile-form {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 10px;
+      padding: 12px;
+      border-top: 1px solid var(--line);
+      background: white;
+    }
+    .person-profile-form label { display: grid; gap: 5px; min-width: 0; color: var(--muted); font-size: 12px; }
+    .person-profile-form input,
+    .person-profile-form select,
+    .person-profile-form textarea { width: 100%; min-width: 0; }
+    .person-profile-form .full { grid-column: 1 / -1; }
+    .person-profile-form textarea { min-height: 180px; resize: vertical; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+    .person-visibility-list { display: flex; flex-wrap: wrap; gap: 6px 12px; }
+    .person-visibility-list label { display: inline-flex; align-items: center; grid-template-columns: auto 1fr; gap: 6px; color: var(--text); }
+    .person-visibility-list input { width: 16px; height: 16px; }
     .retrieval-preview {
       margin: 14px 0;
       padding: 12px 0;
@@ -1751,6 +1804,8 @@ export function renderAppHtml(): string {
       .memory-manager-form,
       .retrieval-preview-toolbar { grid-template-columns: 1fr; }
       .memory-manager-form .full { grid-column: auto; }
+      .person-profile-form { grid-template-columns: 1fr; }
+      .person-profile-form .full { grid-column: auto; }
       .economics-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
       .profile-markdown,
       .character-soul-markdown { min-height: 280px; height: 44vh; }
@@ -2061,6 +2116,20 @@ export function renderAppHtml(): string {
     .world-form-grid label { display: grid; gap: 6px; color: var(--muted); font-size: 12px; }
     .world-form-grid textarea { min-height: 86px; resize: vertical; }
     #worldRules { min-height: 128px; }
+    .world-card-summary {
+      padding: 12px;
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      background: #f7f8f7;
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+      gap: 12px;
+    }
+    .world-card-summary > div { min-width: 0; display: grid; gap: 5px; }
+    .world-card-summary span { color: var(--muted); font-size: 10px; }
+    .world-card-summary strong { overflow-wrap: anywhere; font-size: 12px; font-weight: 600; }
+    .world-card-members { display: flex !important; align-items: center; gap: 7px !important; }
+    .world-card-members .group-avatar-cluster { flex: 0 0 28px; }
     .world-places-section { padding-top: 16px; border-top: 1px solid var(--line); display: grid; gap: 14px; }
     .world-place-row { grid-template-columns: minmax(0, 1fr) auto; align-items: center; }
     .world-place-row-copy { min-width: 0; display: grid; gap: 4px; }
@@ -2231,6 +2300,54 @@ export function renderAppHtml(): string {
       color: #414844;
     }
     .message-row.world-narration .bubble.assistant::before { border-right-color: #f4f5f4; }
+    .world-scene-turn {
+      width: min(100%, 860px);
+      margin: 0 auto;
+      padding: 2px 0 20px;
+      border-bottom: 1px solid #dfe2e0;
+      display: grid;
+      gap: 14px;
+    }
+    .world-scene-head { min-width: 0; display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+    .world-scene-head-copy { min-width: 0; display: grid; gap: 2px; }
+    .world-scene-head-copy strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: #4d5651; font-size: 12px; }
+    .world-scene-head-copy span { color: #8a918d; font-size: 10px; }
+    .world-scene-participants { display: flex; align-items: center; }
+    .world-scene-participants .world-scene-mini-avatar + .world-scene-mini-avatar { margin-left: -5px; }
+    .world-scene-mini-avatar {
+      width: 25px;
+      height: 25px;
+      padding: 0;
+      overflow: hidden;
+      border: 2px solid #f3f3f3;
+      border-radius: 50%;
+      background: #e7ece9;
+      color: #3d654d;
+      display: grid;
+      place-items: center;
+      font-size: 9px;
+      font-weight: 700;
+    }
+    .world-scene-mini-avatar img { width: 100%; height: 100%; object-fit: cover; }
+    button.world-scene-mini-avatar { cursor: pointer; }
+    .world-scene-copy { min-width: 0; padding: 0 clamp(2px, 2vw, 18px); }
+    .world-scene-fragment { min-width: 0; display: grid; gap: 7px; }
+    .world-scene-fragment + .world-scene-fragment { margin-top: 16px; }
+    .world-scene-speaker {
+      width: fit-content;
+      padding: 0;
+      border: 0;
+      background: transparent;
+      color: #347250;
+      font-size: 11px;
+      font-weight: 650;
+    }
+    button.world-scene-speaker { cursor: pointer; }
+    .world-scene-fragment.director .world-scene-speaker { color: #737a76; }
+    .world-scene-text { color: #252a27; font-size: 15px; line-height: 1.88; }
+    .world-scene-text > :first-child { margin-top: 0; }
+    .world-scene-text > :last-child { margin-bottom: 0; }
+    .world-scene-fragment .message-progress { width: fit-content; max-width: 100%; }
     .bubble.user {
       margin: 0;
       background: var(--user);
@@ -2773,6 +2890,7 @@ export function renderAppHtml(): string {
       .schedule-side .schedule-list,
       .task-list { max-height: none; }
       .character-card-grid { grid-template-columns: repeat(auto-fit, minmax(158px, 1fr)); gap: 8px; }
+      .world-card-grid { grid-template-columns: repeat(auto-fit, minmax(158px, 1fr)); }
       .character-card { min-height: 92px; padding: 9px; grid-template-columns: 44px minmax(0, 1fr); gap: 8px; }
       .character-card-avatar { width: 44px; height: 44px; font-size: 16px; }
       .character-head #newCharacterBtn { width: auto; }
@@ -3363,6 +3481,8 @@ export function renderAppHtml(): string {
     .scene-info-row dt { color: var(--muted); }
     .scene-info-row dd { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; }
     .scene-info-actions { padding: 12px 18px 16px; border-top: 1px solid #ededed; display: flex; justify-content: flex-end; gap: 8px; }
+    .world-event-actions { margin-right: auto; display: flex; gap: 7px; flex-wrap: wrap; }
+    .world-event-actions[hidden] { display: none; }
     .scene-editor-form { max-height: min(560px, calc(100vh - 176px)); padding: 16px 18px; overflow: auto; }
     .scene-editor-form label { display: grid; gap: 6px; color: var(--muted); font-size: 13px; }
     .scene-editor-form textarea { min-height: 92px; }
@@ -3435,6 +3555,11 @@ export function renderAppHtml(): string {
       .context-budget-percent { display: inline; font-family: Arial, sans-serif; font-size: 9px; font-variant-numeric: normal; letter-spacing: 0; }
       .context-budget-body { padding: 14px 16px; gap: 12px; }
       .context-budget-summary strong { font-size: 23px; }
+      .world-scene-turn { padding-bottom: 16px; gap: 11px; }
+      .world-scene-copy { padding-inline: 2px; }
+      .world-scene-fragment + .world-scene-fragment { margin-top: 14px; }
+      .world-scene-text { font-size: 14px; line-height: 1.8; }
+      .world-card-summary { grid-template-columns: minmax(0, 1fr); }
       .message-row.interaction { padding-inline: 8px; }
       .interaction-event { flex-wrap: wrap; gap: 6px; }
       .interaction-event::before,
@@ -3447,6 +3572,8 @@ export function renderAppHtml(): string {
       body.keyboard-open .header-left { visibility: hidden; pointer-events: none; }
       body.keyboard-open .composer { padding-bottom: 8px; }
       .scene-info-row { grid-template-columns: 72px minmax(0, 1fr); }
+      .scene-info-actions { flex-wrap: wrap; }
+      .world-event-actions { width: 100%; margin-right: 0; }
     }
   </style>
 </head>
@@ -3484,6 +3611,7 @@ export function renderAppHtml(): string {
               <button id="mobileRenameSessionBtn" type="button" role="menuitem" disabled><i data-lucide="pencil" aria-hidden="true"></i><span>重命名会话</span></button>
               <button id="mobileArchiveSessionBtn" type="button" role="menuitem" disabled><i data-lucide="archive" aria-hidden="true"></i><span>归档会话</span></button>
               <button id="mobileDeleteSessionBtn" type="button" role="menuitem" disabled><i data-lucide="trash-2" aria-hidden="true"></i><span>永久删除会话</span></button>
+              <button id="resetWorldConversationBtn" type="button" role="menuitem" hidden><i data-lucide="message-square-x" aria-hidden="true"></i><span>重置世界会话</span></button>
             </div>
           </div>
         </div>
@@ -3618,14 +3746,30 @@ export function renderAppHtml(): string {
       <section id="charactersPage" class="settings-page" hidden>
         <div class="character-shell">
           <div class="character-head">
-            <h2>角色</h2>
-            <button id="newCharacterBtn" class="primary" type="button"><i data-lucide="user-plus" aria-hidden="true"></i><span>新建角色</span></button>
+            <h2>角色与世界</h2>
           </div>
-          <div id="characterCardGrid" class="character-card-grid" aria-label="角色列表"></div>
-          <div id="characterListEmpty" class="character-list-empty" hidden>
-            <i data-lucide="users-round" aria-hidden="true"></i>
-            <strong>还没有角色</strong>
-          </div>
+          <section class="entity-library-section" aria-labelledby="characterLibraryTitle">
+            <div class="entity-library-head">
+              <div><h3 id="characterLibraryTitle">角色卡</h3><p>私聊身份、关系与个人记忆</p></div>
+              <button id="newCharacterBtn" class="primary" type="button"><i data-lucide="user-plus" aria-hidden="true"></i><span>新建角色</span></button>
+            </div>
+            <div id="characterCardGrid" class="character-card-grid" aria-label="角色列表"></div>
+            <div id="characterListEmpty" class="character-list-empty" hidden>
+              <i data-lucide="users-round" aria-hidden="true"></i>
+              <strong>还没有角色</strong>
+            </div>
+          </section>
+          <section class="entity-library-section" aria-labelledby="worldLibraryTitle">
+            <div class="entity-library-head">
+              <div><h3 id="worldLibraryTitle">世界卡</h3><p>规则、地点、事件与演绎模型</p></div>
+              <button id="newWorldCardBtn" class="primary" type="button"><i data-lucide="map-plus" aria-hidden="true"></i><span>新建世界</span></button>
+            </div>
+            <div id="worldCardGrid" class="character-card-grid world-card-grid" aria-label="世界列表"></div>
+            <div id="worldListEmpty" class="character-list-empty" hidden>
+              <i data-lucide="map" aria-hidden="true"></i>
+              <strong>还没有世界</strong>
+            </div>
+          </section>
           <section id="characterDetail" class="character-detail" hidden>
             <div class="character-detail-head">
               <div class="character-detail-title"><span>角色资料</span><h3 id="characterDetailTitle">新角色</h3></div>
@@ -3687,7 +3831,6 @@ export function renderAppHtml(): string {
             <div id="characterLifePanel" class="character-panel character-life-panel" role="tabpanel" hidden>
               <div class="character-life-head">
                 <div><h4>共享世界与自主生活</h4><span id="characterLifeState" class="muted"></span></div>
-                <button id="openWorldManagerBtn" class="secondary" type="button"><i data-lucide="map" aria-hidden="true"></i><span>管理世界</span></button>
               </div>
               <div class="life-world-binding">
                 <label>所在世界<select id="characterWorldSelect"><option value="">不加入共享世界</option></select></label>
@@ -3871,6 +4014,13 @@ export function renderAppHtml(): string {
               <label class="full">正文<textarea id="managedMemoryCreateContent" required></textarea></label>
               <div class="settings-actions full"><button class="primary" type="submit">固定记忆</button><span id="managedMemoryActionState" class="muted"></span></div>
             </form>
+            <section class="person-directory" aria-labelledby="personDirectoryTitle">
+              <div class="schedule-head">
+                <h3 id="personDirectoryTitle">现实人物档案</h3>
+                <span id="personProfileCount" class="muted"></span>
+              </div>
+              <div id="personProfileList" class="person-profile-list"></div>
+            </section>
             <section class="retrieval-preview" aria-labelledby="retrievalPreviewTitle">
               <div class="schedule-head"><h3 id="retrievalPreviewTitle">检索预览</h3><span class="muted">只读，不更新命中状态</span></div>
               <form id="retrievalPreviewForm" class="retrieval-preview-toolbar">
@@ -4264,6 +4414,7 @@ export function renderAppHtml(): string {
         <div id="sceneState" class="dialog-error" role="status"></div>
       </form>
       <div class="scene-info-actions">
+        <span id="worldEventActions" class="world-event-actions" hidden></span>
         <button id="editSceneInfoBtn" class="secondary" type="button"><i data-lucide="pencil" aria-hidden="true"></i><span>编辑场景</span></button>
         <button id="saveSceneBtn" class="primary" type="submit" form="sceneForm" hidden><i data-lucide="save" aria-hidden="true"></i><span>保存</span></button>
         <button id="dismissSceneInfoBtn" class="secondary" type="button">关闭</button>
@@ -4326,8 +4477,8 @@ export function renderAppHtml(): string {
           <div class="world-form-grid">
             <label>名称<input id="worldName" required maxlength="80" /></label>
             <label>时区<input id="worldTimezone" value="Asia/Shanghai" /></label>
-            <label>演绎导演模型<select id="worldDirectorModelProfile"><option value="">继承系统默认模型</option></select></label>
-            <label>回合分析模型<select id="worldAnalystModelProfile"><option value="">跟随演绎导演</option></select></label>
+            <label>世界演绎模型<select id="worldDirectorModelProfile"><option value="">继承系统默认模型</option></select></label>
+            <label>回合状态模型<select id="worldAnalystModelProfile"><option value="">跟随世界演绎模型</option></select></label>
             <label class="full">简介<textarea id="worldDescription" maxlength="1200"></textarea></label>
             <label class="full">世界规则与常识<textarea id="worldRules" maxlength="6000" spellcheck="false"></textarea></label>
           </div>
@@ -4336,6 +4487,7 @@ export function renderAppHtml(): string {
             <button id="saveWorldBtn" class="primary" type="submit">创建世界</button>
           </div>
         </form>
+        <section id="worldCardSummary" class="world-card-summary" hidden></section>
         <section id="worldPlacesSection" class="world-places-section" hidden>
           <div class="schedule-head"><h3>地点与功能</h3><span id="worldPlaceCount" class="muted"></span></div>
           <div id="worldPlaceList" class="world-place-list"></div>
@@ -4517,6 +4669,7 @@ export function renderAppHtml(): string {
       userInsights: null,
       insightReceiptBaselines: new Map(),
       managedMemories: [],
+      personProfiles: [],
       memoryJobs: [],
       retrievalPreview: null,
       lastTurnStatus: null,
@@ -4651,6 +4804,8 @@ export function renderAppHtml(): string {
       managedMemoryCreateKey: document.getElementById("managedMemoryCreateKey"),
       managedMemoryCreateContent: document.getElementById("managedMemoryCreateContent"),
       managedMemoryActionState: document.getElementById("managedMemoryActionState"),
+      personProfileCount: document.getElementById("personProfileCount"),
+      personProfileList: document.getElementById("personProfileList"),
       retrievalPreviewForm: document.getElementById("retrievalPreviewForm"),
       retrievalPreviewMode: document.getElementById("retrievalPreviewMode"),
       retrievalPreviewQuery: document.getElementById("retrievalPreviewQuery"),
@@ -4739,6 +4894,7 @@ export function renderAppHtml(): string {
       mobileRenameSessionBtn: document.getElementById("mobileRenameSessionBtn"),
       mobileArchiveSessionBtn: document.getElementById("mobileArchiveSessionBtn"),
       mobileDeleteSessionBtn: document.getElementById("mobileDeleteSessionBtn"),
+      resetWorldConversationBtn: document.getElementById("resetWorldConversationBtn"),
       mobileArchivedSessionsBtn: document.getElementById("mobileArchivedSessionsBtn"),
       archivedSessionsDialog: document.getElementById("archivedSessionsDialog"),
       archivedSessionList: document.getElementById("archivedSessionList"),
@@ -4756,7 +4912,9 @@ export function renderAppHtml(): string {
       cancelNewConversationBtn: document.getElementById("cancelNewConversationBtn"),
       createConversationBtn: document.getElementById("createConversationBtn"),
       sceneInfoDialog: document.getElementById("sceneInfoDialog"),
+      sceneInfoTitle: document.getElementById("sceneInfoTitle"),
       sceneInfoContent: document.getElementById("sceneInfoContent"),
+      worldEventActions: document.getElementById("worldEventActions"),
       closeSceneInfoBtn: document.getElementById("closeSceneInfoBtn"),
       dismissSceneInfoBtn: document.getElementById("dismissSceneInfoBtn"),
       editSceneInfoBtn: document.getElementById("editSceneInfoBtn"),
@@ -4850,6 +5008,9 @@ export function renderAppHtml(): string {
       newCharacterBtn: document.getElementById("newCharacterBtn"),
       characterCardGrid: document.getElementById("characterCardGrid"),
       characterListEmpty: document.getElementById("characterListEmpty"),
+      newWorldCardBtn: document.getElementById("newWorldCardBtn"),
+      worldCardGrid: document.getElementById("worldCardGrid"),
+      worldListEmpty: document.getElementById("worldListEmpty"),
       characterDetail: document.getElementById("characterDetail"),
       characterDetailTitle: document.getElementById("characterDetailTitle"),
       characterSettingsTabBtn: document.getElementById("characterSettingsTabBtn"),
@@ -4861,7 +5022,6 @@ export function renderAppHtml(): string {
       characterRelationshipPanel: document.getElementById("characterRelationshipPanel"),
       characterLifePanel: document.getElementById("characterLifePanel"),
       characterLifeState: document.getElementById("characterLifeState"),
-      openWorldManagerBtn: document.getElementById("openWorldManagerBtn"),
       characterWorldSelect: document.getElementById("characterWorldSelect"),
       saveCharacterWorldBtn: document.getElementById("saveCharacterWorldBtn"),
       characterLifeEmpty: document.getElementById("characterLifeEmpty"),
@@ -4901,6 +5061,7 @@ export function renderAppHtml(): string {
       worldRules: document.getElementById("worldRules"),
       worldManagerState: document.getElementById("worldManagerState"),
       saveWorldBtn: document.getElementById("saveWorldBtn"),
+      worldCardSummary: document.getElementById("worldCardSummary"),
       worldPlacesSection: document.getElementById("worldPlacesSection"),
       worldPlaceCount: document.getElementById("worldPlaceCount"),
       worldPlaceList: document.getElementById("worldPlaceList"),
@@ -5073,6 +5234,8 @@ export function renderAppHtml(): string {
     nodes.retrievalPreviewForm.addEventListener("submit", runRetrievalPreview);
     nodes.retrievalPreviewResults.addEventListener("click", jumpFromMemoryDiagnostic);
     nodes.managedMemoryList.addEventListener("click", handleManagedMemoryAction);
+    nodes.personProfileList.addEventListener("submit", savePersonProfile);
+    nodes.personProfileList.addEventListener("change", updatePersonVisibilityControls);
     nodes.memoryJobList.addEventListener("click", retryMemoryJob);
     nodes.debugTracesBtn.addEventListener("click", () => setDebugDataset("traces"));
     nodes.debugEconomicsBtn.addEventListener("click", () => setDebugDataset("economics"));
@@ -5137,6 +5300,7 @@ export function renderAppHtml(): string {
     nodes.mobileRenameSessionBtn.addEventListener("click", () => runMobileSessionAction(renameCurrentSession));
     nodes.mobileArchiveSessionBtn.addEventListener("click", () => runMobileSessionAction(archiveCurrentSession));
     nodes.mobileDeleteSessionBtn.addEventListener("click", () => runMobileSessionAction(deleteCurrentSession));
+    nodes.resetWorldConversationBtn.addEventListener("click", () => runMobileSessionAction(resetCurrentWorldConversation));
     nodes.mobileArchivedSessionsBtn.addEventListener("click", () => runMobileSessionAction(openArchivedSessions));
     nodes.newConversationForm.addEventListener("submit", createNewConversation);
     nodes.newConversationDirectBtn.addEventListener("click", () => setNewConversationKind("direct"));
@@ -5158,6 +5322,7 @@ export function renderAppHtml(): string {
     nodes.dismissSceneInfoBtn.addEventListener("click", dismissSceneInfoDialog);
     nodes.sceneInfoDialog.addEventListener("cancel", (event) => { event.preventDefault(); dismissSceneInfoDialog(); });
     nodes.editSceneInfoBtn.addEventListener("click", beginSceneEditing);
+    nodes.worldEventActions.addEventListener("click", handleWorldEventAction);
     nodes.closeArchivedSessionsBtn.addEventListener("click", () => nodes.archivedSessionsDialog.close());
     nodes.archivedSessionList.addEventListener("click", handleArchivedSessionAction);
     nodes.sessionActionForm.addEventListener("submit", submitSessionActionDialog);
@@ -5220,12 +5385,13 @@ export function renderAppHtml(): string {
     nodes.scheduleList.addEventListener("click", handleScheduleAction);
     nodes.newCharacterBtn.addEventListener("click", resetCharacterForm);
     nodes.characterCardGrid.addEventListener("click", selectCharacterCard);
+    nodes.newWorldCardBtn.addEventListener("click", () => openWorldManager(""));
+    nodes.worldCardGrid.addEventListener("click", selectWorldCard);
     nodes.characterSettingsTabBtn.addEventListener("click", () => setCharacterTab("settings"));
     nodes.characterMemoryTabBtn.addEventListener("click", () => setCharacterTab("memory"));
     nodes.characterRelationshipTabBtn.addEventListener("click", () => setCharacterTab("relationship"));
     nodes.characterLifeTabBtn.addEventListener("click", () => setCharacterTab("life"));
     nodes.resetRelationshipBtn.addEventListener("click", resetRelationship);
-    nodes.openWorldManagerBtn.addEventListener("click", openWorldManager);
     nodes.saveCharacterWorldBtn.addEventListener("click", saveCharacterWorld);
     nodes.saveCharacterLifeBtn.addEventListener("click", saveCharacterLife);
     nodes.planCharacterLifeBtn.addEventListener("click", planCharacterLife);
@@ -6703,11 +6869,14 @@ export function renderAppHtml(): string {
         role,
         text: message.content || "",
         senderId: message.senderId || "",
+        worldTurnId: message.turnId || "",
         worldNarration: message.senderType === "director",
         worldMessageId: message.id,
         attachments: Array.isArray(message.attachments) ? message.attachments : [],
         timestampMs: message.createdAt ? new Date(message.createdAt).getTime() : 0,
-        at: message.createdAt ? new Date(message.createdAt).toLocaleTimeString() : ""
+        at: message.createdAt
+          ? new Date(message.createdAt).toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit" })
+          : ""
       };
     }
 
@@ -7068,18 +7237,23 @@ export function renderAppHtml(): string {
 
     function updateSessionActionState() {
       const directActive = state.activeConversationKind === "direct" && !state.sessionDraft && Boolean(state.activeSessionId);
+      const worldActive = state.activeConversationKind === "world" && Boolean(state.activeWorldId);
       const privatePending = directActive && (state.privateInboxRunning || state.privateInboxMessages.length > 0);
       nodes.renameSessionBtn.disabled = !directActive;
       nodes.archiveSessionBtn.disabled = !directActive || privatePending;
       nodes.deleteSessionBtn.disabled = !directActive || privatePending;
       nodes.mobileRenameSessionBtn.disabled = !directActive;
-      nodes.mobileRenameSessionBtn.hidden = false;
+      nodes.mobileRenameSessionBtn.hidden = !directActive;
       nodes.mobileArchiveSessionBtn.disabled = !directActive || privatePending;
+      nodes.mobileArchiveSessionBtn.hidden = !directActive;
       nodes.mobileDeleteSessionBtn.disabled = !directActive || privatePending;
+      nodes.mobileDeleteSessionBtn.hidden = !directActive;
+      nodes.resetWorldConversationBtn.hidden = !worldActive;
+      nodes.resetWorldConversationBtn.disabled = !worldActive || state.busy;
       nodes.mobileArchiveSessionBtn.querySelector("span").textContent = "归档会话";
       nodes.mobileDeleteSessionBtn.querySelector("span").textContent = "永久删除会话";
-      nodes.sessionActionsMenuBtn.hidden = !directActive;
-      if (!directActive) closeSessionActionsMenu();
+      nodes.sessionActionsMenuBtn.hidden = !directActive && !worldActive;
+      if (!directActive && !worldActive) closeSessionActionsMenu();
     }
 
     async function renameCurrentSession() {
@@ -7254,6 +7428,37 @@ export function renderAppHtml(): string {
       state.sessionDraft = false;
       await loadSessions();
       setStatus("会话已永久删除");
+    }
+
+    async function resetCurrentWorldConversation() {
+      if (state.busy || state.activeConversationKind !== "world" || !state.activeWorldId) return;
+      const worldId = state.activeWorldId;
+      const conversation = state.worldConversations.find((entry) => entry.worldId === worldId);
+      const expected = conversation?.world?.name || "";
+      if (!expected) return;
+      const reset = await openActionDialog({
+        title: "重置世界会话",
+        description: "当前消息、未完成事件和事件级模型上下文将被清空。世界卡、地点、角色、已结算事件、长期记忆、关系和日程会保留。请输入世界名称“" + expected + "”确认。",
+        fieldLabel: "输入世界名称确认",
+        value: "",
+        confirmLabel: "重置并开始新会话",
+        validate: (value) => value === expected ? "" : "世界名称不匹配，未重置。",
+        onConfirm: async (value) => {
+          const response = await fetch("/api/v1/worlds/" + encodeURIComponent(worldId) + "/conversation", {
+            method: "DELETE",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify({ confirmation: value })
+          });
+          const body = await response.json();
+          if (!response.ok) throw new Error(body.error || "重置世界会话失败");
+        }
+      });
+      if (!reset || state.activeConversationKind !== "world" || state.activeWorldId !== worldId) return;
+      state.messages = [];
+      clearConversationScene();
+      await refreshWorldConversationList();
+      await refreshWorldMessages(true);
+      setStatus("已开始新的世界会话");
     }
 
     async function permanentlyDeleteSession(session) {
@@ -7837,6 +8042,7 @@ export function renderAppHtml(): string {
     }
 
     function renderWorldEventInfo(event) {
+      nodes.sceneInfoTitle.textContent = "世界事件";
       const participantNames = (event.participantIds || []).map((id) =>
         state.characters.find((entry) => entry.id === id)?.name || id
       );
@@ -7846,14 +8052,59 @@ export function renderAppHtml(): string {
         ["状态", statusLabels[event.status] || event.status],
         ["当前目标", event.objective],
         ["参与者", participantNames.join("、")],
-        ["事件摘要", event.summary]
+        ["事件摘要", event.summary],
+        ["结算记录", event.settlementSummary]
       ].filter((entry) => entry[1]);
       nodes.sceneInfoContent.innerHTML = '<dl>' + rows.map((entry) =>
         '<div class="scene-info-row"><dt>' + escapeHtml(entry[0]) + '</dt><dd>' + escapeHtml(entry[1]) + '</dd></div>'
       ).join("") + '</dl>';
+      const actions = [];
+      if (event.status === "planned") {
+        actions.push(worldEventActionButton("begin", "play", "开始事件", "primary"));
+        actions.push(worldEventActionButton("cancel", "x", "取消事件", "secondary"));
+      } else if (event.status === "active") {
+        actions.push(worldEventActionButton("resolve", "circle-check", "结束并结算", "primary"));
+        actions.push(worldEventActionButton("cancel", "circle-x", "取消事件", "secondary"));
+      }
+      actions.push(worldEventActionButton("undo", "undo-2", "撤销最近变更", "secondary"));
+      nodes.worldEventActions.innerHTML = actions.join("");
+      nodes.worldEventActions.hidden = false;
+    }
+
+    function worldEventActionButton(action, icon, label, className) {
+      return '<button class="' + escapeHtml(className) + '" type="button" data-world-event-action="' +
+        escapeHtml(action) + '"><i data-lucide="' + escapeHtml(icon) + '" aria-hidden="true"></i><span>' +
+        escapeHtml(label) + '</span></button>';
+    }
+
+    async function handleWorldEventAction(event) {
+      const button = event.target.closest("button[data-world-event-action]");
+      if (!button || !state.activeWorldId) return;
+      const action = button.dataset.worldEventAction || "";
+      nodes.worldEventActions.querySelectorAll("button").forEach((control) => { control.disabled = true; });
+      try {
+        const response = await fetch("/api/v1/worlds/" + encodeURIComponent(state.activeWorldId) + "/conversation/event", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ action })
+        });
+        const body = await response.json();
+        if (!response.ok) throw new Error(body.error || "世界事件更新失败");
+        await refreshWorldConversationList();
+        if (body.event) renderWorldEventInfo({ ...body.event, worldEvent: true });
+        else closeSceneInfoDialog();
+        setStatus(action === "resolve" ? "事件已结束并结算" : action === "undo" ? "已撤销最近的事件变更" : "事件状态已更新");
+      } catch (error) {
+        setStatus(error.message || String(error), true);
+        if (state.currentScene?.worldEvent) renderWorldEventInfo(state.currentScene);
+      }
+      refreshIcons();
     }
 
     function renderSceneInfo(scene) {
+      nodes.sceneInfoTitle.textContent = "场景信息";
+      nodes.worldEventActions.hidden = true;
+      nodes.worldEventActions.innerHTML = "";
       const rows = [
         ["地点", scene.location],
         ["场景时间", scene.inWorldTime],
@@ -7900,6 +8151,7 @@ export function renderAppHtml(): string {
       nodes.sceneInfoContent.hidden = editing;
       nodes.sceneForm.hidden = !editing;
       nodes.editSceneInfoBtn.hidden = editing;
+      nodes.worldEventActions.hidden = editing || !state.currentScene?.worldEvent;
       nodes.saveSceneBtn.hidden = !editing;
       nodes.dismissSceneInfoBtn.textContent = editing ? "取消" : "关闭";
       nodes.dismissSceneInfoBtn.className = editing ? "secondary" : "secondary";
@@ -7967,6 +8219,34 @@ export function renderAppHtml(): string {
       nodes.characterCardGrid.innerHTML = cards;
       nodes.characterListEmpty.hidden = state.characters.length > 0;
       refreshIcons();
+    }
+
+    function renderWorldCards() {
+      const cards = state.worlds.map((world) => {
+        const conversation = state.worldConversations.find((entry) => entry.worldId === world.id);
+        const memberCount = conversation?.characterIds?.length || 0;
+        const event = conversation?.activeEvent;
+        const director = state.modelProfiles.find((profile) => profile.id === world.directorModelProfileId);
+        const modelLabel = director?.name || "默认模型";
+        const eventLabel = event
+          ? '<span class="world-card-event ' + escapeHtml(event.status) + '">' +
+              escapeHtml((event.status === "planned" ? "待开始" : "进行中") + " · " + event.title) + '</span>'
+          : '<span>当前无进行中的事件</span>';
+        return '<button class="character-card world-card" type="button" data-world-card-id="' + escapeHtml(world.id) + '">' +
+          '<span class="character-card-avatar">' + worldAvatarCluster(conversation) + '</span>' +
+          '<span class="character-card-copy"><strong>' + escapeHtml(world.name) + '</strong>' +
+            '<span>' + memberCount + ' 位角色 · ' + escapeHtml(modelLabel) + '</span>' + eventLabel + '</span>' +
+        '</button>';
+      }).join("");
+      nodes.worldCardGrid.innerHTML = cards;
+      nodes.worldListEmpty.hidden = state.worlds.length > 0;
+      refreshIcons();
+    }
+
+    function selectWorldCard(event) {
+      const card = event.target.closest("button[data-world-card-id]");
+      if (!card) return;
+      void openWorldManager(card.dataset.worldCardId || "");
     }
 
     function revealCharacterDetailWhenNeeded() {
@@ -8097,9 +8377,10 @@ export function renderAppHtml(): string {
         ? managerBefore
         : "";
       nodes.worldDirectorModelProfile.innerHTML = '<option value="">继承系统默认模型</option>' + modelOptions;
-      nodes.worldAnalystModelProfile.innerHTML = '<option value="">跟随演绎导演</option>' + modelOptions;
+      nodes.worldAnalystModelProfile.innerHTML = '<option value="">跟随世界演绎模型</option>' + modelOptions;
       nodes.worldDirectorModelProfile.value = state.modelProfiles.some((profile) => profile.id === directorBefore) ? directorBefore : "";
       nodes.worldAnalystModelProfile.value = state.modelProfiles.some((profile) => profile.id === analystBefore) ? analystBefore : "";
+      renderWorldCards();
     }
 
     async function loadCharacterLife() {
@@ -8294,11 +8575,11 @@ export function renderAppHtml(): string {
         const response = await fetch("/api/v1/characters/" + encodeURIComponent(state.workspaceCharacterId) + "/life/plan", {
           method: "POST",
           headers: { "content-type": "application/json" },
-          body: JSON.stringify({ force: false })
+          body: JSON.stringify({ force: true })
         });
         const body = await response.json();
         if (!response.ok) throw new Error(body.error || "生活日程规划失败");
-        const completedState = "已安排 " + (body.result?.plans?.length || 0) + " 项" + (body.result?.fallbackUsed ? "（本地兜底）" : "");
+        const completedState = "已安排 " + (body.result?.plans?.length || 0) + " 项" + (body.result?.fallbackUsed ? "（未生成可用安排）" : "");
         await loadCharacterLife();
         nodes.characterLifeState.textContent = completedState;
       } catch (error) {
@@ -8364,14 +8645,14 @@ export function renderAppHtml(): string {
       }
     }
 
-    async function openWorldManager() {
+    async function openWorldManager(preferredWorldId = "") {
       nodes.worldManagerState.textContent = "加载中...";
       nodes.worldManagerDialog.showModal();
       setWorldManagerBusy(true);
       refreshIcons();
       try {
         await loadWorlds();
-        const preferred = state.characterLife?.membership?.worldId || state.worlds[0]?.id || "";
+        const preferred = state.worlds.some((world) => world.id === preferredWorldId) ? preferredWorldId : "";
         if (preferred) await loadWorldEditor(preferred);
         else resetWorldEditor();
         nodes.worldManagerState.textContent = "";
@@ -8414,6 +8695,7 @@ export function renderAppHtml(): string {
       nodes.worldDescription.value = body.world.description || "";
       nodes.worldRules.value = body.world.rulesMarkdown || "";
       nodes.saveWorldBtn.textContent = "保存世界";
+      renderWorldCardSummary(body.world);
       nodes.worldPlacesSection.hidden = false;
       resetPlaceEditor();
       renderWorldPlaces();
@@ -8429,10 +8711,32 @@ export function renderAppHtml(): string {
       nodes.worldDirectorModelProfile.value = "";
       nodes.worldAnalystModelProfile.value = "";
       nodes.saveWorldBtn.textContent = "创建世界";
+      nodes.worldCardSummary.hidden = true;
+      nodes.worldCardSummary.innerHTML = "";
       nodes.worldPlacesSection.hidden = true;
       nodes.worldPlaceList.innerHTML = "";
       nodes.worldManagerState.textContent = "";
       nodes.worldName.focus();
+    }
+
+    function renderWorldCardSummary(world) {
+      const conversation = state.worldConversations.find((entry) => entry.worldId === world.id);
+      const members = conversation?.characterIds || [];
+      const event = conversation?.activeEvent;
+      const participantNames = (event?.participantIds || []).map((id) =>
+        state.characters.find((character) => character.id === id)?.name || id
+      );
+      const eventText = event
+        ? (event.status === "planned" ? "待开始" : "进行中") + " · " + event.title +
+          (participantNames.length ? " · " + participantNames.join("、") : "")
+        : "当前无进行中的事件";
+      nodes.worldCardSummary.innerHTML =
+        '<div class="world-card-members">' + worldAvatarCluster(conversation, "compact") +
+          '<div><span>世界成员</span><strong>' +
+          members.length + ' 位角色</strong></div></div>' +
+        '<div><span>当前事件</span><strong>' + escapeHtml(eventText) + '</strong></div>';
+      nodes.worldCardSummary.hidden = false;
+      refreshIcons();
     }
 
     async function saveWorld(event) {
@@ -8993,17 +9297,21 @@ export function renderAppHtml(): string {
     async function loadManagedMemories() {
       nodes.memoryCoordinatorState.textContent = "加载中...";
       try {
-        const [statusResponse, memoriesResponse, charactersResponse] = await Promise.all([
+        const [statusResponse, memoriesResponse, charactersResponse, profilesResponse] = await Promise.all([
           fetch("/api/v1/memory-coordinator/status"),
           fetch("/api/v1/memory-coordinator/memories?limit=100"),
-          fetch("/api/v1/characters")
+          fetch("/api/v1/characters"),
+          fetch("/api/v1/person-profiles")
         ]);
         const statusBody = await statusResponse.json();
         const memoriesBody = await memoriesResponse.json();
         const charactersBody = await charactersResponse.json();
+        const profilesBody = await profilesResponse.json();
         if (!statusResponse.ok) throw new Error(statusBody.error || "捕获状态加载失败");
         if (!memoriesResponse.ok) throw new Error(memoriesBody.error || "记忆加载失败");
+        if (!profilesResponse.ok) throw new Error(profilesBody.error || "人物档案加载失败");
         state.managedMemories = Array.isArray(memoriesBody.memories) ? memoriesBody.memories : [];
+        state.personProfiles = Array.isArray(profilesBody.profiles) ? profilesBody.profiles : [];
         state.memoryJobs = Array.isArray(statusBody.coordinator?.recentJobs) ? statusBody.coordinator.recentJobs : [];
         state.characters = Array.isArray(charactersBody.characters) ? charactersBody.characters : state.characters;
         const characterOptions = state.characters.map((character) =>
@@ -9022,6 +9330,7 @@ export function renderAppHtml(): string {
           Number(coordinator.estimatedTokensLast24Hours || 0).toLocaleString() + " tokens";
         updateManagedMemoryCreateControls();
         renderManagedMemories();
+        renderPersonProfiles();
         renderMemoryJobs();
       } catch (error) {
         nodes.memoryCoordinatorState.textContent = error.message || String(error);
@@ -9069,6 +9378,88 @@ export function renderAppHtml(): string {
           '<div class="schedule-meta">' + escapeHtml(memoryTypeLabel(memory.type)) + (memory.key ? ' · ' + escapeHtml(memory.key) : '') + '</div>' +
           '<div class="memory-source">' + escapeHtml(source) + '</div><div class="memory-badges">' + usage + '</div></div><div class="memory-actions">' + actions + '</div></div>';
       }).join("");
+    }
+
+    function renderPersonProfiles() {
+      nodes.personProfileCount.textContent = state.personProfiles.length + " 人";
+      if (!state.personProfiles.length) {
+        nodes.personProfileList.innerHTML = '<div class="muted" style="padding:8px 0;">暂无人物档案</div>';
+        return;
+      }
+      nodes.personProfileList.innerHTML = state.personProfiles.map((profile) => {
+        const visibleIds = new Set(profile.visibleToCharacterIds || []);
+        const visibility = profile.visibility === "selected_characters" ? "selected_characters" : "global";
+        const characterOptions = state.characters.map((character) =>
+          '<label><input type="checkbox" name="visibleCharacter" value="' + escapeHtml(character.id) + '"' +
+            (visibleIds.has(character.id) ? ' checked' : '') + ' />' + escapeHtml(character.name) + '</label>'
+        ).join("");
+        const meta = [
+          profile.relationship || "关系未标注",
+          visibility === "global" ? "全部角色可见" : visibleIds.size + " 个角色可见",
+          (profile.sourceMemoryIds || []).length + " 条来源",
+          "置信度 " + Number(profile.confidence || 0).toFixed(2)
+        ].join(" · ");
+        return '<details class="person-profile" data-person-profile-id="' + escapeHtml(profile.id) + '">' +
+          '<summary><div class="person-profile-title"><strong>' + escapeHtml(profile.displayName) + '</strong>' +
+          '<span class="person-profile-meta">' + escapeHtml(meta) + '</span></div>' +
+          '<i data-lucide="chevron-down" aria-hidden="true"></i></summary>' +
+          '<form class="person-profile-form" data-person-profile-form="' + escapeHtml(profile.id) + '">' +
+          '<label>姓名<input name="displayName" value="' + escapeHtml(profile.displayName) + '" required maxlength="80" /></label>' +
+          '<label>与用户关系<input name="relationship" value="' + escapeHtml(profile.relationship || "") + '" maxlength="120" /></label>' +
+          '<label class="full">别名<input name="aliases" value="' + escapeHtml((profile.aliases || []).join("，")) + '" /></label>' +
+          '<label>可见范围<select name="visibility" data-person-visibility>' +
+          '<option value="global"' + (visibility === "global" ? ' selected' : '') + '>全部角色</option>' +
+          '<option value="selected_characters"' + (visibility === "selected_characters" ? ' selected' : '') + '>指定角色</option>' +
+          '</select></label>' +
+          '<div class="person-visibility-list full" data-person-visibility-list' + (visibility === "global" ? ' hidden' : '') + '>' +
+          (characterOptions || '<span class="muted">暂无角色</span>') + '</div>' +
+          '<label class="full">档案 Markdown<textarea name="markdown" spellcheck="false">' + escapeHtml(profile.markdown || "") + '</textarea></label>' +
+          '<div class="settings-actions full"><button class="primary" type="submit">保存档案</button>' +
+          '<span class="muted" data-person-save-state></span></div></form></details>';
+      }).join("");
+      if (window.lucide) window.lucide.createIcons();
+    }
+
+    function updatePersonVisibilityControls(event) {
+      const select = event.target.closest("select[data-person-visibility]");
+      if (!select) return;
+      const form = select.closest("form[data-person-profile-form]");
+      const list = form?.querySelector("[data-person-visibility-list]");
+      if (list) list.hidden = select.value !== "selected_characters";
+    }
+
+    async function savePersonProfile(event) {
+      const form = event.target.closest("form[data-person-profile-form]");
+      if (!form) return;
+      event.preventDefault();
+      const data = new FormData(form);
+      const status = form.querySelector("[data-person-save-state]");
+      const button = form.querySelector('button[type="submit"]');
+      if (button) button.disabled = true;
+      if (status) status.textContent = "保存中...";
+      try {
+        const response = await fetch("/api/v1/person-profiles/" + encodeURIComponent(form.dataset.personProfileForm), {
+          method: "PATCH",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({
+            displayName: String(data.get("displayName") || "").trim(),
+            relationship: String(data.get("relationship") || "").trim() || null,
+            aliases: String(data.get("aliases") || "").split(/[，,\\n]/u).map((value) => value.trim()).filter(Boolean),
+            visibility: data.get("visibility") === "selected_characters" ? "selected_characters" : "global",
+            visibleToCharacterIds: data.getAll("visibleCharacter").map(String),
+            markdown: String(data.get("markdown") || "")
+          })
+        });
+        const body = await response.json();
+        if (!response.ok) throw new Error(body.error || "人物档案保存失败");
+        const index = state.personProfiles.findIndex((profile) => profile.id === body.profile.id);
+        if (index >= 0) state.personProfiles[index] = body.profile;
+        renderPersonProfiles();
+        nodes.managedMemoryActionState.textContent = "人物档案已保存";
+      } catch (error) {
+        if (status) status.textContent = error.message || String(error);
+        if (button) button.disabled = false;
+      }
     }
 
     async function runRetrievalPreview(event) {
@@ -9787,7 +10178,9 @@ export function renderAppHtml(): string {
         state.privateInboxMessages = inboxResponse.ok && Array.isArray(inboxBody.messages)
           ? inboxBody.messages
           : [];
-        state.privateInboxRunning = Boolean(inboxResponse.ok && inboxBody.running);
+        state.privateInboxRunning = Boolean(
+          inboxResponse.ok && inboxBody.running && activePrivateBurstIds(state.privateInboxMessages).size
+        );
         state.activeProactiveMessages = proactiveResponse.ok && Array.isArray(proactiveBody.messages)
           ? proactiveBody.messages
           : [];
@@ -9969,15 +10362,30 @@ export function renderAppHtml(): string {
       if (event.type === "snapshot") {
         const inbox = event.inbox || {};
         state.privateInboxMessages = Array.isArray(inbox.messages) ? inbox.messages : [];
-        state.privateInboxRunning = Boolean(inbox.running);
+        const activeBurstIds = activePrivateBurstIds(state.privateInboxMessages);
+        state.privateInboxRunning = Boolean(inbox.running && activeBurstIds.size);
         state.privateInboxMessages.forEach(syncPrivateInboxUserBubble);
         for (const message of state.privateInboxMessages) {
           if (message.status === "processing" && message.burstId) {
             ensurePrivateBurstMessage(message.burstId, message.createdAt);
           }
         }
+        const recoveredMissedCompletion = discardStalePrivateBurstPlaceholders(activeBurstIds);
         renderMessages();
         updateDirectGenerationControls();
+        if (recoveredMissedCompletion) {
+          await refreshSessionMessages(true);
+          if (!state.privateInboxRunning) {
+            if (state.lastTurnStatus) {
+              applyTurnOutcome({
+                status: state.lastTurnStatus,
+                canRetry: state.lastTurnCanRetry
+              });
+            } else {
+              setStatus("就绪");
+            }
+          }
+        }
         return;
       }
       if (event.type === "message_queued" || event.type === "message_updated") {
@@ -10156,6 +10564,29 @@ export function renderAppHtml(): string {
           { key: "context", label: "准备模型上下文", status: "active" }
         ]
       };
+    }
+
+    function privateBurstId(message) {
+      if (typeof message?.burstId === "string" && message.burstId) return message.burstId;
+      const localId = String(message?.localId || "");
+      return localId.startsWith("private-burst:") ? localId.slice("private-burst:".length) : "";
+    }
+
+    function activePrivateBurstIds(messages) {
+      return new Set((Array.isArray(messages) ? messages : []).flatMap((message) =>
+        message?.status === "processing" && message.burstId ? [message.burstId] : []
+      ));
+    }
+
+    function discardStalePrivateBurstPlaceholders(activeBurstIds) {
+      let discarded = false;
+      state.messages = state.messages.filter((message) => {
+        const burstId = privateBurstId(message);
+        const stale = Boolean(burstId && message.working && !activeBurstIds.has(burstId));
+        if (stale) discarded = true;
+        return !stale;
+      });
+      return discarded;
     }
 
     function privateBurstIndex(burstId) {
@@ -10383,6 +10814,7 @@ export function renderAppHtml(): string {
       const controller = new AbortController();
       state.worldAbortController = controller;
       let finalResponse;
+      let completionWarning = "";
       try {
         const response = await fetch("/api/v1/worlds/" + encodeURIComponent(worldId) + "/conversation/messages/stream", {
           method: "POST",
@@ -10406,8 +10838,18 @@ export function renderAppHtml(): string {
         if (!response.body) throw new Error("世界演绎流式响应不可用");
         await consumeEventStream(response.body, (event) => {
           if (event.type === "director_state") {
-            if (event.phase === "planning") setStatus("世界正在组织场景...");
-            if (event.phase === "failed") setStatus("导演调用失败，正在使用保底编排...");
+            if (event.phase === "planning") setStatus("世界正在读取当前状态...");
+            if (event.phase === "writing") setStatus("世界正在演绎...");
+            if (event.phase === "failed") {
+              completionWarning = event.reasonCode === "timeout"
+                ? "世界模型响应超时，请重试"
+                : event.reasonCode === "model_unavailable"
+                  ? "世界尚未配置可用模型"
+                  : event.reasonCode === "invalid_output"
+                    ? "世界模型未返回可展示正文，请重试"
+                    : "世界模型调用失败，请重试";
+              setStatus(completionWarning, true);
+            }
           }
           if (event.type === "participant_state") {
             const character = state.characters.find((entry) => entry.id === event.characterId);
@@ -10435,7 +10877,8 @@ export function renderAppHtml(): string {
             if (event.message.senderType === "director") {
               pushMessage("assistant", event.message.content || "", {
                 worldNarration: true,
-                worldMessageId: event.message.id
+                worldMessageId: event.message.id,
+                worldTurnId: event.message.turnId || ""
               });
               return;
             }
@@ -10444,6 +10887,7 @@ export function renderAppHtml(): string {
             if (index !== undefined && state.messages[index]) {
               state.messages[index].text = event.message.content || "";
               state.messages[index].worldMessageId = event.message.id;
+              state.messages[index].worldTurnId = event.message.turnId || "";
               state.messages[index].working = false;
               completeMessageProgress(index, "completed");
               progressByCharacter.delete(event.message.senderId);
@@ -10451,13 +10895,19 @@ export function renderAppHtml(): string {
             } else {
               pushMessage("assistant", event.message.content || "", {
                 senderId: event.message.senderId || "",
-                worldMessageId: event.message.id
+                worldMessageId: event.message.id,
+                worldTurnId: event.message.turnId || ""
               });
             }
           }
           if (event.type === "analysis_state") {
             if (event.phase === "analyzing") setStatus("正在整理世界状态...");
-            if (event.phase === "failed") setStatus("回复已完成，世界状态整理失败", true);
+            if (event.phase === "failed") {
+              completionWarning = event.reasonCode === "timeout"
+                ? "回复已完成，世界状态整理超时"
+                : "回复已完成，世界状态整理失败";
+              setStatus(completionWarning, true);
+            }
           }
           if (event.type === "done") finalResponse = event.response;
           if (event.type === "error") throw new Error(event.error || "世界演绎调用失败");
@@ -10467,12 +10917,8 @@ export function renderAppHtml(): string {
         await refreshWorldMessages(true);
         await refreshWorldConversationList();
         if (isWorldConversationVisible(worldId)) await markWorldConversationRead(worldId);
-        const actorCount = Number(finalResponse.turn?.actorCount || 0);
         const outputCount = Array.isArray(finalResponse.messages) ? finalResponse.messages.length : 0;
-        setStatus(outputCount
-          ? "已完成 · " + actorCount + " 位角色参与"
-          : "本轮没有生成可展示内容",
-          !outputCount);
+        setStatus(outputCount ? completionWarning || "已完成" : completionWarning || "本轮没有生成可展示内容", Boolean(completionWarning) || !outputCount);
         if (state.uiMode === "debug") await loadDebugLogs();
       } catch (error) {
         await refreshWorldMessages(true);
@@ -10920,15 +11366,26 @@ export function renderAppHtml(): string {
       const previous = state.messages.filter((message) =>
         message.role === "assistant" && Array.isArray(message.progress) && message.progress.length
       );
+      const activeBurstIds = activePrivateBurstIds(state.privateInboxMessages);
       const used = new Set();
       for (let index = messages.length - 1; index >= 0; index -= 1) {
         const message = messages[index];
         if (message.role !== "assistant") continue;
         for (let previousIndex = previous.length - 1; previousIndex >= 0; previousIndex -= 1) {
-          if (used.has(previousIndex) || previous[previousIndex].text !== message.text) continue;
-          message.progress = previous[previousIndex].progress;
-          message.progressOpen = previous[previousIndex].progressOpen;
-          message.working = previous[previousIndex].working;
+          const previousMessage = previous[previousIndex];
+          const sameIdentity = Boolean(
+            (message.entryId && previousMessage.entryId && message.entryId === previousMessage.entryId) ||
+            (message.localId && previousMessage.localId && message.localId === previousMessage.localId)
+          );
+          if (used.has(previousIndex) || (!sameIdentity && previousMessage.text !== message.text)) continue;
+          const burstId = privateBurstId(message);
+          const preserveWorking = Boolean(
+            previousMessage.working && sameIdentity && burstId && activeBurstIds.has(burstId)
+          );
+          if (previousMessage.working && !preserveWorking) continue;
+          message.progress = previousMessage.progress;
+          message.progressOpen = previousMessage.progressOpen;
+          message.working = preserveWorking;
           used.add(previousIndex);
           break;
         }
@@ -10982,7 +11439,16 @@ export function renderAppHtml(): string {
         refreshIcons();
         return;
       }
-      nodes.messages.innerHTML = state.messages.map((message, index) => {
+      if (state.activeConversationKind === "world") {
+        renderWorldTimeline();
+        return;
+      }
+      nodes.messages.innerHTML = state.messages.map(renderStandardMessage).join("");
+      refreshIcons();
+      nodes.messages.scrollTop = nodes.messages.scrollHeight;
+    }
+
+    function renderStandardMessage(message, index) {
         if (message.role === "interaction") return renderInteractionEvent(message);
         if (message.role === "system") {
           return '<div class="message-row system" role="status">' +
@@ -11013,9 +11479,69 @@ export function renderAppHtml(): string {
               renderMessageActions(message, index) + '</div>' +
           '</div>' +
         '</div>';
-      }).join("");
+    }
+
+    function renderWorldTimeline() {
+      const blocks = [];
+      let sceneEntries = [];
+      const flushScene = () => {
+        if (!sceneEntries.length) return;
+        blocks.push(renderWorldSceneTurn(sceneEntries));
+        sceneEntries = [];
+      };
+      state.messages.forEach((message, index) => {
+        if (message.role === "assistant") {
+          const currentTurnId = sceneEntries[0]?.message?.worldTurnId || "";
+          if (sceneEntries.length && message.worldTurnId && currentTurnId && message.worldTurnId !== currentTurnId) {
+            flushScene();
+          }
+          sceneEntries.push({ message, index });
+          return;
+        }
+        flushScene();
+        blocks.push(renderStandardMessage(message, index));
+      });
+      flushScene();
+      nodes.messages.innerHTML = blocks.join("");
       refreshIcons();
       nodes.messages.scrollTop = nodes.messages.scrollHeight;
+    }
+
+    function renderWorldSceneTurn(entries) {
+      const conversation = state.worldConversations.find((entry) => entry.worldId === state.activeWorldId);
+      const event = conversation?.activeEvent;
+      const explicitCharacterIds = [...new Set(entries.map((entry) => entry.message.senderId).filter(Boolean))];
+      const characterIds = explicitCharacterIds.length
+        ? explicitCharacterIds
+        : (event?.participantIds?.length ? event.participantIds : conversation?.characterIds || []).slice(0, 6);
+      const participants = characterIds.map((id) => {
+        const character = state.characters.find((entry) => entry.id === id);
+        if (!character) return "";
+        return '<button class="world-scene-mini-avatar character-profile-trigger" type="button" data-character-profile-id="' +
+          escapeHtml(character.id) + '" title="查看' + escapeHtml(character.name) + '的资料" aria-label="查看' +
+          escapeHtml(character.name) + '的资料">' + avatarImageOrInitial(character.avatarUrl, character.name) + '</button>';
+      }).join("");
+      const firstTime = entries.find((entry) => entry.message.at)?.message.at || "";
+      const title = event?.title || conversation?.world?.name || "世界演绎";
+      const fragments = entries.map(({ message, index }) => {
+        const character = state.characters.find((entry) => entry.id === message.senderId);
+        const label = message.worldNarration ? conversation?.world?.name || "世界演绎" : character?.name || "角色";
+        const speaker = character
+          ? '<button class="world-scene-speaker character-profile-trigger" type="button" data-character-profile-id="' +
+              escapeHtml(character.id) + '">' + escapeHtml(label) + '</button>'
+          : '<span class="world-scene-speaker">' + escapeHtml(label) + '</span>';
+        const progress = renderMessageProgress(message, index);
+        const media = renderMessageAttachments(message.attachments);
+        const prose = message.text
+          ? '<div class="world-scene-text markdown-body">' + renderMarkdown(message.text, true) + '</div>'
+          : "";
+        return '<section class="world-scene-fragment' + (message.worldNarration ? ' director' : '') + '">' +
+          speaker + progress + media + prose + '</section>';
+      }).join("");
+      return '<article class="world-scene-turn"><header class="world-scene-head"><div class="world-scene-head-copy"><strong>' +
+        escapeHtml(title) + '</strong><span>世界回合' + (firstTime ? ' · ' + escapeHtml(firstTime) : '') +
+        '</span></div><div class="world-scene-participants">' + participants + '</div></header>' +
+        '<div class="world-scene-copy">' + fragments + '</div></article>';
     }
 
     function assistantBubbleSegments(message) {
@@ -11762,6 +12288,7 @@ export function renderAppHtml(): string {
     function featureCategoryLabel(category) {
       return ({
         conversation: "对话",
+        world: "世界",
         schedule: "日程",
         memory: "记忆",
         relationship: "关系",
@@ -12602,7 +13129,7 @@ export function renderAppHtml(): string {
       if (state.debugDataset === "economics") {
         nodes.traceIndex.innerHTML = state.debugEconomics.map((entry, index) =>
           '<button class="trace-index-item' + (index === state.selectedEconomicsIndex ? ' active' : '') + '" type="button" data-trace-index="' + index + '">' +
-            '<span class="trace-index-title">' + escapeHtml(entry.mode + " · " + entry.estimatedInputTokens + " tokens") + '</span>' +
+            '<span class="trace-index-title">' + escapeHtml(traceTurnLabel(entry.turnKind) + " · " + entry.estimatedInputTokens + " tokens") + '</span>' +
             '<span class="trace-index-meta">LCP ' + Number(entry.prefixReuseRatio || 0).toLocaleString(undefined, { style: "percent", maximumFractionDigits: 1 }) +
               ' · ' + Number(entry.memoryIds?.length || 0) + ' memories<br>' + escapeHtml(formatTraceTime(entry.createdAt)) + '</span></button>'
         ).join("");
@@ -12635,7 +13162,7 @@ export function renderAppHtml(): string {
       }
       nodes.mobileTraceSelect.innerHTML = entries.map((entry, index) => {
         const label = economics
-          ? (entry.mode + " · " + entry.estimatedInputTokens + " tokens · " + formatTraceTime(entry.createdAt))
+          ? (traceTurnLabel(entry.turnKind) + " · " + entry.estimatedInputTokens + " tokens · " + formatTraceTime(entry.createdAt))
           : ("#" + (index + 1) + " · " + (entry.requestText || "无请求摘要") + " · " + traceContextQuantity(entry.payload).total + " 条上下文");
         return '<option value="' + index + '"' + (index === selectedIndex ? ' selected' : '') + '>' + escapeHtml(label) + '</option>';
       }).join("");
@@ -12722,7 +13249,7 @@ export function renderAppHtml(): string {
       nodes.traceEmpty.hidden = true;
       nodes.traceDetail.hidden = false;
       nodes.traceDetailTitle.textContent = "Context Economics · " + entry.estimatedInputTokens + " estimated tokens";
-      nodes.traceDetailMeta.textContent = [entry.sessionId, entry.mode, entry.turnKind, formatTraceTime(entry.createdAt)].filter(Boolean).join(" · ");
+      nodes.traceDetailMeta.textContent = [entry.sessionId, entry.mode, traceTurnLabel(entry.turnKind), formatTraceTime(entry.createdAt)].filter(Boolean).join(" · ");
       nodes.traceSemanticBtn.classList.toggle("active", state.traceView === "semantic");
       nodes.traceRawBtn.classList.toggle("active", state.traceView === "raw");
       nodes.traceSemanticBtn.setAttribute("aria-selected", String(state.traceView === "semantic"));
@@ -12820,8 +13347,8 @@ export function renderAppHtml(): string {
         memory_extraction: "记忆提取",
         relationship_extraction: "关系提取",
         post_turn_analysis: "回合后分析",
-        world_director: "世界导演",
-        world_actor: "世界角色",
+        world_director: "世界演绎",
+        world_actor: "旧版世界角色",
         world_analysis: "世界分析"
       })[kind] || kind || "模型调用";
     }

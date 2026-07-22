@@ -41,6 +41,11 @@ The Coordinator now separates direct Agent proposals from trusted daily capture:
   preference improve synonym retrieval across sessions;
 - a stable model key or deterministic fallback prevents exact repeated facts
   from creating duplicate active records.
+- `person` candidates may include schema-validated name, aliases, and the
+  user's stated relationship. Names and aliases are accepted as directory
+  metadata only when they occur in the user message; the exact quote remains
+  the canonical fact. Confirmed records automatically update the editable
+  `reality/people/` Markdown directory.
 
 The gate now keeps the specific Chinese/English durable patterns and also sends
 substantive first-person self-disclosures to semantic extraction. Short

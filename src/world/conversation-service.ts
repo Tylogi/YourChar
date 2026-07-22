@@ -22,7 +22,7 @@ export class WorldConversationValidationError extends Error {
 }
 
 export type WorldStoryDecisionInput = {
-  action: "none" | "propose" | "begin" | "resolve" | "cancel";
+  action: "none" | "propose" | "begin" | "advance" | "resolve" | "cancel";
   title?: string;
   summary?: string;
   objective?: string;
@@ -60,6 +60,7 @@ export class WorldConversationService {
   get(worldId: string) {
     const world = this.worldService.getWorld(worldId);
     const conversation = this.repository.ensureConversation(world.id, this.clock.now().toISOString());
+    const narrativeContext = this.repository.getActiveNarrativeContext(world.id);
     return {
       ...conversation,
       world,
@@ -68,6 +69,20 @@ export class WorldConversationService {
       activeEvent: this.repository.getOpenStoryEvent(world.id),
       events: this.repository.listStoryEvents(world.id, 30),
       relationships: this.repository.listCharacterRelationships(world.id),
+      ...(narrativeContext
+        ? {
+            narrativeContext: {
+              id: narrativeContext.id,
+              eventId: narrativeContext.eventId,
+              modelProfileId: narrativeContext.modelProfileId,
+              modelSessionId: narrativeContext.modelSessionId,
+              stablePrefixHash: narrativeContext.stablePrefixHash,
+              participantIds: narrativeContext.participantIds,
+              promptMessageCount: this.repository.narrativePromptMessageCount(narrativeContext.id),
+              startedAt: narrativeContext.createdAt,
+            },
+          }
+        : {}),
     };
   }
 
@@ -165,6 +180,11 @@ export class WorldConversationService {
     return this.repository.markRead(worldId, this.clock.now().toISOString());
   }
 
+  reset(worldId: string) {
+    this.worldService.getWorld(worldId);
+    return this.repository.resetConversation(worldId, this.clock.now().toISOString());
+  }
+
   applyStoryDecision(worldId: string, input: WorldStoryDecisionInput): WorldStoryEvent | undefined {
     this.worldService.getWorld(worldId);
     const action = input.action;
@@ -182,8 +202,15 @@ export class WorldConversationService {
       const current = this.repository.getOpenStoryEvent(worldId);
       const beforeState = current ? { ...current, participantIds: [...current.participantIds] } : undefined;
       let afterState: WorldStoryEvent | undefined;
-      if (action === "propose" || action === "begin") {
-        const status = action === "begin" ? "active" as const : "planned" as const;
+      if (action === "propose" || action === "begin" || action === "advance") {
+        if (action === "advance" && !current) {
+          throw new WorldConversationValidationError("an event must exist before it can advance");
+        }
+        const status = action === "propose"
+          ? "planned" as const
+          : action === "advance"
+            ? current!.status
+            : "active" as const;
         if (current) {
           afterState = {
             ...current,
@@ -242,6 +269,22 @@ export class WorldConversationService {
         createdAt: now,
       });
       return saved;
+    });
+  }
+
+  settleStoryEvent(eventId: string, summary: string): WorldStoryEvent {
+    const event = this.repository.getStoryEvent(eventId);
+    if (!event) throw new WorldConversationValidationError(`world event not found: ${eventId}`);
+    if (event.status !== "resolved" && event.status !== "cancelled") {
+      throw new WorldConversationValidationError("only a closed world event can be settled");
+    }
+    if (event.settledAt) return event;
+    const now = this.clock.now().toISOString();
+    return this.repository.saveStoryEvent({
+      ...event,
+      settlementSummary: cleanText(summary, event.summary || event.title, 2_000),
+      settledAt: now,
+      updatedAt: now,
     });
   }
 
@@ -331,9 +374,13 @@ export class WorldConversationService {
   }
 
   characterContext(worldId: string, characterId: string): string {
-    const observations = this.repository.listObservations(characterId, worldId, 8);
-    const relationships = this.repository.listCharacterRelationships(worldId, characterId).slice(0, 8);
     const activeEvent = this.repository.getOpenStoryEvent(worldId);
+    const observations = activeEvent
+      ? this.repository.listObservationsForEvent(activeEvent.id, 100)
+          .filter((entry) => entry.characterId === characterId)
+          .slice(-8)
+      : [];
+    const relationships = this.repository.listCharacterRelationships(worldId, characterId).slice(0, 8);
     const lines = [
       activeEvent
         ? `Active world event: ${activeEvent.title}; status=${activeEvent.status}; ${activeEvent.summary}`
@@ -345,6 +392,19 @@ export class WorldConversationService {
         `- ${entry.subjectCharacterId} -> ${entry.objectCharacterId}: affinity=${band(entry.affinity)}, trust=${band(entry.trust)}, tension=${band(entry.tension)}, intimacy=${band(entry.intimacy)}${entry.summary ? `; ${entry.summary}` : ""}`),
     ].filter(Boolean);
     return lines.join("\n").slice(0, 4_000);
+  }
+
+  chronicleContext(worldId: string): string {
+    const events = this.repository.listStoryEvents(worldId, 12)
+      .filter((event) => event.status === "resolved" || event.status === "cancelled")
+      .slice(0, 8)
+      .reverse();
+    if (!events.length) return "World chronicle: no completed events yet.";
+    return [
+      "World chronicle (completed event checkpoints; trusted state):",
+      ...events.map((event) =>
+        `- ${event.endedAt ?? event.updatedAt} | ${event.title} | ${event.status} | ${event.settlementSummary || event.summary}`),
+    ].join("\n").slice(0, 5_000);
   }
 }
 

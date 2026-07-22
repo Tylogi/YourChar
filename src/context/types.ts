@@ -140,7 +140,7 @@ export type ContextEconomics = {
   id: string;
   sessionId: string;
   mode: Mode;
-  turnKind: "user" | "reminder_due";
+  turnKind: "user" | "reminder_due" | "world_director";
   systemHash: string;
   toolSchemaHash: string;
   messageCount: number;

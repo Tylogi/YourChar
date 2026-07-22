@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 import type { AgentMessage } from "@earendil-works/pi-agent-core";
+import type { PrivateInboxSnapshot } from "../src/inbox/index.js";
 import { createTestRuntime } from "../src/testing/index.js";
 
 test("private inbox keeps UI messages separate but sends one merged user turn to the model", async () => {
@@ -42,6 +43,37 @@ test("private inbox keeps UI messages separate but sends one merged user turn to
     assert.equal(runtime.kernel.privateInbox.repository.listAll().every((message) =>
       message.status === "completed"), true);
     assert.equal(runtime.kernel.recentContextLogs(1)[0]?.requestText, "你在吗？\n我刚到家。\n今天有点累。");
+  } finally {
+    runtime.dispose();
+  }
+});
+
+test("private inbox completion snapshots stop reporting a finished burst as running", async () => {
+  const runtime = createTestRuntime({
+    seed: "private-inbox-finished-snapshot",
+    startPrivateInboxCoordinator: false,
+  });
+  try {
+    const character = runtime.kernel.createCharacter({ name: "完成状态角色" });
+    runtime.model.enqueue([{ kind: "assistant_text", text: "已经回复完成。" }]);
+    await runtime.kernel.enqueuePrivateMessage("private-inbox-finished-snapshot", {
+      mode: "sms",
+      characterId: character.id,
+      text: "检查完成状态。",
+    }, "finished-snapshot-client");
+
+    let completionSnapshot: PrivateInboxSnapshot | undefined;
+    const unsubscribe = runtime.kernel.subscribePrivateInbox("private-inbox-finished-snapshot", (event) => {
+      if (event.type === "burst_done") {
+        completionSnapshot = runtime.kernel.privateInboxSnapshot("private-inbox-finished-snapshot");
+      }
+    });
+    await runtime.kernel.flushPrivateMessageInbox("private-inbox-finished-snapshot");
+    unsubscribe();
+
+    assert.ok(completionSnapshot, "the completion listener should observe a canonical snapshot");
+    assert.equal(completionSnapshot.running, false);
+    assert.deepEqual(completionSnapshot.messages, []);
   } finally {
     runtime.dispose();
   }

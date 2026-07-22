@@ -232,7 +232,7 @@ test("relationship reset suppresses only that consumer while an in-flight depart
   }
 });
 
-test("schema 21 upgrades coordinator state through schema 26 world conversations", () => {
+test("schema 21 upgrades coordinator state through schema 28 world narrative contexts", () => {
   const directory = mkdtempSync(join(tmpdir(), "rp-agent-post-turn-migration-"));
   const path = join(directory, "state.sqlite");
   const legacy = new DatabaseSync(path);
@@ -291,6 +291,14 @@ test("schema 21 upgrades coordinator state through schema 26 world conversations
       );
       CREATE INDEX model_context_traces_session_idx
         ON model_context_traces(session_id, sequence DESC);
+      CREATE TABLE context_economics (
+        sequence INTEGER PRIMARY KEY AUTOINCREMENT, id TEXT NOT NULL UNIQUE,
+        session_id TEXT NOT NULL, mode TEXT NOT NULL, turn_kind TEXT NOT NULL,
+        system_hash TEXT NOT NULL, metrics_json TEXT NOT NULL, plan_json TEXT NOT NULL,
+        message_digests_json TEXT NOT NULL, actual_json TEXT NOT NULL, created_at TEXT NOT NULL
+      );
+      CREATE INDEX context_economics_session_idx
+        ON context_economics(session_id, sequence DESC);
     `);
     const migration = legacy.prepare("INSERT INTO schema_migrations(version, applied_at) VALUES (?, ?)");
     for (let version = 1; version <= 21; version += 1) migration.run(version, "2026-01-01T00:00:00.000Z");
@@ -330,7 +338,17 @@ test("schema 21 upgrades coordinator state through schema 26 world conversations
   try {
     assert.equal(
       Number((upgraded.connection.prepare("SELECT MAX(version) AS version FROM schema_migrations").get() as { version: number }).version),
-      26,
+      28,
+    );
+    const storyEventColumns = upgraded.connection.prepare("PRAGMA table_info(world_story_events)").all() as Array<{ name: string }>;
+    assert.equal(storyEventColumns.some((column) => column.name === "settlement_summary"), true);
+    assert.equal(storyEventColumns.some((column) => column.name === "settled_at"), true);
+    assert.equal(
+      (upgraded.connection.prepare(`
+        SELECT name FROM sqlite_master
+        WHERE type = 'table' AND name = 'world_narrative_contexts'
+      `).get() as { name?: string } | undefined)?.name,
+      "world_narrative_contexts",
     );
     assert.equal(
       (upgraded.connection.prepare(`

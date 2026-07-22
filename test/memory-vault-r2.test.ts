@@ -56,6 +56,7 @@ test("Vault layout, strict frontmatter, stable roundtrip, and 0600 writes", () =
     const root = join(stateDir, "memory-vault");
     for (const directory of [
       "reality",
+      "reality/people",
       `roleplay/characters/${character.id}`,
       "roleplay/scenes",
       "legacy/quarantine",
@@ -70,7 +71,7 @@ test("Vault layout, strict frontmatter, stable roundtrip, and 0600 writes", () =
     const source = readFileSync(memoryPath, "utf8");
     const document = parseVaultMarkdown(source, `roleplay/characters/${character.id}/memories/${memory.id}.md`);
     assert.equal(serializeVaultMarkdown(document.metadata, document.body), source);
-    assert.equal(document.metadata.schemaVersion, 2);
+    assert.equal(document.metadata.schemaVersion, 3);
     assert.equal(document.metadata.realm, "roleplay");
     assert.equal(document.metadata.scope, "character");
     assert.equal(document.metadata.sourceSessionId, "vault-layout-session");

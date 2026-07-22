@@ -29,7 +29,10 @@ and adds the RP companion domain on top:
 - collapsible per-message execution progress without exposing hidden model reasoning;
 - collapsed-by-default tool results and MCP/Skill token-impact estimates;
 - one canonical private SMS thread per character and one shared timeline per world;
-- world-level Director/Analyzer profiles with per-character actor model routing;
+- world-level narrative/Analyzer profiles; World turns never invoke character-bound chat models;
+- event-scoped fixed World prompts with restart-safe append-only history and KV-cache metrics;
+- first-class World Cards and turn-grouped third-person interactive-fiction rendering;
+- event-end observer-scoped settlement into character records and bounded World chronicles;
 - fictional-state policy that separates World events from real schedule changes;
 - thin HTTP server as an adapter, not the core.
 
@@ -161,11 +164,12 @@ scheduling and reminder delivery, per-character SOUL.md, confirmed long-term
 memory, private meeting continuity, isolated Agent test controls, SSE streaming,
 diagnostics, export/deletion, persistent audit summaries, and browser automation.
 Each character has one canonical private SMS thread. Each shared world has one
-application-owned third-person timeline using a world Director, independently
-bound character actors, and a post-turn Analyzer. Legacy standalone RP sessions
-and group records are removed without transcript migration.
+application-owned third-person timeline using one world-bound narrative model
+and a post-turn Analyzer. Character-bound models are used only by private chats.
+Legacy standalone RP sessions and group records are removed without transcript
+migration.
 
-Versioned model profiles support system, character, Director, and Analyzer
+Versioned model profiles support system, character, World narrative, and Analyzer
 bindings. An optional Subagent Delegation MCP remains confined to private chat.
 Relationship State MCP maintains each character's relationship with the user;
 World analysis separately maintains directional character-to-character state.

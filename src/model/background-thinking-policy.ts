@@ -5,7 +5,6 @@ export type BackgroundThinkingScenario =
   | "post_turn_analysis"
   | "world_planning"
   | "proactive_message"
-  | "world_director"
   | "world_analysis";
 
 export type BackgroundThinkingPolicy = {
@@ -41,7 +40,6 @@ const budgets: Record<BackgroundThinkingScenario, { thinkingOff: number; fallbac
   post_turn_analysis: { thinkingOff: 1_024, fallback: 2_400 },
   world_planning: { thinkingOff: 1_200, fallback: 2_400 },
   proactive_message: { thinkingOff: 640, fallback: 1_200 },
-  world_director: { thinkingOff: 1_200, fallback: 2_400 },
   world_analysis: { thinkingOff: 1_400, fallback: 2_800 },
 };
 

@@ -11,7 +11,7 @@ Private SMS meeting state and in-person narrative transitions are specified in
 
 Status: Approved development baseline
 Audience: maintainers, coding agents, reviewers, and test agents
-Last updated: 2026-07-20
+Last updated: 2026-07-21
 
 Implementation status: M0-M11 and the M13 baseline are implemented; M12 remains
 an incremental experience-quality program. Scheduling uses SQLite,
@@ -39,7 +39,13 @@ M9 adds shared fictional worlds, fixed-capability places, character runtime
 state, autonomous character calendar planning, event-to-memory settlement,
 bounded proactive SMS delivery, a conditional World State MCP, and deterministic
 world test controls. Schema 26 extends that state into one canonical World
-timeline with Director, per-character actor, and post-turn Analyzer calls.
+timeline; current World turns use one World narrative call plus one post-turn
+Analyzer call and never route visible prose through character-bound models;
+schema 27 adds rolling event advances and event-end observer settlement. Schema
+28 gives each active World event/checkpoint an immutable System snapshot and an
+append-only provider-message ledger, so later turns preserve an exact cacheable
+prefix across process restarts. A projected 32k soft limit creates a bounded
+visible-timeline checkpoint instead of repeatedly rewriting a rolling summary.
 M10 adds durable private-conversation interaction state. Canonical SMS can move
 from remote messages through a planned meeting into a confirmed observable
 scene without changing conversation mode. Future plans use the pending state;
@@ -133,7 +139,7 @@ Migration v6 stores module enablement overrides. Its original structured profile
 table is retained as an unused append-only migration artifact. The canonical
 profile is `<stateDir>/memory-vault/reality/user-profile.md`; Management can edit it directly, and
 User Profile MCP controls whether the Agent can read it and whether it is
-assembled into private SMS and World actor model context. A separate permission
+assembled into private SMS and read-only World narrative context. A separate permission
 controls whether the Agent receives the update tool.
 
 Generic Agent file access is rooted at `<stateDir>/workspace` and has off,
@@ -190,10 +196,14 @@ continuity. Reminders and proactive world messages resolve their delivery target
 through that mapping and restore the private thread when it was archived.
 
 Multi-character roleplay does not create a Pi session. It uses one SQLite World
-timeline per world: a world-bound Director selects participants, each selected
-character runs against its own model binding and SOUL.md, and a world-bound
-Analyzer proposes trusted state changes. The internal `rp` context realm remains
-only a compatibility key for character memory and is not a creatable UI mode.
+timeline per world: one world-bound narrative model reads an event-scoped fixed
+snapshot plus append-only User/World history to write the complete visible
+passage, and a world-bound Analyzer proposes trusted state changes. Exact
+provider messages are durable only for the active event/checkpoint and are
+purged on closure; visible passages and event settlements remain durable.
+Character model bindings remain private chat concerns. The internal `rp`
+context realm remains only a compatibility key for character memory and is not
+a creatable UI mode.
 
 ### 4.2 Durable application state
 
@@ -474,8 +484,9 @@ temporary compatibility adapters until the UI migrates.
 | POST | `/api/v1/sessions/{id}/messages/retry` | Retry a failed side-effect-free turn |
 | GET | `/api/v1/world-conversations` | List one canonical timeline per active world |
 | GET | `/api/v1/worlds/{id}/conversation` | Read World timeline and current event state |
+| DELETE | `/api/v1/worlds/{id}/conversation` | Reset the canonical World timeline with exact-name confirmation while retaining settled continuity |
 | GET/POST | `/api/v1/worlds/{id}/conversation/messages` | Read messages or run one JSON World turn |
-| POST | `/api/v1/worlds/{id}/conversation/messages/stream` | Stream Director, actor, and Analyzer lifecycle events |
+| POST | `/api/v1/worlds/{id}/conversation/messages/stream` | Stream World narrative and Analyzer lifecycle events |
 | POST | `/api/v1/worlds/{id}/conversation/read` | Acknowledge one World timeline's unread count |
 | POST | `/api/v1/worlds/{id}/conversation/event` | Apply or undo a trusted story-event transition |
 | GET/POST | `/api/v1/schedule-items` | Query or create schedule items |
@@ -537,8 +548,8 @@ threads or application pages, hiding the tab, losing focus, or disconnecting
 before completion therefore leaves a red count on both the thread and its
 Characters section. System/error events do not create unread character messages.
 
-World unread state is independent. One completed World turn with any incoming
-Director or character output increments its timeline once. It is acknowledged
+World unread state is independent. One completed World turn with incoming World
+output increments its timeline once. It is acknowledged
 only while that exact World timeline is visible and focused.
 
 ## 9. Agent-oriented test interfaces
@@ -663,7 +674,7 @@ contract where applicable:
 5. Snoozing creates the correct next occurrence without redelivering the old one.
 6. Concurrent messages in one session execute in deterministic order.
 7. Fictional reminder language in a World turn never creates a real schedule item.
-8. World actor calls have no schedule tools; real scheduling remains in a canonical private thread with normal policy checks.
+8. World narrative calls have no schedule tools; real scheduling remains in a canonical private thread with normal policy checks.
 9. A confirmed long-term memory is retrieved after restart and after compaction.
 10. Contradictory memory supersedes or requests confirmation instead of silently
     duplicating facts.
@@ -894,14 +905,17 @@ Implementation status: complete baseline.
 - Retire standalone RP and ad hoc group chat from the visible product.
 - Keep exactly one canonical private SMS Pi session per character and one
   application-owned World timeline per world.
-- Bind Director and Analyzer profiles at world scope while every actor uses its
-  character model profile and SOUL.md.
+- Bind narrative and Analyzer profiles at world scope. The narrative model reads
+  bounded SOUL/state snapshots; it never invokes character-bound private models.
 - Persist story events, observer-scoped knowledge, and directional
   character-to-character relationships with trusted confidence gates.
 - Delete legacy group records and purge legacy RP sessions without transcript
   migration.
 - Expose Worlds/Characters navigation, member-avatar mosaics, World unread state,
   event details, SSE lifecycle, and World-specific Debug trace labels.
+- Manage World Cards as first-class objects, render one turn as continuous
+  third-person interactive fiction, and settle provisional observations only
+  when the owning event ends. **Implemented.**
 
 The normative contract, migration policy, API, and required tests are defined in
 [`world-conversation-mode.md`](world-conversation-mode.md).

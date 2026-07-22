@@ -13,6 +13,8 @@ test("daily-chat durable gate has high recall without treating transient chatter
     "我不吃香菜。",
     "我最近在做一个叫星桥的长期项目。",
     "我妹妹叫小雨，她在上海工作。",
+    "林夏是我的大学同学，大家也叫她小夏。",
+    "我的室友叫周宁。",
     "我希望年底前把论文投出去。",
     "以后回复我时尽量先说结论。",
     "I usually start work at 9 and prefer concise replies.",

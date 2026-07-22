@@ -25,6 +25,7 @@ const ROOT_README = `# RP Agent Memory Vault
 This directory is the human-readable source of truth for RP Agent memory and can be opened directly as an Obsidian vault.
 
 - \`reality/user-profile.md\`: the bounded high-signal user summary.
+- \`reality/people/\`: structured, user-readable profiles for real people mentioned by the user.
 - \`reality/memories/\`: confirmed and review-state global reality memories.
 - \`roleplay/characters/<id>/\`: character SOUL and character-scoped roleplay memories.
 - \`roleplay/scenes/\`: current roleplay scene state by application session.

@@ -23,12 +23,15 @@ import {
   type WorldCapabilityId,
   type WorldEvent,
   type WorldPlanner,
+  type WorldStoryEvent,
 } from "./types.js";
 
 type ConversationSnapshot = {
   sessionId: string;
-  recentConversation: Array<{ role: "user" | "assistant"; text: string }>;
+  recentConversation: Array<{ role: "user" | "assistant"; text: string; sentAt?: string }>;
   lastUserAt?: string;
+  lastConversationAt?: string;
+  lastConversationRole?: "user" | "assistant";
 };
 
 export type WorldAutonomyCoordinatorOptions = {
@@ -37,6 +40,7 @@ export type WorldAutonomyCoordinatorOptions = {
   conversationForCharacter?: (characterId: string) => Promise<ConversationSnapshot | undefined>;
   proactiveBlockReason?: (sessionId: string, characterId: string) => ProactiveBlockReason | undefined;
   canProjectRuntime?: (characterId: string) => boolean;
+  storySnapshot?: (worldId: string) => { activeEvent?: WorldStoryEvent };
   intervalMs?: number;
 };
 
@@ -241,8 +245,28 @@ export class WorldAutonomyCoordinator {
       characterId,
       status: "scheduled",
     });
+    const story = this.options.storySnapshot?.(life.world.id);
+    if (story?.activeEvent?.participantIds.includes(characterId)) {
+      return {
+        plans: life.plans.filter((plan) => plan.status === "planned"),
+        fallbackUsed: false,
+      };
+    }
+    const worldCharacters = this.worldService.repository.listMemberships(life.world.id).map((membership) => {
+      const member = this.rpService.getCharacter(membership.characterId);
+      const runtime = this.worldService.repository.getRuntime(membership.characterId);
+      return {
+        characterId: member.id,
+        name: member.name,
+        ...(runtime?.placeId ? { placeId: runtime.placeId } : {}),
+        activity: runtime?.activity ?? "自由活动",
+        availability: runtime?.availability ?? "free" as const,
+      };
+    });
     let proposals: WorldActivityProposal[] = [];
     let fallbackUsed = false;
+    let plannerOutputValid = false;
+    let proposedCount = 0;
     if (this.options.planner) {
       try {
         const output = await this.options.planner({
@@ -252,26 +276,41 @@ export class WorldAutonomyCoordinator {
           world: life.world,
           places: life.places,
           currentState: life.runtime,
+          ...(life.membership.homePlaceId ? { homePlaceId: life.membership.homePlaceId } : {}),
           existingSchedule: existingSchedule.map((item) => ({
             title: item.title,
             ...(item.startAt ? { startAt: item.startAt } : {}),
             ...(item.endAt ? { endAt: item.endAt } : {}),
           })),
+          recentEvents: life.events.slice(0, 8).reverse().map((event) => ({
+            summary: event.summary,
+            startsAt: event.startsAt,
+            ...(event.placeId ? { placeId: event.placeId } : {}),
+            participantIds: [...event.participantIds],
+          })),
+          ...(story?.activeEvent ? { activeStoryEvent: story.activeEvent } : {}),
+          worldCharacters,
           now: this.clock.now().toISOString(),
           localDate,
         });
-        proposals = validateProposals(parsePlannerOutput(output), life.places, this.clock.now());
+        const parsed = parsePlannerOutput(output);
+        plannerOutputValid = parsed.valid;
+        proposedCount = parsed.activities.length;
+        proposals = validateProposals(
+          parsed.activities,
+          life.places,
+          this.clock.now(),
+          existingSchedule,
+          life.runtime,
+        );
       } catch {
         proposals = [];
       }
     }
-    if (!proposals.length) {
-      proposals = fallbackProposals(characterId, localDate, life.places, this.clock.now());
-      fallbackUsed = true;
-    }
+    fallbackUsed = !plannerOutputValid || (proposedCount > 0 && !proposals.length);
 
     const created: CharacterActivityPlan[] = [];
-    for (const [index, proposal] of proposals.slice(0, 4).entries()) {
+    for (const [index, proposal] of proposals.slice(0, 3).entries()) {
       const idempotencyKey = `world-plan:${life.world.id}:${characterId}:${life.membership.createdAt}:${localDate}:${index}`;
       const existing = this.worldService.repository.findActivityPlanByIdempotencyKey(idempotencyKey);
       if (existing) {
@@ -697,6 +736,10 @@ export class WorldAutonomyCoordinator {
     const pending = selected.message;
     const event = selected.event;
     const character = this.rpService.getCharacter(characterId);
+    const deliveryNow = this.clock.now();
+    const lastConversationTime = conversation.lastConversationAt
+      ? new Date(conversation.lastConversationAt).getTime()
+      : undefined;
     try {
       const delivery = await this.options.messenger({
         characterId,
@@ -707,6 +750,15 @@ export class WorldAutonomyCoordinator {
         world: life.world,
         place: event.placeId ? life.places.find((place) => place.id === event.placeId) : undefined,
         recentConversation: conversation.recentConversation,
+        currentTime: deliveryNow.toISOString(),
+        ...(conversation.lastConversationAt ? { lastConversationAt: conversation.lastConversationAt } : {}),
+        ...(conversation.lastConversationRole ? { lastConversationRole: conversation.lastConversationRole } : {}),
+        ...(lastConversationTime === undefined || !Number.isFinite(lastConversationTime) ? {} : {
+          elapsedSinceLastConversationSeconds: Math.max(
+            0,
+            Math.floor((deliveryNow.getTime() - lastConversationTime) / 1_000),
+          ),
+        }),
       });
       if (delivery?.declined) {
         const declinedAt = this.clock.now().toISOString();
@@ -791,20 +843,22 @@ function compareProactiveCandidates(
   return byTime || left.message.id.localeCompare(right.message.id);
 }
 
-function parsePlannerOutput(output: unknown): unknown[] {
+function parsePlannerOutput(output: unknown): { valid: boolean; activities: unknown[] } {
   if (output && typeof output === "object" && !Array.isArray(output)) {
     const activities = (output as Record<string, unknown>).activities;
-    return Array.isArray(activities) ? activities : [];
+    return Array.isArray(activities) ? { valid: true, activities } : { valid: false, activities: [] };
   }
-  if (typeof output !== "string") return [];
+  if (typeof output !== "string") return { valid: false, activities: [] };
   const start = output.indexOf("{");
   const end = output.lastIndexOf("}");
-  if (start < 0 || end <= start) return [];
+  if (start < 0 || end <= start) return { valid: false, activities: [] };
   try {
     const parsed = JSON.parse(output.slice(start, end + 1)) as Record<string, unknown>;
-    return Array.isArray(parsed.activities) ? parsed.activities : [];
+    return Array.isArray(parsed.activities)
+      ? { valid: true, activities: parsed.activities }
+      : { valid: false, activities: [] };
   } catch {
-    return [];
+    return { valid: false, activities: [] };
   }
 }
 
@@ -812,10 +866,12 @@ function validateProposals(
   values: unknown[],
   places: Array<{ id: string; capabilityIds: WorldCapabilityId[] }>,
   now: Date,
+  existingSchedule: Array<{ title: string; startAt?: string; endAt?: string }>,
+  currentState: { placeId?: string; energy: number },
 ): WorldActivityProposal[] {
   const placeMap = new Map(places.map((place) => [place.id, place]));
   const horizon = now.getTime() + 30 * 60 * 60_000;
-  const proposals: WorldActivityProposal[] = [];
+  const candidates: WorldActivityProposal[] = [];
   for (const value of values.slice(0, 8)) {
     if (!value || typeof value !== "object" || Array.isArray(value)) continue;
     const item = value as Record<string, unknown>;
@@ -832,7 +888,7 @@ function validateProposals(
     const title = cleanString(item.title).slice(0, 120);
     const summary = cleanString(item.summary).slice(0, 800);
     if (!title || !summary) continue;
-    proposals.push({
+    candidates.push({
       title,
       placeId,
       capabilityId,
@@ -842,35 +898,36 @@ function validateProposals(
       salience: boundedUnit(item.salience, 0.55),
     });
   }
-  return proposals.sort((left, right) => left.startAt.localeCompare(right.startAt));
-}
-
-function fallbackProposals(
-  characterId: string,
-  localDate: string,
-  places: Array<{ id: string; name: string; capabilityIds: WorldCapabilityId[] }>,
-  now: Date,
-): WorldActivityProposal[] {
-  if (!places.length) return [];
-  const offsets = [30, 240, 480];
-  return offsets.map((minutes, index) => {
-    const place = places[stableIndex(`${characterId}:${localDate}:place:${index}`, places.length)];
-    const capabilityId = place.capabilityIds[
-      stableIndex(`${characterId}:${localDate}:capability:${index}`, place.capabilityIds.length)
-    ] ?? "observe";
-    const start = new Date(now.getTime() + minutes * 60_000);
-    const end = new Date(start.getTime() + (capabilityId === "rest" ? 90 : 60) * 60_000);
-    const activity = worldCapabilities[capabilityId].defaultActivity;
-    return {
-      title: `${worldCapabilities[capabilityId].label} · ${place.name}`,
-      placeId: place.id,
-      capabilityId,
-      startAt: start.toISOString(),
-      endAt: end.toISOString(),
-      summary: `在${place.name}${activity}`,
-      salience: index === 1 ? 0.7 : 0.52,
-    };
+  const occupied = existingSchedule.flatMap((item) => {
+    if (!item.startAt) return [];
+    const start = new Date(item.startAt).getTime();
+    const end = item.endAt ? new Date(item.endAt).getTime() : start + 60 * 60_000;
+    return Number.isFinite(start) && Number.isFinite(end) ? [{ start, end }] : [];
   });
+  const accepted: WorldActivityProposal[] = [];
+  const seen = new Set<string>();
+  let previousPlaceId = currentState.placeId;
+  let previousEnd = now.getTime();
+  for (const proposal of candidates.sort((left, right) => left.startAt.localeCompare(right.startAt))) {
+    const start = new Date(proposal.startAt).getTime();
+    const end = new Date(proposal.endAt).getTime();
+    const key = `${proposal.title.toLocaleLowerCase()}\0${proposal.placeId}\0${proposal.capabilityId}`;
+    if (seen.has(key)) continue;
+    if (occupied.some((interval) => start < interval.end && end > interval.start)) continue;
+    if (accepted.some((entry) => start < new Date(entry.endAt).getTime() && end > new Date(entry.startAt).getTime())) continue;
+    if (currentState.energy < 25 && ["exercise", "work", "study", "create"].includes(proposal.capabilityId)) continue;
+    const changedPlace = Boolean(previousPlaceId && previousPlaceId !== proposal.placeId);
+    const transitionMinutes = (start - previousEnd) / 60_000;
+    if (changedPlace && proposal.capabilityId !== "travel" && transitionMinutes < 30) continue;
+    if (proposal.capabilityId === "travel" && previousPlaceId === proposal.placeId) continue;
+    accepted.push(proposal);
+    occupied.push({ start, end });
+    seen.add(key);
+    previousPlaceId = proposal.placeId;
+    previousEnd = end;
+    if (accepted.length >= 3) break;
+  }
+  return accepted;
 }
 
 function stableIndex(value: string, size: number): number {

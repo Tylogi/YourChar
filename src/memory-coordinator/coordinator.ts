@@ -10,6 +10,7 @@ import { parseExtractorOutput } from "./extractor.js";
 import { MemoryCoordinatorRepository } from "./repository.js";
 import type {
   MemoryCoordinatorStatus,
+  ExtractedMemoryCandidate,
   MemoryExtractionInput,
   MemoryExtractionJob,
   MemoryExtractor,
@@ -228,6 +229,7 @@ export class MemoryCoordinator {
           return;
         }
         for (const [index, candidate] of candidates.entries()) {
+          const candidateTags = personMetadataTags(candidate, input.userText);
           const trustedEvidence = job.realm === "reality"
             ? trustedDailyEvidence(candidate, input.userText)
             : undefined;
@@ -236,12 +238,12 @@ export class MemoryCoordinator {
             : undefined;
           const trustedTags = trustedEvidence
             ? [...new Set([
-                ...(candidate.tags ?? []),
+                ...candidateTags,
                 ...dailySemanticTags(candidate.type, trustedEvidence),
                 "daily-auto-capture",
                 "user-quote-evidence",
               ])]
-            : candidate.tags;
+            : candidateTags;
           const memoryInput = {
             realm: job.realm,
             type: candidate.type,
@@ -342,9 +344,10 @@ export function hasDurableSignal(text: string, mode: Mode): boolean {
     const normalized = text.replace(/\s+/gu, " ").trim();
     if (!normalized) return false;
     const durable = /(?:我(?:叫|的名字|是|住在|来自|喜欢|爱吃|常吃|不吃|不喝|不喜欢|讨厌|偏好|习惯|通常|一般|平时|每天|每周|工作日|周末|一直|正在|最近在|打算|计划|希望|目标|家人|家里|有个|认识|妹妹|姐姐|哥哥|弟弟|父母|朋友|同事|导师)|我的(?:目标|项目|课题|习惯|偏好|边界|家人|朋友|同事|导师)|对我来说|以后(?:请)?不要|回复我时|回答我时|跟我说话时|请(?:先|尽量|不要)|I\s+(?:am|live|come from|prefer|usually|normally|always|like|dislike|avoid|work on|plan|hope|know|have))/iu.test(normalized);
+    const namedRelationship = /(?:是|就是)我(?:的)?[^，。！？,.!?]{0,12}(?:同学|朋友|同事|导师|老师|室友|邻居|家人|亲戚|伴侣|恋人|对象|前任|客户)|我(?:的)?[^，。！？,.!?]{0,12}(?:同学|朋友|同事|导师|老师|室友|邻居|家人|亲戚|伴侣|恋人|对象|前任|客户)(?:叫|是|名叫)/u.test(normalized);
     const onlyTransient = /^(?:我)?(?:今天|现在|刚刚|刚才|这会儿|今晚|这次|临时|today|right now|just now).{0,40}(?:累|困|饿|忙|开心|难过|生气|在下雨|有事|tired|busy|happy|sad|hungry)[。！？.!?]?$/iu.test(normalized);
     if (onlyTransient) return false;
-    if (durable) return true;
+    if (durable || namedRelationship) return true;
     if (/^(?:嗯+|哦+|好(?:的|呀|啊)?|行|可以|知道了|收到|谢谢|早|晚安|hi|hello|ok(?:ay)?|thanks?)[。！？.!?~～]*$/iu.test(normalized)) {
       return false;
     }
@@ -393,6 +396,38 @@ function dailySemanticTags(type: string, evidence: string): string[] {
   if (/(?:回复|回答|说话|结论|简洁|详细)/u.test(evidence)) tags.push("沟通", "回复偏好");
   if (/(?:妹妹|姐姐|哥哥|弟弟|父母|家人)/u.test(evidence)) tags.push("家人");
   return tags;
+}
+
+function personMetadataTags(candidate: ExtractedMemoryCandidate, userText: string): string[] {
+  const ordinary = (candidate.tags ?? []).filter((tag) =>
+    !tag.startsWith("person-name:") &&
+    !tag.startsWith("person-alias:") &&
+    !tag.startsWith("person-relationship:")
+  );
+  if (candidate.type !== "person" || !candidate.person) return ordinary;
+  const source = userText.toLocaleLowerCase();
+  const name = source.includes(candidate.person.name.toLocaleLowerCase())
+    ? taggedPersonValue("person-name:", candidate.person.name)
+    : undefined;
+  const aliases = (candidate.person.aliases ?? [])
+    .filter((alias) => source.includes(alias.toLocaleLowerCase()))
+    .map((alias) => taggedPersonValue("person-alias:", alias))
+    .filter((tag): tag is string => Boolean(tag));
+  const relationship = candidate.person.relationship && source.includes(candidate.person.relationship.toLocaleLowerCase())
+    ? taggedPersonValue("person-relationship:", candidate.person.relationship)
+    : undefined;
+  return [...new Set([
+    ...ordinary,
+    ...(name ? [name] : []),
+    ...aliases,
+    ...(relationship ? [relationship] : []),
+  ])].slice(0, 20);
+}
+
+function taggedPersonValue(prefix: string, value: string): string | undefined {
+  const clean = value.replace(/\s+/gu, " ").trim();
+  if (!clean) return undefined;
+  return `${prefix}${[...clean].slice(0, 80 - prefix.length).join("")}`;
 }
 
 function explicitType(realm: MemoryTargetRealm, content: string): RealityMemoryType | RoleplayMemoryType {

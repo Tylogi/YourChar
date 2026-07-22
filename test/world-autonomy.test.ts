@@ -1,6 +1,8 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { proactiveTemporalContext, proactiveTemporalContradiction } from "../src/domain/kernel.js";
 import { createTestRuntime } from "../src/testing/index.js";
+import type { ProactiveMessageInput } from "../src/world/types.js";
 
 test("world activities reuse character schedules, settle into events, and become durable memories", async () => {
   const runtime = createTestRuntime({
@@ -158,6 +160,68 @@ test("proactive world messages obey per-character daily limits and retain pendin
     assert.equal(deliveries, 1);
     assert.equal(runtime.kernel.listProactiveMessages({ characterId: character.id, status: "delivered" }).length, 1);
     assert.equal(runtime.kernel.listProactiveMessages({ characterId: character.id, status: "pending" }).length, 1);
+  } finally {
+    runtime.dispose();
+  }
+});
+
+test("proactive messages receive authoritative conversation times and reject same-day temporal contradictions", async () => {
+  let captured: ProactiveMessageInput | undefined;
+  const runtime = createTestRuntime({
+    now: "2026-07-22T02:00:00.000Z",
+    seed: "proactive-temporal-context",
+    worldMessenger: async (input) => {
+      captured = input;
+      return { sessionId: input.sessionId, text: "刚才聊完以后，我又想到一件小事。" };
+    },
+  });
+  try {
+    const character = runtime.kernel.createCharacter({ name: "时间角色" });
+    const world = runtime.kernel.createWorld({ name: "杭州日常", timezone: "Asia/Shanghai" });
+    const place = runtime.kernel.createWorldPlace({
+      worldId: world.id,
+      name: "书房",
+      capabilityIds: ["communicate", "observe"],
+    });
+    runtime.kernel.assignCharacterWorld(character.id, {
+      worldId: world.id,
+      homePlaceId: place.id,
+      currentPlaceId: place.id,
+    });
+    runtime.kernel.updateCharacterAutonomyPolicy(character.id, {
+      enabled: false,
+      proactiveEnabled: true,
+      dailyMessageLimit: 5,
+    });
+
+    runtime.model.enqueue([{ kind: "assistant_text", text: "嗯，刚聊完这件事。" }]);
+    await runtime.kernel.sendMessage("proactive-temporal-session", {
+      mode: "sms",
+      characterId: character.id,
+      text: "我们现在聊聊近况。",
+    });
+    runtime.clock.advance(5 * 60_000);
+
+    const result = await runtime.kernel.simulateCharacterMoment(character.id);
+    assert.equal(result.proactiveMessage?.status, "delivered");
+    assert.equal(result.proactiveMessage?.text, "刚才聊完以后，我又想到一件小事。");
+    assert.ok(captured);
+    assert.equal(captured.currentTime, "2026-07-22T02:05:00.000Z");
+    assert.equal(captured.lastConversationAt, "2026-07-22T02:00:00.000Z");
+    assert.equal(captured.lastConversationRole, "assistant");
+    assert.equal(captured.elapsedSinceLastConversationSeconds, 300);
+    assert.equal(captured.recentConversation.every((message) => Boolean(message.sentAt)), true);
+    const temporal = proactiveTemporalContext(captured);
+    assert.equal(temporal.sameLocalDate, true);
+    assert.equal(temporal.elapsedDescription, "5 minutes");
+    assert.match(
+      proactiveTemporalContradiction("昨晚聊得怎么样？", temporal, result.event.summary) ?? "",
+      /same local date/,
+    );
+    assert.equal(
+      proactiveTemporalContradiction("刚才聊完以后，我又想到一件小事。", temporal, result.event.summary),
+      undefined,
+    );
   } finally {
     runtime.dispose();
   }
@@ -550,6 +614,105 @@ test("world projections stay bounded and cannot forge context envelope markers",
     assert.equal(coreManifest?.truncated, true);
     assert.ok((coreManifest?.estimatedTokens ?? Infinity) <= plan.budgets.worldCoreTokens);
     assert.equal(plan.stableSystemContext.match(/<\/world_core>/g)?.length, 1);
+  } finally {
+    runtime.dispose();
+  }
+});
+
+test("autonomy rejects implausible plans instead of fabricating a fallback schedule", async () => {
+  const runtime = createTestRuntime({
+    now: "2026-07-21T01:00:00.000Z",
+    seed: "world-plan-validation",
+    worldPlanner: async (input) => ({
+      activities: [
+        {
+          title: "低精力连续工作",
+          placeId: input.places[0].id,
+          capabilityId: "work",
+          startAt: "2026-07-21T01:10:00.000Z",
+          endAt: "2026-07-21T02:00:00.000Z",
+          summary: "精力不足时继续高强度工作",
+          salience: 0.6,
+        },
+        {
+          title: "瞬间出现在咖啡店",
+          placeId: input.places[1].id,
+          capabilityId: "socialize",
+          startAt: "2026-07-21T01:15:00.000Z",
+          endAt: "2026-07-21T02:15:00.000Z",
+          summary: "没有通勤就出现在另一地点",
+          salience: 0.6,
+        },
+      ],
+    }),
+  });
+  try {
+    const character = runtime.kernel.createCharacter({ name: "疲惫角色" });
+    const world = runtime.kernel.createWorld({ name: "合理规划世界" });
+    const office = runtime.kernel.createWorldPlace({
+      worldId: world.id,
+      name: "办公室",
+      capabilityIds: ["work", "rest"],
+    });
+    runtime.kernel.createWorldPlace({
+      worldId: world.id,
+      name: "咖啡店",
+      capabilityIds: ["socialize", "eat"],
+    });
+    runtime.kernel.assignCharacterWorld(character.id, {
+      worldId: world.id,
+      homePlaceId: office.id,
+      currentPlaceId: office.id,
+    });
+    runtime.kernel.updateCharacterRuntime(character.id, { energy: 18 });
+    runtime.kernel.updateCharacterAutonomyPolicy(character.id, { enabled: true });
+
+    const result = await runtime.kernel.planCharacterLife(character.id);
+    assert.equal(result.fallbackUsed, true);
+    assert.deepEqual(result.plans, []);
+    assert.deepEqual(runtime.kernel.listScheduleItems({ ownerType: "character", characterId: character.id }), []);
+  } finally {
+    runtime.dispose();
+  }
+});
+
+test("autonomy defers unrelated planning while a character participates in an active world event", async () => {
+  let plannerCalls = 0;
+  const runtime = createTestRuntime({
+    now: "2026-07-21T01:00:00.000Z",
+    seed: "world-plan-active-event",
+    worldPlanner: async () => {
+      plannerCalls += 1;
+      return { activities: [] };
+    },
+  });
+  try {
+    const character = runtime.kernel.createCharacter({ name: "事件角色" });
+    const world = runtime.kernel.createWorld({ name: "事件世界" });
+    const place = runtime.kernel.createWorldPlace({
+      worldId: world.id,
+      name: "会场",
+      capabilityIds: ["socialize", "observe"],
+    });
+    runtime.kernel.assignCharacterWorld(character.id, {
+      worldId: world.id,
+      homePlaceId: place.id,
+      currentPlaceId: place.id,
+    });
+    runtime.kernel.updateCharacterAutonomyPolicy(character.id, { enabled: true });
+    runtime.kernel.transitionWorldStoryEvent(world.id, {
+      action: "begin",
+      source: "user_control",
+      title: "正在进行的会谈",
+      summary: "角色正在参与会谈。",
+      placeId: place.id,
+      participantIds: [character.id],
+    });
+
+    const result = await runtime.kernel.planCharacterLife(character.id);
+    assert.equal(plannerCalls, 0);
+    assert.equal(result.fallbackUsed, false);
+    assert.deepEqual(result.plans, []);
   } finally {
     runtime.dispose();
   }

@@ -47,7 +47,7 @@ async function runEvaluation(modelConfig, requestedRuns) {
     .filter((scenario) => scenario.countsTowardModelScore)
     .map((scenario) => scenario.durationMs);
   const report = {
-    version: 7,
+    version: 8,
     ranAt: new Date().toISOString(),
     configuration: {
       source: modelConfig.source,
@@ -435,12 +435,41 @@ async function runSingleEvaluation(modelConfig, runNumber) {
       confirmed: true,
       salience: 1,
     });
-    kernel.rpService.ensureRoleSession("eval-rp-continuity", rpCharacter.id);
-    kernel.updateScene("eval-rp-continuity", {
-      location: "雨夜旧车站的站台",
-      currentObjective: "赶上末班车",
-      summary: "林澈和用户刚跑进车站，广播正在播报末班车。",
-    }, rpCharacter.id);
+    const storyWorld = kernel.createWorld({
+      name: "雨夜旧城",
+      timezone: "Asia/Shanghai",
+      description: "一座被连夜雨幕笼罩的现代城市，旧车站仍保留着通往郊外的末班线路。",
+      rulesMarkdown: "世界事件以可观察事实连续推进；虚构时间与钟声不得创建用户现实提醒。",
+    });
+    const station = kernel.createWorldPlace({
+      worldId: storyWorld.id,
+      name: "雨夜旧车站的站台",
+      description: "半开放站台的屋檐挡不住斜雨，广播正在播报末班车。",
+      capabilityIds: ["socialize", "observe", "travel"],
+    });
+    kernel.assignCharacterWorld(rpCharacter.id, {
+      worldId: storyWorld.id,
+      homePlaceId: station.id,
+      currentPlaceId: station.id,
+    });
+    kernel.transitionWorldStoryEvent(storyWorld.id, {
+      action: "begin",
+      source: "system",
+      title: "赶上末班车",
+      summary: "林澈和用户刚跑进旧车站，广播正在播报末班车。",
+      objective: "在雨夜里决定是否赶上末班车",
+      placeId: station.id,
+      participantIds: [rpCharacter.id],
+    });
+    const sendWorldTurn = async (text) => {
+      const response = await kernel.sendWorldMessage(storyWorld.id, text, "Asia/Shanghai");
+      return {
+        status: response.turn.status,
+        canRetry: false,
+        actions: [],
+        reply: response.messages.map((message) => message.content).filter(Boolean).join("\n\n"),
+      };
+    };
 
     await evaluateScenario(scenarios, modelScenario({
       id: "sms-first-person-character",
@@ -490,12 +519,10 @@ async function runSingleEvaluation(modelConfig, runNumber) {
     }));
 
     await evaluateScenario(scenarios, modelScenario({
-      id: "rp-third-person-form",
+      id: "world-third-person-form",
       mode: "rp",
       prompt: "雨突然大了，我们躲到屋檐下。继续演绎这一幕。",
-      execute: () => kernel.sendMessage("eval-rp-form", {
-        mode: "rp", characterId: rpCharacter.id, text: "雨突然大了，我们躲到屋檐下。继续演绎这一幕。",
-      }),
+      execute: () => sendWorldTurn("雨突然大了，我们躲到屋檐下。继续演绎这一幕。"),
       rules: (result) => [
         completedRule(result),
         rule("third-person", "出现角色名或第三人称指代", /林澈|对方|那人|他|她/.test(result.reply), excerpt(result.reply)),
@@ -505,12 +532,10 @@ async function runSingleEvaluation(modelConfig, runNumber) {
     }));
 
     await evaluateScenario(scenarios, modelScenario({
-      id: "rp-scene-continuity",
+      id: "world-event-continuity",
       mode: "rp",
       prompt: "接着刚才的场景继续，广播响起后发生了什么？",
-      execute: () => kernel.sendMessage("eval-rp-continuity", {
-        mode: "rp", characterId: rpCharacter.id, text: "接着刚才的场景继续，广播响起后发生了什么？",
-      }),
+      execute: () => sendWorldTurn("接着刚才的场景继续，广播响起后发生了什么？"),
       rules: (result) => [
         completedRule(result),
         rule("scene-location", "回复延续旧车站或站台地点", /旧车站|车站|站台/.test(result.reply), excerpt(result.reply)),
@@ -519,14 +544,12 @@ async function runSingleEvaluation(modelConfig, runNumber) {
     }));
 
     await evaluateScenario(scenarios, modelScenario({
-      id: "rp-fictional-reminder-isolation",
+      id: "world-fictional-reminder-isolation",
       mode: "rp",
       prompt: "剧情里五分钟后钟声提醒我们去塔顶，继续演绎，不要创建现实提醒。",
       execute: async () => {
         const before = kernel.listScheduleItems().length;
-        const response = await kernel.sendMessage("eval-rp-fictional", {
-          mode: "rp", characterId: rpCharacter.id, text: "剧情里五分钟后钟声提醒我们去塔顶，继续演绎，不要创建现实提醒。",
-        });
+        const response = await sendWorldTurn("剧情里五分钟后钟声提醒我们去塔顶，继续演绎，不要创建现实提醒。");
         return { ...response, before, after: kernel.listScheduleItems().length };
       },
       rules: (result) => [

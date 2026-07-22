@@ -1,16 +1,17 @@
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { ActionRecord, MessageAttachment, MessageResponse, Mode } from "../domain/types.js";
+import type { ActionRecord, MessageAttachment, Mode } from "../domain/types.js";
 import { CompanionKernel } from "../domain/kernel.js";
 import type { MemoryTargetRealm } from "../memory-coordinator/types.js";
 
 export type FeatureTestCase = {
   id: string;
-  category: "conversation" | "schedule" | "memory" | "relationship" | "initiative" | "search" | "workspace" | "character" | "vision" | "subagent";
+  category: "conversation" | "world" | "schedule" | "memory" | "relationship" | "initiative" | "search" | "workspace" | "character" | "vision" | "subagent";
   name: string;
   description: string;
   mode: Mode;
+  surface?: "private" | "world";
   input: string;
   requiredModules: string[];
   requiredPermissions: string[];
@@ -50,11 +51,12 @@ const cases: FeatureTestCase[] = [
     requiredPermissions: [],
   },
   {
-    id: "rp-narrative-form",
-    category: "conversation",
-    name: "RP 第三人称演绎",
-    description: "验证 RP 包含环境、动作和角色对白，而不是私聊短句。",
+    id: "world-narrative-form",
+    category: "world",
+    name: "世界第三人称演绎",
+    description: "验证世界模型统一生成第三人称环境、动作和角色对白，而不是调用角色模型拼接回复。",
     mode: "rp",
+    surface: "world",
     input: "雨突然大了，我们躲到屋檐下。继续演绎这一幕。",
     requiredModules: [],
     requiredPermissions: [],
@@ -100,11 +102,12 @@ const cases: FeatureTestCase[] = [
     requiredPermissions: [],
   },
   {
-    id: "rp-fictional-reminder-isolation",
-    category: "schedule",
-    name: "RP 虚构提醒隔离",
-    description: "验证剧情中的钟声不会写入现实日程。",
+    id: "world-fictional-reminder-isolation",
+    category: "world",
+    name: "世界剧情提醒隔离",
+    description: "验证世界事件里的钟声不会写入用户现实日程。",
     mode: "rp",
+    surface: "world",
     input: "剧情里五分钟后钟声提醒我们去塔顶，继续演绎，不要创建现实提醒。",
     requiredModules: ["mcp:schedule"],
     requiredPermissions: [],
@@ -130,14 +133,15 @@ const cases: FeatureTestCase[] = [
     requiredPermissions: ["userProfileWriteEnabled"],
   },
   {
-    id: "rp-explicit-memory",
-    category: "memory",
-    name: "角色剧情记忆写入",
-    description: "验证明确授权写入当前角色独立的 RP 长期记忆。",
+    id: "world-event-settlement",
+    category: "world",
+    name: "世界事件观察结算",
+    description: "预置进行中的世界事件，验证结束后为参与角色结算观察与剧情记忆。",
     mode: "rp",
-    input: "请记住：剧情中我们约定用蓝色徽章作为见面信物。",
+    surface: "world",
+    input: "用一小段第三人称小说完成这次蓝色徽章约定，并在本轮明确结束当前事件。",
     requiredModules: ["mcp:memory-coordinator"],
-    requiredPermissions: [],
+    requiredPermissions: ["characterMemoryWriteEnabled"],
   },
   {
     id: "cross-session-memory-recall",
@@ -248,7 +252,7 @@ export async function runFeatureTest(
   if (!definition) throw new Error(`unknown feature test case: ${caseId}`);
   const sourceCharacter = characterId ? source.getCharacter(characterId) : source.listCharacters()[0];
   if (!sourceCharacter) throw new Error("feature tests require at least one character");
-  const preflight = preflightRules(source, definition);
+  const preflight = preflightRules(source, definition, sourceCharacter.modelProfileId);
   if (preflight.some((entry) => !entry.passed)) {
     return resultFrom(definition, {
       status: "blocked",
@@ -269,20 +273,25 @@ export async function runFeatureTest(
   const started = performance.now();
   try {
     cloneRuntimeConfiguration(source, runtime);
+    const characterModelProfileId = cloneCharacterModelBinding(source, runtime, sourceCharacter.modelProfileId);
     const character = runtime.createCharacter({
       name: sourceCharacter.name,
       soulMarkdown: sourceCharacter.soulMarkdown,
+      ...(characterModelProfileId ? { modelProfileId: characterModelProfileId } : {}),
     });
     cloneConfirmedMemories(source, runtime, sourceCharacter.id, character.id);
-    const attachments = setupCase(runtime, definition, character.id);
+    const setup = setupCase(runtime, definition, character.id);
     const beforeRequests = runtime.getModelRequestCount();
-    const response = await runtime.sendMessage(`feature-test-${definition.id}`, {
-      mode: definition.mode,
-      characterId: character.id,
-      text: definition.input,
-      timezone: "Asia/Shanghai",
-      attachments,
-    });
+    const beforeActions = runtime.store.actions.length;
+    const response = definition.surface === "world"
+      ? await runWorldFeatureTurn(runtime, definition, setup)
+      : await runtime.sendMessage(`feature-test-${definition.id}`, {
+          mode: definition.mode,
+          characterId: character.id,
+          text: definition.input,
+          timezone: "Asia/Shanghai",
+          attachments: setup.attachments,
+        });
     if (definition.id === "proactive-message-quality") {
       await runtime.simulateCharacterMoment(character.id);
     }
@@ -292,11 +301,14 @@ export async function runFeatureTest(
     }
     await runtime.memoryCoordinator.drain();
     await runtime.relationshipCoordinator.drain();
-    const rules = [...preflight, ...evaluateCase(runtime, definition, response, character.id)];
+    const featureResponse = definition.surface === "world"
+      ? { ...response, actions: runtime.store.actions.slice(beforeActions) }
+      : response;
+    const rules = [...preflight, ...evaluateCase(runtime, definition, featureResponse, character.id, setup.worldId)];
     return resultFrom(definition, {
-      status: response.status,
-      reply: response.reply,
-      actions: response.actions,
+      status: featureResponse.status,
+      reply: featureResponse.reply,
+      actions: featureResponse.actions,
       rules,
       durationMs: Math.round(performance.now() - started),
       modelRequests: runtime.getModelRequestCount() - beforeRequests,
@@ -305,6 +317,28 @@ export async function runFeatureTest(
     runtime.dispose();
     rmSync(stateDir, { recursive: true, force: true });
   }
+}
+
+function cloneCharacterModelBinding(
+  source: CompanionKernel,
+  target: CompanionKernel,
+  sourceProfileId?: string,
+): string | undefined {
+  if (!sourceProfileId) return undefined;
+  const profile = source.listModelApiProfiles().profiles.find((entry) => entry.id === sourceProfileId);
+  const raw = source.store.getRawModelApiProfile(sourceProfileId);
+  if (!profile || !raw) return undefined;
+  return target.createModelApiProfile({
+    name: `功能测试 · ${profile.name}`,
+    enabled: raw.enabled,
+    baseUrl: raw.baseUrl,
+    model: raw.model,
+    visionInputEnabled: raw.visionInputEnabled,
+    ...(raw.apiKey ? { apiKey: raw.apiKey } : {}),
+    ...(raw.temperature === undefined ? {} : { temperature: raw.temperature }),
+    ...(raw.maxTokens === undefined ? {} : { maxTokens: raw.maxTokens }),
+    ...(raw.contextWindowTokens === undefined ? {} : { contextWindowTokens: raw.contextWindowTokens }),
+  }).id;
 }
 
 function cloneRuntimeConfiguration(source: CompanionKernel, target: CompanionKernel): void {
@@ -379,8 +413,63 @@ function cloneConfirmedMemories(
   }
 }
 
-function setupCase(runtime: CompanionKernel, definition: FeatureTestCase, characterId: string): MessageAttachment[] {
+type FeatureTestSetup = { attachments: MessageAttachment[]; worldId?: string };
+
+async function runWorldFeatureTurn(
+  runtime: CompanionKernel,
+  definition: FeatureTestCase,
+  setup: FeatureTestSetup,
+): Promise<{ status: string; reply: string; actions: ActionRecord[] }> {
+  if (!setup.worldId) throw new Error(`world feature test ${definition.id} has no isolated world`);
+  const result = await runtime.sendWorldMessage(
+    setup.worldId,
+    definition.input,
+    "Asia/Shanghai",
+    setup.attachments,
+  );
+  return {
+    status: result.turn.status,
+    reply: result.messages.map((message) => message.content).filter(Boolean).join("\n\n"),
+    actions: [],
+  };
+}
+
+function setupCase(runtime: CompanionKernel, definition: FeatureTestCase, characterId: string): FeatureTestSetup {
   const sessionId = `feature-test-${definition.id}`;
+  if (definition.surface === "world") {
+    const character = runtime.getCharacter(characterId);
+    const world = runtime.createWorld({
+      name: "功能测试世界",
+      timezone: "Asia/Shanghai",
+      description: "用于验证第三人称互动小说、事件连续性与观察结算的隔离世界。",
+      rulesMarkdown: "世界中的叙事以可观察事实为准；虚构剧情不得创建用户现实日程。",
+      ...(character.modelProfileId ? { directorModelProfileId: character.modelProfileId } : {}),
+      ...(character.modelProfileId ? { analystModelProfileId: character.modelProfileId } : {}),
+    });
+    const place = runtime.createWorldPlace({
+      worldId: world.id,
+      name: "雨夜街角的屋檐下",
+      description: "雨声清晰，灯光从湿漉漉的街面反射回来。",
+      capabilityIds: ["socialize", "observe", "communicate"],
+    });
+    runtime.assignCharacterWorld(characterId, {
+      worldId: world.id,
+      homePlaceId: place.id,
+      currentPlaceId: place.id,
+    });
+    if (definition.id === "world-event-settlement") {
+      runtime.transitionWorldStoryEvent(world.id, {
+        action: "begin",
+        source: "system",
+        title: "蓝色徽章的约定",
+        summary: "角色与用户正在确认以后见面时使用蓝色徽章作为信物。",
+        objective: "完成约定并自然结束这一幕",
+        placeId: place.id,
+        participantIds: [characterId],
+      });
+    }
+    return { attachments: [], worldId: world.id };
+  }
   if (definition.id === "interaction-arrival-confirmation" || definition.id === "interaction-meeting-departure") {
     runtime.rpService.ensureRoleSession(sessionId, characterId);
     runtime.interactionService.proposeMeeting({
@@ -414,13 +503,6 @@ function setupCase(runtime: CompanionKernel, definition: FeatureTestCase, charac
       idempotencyKey: "feature-test-recall",
     });
   }
-  if (definition.id === "rp-narrative-form") {
-    runtime.updateScene(`feature-test-${definition.id}`, {
-      location: "雨夜街角的屋檐下",
-      currentObjective: "避雨并确认下一步去向",
-      summary: "角色与用户刚躲进屋檐，雨势仍在增强。",
-    }, characterId);
-  }
   if (definition.id === "vision-image-understanding") {
     const entry = runtime.uploadWorkspaceFile({
       directory: "uploads",
@@ -430,7 +512,7 @@ function setupCase(runtime: CompanionKernel, definition: FeatureTestCase, charac
         "base64",
       ),
     });
-    return [{ path: entry.path, name: entry.name, contentType: entry.contentType, size: entry.size }];
+    return { attachments: [{ path: entry.path, name: entry.name, contentType: entry.contentType, size: entry.size }] };
   }
   if (definition.id === "proactive-message-quality") {
     const world = runtime.createWorld({ name: "功能测试世界", timezone: "Asia/Shanghai" });
@@ -476,18 +558,27 @@ function setupCase(runtime: CompanionKernel, definition: FeatureTestCase, charac
       quietEnd: "00:00",
     });
   }
-  return [];
+  return { attachments: [] };
 }
 
-function preflightRules(source: CompanionKernel, definition: FeatureTestCase): FeatureTestRule[] {
+function preflightRules(
+  source: CompanionKernel,
+  definition: FeatureTestCase,
+  characterModelProfileId?: string,
+): FeatureTestRule[] {
   const modules = new Map(source.listAgentModules().map((entry) => [entry.id, entry]));
   const permissions = source.getAgentPermissions();
-  const model = source.getModelApiConfig();
+  const boundProfile = characterModelProfileId
+    ? source.listModelApiProfiles().profiles.find((entry) => entry.id === characterModelProfileId)
+    : undefined;
+  const model = characterModelProfileId
+    ? source.store.getRawModelApiProfile(characterModelProfileId) ?? source.store.getRawModelApiConfig()
+    : source.store.getRawModelApiConfig();
   const output: FeatureTestRule[] = [rule(
     "model-configured",
-    "当前模型 API 已配置",
+    boundProfile ? "所选角色绑定模型已配置" : "当前模型 API 已配置",
     Boolean(model.enabled && model.baseUrl && model.model),
-    model.model || "未配置模型",
+    [boundProfile?.name, model.model].filter(Boolean).join(" · ") || "未配置模型",
   )];
   for (const moduleId of definition.requiredModules) {
     const module = modules.get(moduleId);
@@ -519,8 +610,9 @@ function preflightRules(source: CompanionKernel, definition: FeatureTestCase): F
 function evaluateCase(
   runtime: CompanionKernel,
   definition: FeatureTestCase,
-  response: MessageResponse,
+  response: { status: string; reply: string; actions: ActionRecord[] },
   characterId: string,
+  worldId?: string,
 ): FeatureTestRule[] {
   const rules = [rule("completed", "对话轮次成功完成", response.status === "completed", response.status)];
   const reply = response.reply;
@@ -528,9 +620,10 @@ function evaluateCase(
   if (definition.id === "sms-character-voice") {
     rules.push(rule("first-person", "包含第一人称表达", /我/.test(reply), excerpt(reply)));
     rules.push(rule("no-assistant-tone", "没有通用助手或 AI 自称", !/作为(?:一个)?AI|人工智能|我是.*助手/u.test(reply), excerpt(reply)));
-  } else if (definition.id === "rp-narrative-form") {
+  } else if (definition.id === "world-narrative-form") {
     rules.push(rule("narrative-length", "剧情正文不少于 60 字", [...reply].length >= 60, `${[...reply].length} chars`));
-    rules.push(rule("narrative-form", "包含环境、动作和对白", /雨|屋檐|风|街/u.test(reply) && /走|抬|停|望|伸|靠|转/u.test(reply) && /[“”]/u.test(reply), excerpt(reply)));
+    rules.push(rule("narrative-form", "包含环境、动作和对白", /雨|屋檐|风|街/u.test(reply) && /走|抬|停|望|伸|靠|转/u.test(reply) && /[“”"]|：/u.test(reply), excerpt(reply)));
+    rules.push(rule("world-event", "世界分析器建立或推进事件", Boolean(worldId && runtime.getWorldConversation(worldId).events.length), worldId ? `${runtime.getWorldConversation(worldId).events.length} events` : "missing world"));
   } else if (definition.id === "interaction-meeting-proposal") {
     const interaction = runtime.getConversationInteraction(`feature-test-${definition.id}`);
     rules.push(rule("propose-tool", "调用 propose_meeting", hasAction(completedActions, "propose_meeting"), actionEvidence(completedActions)));
@@ -546,7 +639,7 @@ function evaluateCase(
   } else if (definition.id === "schedule-relative-reminder") {
     rules.push(rule("schedule-tool", "调用 create_schedule_item", hasAction(completedActions, "create_schedule_item"), actionEvidence(completedActions)));
     rules.push(rule("schedule-created", "隔离日程库新增提醒", runtime.listScheduleItems().length === 1, `${runtime.listScheduleItems().length} items`));
-  } else if (definition.id === "rp-fictional-reminder-isolation") {
+  } else if (definition.id === "world-fictional-reminder-isolation") {
     rules.push(rule("no-real-schedule", "没有创建现实日程", runtime.listScheduleItems().length === 0, `${runtime.listScheduleItems().length} items`));
     rules.push(rule("no-schedule-action", "没有完成日程变更工具", !completedActions.some((action) => /schedule|reminder/u.test(action.actionType)), actionEvidence(completedActions)));
   } else if (definition.id === "schedule-profile-insight") {
@@ -561,9 +654,14 @@ function evaluateCase(
     const memory = runtime.listMemories({ realm: "reality" }).find((entry) => /功能测试偏好/u.test(entry.content));
     rules.push(rule("confirmed-reality-memory", "创建已确认现实记忆", memory?.confirmed === true && memory.validity === "active", memory ? `${memory.validity}/${memory.confirmed}` : "missing"));
     rules.push(rule("profile-projection", "记忆投影进入用户画像", /功能测试偏好|回答前先给结论/u.test(runtime.getUserProfile().markdown), excerpt(runtime.getUserProfile().markdown)));
-  } else if (definition.id === "rp-explicit-memory") {
-    const memory = runtime.listMemories({ realm: "roleplay", characterId }).find((entry) => /蓝色徽章/u.test(entry.content));
-    rules.push(rule("confirmed-rp-memory", "创建当前角色已确认 RP 记忆", memory?.confirmed === true && memory.validity === "active", memory ? `${memory.validity}/${memory.confirmed}` : "missing"));
+  } else if (definition.id === "world-event-settlement") {
+    const conversation = worldId ? runtime.getWorldConversation(worldId) : undefined;
+    const settled = conversation?.events.find((event) => event.title === "蓝色徽章的约定");
+    const memory = runtime.listMemories({ realm: "roleplay", characterId }).find((entry) =>
+      entry.key === `world.event.${settled?.id}.settlement` && /蓝色徽章/u.test(entry.content)
+    );
+    rules.push(rule("event-closed", "当前世界事件已结束", settled?.status === "resolved" && Boolean(settled.settledAt), settled ? `${settled.status}/${settled.settledAt ?? "unsettled"}` : "missing"));
+    rules.push(rule("observation-settled", "参与角色获得已确认剧情记录", memory?.confirmed === true && memory.validity === "active", memory ? `${memory.validity}/${memory.confirmed}` : "missing"));
   } else if (definition.id === "cross-session-memory-recall") {
     rules.push(rule("memory-recalled", "回复召回测试码松针-17", /松针[-—]?17/u.test(reply), excerpt(reply)));
   } else if (definition.id === "subagent-delegation") {

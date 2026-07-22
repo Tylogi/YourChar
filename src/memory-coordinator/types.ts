@@ -80,6 +80,11 @@ export type ExtractedMemoryCandidate = {
   confidence?: number;
   tags?: string[];
   evidence?: { user: string };
+  person?: {
+    name: string;
+    aliases?: string[];
+    relationship?: string;
+  };
 };
 
 export type MemoryExtractor = (input: MemoryExtractionInput) => Promise<unknown>;

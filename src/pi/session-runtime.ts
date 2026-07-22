@@ -814,6 +814,7 @@ export class PiSessionRuntime {
       .find((entry) => entry.role === "assistant");
     if (message?.role === "assistant") {
       const annotated = message as typeof message & { turnStatus?: TurnStatus; canRetry?: boolean };
+      annotated.timestamp = this.clock.now().getTime();
       annotated.turnStatus = status;
       annotated.canRetry = canRetry;
       this.rewritePersistedSession(handle.sessionManager);

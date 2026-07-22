@@ -1328,6 +1328,115 @@ const migrations: Migration[] = [
         ON model_context_traces(session_id, sequence DESC);
     `,
   },
+  {
+    version: 27,
+    sql: `
+      ALTER TABLE world_story_events
+        ADD COLUMN settlement_summary TEXT NOT NULL DEFAULT '';
+      ALTER TABLE world_story_events
+        ADD COLUMN settled_at TEXT;
+
+      ALTER TABLE world_story_event_transitions
+        RENAME TO world_story_event_transitions_v26;
+      CREATE TABLE world_story_event_transitions (
+        id TEXT PRIMARY KEY,
+        world_id TEXT NOT NULL REFERENCES role_worlds(id) ON DELETE CASCADE,
+        event_id TEXT REFERENCES world_story_events(id) ON DELETE SET NULL,
+        turn_id TEXT REFERENCES world_conversation_turns(id) ON DELETE SET NULL,
+        event_type TEXT NOT NULL CHECK (event_type IN (
+          'propose', 'begin', 'advance', 'resolve', 'cancel', 'undo'
+        )),
+        source TEXT NOT NULL CHECK (source IN (
+          'world_director', 'world_analyzer', 'user_control', 'system'
+        )),
+        status TEXT NOT NULL CHECK (status IN ('applied', 'reverted')),
+        summary TEXT NOT NULL,
+        before_state_json TEXT NOT NULL,
+        after_state_json TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        reverted_at TEXT
+      );
+      INSERT INTO world_story_event_transitions(
+        id, world_id, event_id, turn_id, event_type, source, status, summary,
+        before_state_json, after_state_json, created_at, reverted_at
+      )
+      SELECT
+        id, world_id, event_id, turn_id, event_type, source, status, summary,
+        before_state_json, after_state_json, created_at, reverted_at
+      FROM world_story_event_transitions_v26;
+      DROP TABLE world_story_event_transitions_v26;
+      CREATE INDEX world_story_event_transitions_world_idx
+        ON world_story_event_transitions(world_id, created_at DESC, id DESC);
+      CREATE INDEX world_character_observations_event_idx
+        ON world_character_observations(event_id, character_id, created_at, id);
+    `,
+  },
+  {
+    version: 28,
+    sql: `
+      DROP INDEX context_economics_session_idx;
+      ALTER TABLE context_economics RENAME TO context_economics_v27;
+      CREATE TABLE context_economics (
+        sequence INTEGER PRIMARY KEY AUTOINCREMENT,
+        id TEXT NOT NULL UNIQUE,
+        session_id TEXT NOT NULL,
+        mode TEXT NOT NULL CHECK (mode IN ('sms', 'rp')),
+        turn_kind TEXT NOT NULL CHECK (turn_kind IN ('user', 'reminder_due', 'world_director')),
+        system_hash TEXT NOT NULL,
+        metrics_json TEXT NOT NULL,
+        plan_json TEXT NOT NULL,
+        message_digests_json TEXT NOT NULL,
+        actual_json TEXT NOT NULL,
+        created_at TEXT NOT NULL
+      );
+      INSERT INTO context_economics(
+        sequence, id, session_id, mode, turn_kind, system_hash, metrics_json,
+        plan_json, message_digests_json, actual_json, created_at
+      )
+      SELECT
+        sequence, id, session_id, mode, turn_kind, system_hash, metrics_json,
+        plan_json, message_digests_json, actual_json, created_at
+      FROM context_economics_v27;
+      DROP TABLE context_economics_v27;
+      CREATE INDEX context_economics_session_idx
+        ON context_economics(session_id, sequence DESC);
+
+      CREATE TABLE world_narrative_contexts (
+        id TEXT PRIMARY KEY,
+        world_id TEXT NOT NULL REFERENCES role_worlds(id) ON DELETE CASCADE,
+        event_id TEXT REFERENCES world_story_events(id) ON DELETE SET NULL,
+        model_profile_id TEXT NOT NULL,
+        model_key TEXT NOT NULL,
+        model_session_id TEXT NOT NULL,
+        system_prompt TEXT NOT NULL,
+        stable_prefix_hash TEXT NOT NULL,
+        participant_ids_json TEXT NOT NULL DEFAULT '[]',
+        start_message_sequence INTEGER NOT NULL CHECK (start_message_sequence >= 0),
+        status TEXT NOT NULL CHECK (status IN ('active', 'closed')),
+        close_reason TEXT,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        closed_at TEXT
+      );
+      CREATE UNIQUE INDEX world_narrative_contexts_active_idx
+        ON world_narrative_contexts(world_id) WHERE status = 'active';
+      CREATE INDEX world_narrative_contexts_event_idx
+        ON world_narrative_contexts(event_id, created_at DESC);
+
+      CREATE TABLE world_narrative_prompt_messages (
+        id TEXT PRIMARY KEY,
+        context_id TEXT NOT NULL REFERENCES world_narrative_contexts(id) ON DELETE CASCADE,
+        turn_id TEXT NOT NULL REFERENCES world_conversation_turns(id) ON DELETE CASCADE,
+        sequence INTEGER NOT NULL CHECK (sequence >= 1),
+        role TEXT NOT NULL CHECK (role IN ('user', 'assistant')),
+        payload_json TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        UNIQUE(context_id, sequence)
+      );
+      CREATE INDEX world_narrative_prompt_messages_context_idx
+        ON world_narrative_prompt_messages(context_id, sequence);
+    `,
+  },
 ];
 
 export class AppDatabase {

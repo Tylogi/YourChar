@@ -16,7 +16,7 @@ export type WorldCapabilityId = keyof typeof worldCapabilities;
 export type WorldStatus = "active" | "archived";
 export type WorldConversationTurnStatus = "running" | "completed" | "partial" | "failed" | "cancelled";
 export type WorldStoryEventStatus = "planned" | "active" | "resolved" | "cancelled";
-export type WorldStoryTransitionType = "propose" | "begin" | "resolve" | "cancel" | "undo";
+export type WorldStoryTransitionType = "propose" | "begin" | "advance" | "resolve" | "cancel" | "undo";
 export type WorldObservationKnowledge = "direct" | "heard" | "inferred";
 export type CharacterAvailability = "free" | "busy" | "resting" | "traveling";
 export type WorldEventType = "activity" | "interaction" | "travel" | "world_change";
@@ -239,6 +239,50 @@ export type WorldConversationMessage = {
   createdAt: string;
 };
 
+export type WorldConversationReset = {
+  conversation: WorldConversation;
+  resetAt: string;
+  removedOpenEventId?: string;
+  modelSessionIds: string[];
+  deleted: {
+    messages: number;
+    turns: number;
+    narrativeContexts: number;
+    narrativePromptMessages: number;
+    openEventObservations: number;
+    openEventTransitions: number;
+    openEvents: number;
+  };
+};
+
+export type WorldNarrativeContext = {
+  id: string;
+  worldId: string;
+  eventId?: string;
+  modelProfileId: string;
+  modelKey: string;
+  modelSessionId: string;
+  systemPrompt: string;
+  stablePrefixHash: string;
+  participantIds: string[];
+  startMessageSequence: number;
+  status: "active" | "closed";
+  closeReason?: string;
+  createdAt: string;
+  updatedAt: string;
+  closedAt?: string;
+};
+
+export type WorldNarrativePromptMessage = {
+  id: string;
+  contextId: string;
+  turnId: string;
+  sequence: number;
+  role: "user" | "assistant";
+  payload: Record<string, unknown>;
+  createdAt: string;
+};
+
 export type WorldStoryEvent = {
   id: string;
   worldId: string;
@@ -253,6 +297,8 @@ export type WorldStoryEvent = {
   updatedAt: string;
   startedAt?: string;
   endedAt?: string;
+  settlementSummary?: string;
+  settledAt?: string;
 };
 
 export type WorldStoryTransition = {
@@ -295,15 +341,9 @@ export type WorldCharacterRelationship = {
   updatedAt: string;
 };
 
-export type WorldDirectorPlan = {
-  placeId?: string;
-  openingNarration: string;
-  participants: Array<{ characterId: string; cue: string }>;
-};
-
 export type WorldAnalysis = {
   event: {
-    action: "none" | "propose" | "begin" | "resolve" | "cancel";
+    action: "none" | "propose" | "begin" | "advance" | "resolve" | "cancel";
     title?: string;
     summary?: string;
     objective?: string;
@@ -324,7 +364,6 @@ export type WorldAnalysis = {
     knowledge: WorldObservationKnowledge;
     summary: string;
     salience: number;
-    remember: boolean;
   }>;
   relationships: Array<{
     subjectCharacterId: string;
@@ -339,11 +378,26 @@ export type WorldAnalysis = {
 };
 
 export type WorldTurnEvent =
-  | { type: "director_state"; phase: "planning" | "writing" | "failed" }
+  | {
+      type: "director_state";
+      phase: "planning" | "writing" | "failed";
+      reasonCode?: WorldModelFailureReasonCode;
+    }
   | { type: "participant_state"; characterId: string; phase: "typing" | "silent" | "failed"; reasonCode?: string }
   | { type: "message"; message: WorldConversationMessage }
-  | { type: "analysis_state"; phase: "analyzing" | "applied" | "failed" }
+  | {
+      type: "analysis_state";
+      phase: "analyzing" | "applied" | "failed";
+      reasonCode?: WorldModelFailureReasonCode;
+    }
   | { type: "turn_done"; turn: WorldConversationTurn };
+
+export type WorldModelFailureReasonCode =
+  | "cancelled"
+  | "timeout"
+  | "model_unavailable"
+  | "invalid_output"
+  | "generation_failed";
 
 export type WorldTurnResult = {
   turn: WorldConversationTurn;
@@ -409,7 +463,25 @@ export type WorldPlannerInput = {
   world: RoleWorld;
   places: WorldPlace[];
   currentState: CharacterRuntimeState;
+  homePlaceId?: string;
   existingSchedule: Array<{ title: string; startAt?: string; endAt?: string }>;
+  recentEvents: Array<{ summary: string; startsAt: string; placeId?: string; participantIds: string[] }>;
+  activeStoryEvent?: {
+    id: string;
+    title: string;
+    summary: string;
+    objective: string;
+    status: WorldStoryEventStatus;
+    placeId?: string;
+    participantIds: string[];
+  };
+  worldCharacters: Array<{
+    characterId: string;
+    name: string;
+    placeId?: string;
+    activity: string;
+    availability: CharacterAvailability;
+  }>;
   now: string;
   localDate: string;
 };
@@ -424,7 +496,11 @@ export type ProactiveMessageInput = {
   candidate: ProactiveMessage;
   world: RoleWorld;
   place?: WorldPlace;
-  recentConversation: Array<{ role: "user" | "assistant"; text: string }>;
+  recentConversation: Array<{ role: "user" | "assistant"; text: string; sentAt?: string }>;
+  currentTime: string;
+  lastConversationAt?: string;
+  lastConversationRole?: "user" | "assistant";
+  elapsedSinceLastConversationSeconds?: number;
 };
 
 export type ProactiveMessageDelivery =

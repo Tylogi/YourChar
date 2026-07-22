@@ -24,6 +24,7 @@ export class MemoryVaultPaths {
     for (const relativePath of [
       "reality",
       "reality/memories",
+      "reality/people",
       "roleplay",
       "roleplay/characters",
       "roleplay/scenes",
@@ -114,6 +115,7 @@ export function relativePathForMetadata(
 ): string {
   assertIdentifier(metadata.id, "id");
   if (metadata.kind === "user_profile") return "reality/user-profile.md";
+  if (metadata.kind === "person_profile") return `reality/people/${metadata.id}.md`;
   if (metadata.kind === "character_soul") {
     assertIdentifier(metadata.characterId, "characterId");
     return `roleplay/characters/${metadata.characterId}/SOUL.md`;

@@ -35,13 +35,20 @@ import {
   MEMORY_VAULT_SCHEMA_VERSION,
   type LegacyVaultSnapshot,
   type MemoryVaultStatus,
+  type PersonProfile,
   type VaultCas,
   type VaultDocument,
   type VaultDocumentSummary,
   type VaultFrontmatter,
   type VaultMigrationManifest,
+  type UpdatePersonProfileInput,
   type VaultWriteInput,
 } from "./types.js";
+
+export const PERSON_PROFILE_MAX_CHARACTERS = 8_000;
+const PERSON_CONTEXT_MAX_CHARACTERS = 180;
+const PERSON_FACTS_START = "<!-- rp-agent:person-facts:start -->";
+const PERSON_FACTS_END = "<!-- rp-agent:person-facts:end -->";
 
 export type MemoryVaultServiceOptions = {
   database: AppDatabase;
@@ -160,6 +167,7 @@ export class MemoryVaultService {
     const manifest = this.readManifest();
     const counts: MemoryVaultStatus["counts"] = {
       user_profile: 0,
+      person_profile: 0,
       character_soul: 0,
       scene: 0,
       memory: 0,
@@ -200,6 +208,9 @@ export class MemoryVaultService {
             openThreads: [...document.metadata.scene.openThreads],
           },
         } : {}),
+        aliases: [...document.metadata.aliases],
+        visibleToCharacterIds: [...document.metadata.visibleToCharacterIds],
+        sourceMemoryIds: [...document.metadata.sourceMemoryIds],
       },
     }));
   }
@@ -277,6 +288,95 @@ export class MemoryVaultService {
     this.atomicMutation("profile_delete", "profile:user-profile:delete", () => {
       this.store.remove("user-profile");
       this.rebuildDocuments(this.store.list());
+    });
+  }
+
+  listPersonProfiles(): PersonProfile[] {
+    this.syncIfChanged();
+    return this.store.getByKind("person_profile")
+      .map(personProfileFromDocument)
+      .sort((left, right) => left.displayName.localeCompare(right.displayName, "zh-CN"));
+  }
+
+  getPersonProfile(id: string): PersonProfile | undefined {
+    this.syncIfChanged();
+    const document = this.store.get(id);
+    return document?.metadata.kind === "person_profile" ? personProfileFromDocument(document) : undefined;
+  }
+
+  updatePersonProfile(id: string, patch: UpdatePersonProfileInput): PersonProfile {
+    this.syncIfChanged();
+    const existing = this.store.get(id);
+    if (!existing || existing.metadata.kind !== "person_profile") {
+      throw new MemoryVaultError(`person profile not found: ${id}`, "MEMORY_VAULT_INVALID_DOCUMENT");
+    }
+    const displayName = patch.displayName === undefined
+      ? existing.metadata.displayName!
+      : cleanPersonField(patch.displayName, "displayName", 80);
+    const aliases = patch.aliases === undefined
+      ? existing.metadata.aliases
+      : cleanPersonList(patch.aliases, "aliases", 20, 80);
+    const relationship = patch.relationship === undefined
+      ? existing.metadata.relationship
+      : patch.relationship === null || !patch.relationship.trim()
+        ? null
+        : cleanPersonField(patch.relationship, "relationship", 120);
+    const visibility = patch.visibility ?? existing.metadata.visibility!;
+    const requestedCharacterIds = patch.visibleToCharacterIds ?? existing.metadata.visibleToCharacterIds;
+    const visibleToCharacterIds = visibility === "global"
+      ? []
+      : validateVisibleCharacterIds(this.options.database, requestedCharacterIds);
+    const markdown = patch.markdown === undefined ? existing.body : patch.markdown.replace(/\r\n?/g, "\n");
+    assertPersonProfileWithinLimit(markdown);
+    const now = this.now();
+    const input: VaultWriteInput = {
+      metadata: {
+        ...stripGenerated(existing.metadata),
+        displayName,
+        aliases,
+        relationship,
+        visibility,
+        visibleToCharacterIds,
+        updatedAt: now,
+      },
+      body: markdown,
+    };
+    this.atomicMutation("person_profile_write", `person-profile:${id}:${createHash("sha256").update(JSON.stringify(patch)).digest("hex")}`, () => {
+      this.store.write(input, this.casForWrite(existing, input.metadata));
+      this.rebuildDocuments(this.store.list());
+    });
+    return this.getPersonProfile(id)!;
+  }
+
+  ensurePersonProfiles(): number {
+    this.syncIfChanged();
+    return this.atomicMutation("person_profiles_ensure", `person-profiles:${this.store.hash()}`, () => {
+      const changed = this.syncPersonProfileDocuments();
+      if (changed) this.rebuildDocuments(this.store.list());
+      return changed;
+    });
+  }
+
+  contextualizeRealityMemories(memories: RpMemory[], viewerCharacterId?: string, query = ""): RpMemory[] {
+    this.syncIfChanged();
+    const profiles = new Map(this.store.getByKind("person_profile").map((document) => [
+      normalizePersonKey(document.metadata.personKey!),
+      document,
+    ]));
+    return memories.flatMap((memory) => {
+      if (memory.realm !== "reality" || memory.type !== "person") return [memory];
+      const profile = profiles.get(normalizePersonKey(personKeyForMemory(memory)));
+      if (!profile) return [memory];
+      if (
+        profile.metadata.visibility === "selected_characters" &&
+        (!viewerCharacterId || !profile.metadata.visibleToCharacterIds.includes(viewerCharacterId))
+      ) return [];
+      const profileText = boundedPersonContext(profile, query);
+      return [{
+        ...memory,
+        content: profileText,
+        normalizedContent: normalizePersonContent(profileText),
+      }];
     });
   }
 
@@ -405,6 +505,7 @@ export class MemoryVaultService {
     );
     this.atomicMutation("memory_write", idempotencyKey ?? existing?.metadata.idempotencyKey ?? `memory:${memory.id}:${memory.updatedAt}`, () => {
       this.store.write(input, this.casForWrite(existing, input.metadata));
+      this.syncPersonProfileDocuments();
       this.rebuildDocuments(this.store.list());
     });
     return this.readMemory(memory.id)!;
@@ -422,6 +523,7 @@ export class MemoryVaultService {
     this.atomicMutation("memory_pair_write", idempotencyKey ?? `memory-pair:${previous.id}:${memory.id}`, () => {
       this.store.write(previousInput, this.casForWrite(previousDocument, previousInput.metadata));
       this.store.write(nextInput, this.casForWrite(undefined, nextInput.metadata));
+      this.syncPersonProfileDocuments();
       this.rebuildDocuments(this.store.list());
     });
     return this.readMemory(memory.id)!;
@@ -466,6 +568,7 @@ export class MemoryVaultService {
         };
         this.store.write(profileInput, this.casForWrite(existingProfile, profileInput.metadata));
       }
+      this.syncPersonProfileDocuments();
       this.rebuildDocuments(this.store.list());
     });
     return entries.map((entry) => this.readMemory(entry.memory.id)!);
@@ -537,6 +640,7 @@ export class MemoryVaultService {
   }
 
   private rebuildDocuments(documents: VaultDocument[]): MemoryVaultRebuildResult {
+    const byId = new Map(documents.map((document) => [document.metadata.id, document]));
     for (const document of documents) {
       const count = [...document.body].length;
       if (document.metadata.kind === "user_profile") assertProfileWithinLimit(document.body);
@@ -545,8 +649,95 @@ export class MemoryVaultService {
           `character SOUL.md must not exceed ${CHARACTER_SOUL_MAX_CHARACTERS} characters (received ${count})`,
         );
       }
+      if (document.metadata.kind === "person_profile") assertPersonProfileWithinLimit(document.body);
+      if (document.metadata.kind === "person_profile") {
+        for (const memoryId of document.metadata.sourceMemoryIds) {
+          const source = byId.get(memoryId);
+          if (
+            source?.metadata.kind !== "memory" || source.metadata.realm !== "reality" ||
+            source.metadata.type !== "person" ||
+            normalizePersonKey(source.metadata.memoryKey ?? `memory:${source.metadata.id}`) !==
+              normalizePersonKey(document.metadata.personKey!)
+          ) {
+            throw new MemoryVaultError(
+              `person profile ${document.metadata.id} has invalid source memory ${memoryId}`,
+              "MEMORY_VAULT_INVALID_DOCUMENT",
+            );
+          }
+        }
+      }
     }
     return this.projection.rebuild(documents, this.store.hash(documents), this.now());
+  }
+
+  private syncPersonProfileDocuments(): number {
+    const documents = this.store.list();
+    const personMemories = documents.filter((document) =>
+      document.metadata.kind === "memory" &&
+      document.metadata.realm === "reality" &&
+      document.metadata.type === "person"
+    );
+    const grouped = new Map<string, VaultDocument[]>();
+    for (const memory of personMemories) {
+      const key = normalizePersonKey(memory.metadata.memoryKey ?? `memory:${memory.metadata.id}`);
+      grouped.set(key, [...(grouped.get(key) ?? []), memory]);
+    }
+    const existingProfiles = new Map(this.store.getByKind("person_profile").map((document) => [
+      normalizePersonKey(document.metadata.personKey!),
+      document,
+    ]));
+    let changed = 0;
+    for (const [personKey, sources] of grouped) {
+      const active = sources.filter((document) =>
+        document.metadata.validity === "active" && document.metadata.confirmed
+      );
+      const existing = existingProfiles.get(personKey);
+      if (!active.length && !existing) continue;
+      const structured = structuredPersonMetadata(active);
+      const fallbackDisplayName = derivePersonDisplayName(personKey);
+      const canUpgradeFallback = Boolean(
+        existing && structured.displayName && existing.metadata.displayName === fallbackDisplayName
+      );
+      const displayName = canUpgradeFallback
+        ? structured.displayName!
+        : existing?.metadata.displayName ?? structured.displayName ?? fallbackDisplayName;
+      const relationship = existing?.metadata.relationship ?? structured.relationship ?? null;
+      const aliases = [...new Set([...(existing?.metadata.aliases ?? []), ...structured.aliases])].sort();
+      const sourceMemoryIds = sources.map((document) => document.metadata.id).sort();
+      const confidence = active.length
+        ? Math.max(...active.map((document) => document.metadata.confidence ?? 0))
+        : 0;
+      const currentBody = canUpgradeFallback
+        ? replaceGeneratedPersonHeading(existing!.body, fallbackDisplayName, displayName)
+        : existing?.body;
+      const body = projectPersonProfileBody(currentBody, displayName, active);
+      assertPersonProfileWithinLimit(body);
+      const now = this.now();
+      const input: VaultWriteInput = {
+        metadata: baseMetadata({
+          id: existing?.metadata.id ?? personProfileId(personKey),
+          kind: "person_profile",
+          realm: "reality",
+          scope: "global",
+          createdAt: existing?.metadata.createdAt ?? earliestTimestamp(sources),
+          updatedAt: now,
+          tags: ["person-directory"],
+          personKey,
+          displayName,
+          aliases,
+          relationship,
+          visibility: existing?.metadata.visibility ?? "global",
+          visibleToCharacterIds: existing?.metadata.visibleToCharacterIds ?? [],
+          sourceMemoryIds,
+          personConfidence: confidence,
+        }),
+        body,
+      };
+      if (existing && personProfileMatches(existing, input)) continue;
+      this.store.write(input, this.casForWrite(existing, input.metadata));
+      changed += 1;
+    }
+    return changed;
   }
 
   private snapshot(): LegacyVaultSnapshot {
@@ -994,6 +1185,14 @@ function baseMetadata(
     confidence: patch.confidence ?? null,
     idempotencyKey: patch.idempotencyKey ?? null,
     scene: patch.scene ?? null,
+    personKey: patch.personKey ?? null,
+    displayName: patch.displayName ?? null,
+    aliases: patch.aliases ?? [],
+    relationship: patch.relationship ?? null,
+    visibility: patch.visibility ?? null,
+    visibleToCharacterIds: patch.visibleToCharacterIds ?? [],
+    sourceMemoryIds: patch.sourceMemoryIds ?? [],
+    personConfidence: patch.personConfidence ?? null,
   };
 }
 
@@ -1004,6 +1203,188 @@ function stripGenerated(metadata: VaultFrontmatter): VaultWriteInput["metadata"]
 
 function sceneMarkdown(scene: SceneState): string {
   return scene.summary;
+}
+
+function personProfileFromDocument(document: VaultDocument): PersonProfile {
+  const metadata = document.metadata;
+  return {
+    id: metadata.id,
+    personKey: metadata.personKey!,
+    displayName: metadata.displayName!,
+    aliases: [...metadata.aliases],
+    ...(metadata.relationship ? { relationship: metadata.relationship } : {}),
+    visibility: metadata.visibility!,
+    visibleToCharacterIds: [...metadata.visibleToCharacterIds],
+    sourceMemoryIds: [...metadata.sourceMemoryIds],
+    confidence: metadata.personConfidence!,
+    markdown: document.body,
+    revision: metadata.revision,
+    createdAt: metadata.createdAt,
+    updatedAt: metadata.updatedAt,
+  };
+}
+
+function personProfileId(personKey: string): string {
+  return `person_${createHash("sha256").update(normalizePersonKey(personKey)).digest("hex").slice(0, 24)}`;
+}
+
+function personKeyForMemory(memory: RpMemory): string {
+  return memory.key?.trim() || `memory:${memory.id}`;
+}
+
+function normalizePersonKey(value: string): string {
+  return value.trim().toLocaleLowerCase().replace(/\s+/gu, "_").slice(0, 240);
+}
+
+function derivePersonDisplayName(personKey: string): string {
+  const tail = personKey.split(/[.:/]/u).filter(Boolean).at(-1) ?? personKey;
+  if (/^[a-f0-9]{16,}$/u.test(tail)) return `相关人物 ${tail.slice(0, 6)}`;
+  const display = tail.replace(/[_-]+/gu, " ").trim();
+  return [...display].slice(0, 80).join("") || "相关人物";
+}
+
+function structuredPersonMetadata(documents: VaultDocument[]): {
+  displayName?: string;
+  aliases: string[];
+  relationship?: string;
+} {
+  const ordered = [...documents].sort((left, right) => right.metadata.updatedAt.localeCompare(left.metadata.updatedAt));
+  const values = ordered.flatMap((document) => document.metadata.tags);
+  return {
+    displayName: taggedValue(values, "person-name:"),
+    aliases: values.flatMap((tag) => tag.startsWith("person-alias:") ? [tag.slice("person-alias:".length)] : [])
+      .map((value) => value.trim()).filter(Boolean),
+    relationship: taggedValue(values, "person-relationship:"),
+  };
+}
+
+function taggedValue(tags: string[], prefix: string): string | undefined {
+  return tags.find((tag) => tag.startsWith(prefix))?.slice(prefix.length).trim() || undefined;
+}
+
+function projectPersonProfileBody(
+  current: string | undefined,
+  displayName: string,
+  activeSources: VaultDocument[],
+): string {
+  const manual = stripPersonFacts(current ?? `# ${displayName}\n`).trimEnd();
+  const facts = [...activeSources]
+    .sort((left, right) => right.metadata.updatedAt.localeCompare(left.metadata.updatedAt))
+    .map((document) => {
+      const content = document.body.trim().replace(/\s+/gu, " ");
+      const confidence = (document.metadata.confidence ?? 0).toFixed(2);
+      return `- ${content}\n  - 来源：\`${document.metadata.id}\`；置信度：${confidence}`;
+    })
+    .join("\n");
+  return `${manual || `# ${displayName}`}\n\n${PERSON_FACTS_START}\n## 已确认信息\n\n${facts}\n${PERSON_FACTS_END}\n`;
+}
+
+function replaceGeneratedPersonHeading(markdown: string, previous: string, next: string): string {
+  const lines = markdown.split("\n");
+  if (lines[0]?.trim() === `# ${previous}`) lines[0] = `# ${next}`;
+  return lines.join("\n");
+}
+
+function stripPersonFacts(markdown: string): string {
+  const start = markdown.indexOf(PERSON_FACTS_START);
+  if (start < 0) return markdown;
+  const end = markdown.indexOf(PERSON_FACTS_END, start);
+  if (end < 0) return markdown.slice(0, start);
+  return `${markdown.slice(0, start)}${markdown.slice(end + PERSON_FACTS_END.length)}`.trimEnd();
+}
+
+function boundedPersonContext(document: VaultDocument, query: string): string {
+  const identity = [
+    `人物档案：${document.metadata.displayName}`,
+    document.metadata.relationship ? `与用户关系：${document.metadata.relationship}` : "",
+    document.metadata.aliases.length ? `别名：${document.metadata.aliases.join("、")}` : "",
+  ].filter(Boolean).join("\n");
+  const queryTerms = personContextTerms(query);
+  const bodyLines = document.body.split("\n")
+    .map((line) => line.trim())
+    .filter((line) => line && !line.startsWith("#") && !line.startsWith("<!--") &&
+      !/^- 来源：/u.test(line))
+    .map((line) => line.replace(/^-\s*/u, ""));
+  const ordered = [...new Set(bodyLines)].sort((left, right) =>
+    personLineScore(right, queryTerms) - personLineScore(left, queryTerms)
+  );
+  let context = identity;
+  for (const line of ordered) {
+    const candidate = `${context}\n${line}`;
+    if ([...candidate].length > PERSON_CONTEXT_MAX_CHARACTERS) continue;
+    context = candidate;
+  }
+  return context;
+}
+
+function personContextTerms(value: string): string[] {
+  const normalized = value.toLocaleLowerCase();
+  const words = normalized.match(/[a-z0-9_]{2,}/gu) ?? [];
+  const han = [...(normalized.match(/[\p{Script=Han}]+/gu) ?? [])].flatMap((sequence) => {
+    const characters = [...sequence];
+    return characters.flatMap((character, index) => index + 1 < characters.length
+      ? [`${character}${characters[index + 1]}`]
+      : []);
+  });
+  return [...new Set([...words, ...han])];
+}
+
+function personLineScore(line: string, queryTerms: string[]): number {
+  const normalized = line.toLocaleLowerCase();
+  return queryTerms.reduce((score, term) => score + (normalized.includes(term) ? 1 : 0), 0);
+}
+
+function normalizePersonContent(value: string): string {
+  return value.trim().toLocaleLowerCase().replace(/[\s，。！？、,.!?;；:：'"“”‘’()（）]+/g, "");
+}
+
+function earliestTimestamp(documents: VaultDocument[]): string {
+  return documents.map((document) => document.metadata.createdAt).sort()[0];
+}
+
+function personProfileMatches(existing: VaultDocument, input: VaultWriteInput): boolean {
+  const current = stripGenerated(existing.metadata);
+  const target = input.metadata;
+  return existing.body === input.body && JSON.stringify({ ...current, updatedAt: null, revision: null }) ===
+    JSON.stringify({ ...target, updatedAt: null, revision: null });
+}
+
+function cleanPersonField(value: string, field: string, max: number): string {
+  const text = value.trim();
+  if (!text) throw new MemoryVaultError(`${field} is required`, "MEMORY_VAULT_INVALID_DOCUMENT");
+  if ([...text].length > max) {
+    throw new MemoryVaultError(`${field} exceeds ${max} characters`, "MEMORY_VAULT_INVALID_DOCUMENT");
+  }
+  return text;
+}
+
+function cleanPersonList(values: string[], field: string, maxItems: number, maxCharacters: number): string[] {
+  if (values.length > maxItems) {
+    throw new MemoryVaultError(`${field} exceeds ${maxItems} items`, "MEMORY_VAULT_INVALID_DOCUMENT");
+  }
+  return [...new Set(values.map((value) => cleanPersonField(value, field, maxCharacters)))];
+}
+
+function validateVisibleCharacterIds(database: AppDatabase, values: string[]): string[] {
+  const requested = [...new Set(values)];
+  const existing = new Set(
+    (database.connection.prepare("SELECT id FROM characters").all() as Array<{ id: string }>).map((row) => row.id),
+  );
+  const unknown = requested.filter((id) => !existing.has(id));
+  if (unknown.length) {
+    throw new MemoryVaultError(`unknown visible character: ${unknown.join(", ")}`, "MEMORY_VAULT_INVALID_DOCUMENT");
+  }
+  return requested.sort();
+}
+
+function assertPersonProfileWithinLimit(markdown: string): void {
+  const count = [...markdown].length;
+  if (count > PERSON_PROFILE_MAX_CHARACTERS) {
+    throw new MemoryVaultError(
+      `person profile must not exceed ${PERSON_PROFILE_MAX_CHARACTERS} characters (received ${count})`,
+      "MEMORY_VAULT_INVALID_DOCUMENT",
+    );
+  }
 }
 
 function atomicJson(path: string, value: unknown, beforeCommit?: () => void): void {

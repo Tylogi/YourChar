@@ -93,6 +93,9 @@ test("server serves chat UI and debug model traces", async () => {
     assert.match(html, /data-world-id/);
     assert.match(html, /api\/v1\/world-conversations/);
     assert.match(html, /function sendWorldChatMessage/);
+    assert.match(html, /id="resetWorldConversationBtn"/);
+    assert.match(html, /function resetCurrentWorldConversation/);
+    assert.match(html, /method: "DELETE"/);
     assert.match(html, /function worldAvatarCluster/);
     assert.match(html, /data-conversation-session-select/);
     assert.match(html, /data-session-draft/);

@@ -2,7 +2,7 @@
 
 Status: implemented trial baseline with controlled initiative
 Audience: maintainers, coding agents, reviewers, and test agents
-Last updated: 2026-07-20
+Last updated: 2026-07-21
 
 ## 1. Product Contract
 
@@ -108,18 +108,31 @@ For each world member, one tick performs this order:
 
 Daily planning uses the model profile bound to that character. The call receives
 a bounded SOUL excerpt, bounded world rules, compact place IDs/names/capability
-IDs, current runtime, and at most 20 existing schedule entries. Output is strict
-JSON and is validated against these rules:
+IDs, current runtime and energy, home place, recent settled experiences, public
+runtime for other world members, the active story event, and at most 20 existing
+schedule entries. Output is strict JSON and is validated against these rules:
 
-- zero to four activities;
+- zero to three activities, where an empty list is valid when no useful plan is needed;
 - an existing place and one capability assigned to that place, except that travel targets any place in the same world;
 - start at least five minutes in the future and within 30 hours;
 - duration from 15 minutes to four hours;
+- no overlap with existing or newly accepted activities;
+- at least 30 minutes between different places unless the next item is travel;
+- no work, study, exercise, or creation plan while energy is below 25;
+- no travel whose destination is already the current place;
 - bounded title, summary, and salience.
 
-Malformed, failed, empty, or unavailable model output uses a deterministic local
-fallback. No raw model draft becomes durable state. Planning is idempotent per
-membership/day/index; process retry returns the same schedule item.
+Malformed, failed, unavailable, or entirely rejected model output creates no
+schedule. The Coordinator no longer samples place capabilities to fabricate a
+local fallback; an implausible empty day is less harmful than false continuity.
+A valid model response may intentionally return zero plans. No raw model draft
+becomes durable state. Planning is idempotent per membership/day/index; process
+retry returns the same schedule item. The manual "安排今日" control forces a new
+attempt, while the background daily checkpoint prevents repeated failed calls.
+
+If a character is a participant in an open World story event, unrelated
+offscreen planning is deferred. The event is the authoritative activity until
+it closes; autonomy resumes from the resulting runtime and settlement state.
 
 While travel is active, runtime remains at the origin with availability
 `traveling`; the destination is persisted only when the interval ends. Other
@@ -159,9 +172,15 @@ global cooldown is 120 minutes and is configurable between 15 and 1440 minutes.
 
 Only the final first-person SMS is appended to Pi history. The call receives the
 stable character context, latest bounded runtime/relationship/memory context,
-the triggering event, and the last four visible messages. It receives no tools.
-Failures retry after ten minutes using a dedicated last-attempt timestamp and
-become `failed` after three attempts.
+the triggering event, and the last four visible messages with their actual send
+times. A trusted temporal envelope also supplies current UTC/local time, the
+last visible message time and role, exact elapsed seconds, and whether both
+timestamps fall on the same world-local date. Relative-time wording must follow
+that envelope instead of conversational tone. A deterministic guard rejects
+clear contradictions such as referring to a conversation from five minutes ago
+as "last night" and permits one corrected generation; the rejected draft is
+never appended. It receives no tools. Failures retry after ten minutes using a
+dedicated last-attempt timestamp and become `failed` after three attempts.
 Disabling proactive delivery skips existing pending work so re-enabling it does
 not unexpectedly send stale events.
 
@@ -391,7 +410,7 @@ world history into every prompt.
 - `src/world/proactive-policy.ts`: deterministic topic, scoring, gating, cooldown and ranking policy
 - `src/world/conversation-repository.ts`: schema-26 World timeline persistence
 - `src/world/conversation-service.ts`: events, observations, relationships, and unread state
-- `src/world/conversation-prompts.ts`: Director, actor, and Analyzer output contracts
+- `src/world/conversation-prompts.ts`: World narrative and Analyzer output contracts
 - `src/mcp/world-server.ts`: fixed character-bound MCP
 - `src/context/planner.ts`: stable/dynamic placement and budgets
 - `src/domain/kernel.ts`: model calls, lifecycle wiring, public control plane

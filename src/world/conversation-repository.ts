@@ -5,7 +5,10 @@ import type {
   WorldConversation,
   WorldConversationAttachment,
   WorldConversationMessage,
+  WorldConversationReset,
   WorldConversationTurn,
+  WorldNarrativeContext,
+  WorldNarrativePromptMessage,
   WorldStoryEvent,
   WorldStoryTransition,
 } from "./types.js";
@@ -151,6 +154,170 @@ export class WorldConversationRepository {
     return Number(row.count);
   }
 
+  resetConversation(worldId: string, resetAt: string): WorldConversationReset {
+    const openEvent = this.getOpenStoryEvent(worldId);
+    const modelSessionIds = (this.database.connection.prepare(`
+      SELECT DISTINCT model_session_id FROM world_narrative_contexts WHERE world_id = ?
+    `).all(worldId) as Row[]).map((row) => String(row.model_session_id));
+    const count = (sql: string, ...parameters: string[]) => Number(
+      (this.database.connection.prepare(sql).get(...parameters) as Row).count,
+    );
+    const deleted = {
+      messages: count("SELECT COUNT(*) AS count FROM world_conversation_messages WHERE world_id = ?", worldId),
+      turns: count("SELECT COUNT(*) AS count FROM world_conversation_turns WHERE world_id = ?", worldId),
+      narrativeContexts: count("SELECT COUNT(*) AS count FROM world_narrative_contexts WHERE world_id = ?", worldId),
+      narrativePromptMessages: count(`
+        SELECT COUNT(*) AS count FROM world_narrative_prompt_messages
+        WHERE context_id IN (SELECT id FROM world_narrative_contexts WHERE world_id = ?)
+      `, worldId),
+      openEventObservations: openEvent
+        ? count("SELECT COUNT(*) AS count FROM world_character_observations WHERE event_id = ?", openEvent.id)
+        : 0,
+      openEventTransitions: openEvent
+        ? count("SELECT COUNT(*) AS count FROM world_story_event_transitions WHERE event_id = ?", openEvent.id)
+        : 0,
+      openEvents: openEvent ? 1 : 0,
+    };
+    const conversation = this.transaction(() => {
+      this.database.connection.prepare("DELETE FROM world_narrative_contexts WHERE world_id = ?").run(worldId);
+      if (openEvent) {
+        this.database.connection.prepare(
+          "DELETE FROM world_story_event_transitions WHERE event_id = ?",
+        ).run(openEvent.id);
+        this.database.connection.prepare(
+          "DELETE FROM world_character_observations WHERE event_id = ?",
+        ).run(openEvent.id);
+        this.database.connection.prepare("DELETE FROM world_story_events WHERE id = ?").run(openEvent.id);
+      }
+      this.database.connection.prepare("DELETE FROM world_conversation_turns WHERE world_id = ?").run(worldId);
+      this.database.connection.prepare("DELETE FROM world_conversations WHERE world_id = ?").run(worldId);
+      return this.ensureConversation(worldId, resetAt);
+    });
+    return {
+      conversation,
+      resetAt,
+      ...(openEvent ? { removedOpenEventId: openEvent.id } : {}),
+      modelSessionIds,
+      deleted,
+    };
+  }
+
+  createNarrativeContext(context: WorldNarrativeContext): WorldNarrativeContext {
+    this.database.connection.prepare(`
+      INSERT INTO world_narrative_contexts(
+        id, world_id, event_id, model_profile_id, model_key, model_session_id,
+        system_prompt, stable_prefix_hash, participant_ids_json, start_message_sequence,
+        status, close_reason, created_at, updated_at, closed_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(
+      context.id,
+      context.worldId,
+      context.eventId ?? null,
+      context.modelProfileId,
+      context.modelKey,
+      context.modelSessionId,
+      context.systemPrompt,
+      context.stablePrefixHash,
+      JSON.stringify(context.participantIds),
+      context.startMessageSequence,
+      context.status,
+      context.closeReason ?? null,
+      context.createdAt,
+      context.updatedAt,
+      context.closedAt ?? null,
+    );
+    return this.getNarrativeContext(context.id)!;
+  }
+
+  getNarrativeContext(id: string): WorldNarrativeContext | undefined {
+    const row = this.database.connection.prepare(`
+      SELECT * FROM world_narrative_contexts WHERE id = ?
+    `).get(id) as Row | undefined;
+    return row ? mapNarrativeContext(row) : undefined;
+  }
+
+  getActiveNarrativeContext(worldId: string): WorldNarrativeContext | undefined {
+    const row = this.database.connection.prepare(`
+      SELECT * FROM world_narrative_contexts
+      WHERE world_id = ? AND status = 'active' LIMIT 1
+    `).get(worldId) as Row | undefined;
+    return row ? mapNarrativeContext(row) : undefined;
+  }
+
+  bindNarrativeContextEvent(id: string, eventId: string, updatedAt: string): WorldNarrativeContext {
+    this.database.connection.prepare(`
+      UPDATE world_narrative_contexts SET event_id = ?, updated_at = ?
+      WHERE id = ? AND status = 'active'
+    `).run(eventId, updatedAt, id);
+    return this.getNarrativeContext(id)!;
+  }
+
+  updateNarrativeContextParticipants(
+    id: string,
+    participantIds: string[],
+    updatedAt: string,
+  ): WorldNarrativeContext {
+    this.database.connection.prepare(`
+      UPDATE world_narrative_contexts SET participant_ids_json = ?, updated_at = ?
+      WHERE id = ? AND status = 'active'
+    `).run(JSON.stringify([...new Set(participantIds)]), updatedAt, id);
+    return this.getNarrativeContext(id)!;
+  }
+
+  closeNarrativeContext(id: string, reason: string, closedAt: string): WorldNarrativeContext {
+    this.database.connection.prepare(`
+      UPDATE world_narrative_contexts
+      SET status = 'closed', close_reason = ?, updated_at = ?, closed_at = ?
+      WHERE id = ? AND status = 'active'
+    `).run(reason, closedAt, closedAt, id);
+    return this.getNarrativeContext(id)!;
+  }
+
+  appendNarrativePromptMessage(
+    input: Omit<WorldNarrativePromptMessage, "sequence">,
+  ): WorldNarrativePromptMessage {
+    const row = this.database.connection.prepare(`
+      SELECT COALESCE(MAX(sequence), 0) + 1 AS sequence
+      FROM world_narrative_prompt_messages WHERE context_id = ?
+    `).get(input.contextId) as Row;
+    const sequence = Number(row.sequence);
+    this.database.connection.prepare(`
+      INSERT INTO world_narrative_prompt_messages(
+        id, context_id, turn_id, sequence, role, payload_json, created_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?)
+    `).run(
+      input.id,
+      input.contextId,
+      input.turnId,
+      sequence,
+      input.role,
+      JSON.stringify(input.payload),
+      input.createdAt,
+    );
+    return { ...input, sequence };
+  }
+
+  listNarrativePromptMessages(contextId: string, limit = 500): WorldNarrativePromptMessage[] {
+    const bounded = Math.max(1, Math.min(Math.floor(limit), 1_000));
+    return (this.database.connection.prepare(`
+      SELECT * FROM world_narrative_prompt_messages
+      WHERE context_id = ? ORDER BY sequence LIMIT ?
+    `).all(contextId, bounded) as Row[]).map(mapNarrativePromptMessage);
+  }
+
+  narrativePromptMessageCount(contextId: string): number {
+    const row = this.database.connection.prepare(`
+      SELECT COUNT(*) AS count FROM world_narrative_prompt_messages WHERE context_id = ?
+    `).get(contextId) as Row;
+    return Number(row.count);
+  }
+
+  deleteNarrativePromptMessages(contextId: string): number {
+    return Number(this.database.connection.prepare(`
+      DELETE FROM world_narrative_prompt_messages WHERE context_id = ?
+    `).run(contextId).changes);
+  }
+
   getStoryEvent(id: string): WorldStoryEvent | undefined {
     const row = this.database.connection.prepare(`
       SELECT * FROM world_story_events WHERE id = ?
@@ -179,8 +346,8 @@ export class WorldConversationRepository {
     this.database.connection.prepare(`
       INSERT INTO world_story_events(
         id, world_id, place_id, title, summary, objective, status, revision,
-        created_at, updated_at, started_at, ended_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        created_at, updated_at, started_at, ended_at, settlement_summary, settled_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT(id) DO UPDATE SET
         place_id = excluded.place_id,
         title = excluded.title,
@@ -190,7 +357,9 @@ export class WorldConversationRepository {
         revision = excluded.revision,
         updated_at = excluded.updated_at,
         started_at = excluded.started_at,
-        ended_at = excluded.ended_at
+        ended_at = excluded.ended_at,
+        settlement_summary = excluded.settlement_summary,
+        settled_at = excluded.settled_at
     `).run(
       event.id,
       event.worldId,
@@ -204,6 +373,8 @@ export class WorldConversationRepository {
       event.updatedAt,
       event.startedAt ?? null,
       event.endedAt ?? null,
+      event.settlementSummary ?? "",
+      event.settledAt ?? null,
     );
     this.database.connection.prepare(`
       DELETE FROM world_story_event_participants WHERE event_id = ?
@@ -289,6 +460,14 @@ export class WorldConversationRepository {
     `).all(characterId, worldId, bounded) as Row[]).map(mapObservation);
   }
 
+  listObservationsForEvent(eventId: string, limit = 200): WorldCharacterObservation[] {
+    const bounded = Math.max(1, Math.min(Math.floor(limit), 500));
+    return (this.database.connection.prepare(`
+      SELECT * FROM world_character_observations
+      WHERE event_id = ? ORDER BY created_at, id LIMIT ?
+    `).all(eventId, bounded) as Row[]).map(mapObservation);
+  }
+
   getCharacterRelationship(
     worldId: string,
     subjectCharacterId: string,
@@ -367,6 +546,10 @@ export class WorldConversationRepository {
       updatedAt: String(row.updated_at),
       ...(optionalString(row.started_at) ? { startedAt: optionalString(row.started_at) } : {}),
       ...(optionalString(row.ended_at) ? { endedAt: optionalString(row.ended_at) } : {}),
+      ...(optionalString(row.settlement_summary)
+        ? { settlementSummary: optionalString(row.settlement_summary) }
+        : {}),
+      ...(optionalString(row.settled_at) ? { settledAt: optionalString(row.settled_at) } : {}),
     };
   }
 }
@@ -404,6 +587,38 @@ function mapMessage(row: Row): WorldConversationMessage {
     ...(optionalString(row.sender_id) ? { senderId: optionalString(row.sender_id) } : {}),
     content: String(row.content),
     attachments: parseAttachments(row.attachments_json),
+    createdAt: String(row.created_at),
+  };
+}
+
+function mapNarrativeContext(row: Row): WorldNarrativeContext {
+  return {
+    id: String(row.id),
+    worldId: String(row.world_id),
+    ...(optionalString(row.event_id) ? { eventId: optionalString(row.event_id) } : {}),
+    modelProfileId: String(row.model_profile_id),
+    modelKey: String(row.model_key),
+    modelSessionId: String(row.model_session_id),
+    systemPrompt: String(row.system_prompt),
+    stablePrefixHash: String(row.stable_prefix_hash),
+    participantIds: parseStringArray(row.participant_ids_json),
+    startMessageSequence: Number(row.start_message_sequence),
+    status: String(row.status) as WorldNarrativeContext["status"],
+    ...(optionalString(row.close_reason) ? { closeReason: optionalString(row.close_reason) } : {}),
+    createdAt: String(row.created_at),
+    updatedAt: String(row.updated_at),
+    ...(optionalString(row.closed_at) ? { closedAt: optionalString(row.closed_at) } : {}),
+  };
+}
+
+function mapNarrativePromptMessage(row: Row): WorldNarrativePromptMessage {
+  return {
+    id: String(row.id),
+    contextId: String(row.context_id),
+    turnId: String(row.turn_id),
+    sequence: Number(row.sequence),
+    role: String(row.role) as WorldNarrativePromptMessage["role"],
+    payload: parseRecord(row.payload_json),
     createdAt: String(row.created_at),
   };
 }
@@ -488,4 +703,26 @@ function parseAttachments(value: unknown): WorldConversationAttachment[] {
 
 function optionalString(value: unknown): string | undefined {
   return typeof value === "string" && value ? value : undefined;
+}
+
+function parseStringArray(value: unknown): string[] {
+  try {
+    const parsed = JSON.parse(String(value)) as unknown;
+    return Array.isArray(parsed)
+      ? parsed.filter((entry): entry is string => typeof entry === "string")
+      : [];
+  } catch {
+    return [];
+  }
+}
+
+function parseRecord(value: unknown): Record<string, unknown> {
+  try {
+    const parsed = JSON.parse(String(value)) as unknown;
+    return parsed && typeof parsed === "object" && !Array.isArray(parsed)
+      ? parsed as Record<string, unknown>
+      : {};
+  } catch {
+    return {};
+  }
 }
