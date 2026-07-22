@@ -10,10 +10,12 @@ import { parseExtractorOutput } from "./extractor.js";
 import { MemoryCoordinatorRepository } from "./repository.js";
 import type {
   MemoryCoordinatorStatus,
+  ExtractedMemoryCandidate,
   MemoryExtractionInput,
   MemoryExtractionJob,
   MemoryExtractor,
   MemoryTargetRealm,
+  TrustedRealityMemoryObserver,
 } from "./types.js";
 
 export class MemoryCoordinator {
@@ -29,6 +31,8 @@ export class MemoryCoordinator {
     private readonly clock: Clock,
     private readonly idGenerator: IdGenerator,
     private readonly extractor: MemoryExtractor,
+    private readonly autoCaptureRealityEnabled: () => boolean = () => false,
+    private readonly observeTrustedReality?: TrustedRealityMemoryObserver,
   ) {
     this.repository.recoverExpired(this.now());
     this.schedule();
@@ -225,19 +229,53 @@ export class MemoryCoordinator {
           return;
         }
         for (const [index, candidate] of candidates.entries()) {
-          this.lifecycle.propose({
+          const candidateTags = personMetadataTags(candidate, input.userText);
+          const trustedEvidence = job.realm === "reality"
+            ? trustedDailyEvidence(candidate, input.userText)
+            : undefined;
+          const trustedKey = trustedEvidence
+            ? candidate.key ?? `reality.daily.${candidate.type}.${shortHash(trustedEvidence)}`
+            : undefined;
+          const trustedTags = trustedEvidence
+            ? [...new Set([
+                ...candidateTags,
+                ...dailySemanticTags(candidate.type, trustedEvidence),
+                "daily-auto-capture",
+                "user-quote-evidence",
+              ])]
+            : candidateTags;
+          const memoryInput = {
             realm: job.realm,
             type: candidate.type,
-            key: candidate.key,
-            content: candidate.content,
+            key: trustedKey ?? candidate.key,
+            content: trustedEvidence ?? candidate.content,
             ...(job.characterId ? { characterId: job.characterId } : {}),
             sourceSessionId: job.sessionId,
             sourceMessageId: job.sourceMessageId,
-            salience: candidate.salience,
+            salience: trustedEvidence
+              ? Math.max(candidate.salience ?? 0, dailyAutoSalience(candidate.type))
+              : candidate.salience,
             confidence: candidate.confidence,
-            tags: candidate.tags,
+            tags: trustedTags,
             idempotencyKey: `${job.idempotencyKey}:candidate:${index}`,
-          });
+          };
+          if (trustedEvidence && trustedKey && this.observeTrustedReality) {
+            this.observeTrustedReality({
+              sourceSessionId: job.sessionId,
+              sourceMessageId: job.sourceMessageId,
+              candidateIndex: index,
+              claimKey: trustedKey,
+              claimType: candidate.type as RealityMemoryType,
+              exactQuote: trustedEvidence,
+              confidence: candidate.confidence ?? 0,
+              ...(candidate.salience === undefined ? {} : { salience: candidate.salience }),
+              ...(trustedTags?.length ? { tags: trustedTags } : {}),
+            });
+          } else if (trustedEvidence && this.autoCaptureRealityEnabled()) {
+            this.lifecycle.createControlPlane(memoryInput);
+          } else {
+            this.lifecycle.propose(memoryInput);
+          }
           resultCount += 1;
         }
       }
@@ -301,11 +339,95 @@ export function explicitForget(text: string): string | undefined {
   return value || undefined;
 }
 
-function hasDurableSignal(text: string, mode: Mode): boolean {
+export function hasDurableSignal(text: string, mode: Mode): boolean {
   if (mode === "sms") {
-    return /(?:我叫|我的名字|我住在|我来自|我喜欢|我不喜欢|我的目标|我的项目|我正在做|我认识|对我来说|以后不要|我的边界|I\s+(?:am|live|prefer|like|dislike|work on|know))/iu.test(text);
+    const normalized = text.replace(/\s+/gu, " ").trim();
+    if (!normalized) return false;
+    const durable = /(?:我(?:叫|的名字|是|住在|来自|喜欢|爱吃|常吃|不吃|不喝|不喜欢|讨厌|偏好|习惯|通常|一般|平时|每天|每周|工作日|周末|一直|正在|最近在|打算|计划|希望|目标|家人|家里|有个|认识|妹妹|姐姐|哥哥|弟弟|父母|朋友|同事|导师)|我的(?:目标|项目|课题|习惯|偏好|边界|家人|朋友|同事|导师)|对我来说|以后(?:请)?不要|回复我时|回答我时|跟我说话时|请(?:先|尽量|不要)|I\s+(?:am|live|come from|prefer|usually|normally|always|like|dislike|avoid|work on|plan|hope|know|have))/iu.test(normalized);
+    const namedRelationship = /(?:是|就是)我(?:的)?[^，。！？,.!?]{0,12}(?:同学|朋友|同事|导师|老师|室友|邻居|家人|亲戚|伴侣|恋人|对象|前任|客户)|我(?:的)?[^，。！？,.!?]{0,12}(?:同学|朋友|同事|导师|老师|室友|邻居|家人|亲戚|伴侣|恋人|对象|前任|客户)(?:叫|是|名叫)/u.test(normalized);
+    const onlyTransient = /^(?:我)?(?:今天|现在|刚刚|刚才|这会儿|今晚|这次|临时|today|right now|just now).{0,40}(?:累|困|饿|忙|开心|难过|生气|在下雨|有事|tired|busy|happy|sad|hungry)[。！？.!?]?$/iu.test(normalized);
+    if (onlyTransient) return false;
+    if (durable || namedRelationship) return true;
+    if (/^(?:嗯+|哦+|好(?:的|呀|啊)?|行|可以|知道了|收到|谢谢|早|晚安|hi|hello|ok(?:ay)?|thanks?)[。！？.!?~～]*$/iu.test(normalized)) {
+      return false;
+    }
+    const selfDisclosure = /(?:^|[，。！？,.!?\s])(?:我|我的|我们|咱们|家里|家人|I\b|I'm\b|I've\b|my\b)/iu.test(normalized);
+    return selfDisclosure && [...normalized].length >= 5;
   }
   return /(?:我们约定|世界观|剧情里|从此|关系变成|角色知道|秘密是|边界是|誓言|线索)/u.test(text);
+}
+
+function trustedDailyEvidence(
+  candidate: { confidence?: number; evidence?: { user: string } },
+  userText: string,
+): string | undefined {
+  if ((candidate.confidence ?? 0) < 0.88) return undefined;
+  const evidence = candidate.evidence?.user.replace(/\s+/gu, " ").trim();
+  if (!evidence || [...evidence].length < 2 || !normalizeEvidence(userText).includes(evidence)) return undefined;
+  if (isSensitiveDailyMemory(evidence)) return undefined;
+  return evidence;
+}
+
+function normalizeEvidence(value: string): string {
+  return value.replace(/\s+/gu, " ").trim();
+}
+
+export function isSensitiveDailyMemory(value: string): boolean {
+  return /(?:密码|口令|验证码|密钥|token|api\s*key|secret|身份证|护照|银行卡|信用卡|账号|账户|转账|收入|工资|存款|负债|病史|疾病|诊断|药物|过敏|手机号|电话号码|邮箱|电子邮件|详细地址|住址|门牌号|password|credential|verification code|identity card|passport|bank|credit card|salary|diagnosis|medical|phone number|email|street address)/iu.test(value);
+}
+
+function dailyAutoSalience(type: string): number {
+  if (type === "boundary" || type === "goal") return 0.85;
+  if (type === "preference" || type === "project" || type === "person") return 0.78;
+  return 0.72;
+}
+
+function dailySemanticTags(type: string, evidence: string): string[] {
+  const tags: string[] = [];
+  if (type === "preference") tags.push("偏好");
+  if (type === "goal") tags.push("目标", "计划");
+  if (type === "project") tags.push("项目", "工作");
+  if (type === "person") tags.push("人际", "人物");
+  if (type === "boundary") tags.push("边界");
+  if (/(?:平时|通常|一般|每天|每周|工作日|周末|起床|睡觉|作息|习惯)/u.test(evidence)) {
+    tags.push("作息", "日常习惯");
+  }
+  if (/(?:吃|喝|香菜|饮食|忌口|口味)/u.test(evidence)) tags.push("饮食", "忌口");
+  if (/(?:回复|回答|说话|结论|简洁|详细)/u.test(evidence)) tags.push("沟通", "回复偏好");
+  if (/(?:妹妹|姐姐|哥哥|弟弟|父母|家人)/u.test(evidence)) tags.push("家人");
+  return tags;
+}
+
+function personMetadataTags(candidate: ExtractedMemoryCandidate, userText: string): string[] {
+  const ordinary = (candidate.tags ?? []).filter((tag) =>
+    !tag.startsWith("person-name:") &&
+    !tag.startsWith("person-alias:") &&
+    !tag.startsWith("person-relationship:")
+  );
+  if (candidate.type !== "person" || !candidate.person) return ordinary;
+  const source = userText.toLocaleLowerCase();
+  const name = source.includes(candidate.person.name.toLocaleLowerCase())
+    ? taggedPersonValue("person-name:", candidate.person.name)
+    : undefined;
+  const aliases = (candidate.person.aliases ?? [])
+    .filter((alias) => source.includes(alias.toLocaleLowerCase()))
+    .map((alias) => taggedPersonValue("person-alias:", alias))
+    .filter((tag): tag is string => Boolean(tag));
+  const relationship = candidate.person.relationship && source.includes(candidate.person.relationship.toLocaleLowerCase())
+    ? taggedPersonValue("person-relationship:", candidate.person.relationship)
+    : undefined;
+  return [...new Set([
+    ...ordinary,
+    ...(name ? [name] : []),
+    ...aliases,
+    ...(relationship ? [relationship] : []),
+  ])].slice(0, 20);
+}
+
+function taggedPersonValue(prefix: string, value: string): string | undefined {
+  const clean = value.replace(/\s+/gu, " ").trim();
+  if (!clean) return undefined;
+  return `${prefix}${[...clean].slice(0, 80 - prefix.length).join("")}`;
 }
 
 function explicitType(realm: MemoryTargetRealm, content: string): RealityMemoryType | RoleplayMemoryType {

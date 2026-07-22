@@ -7,6 +7,8 @@ import type {
   ReminderOccurrence,
   ScheduleItem,
   ScheduleListFilter,
+  ScheduleMutationEvent,
+  ScheduleMutationListener,
   ScheduleMutationResult,
   UpdateScheduleItemInput,
 } from "./types.js";
@@ -26,11 +28,18 @@ export class ScheduleValidationError extends Error {
 }
 
 export class ScheduleService {
+  private readonly mutationListeners = new Set<ScheduleMutationListener>();
+
   constructor(
     readonly repository: ScheduleRepository,
     private readonly clock: Clock,
     private readonly idGenerator: IdGenerator,
   ) {}
+
+  onMutation(listener: ScheduleMutationListener): () => void {
+    this.mutationListeners.add(listener);
+    return () => this.mutationListeners.delete(listener);
+  }
 
   create(input: CreateScheduleItemInput): ScheduleMutationResult {
     validateCreateInput(input);
@@ -66,11 +75,13 @@ export class ScheduleService {
     validateScheduleItem(item);
     assertFutureReminder(item, this.clock.now());
     const warnings = this.overlapWarnings(item);
-    return this.repository.transaction(() => {
+    const result = this.repository.transaction(() => {
       this.repository.createItem(item, input.idempotencyKey);
       const occurrence = item.kind === "reminder" ? this.createOccurrence(item, item.startAt!) : undefined;
       return { item, occurrence, warnings };
     });
+    this.emitMutation({ type: "created", item: result.item, occurrence: result.occurrence });
+    return result;
   }
 
   list(filter: ScheduleListFilter = {}): ScheduleItem[] {
@@ -107,7 +118,7 @@ export class ScheduleService {
     validateScheduleItem(next);
     assertFutureReminder(next, this.clock.now());
     const warnings = this.overlapWarnings(next);
-    return this.repository.transaction(() => {
+    const result = this.repository.transaction(() => {
       this.repository.updateItem(next);
       let occurrence: ReminderOccurrence | undefined;
       if (next.kind === "reminder" && next.startAt !== current.startAt) {
@@ -116,26 +127,32 @@ export class ScheduleService {
       }
       return { item: next, occurrence, warnings };
     });
+    this.emitMutation({ type: "updated", item: result.item, previousItem: current, occurrence: result.occurrence });
+    return result;
   }
 
   complete(id: string): ScheduleItem {
     const item = this.get(id);
     const updated = { ...item, status: "completed" as const, updatedAt: this.clock.now().toISOString() };
-    return this.repository.transaction(() => {
+    const result = this.repository.transaction(() => {
       this.repository.updateItem(updated);
       this.repository.cancelScheduledOccurrences(id, updated.updatedAt);
       return updated;
     });
+    this.emitMutation({ type: "completed", item: result, previousItem: item });
+    return result;
   }
 
   cancel(id: string): ScheduleItem {
     const item = this.get(id);
     const updated = { ...item, status: "cancelled" as const, updatedAt: this.clock.now().toISOString() };
-    return this.repository.transaction(() => {
+    const result = this.repository.transaction(() => {
       this.repository.updateItem(updated);
       this.repository.cancelScheduledOccurrences(id, updated.updatedAt);
       return updated;
     });
+    this.emitMutation({ type: "cancelled", item: result, previousItem: item });
+    return result;
   }
 
   snooze(occurrenceId: string, minutes: number): ReminderOccurrence {
@@ -148,10 +165,13 @@ export class ScheduleService {
     }
     const now = this.clock.now();
     const nextDueAt = new Date(now.getTime() + minutes * 60_000).toISOString();
-    return this.repository.transaction(() => {
+    const item = this.get(occurrence.scheduleItemId);
+    const result = this.repository.transaction(() => {
       this.repository.setOccurrenceStatus(occurrence.id, "snoozed", now.toISOString());
-      return this.createOccurrence(this.get(occurrence.scheduleItemId), nextDueAt, occurrence.id);
+      return this.createOccurrence(item, nextDueAt, occurrence.id);
     });
+    this.emitMutation({ type: "snoozed", item, occurrence: result, snoozeMinutes: minutes });
+    return result;
   }
 
   createNextRecurringOccurrence(item: ScheduleItem, previousDueAt: string): ReminderOccurrence | undefined {
@@ -217,6 +237,16 @@ export class ScheduleService {
       return candidateStart < end && candidateEnd > start;
     });
     return overlaps.map((candidate) => `与“${candidate.title}”时间重叠`);
+  }
+
+  private emitMutation(event: ScheduleMutationEvent): void {
+    for (const listener of this.mutationListeners) {
+      try {
+        listener(event);
+      } catch {
+        // Schedule mutations are already committed; observers reconcile from durable state.
+      }
+    }
   }
 }
 

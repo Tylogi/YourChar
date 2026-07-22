@@ -21,6 +21,7 @@ type ProviderMessage = {
 type ProviderPayload = {
   messages?: ProviderMessage[];
   tools?: unknown[];
+  chat_template_kwargs?: Record<string, unknown>;
 };
 
 test("realm contracts keep global reality profile separate from character RP memory", () => {
@@ -86,7 +87,7 @@ test("realm contracts keep global reality profile separate from character RP mem
   }
 });
 
-test("SMS and RP preserve the first provider request as a two-turn cache prefix", async (t) => {
+test("SMS and RP preserve durable prefix context while replacing the volatile snapshot", async (t) => {
   for (const mode of ["sms", "rp"] as const) {
     await t.test(mode, () => verifyProviderCacheContract(mode));
   }
@@ -117,7 +118,7 @@ async function verifyProviderCacheContract(mode: Mode): Promise<void> {
     kernel.patchModelApiConfig({
       enabled: true,
       baseUrl: `http://127.0.0.1:${address.port}/v1`,
-      model: "cache-contract-model",
+      model: "cache-contract-MLX-model",
       temperature: 0,
     });
     kernel.patchAgentPermissions({
@@ -168,8 +169,20 @@ async function verifyProviderCacheContract(mode: Mode): Promise<void> {
     assert.equal(payloads.length, 2);
     const firstMessages = requireMessages(payloads[0]);
     const secondMessages = requireMessages(payloads[1]);
-    assert.equal(longestCommonPrefix(firstMessages, secondMessages), firstMessages.length);
-    assert.deepEqual(secondMessages.slice(0, firstMessages.length), firstMessages);
+    const reusablePrefixLength = firstMessages.length - 2;
+    assert.equal(longestCommonPrefix(firstMessages, secondMessages), reusablePrefixLength);
+    assert.deepEqual(secondMessages.slice(0, reusablePrefixLength), firstMessages.slice(0, reusablePrefixLength));
+
+    assert.equal(firstMessages.at(-1)?.role, "user");
+    assert.equal(messageText(firstMessages.at(-1)), "还记得玻璃温室的约定吗？");
+    assert.equal(secondMessages.at(-1)?.role, "user");
+    assert.equal(messageText(secondMessages.at(-1)), "现在继续。");
+    assert.ok(firstMessages.findIndex((message) => JSON.stringify(message).includes("NOT_USER_AUTHORED")) < firstMessages.length - 1);
+    assert.ok(secondMessages.findIndex((message) => JSON.stringify(message).includes("NOT_USER_AUTHORED")) < secondMessages.length - 1);
+    assert.deepEqual(payloads.map((payload) => payload.chat_template_kwargs), [
+      { enable_thinking: true, preserve_thinking: true },
+      { enable_thinking: true, preserve_thinking: true },
+    ]);
 
     const firstSystem = requireSystem(firstMessages);
     const secondSystem = requireSystem(secondMessages);
@@ -182,13 +195,18 @@ async function verifyProviderCacheContract(mode: Mode): Promise<void> {
 
     const firstJson = JSON.stringify(firstMessages);
     const secondJson = JSON.stringify(secondMessages);
-    assert.match(firstJson, /RP_AGENT_TURN_CONTEXT v2/);
+    assert.match(firstJson, /RP_AGENT_TURN_CONTEXT v3/);
     assert.match(firstJson, /2026-07-11 17:00 Asia\/Shanghai/);
     assert.match(firstJson, /记得玻璃温室的约定/);
+    assert.doesNotMatch(secondJson, /2026-07-11 17:00 Asia\/Shanghai/);
     assert.match(secondJson, /2026-07-11 17:02 Asia\/Shanghai/);
+    assert.equal((firstJson.match(/LATEST_VOLATILE_SNAPSHOT/g) ?? []).length, 1);
+    assert.equal((secondJson.match(/LATEST_VOLATILE_SNAPSHOT/g) ?? []).length, 1);
+    assert.equal((secondJson.match(/<roleplay_memories>/g) ?? []).length, 1);
     if (mode === "rp") {
-      assert.match(firstJson, /玻璃温室/);
-      assert.match(secondJson, /北侧塔楼/);
+      assert.match(firstJson, /Location: 玻璃温室/);
+      assert.doesNotMatch(secondJson, /Location: 玻璃温室|正在核对旧约定/);
+      assert.match(secondJson, /Location: 北侧塔楼/);
     }
 
     const proposeMemoryTool = (payloads[0].tools ?? []).find((tool) =>
@@ -219,6 +237,9 @@ async function verifyProviderCacheContract(mode: Mode): Promise<void> {
     );
     assert.equal(turnContexts.length, 2);
     assert.equal(turnContexts.every((message) => message.role === "custom" && message.display === false), true);
+    assert.equal(turnContexts.every((message) =>
+      message.role === "custom" && (message.details as { schemaVersion?: number })?.schemaVersion === 3
+    ), true);
   } finally {
     kernel.dispose();
     await new Promise<void>((resolve, reject) => {
@@ -238,6 +259,15 @@ function requireSystem(messages: ProviderMessage[]): string {
   assert.ok(message);
   assert.ok(typeof message.content === "string");
   return message.content;
+}
+
+function messageText(message: ProviderMessage | undefined): string {
+  if (typeof message?.content === "string") return message.content;
+  if (!Array.isArray(message?.content)) return "";
+  return message.content.flatMap((part) => {
+    if (!part || typeof part !== "object" || !("text" in part)) return [];
+    return typeof part.text === "string" ? [part.text] : [];
+  }).join("");
 }
 
 function longestCommonPrefix(left: ProviderMessage[], right: ProviderMessage[]): number {
@@ -262,6 +292,13 @@ function writeChatCompletionStream(response: ServerResponse, content: string): v
   response.writeHead(200, { "content-type": "text/event-stream; charset=utf-8" });
   for (const data of [
     { choices: [{ index: 0, delta: { role: "assistant" }, finish_reason: null }] },
+    {
+      choices: [{
+        index: 0,
+        delta: { reasoning_content: "核对角色身份、长期记忆与当前用户消息后再组织回复。" },
+        finish_reason: null,
+      }],
+    },
     { choices: [{ index: 0, delta: { content }, finish_reason: null }] },
     { choices: [{ index: 0, delta: {}, finish_reason: "stop" }] },
   ]) {
@@ -269,7 +306,7 @@ function writeChatCompletionStream(response: ServerResponse, content: string): v
       id,
       object: "chat.completion.chunk",
       created,
-      model: "cache-contract-model",
+      model: "cache-contract-MLX-model",
       ...data,
     })}\n\n`);
   }

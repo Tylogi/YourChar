@@ -1,10 +1,20 @@
 # RP Agent Product and Development Specification
 
+Long-conversation lifecycle and compaction behavior are specified in
+[`conversation-sleep-lifecycle.md`](./conversation-sleep-lifecycle.md).
+Shared fictional worlds, character autonomy, and proactive character messages
+are specified in [`world-autonomy.md`](./world-autonomy.md).
+Canonical multi-character World timelines and retired RP/group migration are
+specified in [`world-conversation-mode.md`](./world-conversation-mode.md).
+Private SMS meeting state and in-person narrative transitions are specified in
+[`interaction-state.md`](./interaction-state.md).
+
 Status: Approved development baseline
 Audience: maintainers, coding agents, reviewers, and test agents
-Last updated: 2026-07-15
+Last updated: 2026-07-21
 
-Implementation status: M0-M8 are implemented. Scheduling uses SQLite,
+Implementation status: M0-M11 and the M13 baseline are implemented; M12 remains
+an incremental experience-quality program. Scheduling uses SQLite,
 occurrences, an outbox scheduler, quiet hours, in-app history, an opt-in
 `notify-send` adapter, and deterministic test controls. The current workstation
 does not provide `notify-send`, so desktop delivery still requires the host
@@ -25,11 +35,58 @@ permissions for User Profile and character SOUL Markdown.
 M8 adds optional live web search through a local Tavily MCP, a protected Key
 settings flow, source-preserving results, metered-tool policy, and deterministic
 fake-upstream tests.
+M9 adds shared fictional worlds, fixed-capability places, character runtime
+state, autonomous character calendar planning, event-to-memory settlement,
+bounded proactive SMS delivery, a conditional World State MCP, and deterministic
+world test controls. Schema 26 extends that state into one canonical World
+timeline; current World turns use one World narrative call plus one post-turn
+Analyzer call and never route visible prose through character-bound models;
+schema 27 adds rolling event advances and event-end observer settlement. Schema
+28 gives each active World event/checkpoint an immutable System snapshot and an
+append-only provider-message ledger, so later turns preserve an exact cacheable
+prefix across process restarts. A projected 32k soft limit creates a bounded
+visible-timeline checkpoint instead of repeatedly rewriting a rolling summary.
+M10 adds durable private-conversation interaction state. Canonical SMS can move
+from remote messages through a planned meeting into a confirmed observable
+scene without changing conversation mode. Future plans use the pending state;
+semantically established immediate co-presence can begin directly at a concrete
+location, while explicit future/negative evidence is rejected. Departure settles
+only after the farewell reply.
+M11 adds a durable private-message Inbox. Rapid user messages are accepted while
+the character is generating, grouped with a 5-second initial grace period and a
+7-second hard maximum, and delivered to one Pi turn as a single newline-separated
+provider user message while remaining separate durable transcript/UI entries.
+Messages arriving during generation remain queued for the next turn. SQLite
+preserves queued input across restarts, while a session-scoped SSE subscription
+streams progress independently of the request that enqueued the message.
+M12 Phases 1-2 add durable user-calendar, reminder, and exact-quote SMS
+observations. A trusted
+policy layer promotes only bounded low-risk recurrence, repeated completion, and
+snooze evidence into confirmed reality memory and deterministic profile
+projection, with sensitivity redaction, conflict suspension, user overrides,
+restart reconciliation, provenance and control UI, and built-in model-path
+coverage. Model profiles now include an optional context window; direct sessions
+expose measured/estimated remaining input, guarded manual compaction, and
+model-relative planned/emergency checkpoints after durable coordinator handoff.
+Each character has exactly one canonical SMS private conversation. Opening SMS
+again returns that conversation instead of creating another Pi session. Each
+world has exactly one shared third-person timeline. Standalone RP and group chat
+are retired: schema 26 deletes old groups and startup purges legacy RP sessions
+without transcript migration. On upgrade, the most recently updated unarchived
+legacy SMS session is retained per character (or the latest archived one when
+none are active), and all earlier SMS sessions are archived without transcript
+merging or deletion. Queued input from those older sessions is reassigned to the
+retained conversation.
 Chat bubbles expose a collapsible execution summary built from sanitized Pi
 lifecycle events. It shows request preparation, response generation, tool names,
 tool completion, safe reasoning start/end status, and retries, but never tool
 arguments, hidden chain-of-thought, credentials, or system prompt content. Tool
-result messages are complete but collapsed by default. Management shows
+result messages are complete but collapsed by default. Full tool results remain
+in the Pi transcript and Debug/audit surfaces; the provider-only context copy
+caps the current tool phase at 48,000 text characters (32,000 per result) and
+retains at most 6,000 characters from the newest historical results. Older
+results and their matching historical tool-call blocks are removed together;
+large historical call arguments are represented by bounded previews. Management shows
 tokenizer-dependent estimates for MCP schemas and Skill index/full-content cost.
 
 This document is the source of truth for evolving RP Agent from the current
@@ -67,8 +124,9 @@ The product must support two connected but clearly separated use cases:
 The application runs the original `@earendil-works/pi-coding-agent` session
 runtime with all Pi packages pinned to `0.80.3`. Pi owns JSONL transcripts and
 SQLite owns schedule items, reminder occurrences, and notification outbox
-state. Conversations have fixed SMS/RP modes, the browser restores transcript
-history, model credentials use mode `0600`, and scheduling is available through
+state. Private character chats are canonical SMS Pi sessions; shared roleplay is
+one application-owned World timeline per world. The browser restores both kinds,
+model credentials use mode `0600`, and scheduling is available through
 MCP-discovered Pi tools, `/api/v1`, and the Schedule UI.
 
 RP state also uses SQLite migration v2. The Characters view manages character
@@ -81,8 +139,8 @@ Migration v6 stores module enablement overrides. Its original structured profile
 table is retained as an unused append-only migration artifact. The canonical
 profile is `<stateDir>/memory-vault/reality/user-profile.md`; Management can edit it directly, and
 User Profile MCP controls whether the Agent can read it and whether it is
-assembled into SMS and RP model context. A separate permission controls whether
-the Agent receives the update tool.
+assembled into private SMS and read-only World narrative context. A separate permission
+controls whether the Agent receives the update tool.
 
 Generic Agent file access is rooted at `<stateDir>/workspace` and has off,
 read-only, and read-write modes. Shell execution is disabled by default and uses
@@ -100,8 +158,8 @@ on normal production requests.
 
 Remaining operational limitations:
 
-- Memory extraction uses conservative lexical durable-signal triggers; quality
-  still needs an evaluation corpus and relevance metrics.
+- Memory extraction uses a cheap self-disclosure prefilter followed by semantic
+  extraction; quality still needs a larger evaluation corpus and relevance metrics.
 - Retrieval quality has deterministic coverage but no evaluation corpus or
   relevance metrics yet.
 - Desktop delivery is opt-in and depends on a host `notify-send` binary plus a
@@ -132,10 +190,20 @@ runtime is `@earendil-works/pi-coding-agent` at the same pinned version as
 - Do not edit the repository under `agent_references/pi`. Pin a released package
   version or an explicit upstream commit.
 
-The application owns session metadata and maps each application conversation to
-one Pi session ID. A conversation has a fixed kind (`sms` or `rp`). Changing kind
-creates a new conversation or an explicit branch; it does not silently replace
-the prompt over the same history.
+The application owns private-session metadata and maps each character to one
+canonical SMS Pi session, including remote messages and confirmed in-person
+continuity. Reminders and proactive world messages resolve their delivery target
+through that mapping and restore the private thread when it was archived.
+
+Multi-character roleplay does not create a Pi session. It uses one SQLite World
+timeline per world: one world-bound narrative model reads an event-scoped fixed
+snapshot plus append-only User/World history to write the complete visible
+passage, and a world-bound Analyzer proposes trusted state changes. Exact
+provider messages are durable only for the active event/checkpoint and are
+purged on closure; visible passages and event settlements remain durable.
+Character model bindings remain private chat concerns. The internal `rp`
+context realm remains only a compatibility key for character memory and is not
+a creatable UI mode.
 
 ### 4.2 Durable application state
 
@@ -143,6 +211,8 @@ Pi JSONL is the source of truth for conversation transcripts. SQLite is the
 source of truth for relational application state:
 
 - application conversation metadata;
+- queued and processing private messages with client idempotency IDs;
+- private-conversation interaction state and transition provenance;
 - characters and scene state;
 - memories and memory provenance;
 - schedule items and reminder occurrences;
@@ -218,6 +288,8 @@ model reasoning.
 Browser / API client
         |
 HTTP routes and stream transport
+        |
+Durable private Inbox + per-conversation burst coordinator
         |
 Application services + per-conversation execution queue
         |
@@ -376,6 +448,14 @@ The context assembler budgets context in this order:
 Pi compaction summarizes older complete turns. It must never split an assistant
 tool call from its tool result.
 
+Before each provider request, tool-result compaction operates only on the
+ephemeral provider context, never on session persistence. The current tool phase
+keeps enough bounded evidence for the model to finish the operation. On later
+user turns, only the newest bounded historical tool evidence remains; any
+discarded result and its matching assistant call are removed as a pair. This
+prevents search, web, file, and subagent payloads from consuming every later
+turn while preserving complete user-visible diagnostics.
+
 The current integration keeps character, scene, and retrieved memory outside
 the transcript and injects them through Pi's `before_agent_start` hook on every
 turn. Consequently transcript compaction cannot remove durable RP state.
@@ -389,22 +469,38 @@ temporary compatibility adapters until the UI migrates.
 |---|---|---|
 | GET | `/api/v1/health` | Process liveness |
 | GET | `/api/v1/readiness` | Database and runtime readiness |
-| POST | `/api/v1/sessions` | Create a fixed-kind conversation |
+| POST | `/api/v1/sessions` | Legacy fixed-kind compatibility adapter; supported UI uses direct/world endpoints |
+| POST | `/api/v1/direct-conversations` | Open or restore one character's canonical SMS conversation |
 | GET | `/api/v1/sessions` | List resumable conversations |
 | GET | `/api/v1/sessions/{id}/messages` | Read persisted transcript |
+| GET | `/api/v1/sessions/{id}/context-budget` | Read measured/estimated model-window capacity and latest checkpoint |
+| POST | `/api/v1/sessions/{id}/compact` | Guarded manual deterministic context checkpoint |
 | POST | `/api/v1/sessions/{id}/messages` | Synchronous JSON turn for clients and tests |
 | POST | `/api/v1/sessions/{id}/messages/stream` | Streaming turn over fetch-compatible SSE |
+| GET/POST | `/api/v1/sessions/{id}/inbox` | Inspect active private input or enqueue an idempotent message |
+| PATCH/DELETE | `/api/v1/sessions/{id}/inbox/{messageId}` | Edit or retract a message that is still queued |
+| GET | `/api/v1/sessions/{id}/inbox/events` | Durable-turn progress over reconnectable SSE |
 | POST | `/api/v1/sessions/{id}/messages/cancel` | Abort the active Pi turn |
 | POST | `/api/v1/sessions/{id}/messages/retry` | Retry a failed side-effect-free turn |
+| GET | `/api/v1/world-conversations` | List one canonical timeline per active world |
+| GET | `/api/v1/worlds/{id}/conversation` | Read World timeline and current event state |
+| DELETE | `/api/v1/worlds/{id}/conversation` | Reset the canonical World timeline with exact-name confirmation while retaining settled continuity |
+| GET/POST | `/api/v1/worlds/{id}/conversation/messages` | Read messages or run one JSON World turn |
+| POST | `/api/v1/worlds/{id}/conversation/messages/stream` | Stream World narrative and Analyzer lifecycle events |
+| POST | `/api/v1/worlds/{id}/conversation/read` | Acknowledge one World timeline's unread count |
+| POST | `/api/v1/worlds/{id}/conversation/event` | Apply or undo a trusted story-event transition |
 | GET/POST | `/api/v1/schedule-items` | Query or create schedule items |
 | GET/PATCH/DELETE | `/api/v1/schedule-items/{id}` | Inspect, update, or cancel one item |
 | POST | `/api/v1/schedule-items/{id}/complete` | Complete a task |
 | POST | `/api/v1/reminder-occurrences/{id}/snooze` | Snooze one occurrence |
 | GET | `/api/v1/notifications` | Inspect delivery history and failures |
+| GET/PATCH | `/api/v1/user-profile` | Read the full profile or update its user-owned manual section |
+| GET | `/api/v1/user-insights` | Inspect bounded profile observations, policy decisions, and provenance |
+| POST | `/api/v1/user-insights/{id}/{confirm\|reject\|unlock}` | Apply explicit user control to an automatic profile observation |
 | POST | `/api/v1/notifications/{id}/retry` | Retry one failed delivery |
 | GET/POST | `/api/v1/characters` | List or create characters |
 | GET/PATCH | `/api/v1/characters/{id}` | Inspect or update a character |
-| GET/PATCH | `/api/v1/sessions/{id}/scene` | Inspect or update the current RP scene |
+| GET/PATCH | `/api/v1/sessions/{id}/scene` | Legacy/private continuity scene adapter |
 | GET/POST | `/api/v1/memories` | Search or pin memory |
 | PATCH/DELETE | `/api/v1/memories/{id}` | Correct, supersede, or remove memory |
 | POST | `/api/v1/diagnostics/model/test` | Test configured model completion endpoint |
@@ -430,6 +526,31 @@ Mutating requests accept `Idempotency-Key`. Every response contains a
 
 The synchronous message endpoint remains available even after streaming is
 implemented because it is easier for automation and contract tests.
+
+The browser uses the Inbox endpoints for private chat. A burst is bounded to 10
+messages and 12,000 Unicode characters. The model receives each message as its
+own Pi `user` entry and is invoked only by the final entry; retrieval, trace,
+memory extraction, and relationship extraction receive the bounded combined
+text. Tools that require current-message evidence, such as `begin_meeting`, read
+only the final real user message. Disconnecting the browser never aborts the
+turn, and archiving or deleting a conversation is rejected while its Inbox is
+not idle. The default accumulation grace is 1.5 seconds. While a queued burst
+exists, composer `input` events send a throttled
+`POST /api/v1/sessions/{id}/inbox/typing` heartbeat; each heartbeat defers the
+claim until input has been quiet for another 1.5 seconds, even beyond the normal
+maximum wait. Message and character-count caps still force bounded batches.
+
+Every completed private character reply first increments the durable unread
+count on its conversation. The UI acknowledges it through
+`POST /api/v1/sessions/{id}/read` only when that exact private thread is on the
+chat page, the document is visible, and the browser window has focus. Switching
+threads or application pages, hiding the tab, losing focus, or disconnecting
+before completion therefore leaves a red count on both the thread and its
+Characters section. System/error events do not create unread character messages.
+
+World unread state is independent. One completed World turn with incoming World
+output increments its timeline once. It is acknowledged
+only while that exact World timeline is visible and focused.
 
 ## 9. Agent-oriented test interfaces
 
@@ -552,8 +673,8 @@ contract where applicable:
    when the scheduler tick is repeated.
 5. Snoozing creates the correct next occurrence without redelivering the old one.
 6. Concurrent messages in one session execute in deterministic order.
-7. Fictional reminder language in RP never creates a real schedule item.
-8. Explicit real-world scheduling from RP requires and records confirmation.
+7. Fictional reminder language in a World turn never creates a real schedule item.
+8. World narrative calls have no schedule tools; real scheduling remains in a canonical private thread with normal policy checks.
 9. A confirmed long-term memory is retrieved after restart and after compaction.
 10. Contradictory memory supersedes or requests confirmation instead of silently
     duplicating facts.
@@ -564,12 +685,13 @@ contract where applicable:
 
 The first usable UI contains four primary views:
 
-- Conversations: session list, persisted history, fixed SMS/RP type, streaming
-  response, cancel, retry, and visible tool status.
+- Conversations: Worlds/Characters hierarchy, one timeline per world, one
+  private thread per character, persisted history, streaming response, cancel,
+  retry, unread state, and visible tool status.
 - Schedule: today, upcoming, completed, direct create/edit/cancel, recurrence,
   snooze, and delivery state.
-- Characters: character selection and editing, current scene, memory search,
-  pin/correct/delete controls, and RP boundaries.
+- Characters: card management, model binding, SOUL.md editing, world membership,
+  memory search, pin/correct/delete controls, and private/World boundaries.
 - Settings and diagnostics: model connection test, model discovery when
   supported, notification adapter status, database status, and bounded logs.
 
@@ -580,10 +702,14 @@ with distinct colors. A master-detail layout keeps the latest calls selectable
 without stacking all payloads vertically. The detail viewer supports semantic/raw
 tabs, per-block and global expansion, line wrapping, and payload copy; its content
 scrolls independently without per-block height truncation. The semantic view is
-accompanied by the complete raw JSON payload so provider-specific fields remain inspectable. Credential-shaped fields
-are redacted by key, while message content and tool schemas are not truncated.
+accompanied by the sanitized raw JSON payload so provider-specific fields remain inspectable. Credential-shaped fields
+are redacted by key, while textual message content and tool schemas are not truncated. Embedded binary data URLs are
+replaced with MIME/encoded-size placeholders to keep Debug bounded; this never changes the actual provider request.
 The read endpoint is `GET /api/debug/model-traces?limit=10`; the limit is always
-clamped to 10. Trace data participates in user-data export and complete deletion.
+clamped to 10. The optional JSONL archive is controlled through
+`GET/PATCH /api/settings/trace-archive`, is included in state backups, and is
+removed by complete deletion. Bounded Trace data participates in normal
+user-data export; the unbounded JSONL archive does not.
 Raw token deltas are not stored indefinitely or returned in normal message
 responses.
 
@@ -726,6 +852,73 @@ Implementation status: complete.
 Exit gate: tool gating, search mapping, credential redaction, persistence,
 diagnostics, module lifecycle, and browser workflows pass without production
 network traffic.
+
+### M9: shared worlds and character autonomy
+
+Implementation status: complete.
+
+- Add canonical worlds, fixed-capability places, memberships, runtime state, and character autonomy policy.
+- Reuse character calendars for autonomous plans and settle completed activities into events and memories.
+- Add bounded proactive SMS delivery and a conditional World State MCP.
+
+Exit gate: planning, settlement, context isolation, proactive limits, world
+reassignment cleanup, and desktop/mobile world-management workflows pass.
+
+### M10: private meeting continuity
+
+Implementation status: complete.
+
+- Add durable `remote`, `meeting_pending`, and `co_present` state with append-only transition events.
+- Add Interaction State MCP tools with actual-message arrival validation and delayed departure settlement.
+- Keep the stable SMS prompt cacheable while replacing only one bounded volatile interaction projection.
+- Add inline transition history, trusted manual controls, undo, and proactive-message suppression during co-presence.
+
+Exit gate: tool flow, evidence rejection, failure rollback, HTTP confirmation,
+context isolation, Agent test cases, and desktop/mobile browser workflows pass.
+
+### M12: experience coherence and active user understanding
+
+Implementation status: in progress. Structured user-calendar, reminder, and SMS
+observations; bounded policy decisions; deterministic profile projection;
+restart reconciliation; provenance controls; model-relative context budgets;
+active compaction; canonical chat-header state; remote SMS multi-bubble
+rendering; and ranked, user-controlled proactive delivery are complete.
+
+- Unify the visible character status with canonical world, activity, and interaction state. **Implemented.**
+- Add natural private-message batching, multi-bubble replies, and explicit queue controls. **Implemented.**
+- Flush durable memories, promises, and scene state before conversation sleep, then wake from a bounded orientation packet. **Implemented for Memory and Post-turn Coordinators.**
+- Rank and rate-limit proactive messages, with direct user feedback controls. **Implemented.**
+- Add same-world character contact requests that route through the target character's own model and private thread, with visible unread state and an independent decline path. **Implemented.**
+- Expose memory provenance and corrections while expressing relationship changes through behavior instead of scores.
+- Evaluate configured model capabilities against built-in feature tests.
+- Extend user understanding from text-only extraction to evidence-based schedule and interaction observations without profiling one-off or sensitive behavior. **Implemented for conversation, schedule, completion, and snooze evidence.**
+- Track a per-model context budget, expose measured or estimated remaining capacity,
+  and compact proactively at safe turn boundaries before provider overflow. **Implemented.**
+
+Detailed product, context, safety, and test requirements are defined in
+[`experience-coherence-m12.md`](experience-coherence-m12.md).
+
+### M13: canonical World conversations
+
+Implementation status: complete baseline.
+
+- Retire standalone RP and ad hoc group chat from the visible product.
+- Keep exactly one canonical private SMS Pi session per character and one
+  application-owned World timeline per world.
+- Bind narrative and Analyzer profiles at world scope. The narrative model reads
+  bounded SOUL/state snapshots; it never invokes character-bound private models.
+- Persist story events, observer-scoped knowledge, and directional
+  character-to-character relationships with trusted confidence gates.
+- Delete legacy group records and purge legacy RP sessions without transcript
+  migration.
+- Expose Worlds/Characters navigation, member-avatar mosaics, World unread state,
+  event details, SSE lifecycle, and World-specific Debug trace labels.
+- Manage World Cards as first-class objects, render one turn as continuous
+  third-person interactive fiction, and settle provisional observations only
+  when the owning event ends. **Implemented.**
+
+The normative contract, migration policy, API, and required tests are defined in
+[`world-conversation-mode.md`](world-conversation-mode.md).
 
 ## 14. Development rules for humans and agents
 

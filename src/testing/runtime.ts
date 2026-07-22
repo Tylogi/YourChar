@@ -1,6 +1,8 @@
 import {
   createFauxCore,
   fauxAssistantMessage,
+  fauxText,
+  fauxThinking,
   fauxToolCall,
   type Context,
   type FauxResponseFactory,
@@ -11,19 +13,29 @@ import { SeededIdGenerator } from "../app/id-generator.js";
 import { VirtualClock } from "../app/clock.js";
 import { CompanionKernel } from "../domain/kernel.js";
 import { CaptureNotificationSink } from "../notifications/sink.js";
-import type { PiModelResolver } from "../pi/session-runtime.js";
+import type {
+  ConversationLifecycleThresholds,
+  PiModelResolver,
+} from "../pi/session-runtime.js";
 import type { MemoryExtractor } from "../memory-coordinator/types.js";
+import type { RelationshipExtractor } from "../relationship/types.js";
 import type { VisionService } from "../vision/service.js";
+import type { WebReaderService } from "../web-reader/service.js";
+import type { ProactiveMessenger, WorldPlanner } from "../world/types.js";
+import type { PrivateInboxCoordinatorOptions } from "../inbox/index.js";
+import type { PostTurnAnalyzer } from "../post-turn/index.js";
 
-export type ScriptedModelResponse =
+export type ScriptedModelResponse = (
   | {
       kind: "assistant_text";
       text: string;
+      thinking?: string;
       usage?: { input: number; output: number; cacheRead?: number; cacheWrite?: number };
     }
   | { kind: "tool_call"; name: string; arguments: Record<string, unknown>; id?: string }
   | { kind: "provider_error"; message: string }
-  | { kind: "stream_chunks"; chunks: string[] };
+  | { kind: "stream_chunks"; chunks: string[] }
+) & { delayMs?: number };
 
 export type CapturedModelRequest = {
   sequence: number;
@@ -41,7 +53,15 @@ export type CreateTestRuntimeOptions = {
   workspaceDir?: string;
   tavilyBaseUrl?: string;
   memoryExtractor?: MemoryExtractor;
+  relationshipExtractor?: RelationshipExtractor;
+  postTurnAnalyzer?: PostTurnAnalyzer;
+  worldPlanner?: WorldPlanner;
+  worldMessenger?: ProactiveMessenger;
   visionService?: VisionService;
+  webReaderService?: WebReaderService;
+  conversationLifecycleThresholds?: Partial<ConversationLifecycleThresholds>;
+  privateInboxOptions?: PrivateInboxCoordinatorOptions;
+  startPrivateInboxCoordinator?: boolean;
 };
 
 export class ScriptedModelController {
@@ -90,8 +110,11 @@ export class ScriptedModelController {
       };
       await options?.onPayload?.(providerPayload, model as Model<Api>);
       this.captureRequest(context, providerPayload);
+      if (response.delayMs) await new Promise((resolve) => setTimeout(resolve, response.delayMs));
       if (response.kind === "assistant_text") {
-        const message = fauxAssistantMessage(response.text);
+        const message = fauxAssistantMessage(response.thinking === undefined
+          ? response.text
+          : [fauxThinking(response.thinking), fauxText(response.text)]);
         if (response.usage) {
           message.usage = {
             input: response.usage.input,
@@ -162,7 +185,17 @@ export class TestRuntime {
       workspaceDir: options.workspaceDir,
       tavilyBaseUrl: options.tavilyBaseUrl,
       visionService: options.visionService,
+      webReaderService: options.webReaderService,
       memoryExtractor: options.memoryExtractor ?? (async () => ({ candidates: [] })),
+      postTurnAnalyzer: options.postTurnAnalyzer,
+      relationshipExtractor: options.postTurnAnalyzer
+        ? undefined
+        : options.relationshipExtractor ?? (async () => ({ significant: false, confidence: 0 })),
+      worldPlanner: options.worldPlanner,
+      worldMessenger: options.worldMessenger,
+      conversationLifecycleThresholds: options.conversationLifecycleThresholds,
+      privateInboxOptions: options.privateInboxOptions,
+      startPrivateInboxCoordinator: options.startPrivateInboxCoordinator,
     });
     this.kernel.patchModelApiConfig({
       enabled: true,
@@ -180,12 +213,22 @@ export class TestRuntime {
     return this.kernel.scheduler.tick();
   }
 
+  async worldTick(characterId?: string) {
+    return this.kernel.tickWorldAutonomy(characterId);
+  }
+
   async snapshot() {
     const sessions = await this.kernel.listSessions();
+    const conversations = this.kernel.sessionRuntime.getConversationMetadata();
+    const interactionStates = conversations.flatMap((conversation) => {
+      if (!conversation.characterId) return [];
+      const state = this.kernel.interactionService.get(conversation.id);
+      return state ? [state] : [];
+    });
     return {
       now: this.clock.now().toISOString(),
       timezone: this.timezone,
-      conversations: this.kernel.sessionRuntime.getConversationMetadata().map((conversation) => ({
+      conversations: conversations.map((conversation) => ({
         id: conversation.id,
         mode: conversation.mode,
         characterId: conversation.characterId,
@@ -201,9 +244,16 @@ export class TestRuntime {
       scheduleItems: this.kernel.listScheduleItems(),
       reminderOccurrences: this.kernel.listReminderOccurrences(),
       characters: this.kernel.listCharacters(),
+      worlds: this.kernel.listWorlds(true),
+      characterLives: this.kernel.listCharacters().map((character) =>
+        this.kernel.getCharacterLife(character.id)),
       roleSessions: this.kernel.rpService.listRoleSessions(),
       scenes: this.kernel.rpService.listScenes(),
+      interactionStates,
+      interactionEvents: interactionStates.flatMap((state) =>
+        this.kernel.interactionService.listEvents(state.sessionId, 200)),
       memories: this.kernel.rpService.listAllMemories().sort(byId),
+      userInsights: this.kernel.getUserInsightStatus(200),
       pendingRealMutations: this.kernel.rpService.repository.listPendingMutations(),
       actions: [...this.kernel.store.actions].sort(byId),
       notifications: [...this.notifications],

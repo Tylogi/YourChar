@@ -3,6 +3,7 @@ export type NarrativePerspective = "first_person" | "third_person";
 export type CharacterProfile = {
   id: string;
   name: string;
+  modelProfileId?: string;
   soulMarkdown: string;
   soulCharacterCount: number;
   soulMaxCharacters: number;
@@ -12,6 +13,7 @@ export type CharacterProfile = {
 
 export type CreateCharacterInput = {
   name: string;
+  modelProfileId?: string | null;
   soulMarkdown?: string;
   // Legacy fields remain accepted so existing API clients migrate without data loss.
   identity?: string;

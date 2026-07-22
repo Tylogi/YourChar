@@ -18,14 +18,22 @@ and adds the RP companion domain on top:
 - per-character SOUL.md files, scenes, typed long-term memory, and FTS5 retrieval;
 - runtime MCP/Skill discovery and persisted capability toggles;
 - optional Tavily live web search through a credential-isolated local MCP;
+- optional SSRF-restricted Web Reader MCP for readable public URL contents;
 - direct or independent Vision MCP image understanding for text-only primary models;
+- optional isolated private-chat subagents for bounded work, research, planning, and review;
+- optional per-character relationship and decaying affect state with trusted bounded updates;
 - a 2000-character profile summary plus durable reality/global memory;
 - persistent, retryable post-turn Memory Coordinator jobs with trusted review;
 - permission-gated workspace file tools and a Bubblewrap-isolated shell;
 - independently authorized User Profile and character SOUL editing;
 - collapsible per-message execution progress without exposing hidden model reasoning;
 - collapsed-by-default tool results and MCP/Skill token-impact estimates;
-- RP policy that records and requires confirmation before real schedule changes;
+- one canonical private SMS thread per character and one shared timeline per world;
+- world-level narrative/Analyzer profiles; World turns never invoke character-bound chat models;
+- event-scoped fixed World prompts with restart-safe append-only history and KV-cache metrics;
+- first-class World Cards and turn-grouped third-person interactive-fiction rendering;
+- event-end observer-scoped settlement into character records and bounded World chronicles;
+- fictional-state policy that separates World events from real schedule changes;
 - thin HTTP server as an adapter, not the core.
 
 ## Commands
@@ -49,12 +57,24 @@ Module lifecycle and user-profile rules are documented in
 [`docs/agent-modules-and-user-profile.md`](docs/agent-modules-and-user-profile.md).
 Character identity and migration rules are documented in
 [`docs/character-soul.md`](docs/character-soul.md).
+Multi-model profiles, per-character routing, canonical World timelines, and the
+retired RP/group migration policy are documented in
+[`docs/world-conversation-mode.md`](docs/world-conversation-mode.md). The old
+group contract remains only as a compatibility note in
+[`docs/group-chat-multi-model.md`](docs/group-chat-multi-model.md).
 Workspace, shell, and protected-document permissions are documented in
 [`docs/workspace-capabilities.md`](docs/workspace-capabilities.md).
 Tavily module enablement, Key handling, tool limits, and test contracts are
 documented in [`docs/tavily-search-mcp.md`](docs/tavily-search-mcp.md).
+Read-only URL extraction, network boundaries, TUN behavior, and test contracts
+are documented in [`docs/web-reader-mcp.md`](docs/web-reader-mcp.md).
 Vision routing, upload boundaries, caching, and test contracts are documented in
 [`docs/vision-mcp.md`](docs/vision-mcp.md).
+Private-chat delegation, child isolation, budgets, and test contracts are
+documented in [`docs/subagent-delegation.md`](docs/subagent-delegation.md).
+Per-character relationship dimensions, affect decay, trusted update policy, MCP
+boundaries, and test contracts are documented in
+[`docs/relationship-affect.md`](docs/relationship-affect.md).
 The current memory retrieval, context budget, resident snapshot, cache, and
 token-economics contracts are documented in
 [`docs/memory-architecture-r4.md`](docs/memory-architecture-r4.md). The capture
@@ -63,6 +83,12 @@ and lifecycle foundation remains in
 consistency, writer/job leases, startup recovery, backup verification, and Vault
 Health contracts are documented in
 [`docs/memory-architecture-r5.md`](docs/memory-architecture-r5.md).
+Daily-chat capture policy, the failure audit, semantic retrieval tags, and the
+configured-model evaluation are documented in
+[`docs/memory-daily-capture.md`](docs/memory-daily-capture.md).
+The per-scenario background thinking controls, compatibility fallback, token
+ceilings, and configured-model corpus are documented in
+[`docs/background-thinking-policy.md`](docs/background-thinking-policy.md).
 
 The deterministic Agent test control API is disabled by default. Start a
 loopback-only test server with:
@@ -96,12 +122,18 @@ history and no external command is executed.
 The scheduling API is rooted at `/api/v1/schedule-items`; notification history
 and retry use `/api/v1/notifications`. Character, scene, and memory APIs use
 `/api/v1/characters`, `/api/v1/sessions/{id}/scene`, and `/api/v1/memories`.
+Canonical private chat opens through `/api/v1/direct-conversations`; World
+timelines use `/api/v1/world-conversations` and
+`/api/v1/worlds/{id}/conversation/*`.
 Agent capability management uses `/api/v1/agent-modules` and
 `/api/v1/agent-permissions`; the user-editable
 profile Markdown uses `/api/v1/user-profile`. Roleplay memory creation remains
 at `/api/v1/memories`; trusted reality-memory creation uses
 `/api/v1/reality-memories`, and review/observability uses
 `/api/v1/memory-coordinator/*`.
+Per-character relationship inspection/reset uses
+`/api/v1/characters/{id}/relationship`; background status and retries use
+`/api/v1/relationship-coordinator/*`.
 Read-only retrieval evaluation uses `/api/v1/context-plan/preview` and
 `/api/v1/memory-retrieval/preview`; lightweight provider metrics use
 `/api/debug/context-economics`. Metadata-only Vault durability status uses
@@ -127,11 +159,20 @@ staged restore procedures are in
 
 ## Current Scope
 
-M0-M9 are implemented: original Pi sessions, fixed SMS/RP conversations,
-persistent scheduling, scheduler/outbox delivery, per-character SOUL.md and scene
-state, confirmed long-term memory retrieval, RP mutation confirmation, Schedule
-and Characters UI, isolated Agent test controls, SSE streaming/cancellation,
+M0-M13 baseline work is implemented: original Pi private sessions, persistent
+scheduling and reminder delivery, per-character SOUL.md, confirmed long-term
+memory, private meeting continuity, isolated Agent test controls, SSE streaming,
 diagnostics, export/deletion, persistent audit summaries, and browser automation.
+Each character has one canonical private SMS thread. Each shared world has one
+application-owned third-person timeline using one world-bound narrative model
+and a post-turn Analyzer. Character-bound models are used only by private chats.
+Legacy standalone RP sessions and group records are removed without transcript
+migration.
+
+Versioned model profiles support system, character, World narrative, and Analyzer
+bindings. An optional Subagent Delegation MCP remains confined to private chat.
+Relationship State MCP maintains each character's relationship with the user;
+World analysis separately maintains directional character-to-character state.
 M5 moves schedule operations behind an MCP server/client boundary and makes due
 reminders resume the originating Pi session before delivery. Debug also retains
 the latest 10 final provider request payloads, with role-colored messages and a

@@ -11,7 +11,7 @@ import { DatabaseSync } from "node:sqlite";
 import { parseDocument } from "yaml";
 
 export const BACKUP_SCHEMA_VERSION = 3;
-export const MAX_DATABASE_SCHEMA_VERSION = 11;
+export const MAX_DATABASE_SCHEMA_VERSION = 28;
 const V1_FRONTMATTER_KEYS = [
   "schemaVersion", "id", "kind", "realm", "scope", "type", "characterId", "sessionId",
   "validity", "confirmed", "sourceSessionId", "sourceMessageId", "createdAt", "updatedAt",
@@ -24,6 +24,11 @@ const V2_FRONTMATTER_KEYS = [
   "statusReason", "sourceSessionId", "sourceMessageId", "createdAt", "updatedAt", "lastUsedAt",
   "revision", "supersedes", "tags", "quarantineReasons", "contentHash", "memoryKey", "salience",
   "confidence", "idempotencyKey", "scene",
+].sort();
+const V3_FRONTMATTER_KEYS = [
+  ...V2_FRONTMATTER_KEYS,
+  "personKey", "displayName", "aliases", "relationship", "visibility",
+  "visibleToCharacterIds", "sourceMemoryIds", "personConfidence",
 ].sort();
 
 export function sha256(source) {
@@ -154,15 +159,19 @@ function parseVaultDocument(source, relativePath) {
   });
   if (yaml.errors.length) throw new Error(`${relativePath}: ${yaml.errors.map((entry) => entry.message).join("; ")}`);
   const metadata = yaml.toJS({ maxAliasCount: 0 });
-  if (!metadata || typeof metadata !== "object" || ![1, 2].includes(metadata.schemaVersion) ||
+  if (!metadata || typeof metadata !== "object" || ![1, 2, 3].includes(metadata.schemaVersion) ||
       typeof metadata.id !== "string" || !/^[A-Za-z0-9_-]+$/.test(metadata.id) ||
-      !["user_profile", "character_soul", "scene", "memory"].includes(metadata.kind) ||
+      !["user_profile", "person_profile", "character_soul", "scene", "memory"].includes(metadata.kind) ||
       !["reality", "roleplay", "legacy"].includes(metadata.realm) ||
       !Number.isInteger(metadata.revision) || metadata.revision < 1 ||
       typeof metadata.contentHash !== "string" || !/^[a-f0-9]{64}$/.test(metadata.contentHash)) {
     throw new Error(`${relativePath}: invalid stable frontmatter`);
   }
-  const expectedKeys = metadata.schemaVersion === 1 ? V1_FRONTMATTER_KEYS : V2_FRONTMATTER_KEYS;
+  const expectedKeys = metadata.schemaVersion === 1
+    ? V1_FRONTMATTER_KEYS
+    : metadata.schemaVersion === 2
+      ? V2_FRONTMATTER_KEYS
+      : V3_FRONTMATTER_KEYS;
   const actualKeys = Object.keys(metadata).sort();
   if (JSON.stringify(actualKeys) !== JSON.stringify(expectedKeys)) {
     throw new Error(`${relativePath}: frontmatter key set is not stable schema ${metadata.schemaVersion}`);
@@ -177,6 +186,7 @@ function parseVaultDocument(source, relativePath) {
 
 function expectedVaultPath(metadata) {
   if (metadata.kind === "user_profile") return "reality/user-profile.md";
+  if (metadata.kind === "person_profile") return `reality/people/${metadata.id}.md`;
   if (metadata.kind === "character_soul") return `roleplay/characters/${safeId(metadata.characterId, "characterId")}/SOUL.md`;
   if (metadata.kind === "scene") return `roleplay/scenes/${safeId(metadata.sessionId, "sessionId")}.md`;
   if (metadata.kind !== "memory") throw new Error(`unsupported Vault kind ${String(metadata.kind)}`);

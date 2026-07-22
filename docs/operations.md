@@ -126,9 +126,33 @@ The Debug page has two bounded views:
 
 - Provider Trace retains the latest 10 final payloads. It can contain user and
   memory text, so treat screenshots and exported diagnostics as user data.
+  Embedded image/file data URLs are represented only by MIME and encoded size;
+  inspect the original attachment through Chat or Workspace Files.
 - Context Economics retains the latest 100 lightweight records. It stores
   hashes, memory IDs, score reasons, section budgets, LCP evidence, and token
   counts without candidate bodies, query text, credentials, or tool arguments.
+
+Settings > Data also has an opt-in Provider Trace file archive. It is disabled
+by default. When enabled, every sanitized trace is appended as one JSON object
+per line under:
+
+```text
+<stateDir>/trace-archive/model-traces-YYYY-MM-DD.jsonl
+```
+
+The config is stored in `<stateDir>/trace-archive.json`. Directories use mode
+`0700` and files use `0600`. Files rotate by UTC date and are not automatically
+expired, so operators must monitor disk usage. The normal Debug view and SQLite
+table remain capped at 10. Backups include the archive; deleting all user data
+removes archived files while retaining the on/off setting.
+
+Credential-shaped JSON fields such as `authorization`, `apiKey`, tokens,
+passwords, and secrets are redacted before both bounded and file persistence.
+Text conversation content and tool results are intentionally complete; binary
+data URLs are omitted. A secret typed
+inside ordinary message text is therefore not automatically redacted. Treat the
+JSONL as sensitive user data. It is useful as a debugging or dataset source, but
+must be reviewed, consented, filtered, and transformed before model training.
 
 `estimated*` token fields are deterministic local estimates. The `actual`
 provider fields are independent: `null` and the UI label `unknown` mean that

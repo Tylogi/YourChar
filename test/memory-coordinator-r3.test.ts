@@ -14,7 +14,11 @@ import {
   stableMemoryExtractorPrompt,
 } from "../src/memory-coordinator/index.js";
 import { createMemoryMcpBridge } from "../src/mcp/index.js";
-import { MemoryVaultError, parseVaultMarkdown } from "../src/memory-vault/index.js";
+import {
+  MEMORY_VAULT_SCHEMA_VERSION,
+  MemoryVaultError,
+  parseVaultMarkdown,
+} from "../src/memory-vault/index.js";
 import {
   managedRealityEnd,
   managedRealityStart,
@@ -948,12 +952,13 @@ test("R2 schema-1 confirmed memories gain deterministic trusted provenance befor
     const original = readFileSync(path, "utf8");
     writeFileSync(path, downgradeToSchema1(original), { mode: 0o600 });
     kernel.dispose();
+    kernel = undefined;
 
     kernel = new CompanionKernel({ stateDir, startScheduler: false });
     kernel.syncMemoryVault();
     kernel.rpService.touchMemories([memory.id]);
     const touched = parseVaultMarkdown(readFileSync(path, "utf8"), `roleplay/characters/${character.id}/memories/${memory.id}.md`);
-    assert.equal(touched.metadata.schemaVersion, 2);
+    assert.equal(touched.metadata.schemaVersion, MEMORY_VAULT_SCHEMA_VERSION);
     assert.equal(touched.metadata.confirmationProvenance?.kind, "trusted_control_plane");
     assert.equal(touched.metadata.confirmationProvenance?.evidenceMessageId, "legacy-message");
     assert.notEqual(touched.metadata.confirmationProvenance?.kind, "explicit_user_authorization");
@@ -1002,5 +1007,13 @@ function downgradeToSchema1(source: string): string {
   delete metadata.archivedAt;
   delete metadata.deletedAt;
   delete metadata.statusReason;
+  delete metadata.personKey;
+  delete metadata.displayName;
+  delete metadata.aliases;
+  delete metadata.relationship;
+  delete metadata.visibility;
+  delete metadata.visibleToCharacterIds;
+  delete metadata.sourceMemoryIds;
+  delete metadata.personConfidence;
   return `---\n${stringify(metadata, { lineWidth: 0 })}---\n${match[2]}`;
 }

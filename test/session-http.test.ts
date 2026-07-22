@@ -67,6 +67,7 @@ test("HTTP user messages require and preserve a fixed character-bound session", 
         title?: string;
         lastTurnStatus?: string;
         lastTurnCanRetry?: boolean;
+        sleepState?: string;
       }>;
     };
     const current = sessions.sessions.find((session) => session.id === "generated-session-id");
@@ -77,6 +78,7 @@ test("HTTP user messages require and preserve a fixed character-bound session", 
     assert.equal(current?.title, "建立新会话");
     assert.equal(current?.lastTurnStatus, "blocked");
     assert.equal(current?.lastTurnCanRetry, false);
+    assert.equal(current?.sleepState, "awake");
     assert.equal(sessions.sessions.some((session) => session.id === "default" && !session.characterId), true);
     const updatedAt = (current as { updatedAt?: string } | undefined)?.updatedAt;
     const listedAgain = (await (await fetch(`${baseUrl}/api/v1/sessions`)).json()) as {

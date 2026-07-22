@@ -12,6 +12,10 @@ export type SchedulerTickResult = {
   failed: number;
 };
 
+export type NotificationSessionResolver = (
+  sourceSessionId?: string,
+) => string | undefined | Promise<string | undefined>;
+
 export class ScheduleScheduler {
   private timer?: NodeJS.Timeout;
   private running?: Promise<SchedulerTickResult>;
@@ -24,6 +28,7 @@ export class ScheduleScheduler {
     private readonly idGenerator: IdGenerator,
     private readonly quietHours?: QuietHoursPolicy,
     private readonly messageComposer?: ReminderMessageComposer,
+    private readonly sessionResolver?: NotificationSessionResolver,
   ) {}
 
   start(intervalMs = 15_000): void {
@@ -91,6 +96,9 @@ export class ScheduleScheduler {
       }
       this.repository.markOutboxProcessing(entry.id, now);
       try {
+        const sourceSessionId = this.sessionResolver
+          ? await this.sessionResolver(item.sourceSessionId)
+          : item.sourceSessionId;
         const composed = entry.deliveryBody
           ? {
               body: entry.deliveryBody,
@@ -101,7 +109,7 @@ export class ScheduleScheduler {
               outboxId: entry.id,
               occurrenceId: occurrence.id,
               scheduleItemId: item.id,
-              sourceSessionId: item.sourceSessionId,
+              sourceSessionId,
               title: item.title,
               notes: item.notes,
               dueAt: occurrence.dueAt,
@@ -128,7 +136,7 @@ export class ScheduleScheduler {
           title: deliveryTitle,
           body: composed.body,
           dueAt: occurrence.dueAt,
-          sourceSessionId: item.sourceSessionId,
+          sourceSessionId,
           agentGenerated: composed.agentGenerated,
         });
         if (!result.delivered) {

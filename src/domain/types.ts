@@ -58,6 +58,7 @@ export type ModelApiConfig = {
   apiKeyMasked: string;
   temperature?: number;
   maxTokens?: number;
+  contextWindowTokens?: number;
   updatedAt?: string;
 };
 
@@ -70,6 +71,22 @@ export type ModelApiConfigPatch = {
   clearApiKey?: boolean;
   temperature?: number | null;
   maxTokens?: number | null;
+  contextWindowTokens?: number | null;
+};
+
+export type ModelApiProfile = ModelApiConfig & {
+  id: string;
+  name: string;
+  isDefault: boolean;
+};
+
+export type ModelApiProfilePatch = ModelApiConfigPatch & {
+  name?: string;
+};
+
+export type ModelApiProfileCollection = {
+  defaultProfileId: string;
+  profiles: ModelApiProfile[];
 };
 
 export type ContextLogEntry = {
@@ -92,10 +109,25 @@ export type ModelContextTrace = {
   id: string;
   sessionId: string;
   mode: Mode;
-  turnKind: "user" | "reminder_due";
+  turnKind: "user" | "reminder_due" | "group_gate" | "group_reply" | "subagent" | "memory_extraction" | "relationship_extraction" | "post_turn_analysis" | "world_planning" | "proactive_message" | "world_director" | "world_actor" | "world_analysis";
   requestText: string;
   payload: Record<string, unknown>;
   createdAt: string;
+};
+
+export type TraceArchiveConfig = {
+  enabled: boolean;
+  available: boolean;
+  updatedAt?: string;
+};
+
+export type TraceArchiveStatus = TraceArchiveConfig & {
+  format: "jsonl";
+  directory?: string;
+  currentFile?: string;
+  files: number;
+  totalBytes: number;
+  lastError?: string;
 };
 
 export type SessionRecord = {

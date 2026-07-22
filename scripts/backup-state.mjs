@@ -23,7 +23,7 @@ try {
     "conversations.json", "pi-sessions", "pi-agent", "model-api.json", "tavily.json", "vision.json",
     "user-profile.md", "characters", "memory-vault", "memory-vault-state.json",
     "memory-vault-migration.json", "memory-vault-journal", "memory-vault-recovery.json", "workspace",
-    "avatars", "system-prompts",
+    "avatars", "system-prompts", "trace-archive.json", "trace-archive",
   ]) {
     const source = join(stateDir, name);
     if (existsSync(source)) cpSync(source, join(staging, name), { recursive: true });

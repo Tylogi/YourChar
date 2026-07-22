@@ -79,9 +79,29 @@ export type ExtractedMemoryCandidate = {
   salience?: number;
   confidence?: number;
   tags?: string[];
+  evidence?: { user: string };
+  person?: {
+    name: string;
+    aliases?: string[];
+    relationship?: string;
+  };
 };
 
 export type MemoryExtractor = (input: MemoryExtractionInput) => Promise<unknown>;
+
+export type TrustedRealityMemoryObservation = {
+  sourceSessionId: string;
+  sourceMessageId: string;
+  candidateIndex: number;
+  claimKey: string;
+  claimType: RealityMemoryType;
+  exactQuote: string;
+  confidence: number;
+  salience?: number;
+  tags?: string[];
+};
+
+export type TrustedRealityMemoryObserver = (input: TrustedRealityMemoryObservation) => void;
 
 export type MemoryCoordinatorStatus = {
   enabled: boolean;

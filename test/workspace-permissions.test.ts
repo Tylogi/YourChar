@@ -317,5 +317,5 @@ function hasRole(value: unknown, role: string): boolean {
 }
 
 function isUserPrompt(value: unknown): boolean {
-  return hasRole(value, "user") && !JSON.stringify(value).includes("[RP_AGENT_TURN_CONTEXT");
+  return hasRole(value, "user") && !JSON.stringify(value).includes("[RP_AGENT_");
 }

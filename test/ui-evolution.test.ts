@@ -1,6 +1,8 @@
 import assert from "node:assert/strict";
+import { createServer, type ServerResponse } from "node:http";
 import test from "node:test";
 import { CompanionKernel } from "../src/domain/kernel.js";
+import { runFeatureTest } from "../src/evaluation/feature-tests.js";
 import { createHttpServer } from "../src/http/router.js";
 import { createTestRuntime } from "../src/testing/runtime.js";
 
@@ -142,6 +144,49 @@ test("feature test catalog is available and blocked preflight does not call a mo
   }
 });
 
+test("feature test preflight follows the selected character model binding", async () => {
+  const requestedModels: string[] = [];
+  const modelServer = createServer(async (request, response) => {
+    const chunks: Buffer[] = [];
+    for await (const chunk of request) chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+    const body = JSON.parse(Buffer.concat(chunks).toString("utf8")) as { model?: string };
+    requestedModels.push(body.model ?? "");
+    writeModelResponse(response, body.model ?? "bound-character-model", "我会先把变量拆开，再陪你看下一步。");
+  });
+  await new Promise<void>((resolve) => modelServer.listen(0, "127.0.0.1", resolve));
+  const address = modelServer.address();
+  assert.ok(address && typeof address === "object");
+  const kernel = new CompanionKernel({
+    stateDir: false,
+    startScheduler: false,
+    startWorldCoordinator: false,
+    startPrivateInboxCoordinator: false,
+  });
+  try {
+    kernel.patchModelApiConfig({ enabled: false });
+    const profile = kernel.createModelApiProfile({
+      name: "角色专用模型",
+      enabled: true,
+      baseUrl: `http://127.0.0.1:${address.port}/v1`,
+      model: "bound-character-model",
+    });
+    const character = kernel.createCharacter({
+      name: "绑定模型角色",
+      modelProfileId: profile.id,
+      soulMarkdown: "你是角色本人，用第一人称自然回复。",
+    });
+
+    const result = await runFeatureTest(kernel, "sms-character-voice", character.id);
+
+    assert.equal(result.status, "completed");
+    assert.equal(result.rules.find((entry) => entry.id === "model-configured")?.passed, true);
+    assert.equal(requestedModels.includes("bound-character-model"), true);
+  } finally {
+    kernel.dispose();
+    await new Promise<void>((resolve, reject) => modelServer.close((error) => error ? reject(error) : resolve()));
+  }
+});
+
 test("user and character avatars validate, persist through the API, and appear in character listings", async () => {
   const kernel = new CompanionKernel({ stateDir: false, startScheduler: false });
   const character = kernel.createCharacter({ name: "头像角色" });
@@ -217,4 +262,23 @@ function addressOf(server: ReturnType<typeof createHttpServer>): string {
 
 async function closeServer(server: ReturnType<typeof createHttpServer>): Promise<void> {
   await new Promise<void>((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
+}
+
+function writeModelResponse(response: ServerResponse, model: string, content: string): void {
+  response.writeHead(200, { "content-type": "text/event-stream; charset=utf-8" });
+  response.write(`data: ${JSON.stringify({
+    id: "chatcmpl-feature-binding",
+    object: "chat.completion.chunk",
+    created: 1,
+    model,
+    choices: [{ index: 0, delta: { role: "assistant", content }, finish_reason: null }],
+  })}\n\n`);
+  response.write(`data: ${JSON.stringify({
+    id: "chatcmpl-feature-binding",
+    object: "chat.completion.chunk",
+    created: 1,
+    model,
+    choices: [{ index: 0, delta: {}, finish_reason: "stop" }],
+  })}\n\n`);
+  response.end("data: [DONE]\n\n");
 }

@@ -103,8 +103,8 @@ export class AgentPermissionCatalog {
       : "User Profile MCP writing is disabled; profile context may still be readable."
     const soulWrite = characterSoulStatus(permissions.characterSoulWriteEnabled, context);
     const realityMemoryWrite = permissions.realityMemoryWriteEnabled
-      ? "Reality memory proposals are authorized; confirmation and deletion remain control-plane only."
-      : "Reality memory Agent proposals are disabled."
+      ? "Reality memory proposals are authorized. The trusted background Coordinator may auto-capture low-risk facts backed by an exact user quote; sensitive facts remain pending. Confirmation and deletion otherwise remain control-plane only."
+      : "Reality memory Agent proposals and automatic daily-fact capture are disabled."
     const characterMemoryWrite = permissions.characterMemoryWriteEnabled
       ? "Current-character RP memory proposals are authorized; confirmation and deletion remain control-plane only."
       : "Character RP memory Agent proposals are disabled."

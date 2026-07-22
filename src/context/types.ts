@@ -7,6 +7,9 @@ export type ContextPlannerBudgets = {
   realityMemoryTokens: number;
   roleplayMemoryTokens: number;
   sceneTokens: number;
+  worldCoreTokens: number;
+  worldRuntimeTokens: number;
+  interactionTokens: number;
   realityItems: number;
   roleplayItems: number;
   bootstrapItems: number;
@@ -57,7 +60,8 @@ export type MemoryRetrievalPlan = {
 
 export type ContextSectionManifest = {
   id: "stable_rules" | "profile" | "soul" | "skills" | "capabilities" | "tools" |
-    "latest_time" | "scene" | "reality_memory" | "rp_memory";
+    "world_core" | "latest_time" | "interaction" | "relationship" | "world_runtime" | "scene" |
+    "reality_memory" | "rp_memory";
   placement: "stable" | "dynamic" | "provider";
   characters: number;
   estimatedTokens: number;
@@ -87,6 +91,8 @@ export type ContextPlan = {
   truncated: boolean;
   runtimeEnvelope: string;
   stableSystemContext: string;
+  volatileContext: string;
+  memoryContext: string;
   turnContext: string;
   stableEstimatedTokens: number;
   dynamicEstimatedTokens: number;
@@ -100,11 +106,41 @@ export type ActualProviderUsage = {
   cacheWriteTokens: number | null;
 };
 
+export type ContextBudgetSnapshot = {
+  sessionId: string;
+  modelProfileId: string;
+  model: string;
+  contextWindowTokens: number;
+  contextWindowSource: "configured" | "assumed";
+  maxOutputTokens: number;
+  safetyReserveTokens: number;
+  usableInputTokens: number;
+  estimatedInputTokens: number;
+  actualInputTokens: number | null;
+  usedInputTokens: number;
+  usageSource: "measured" | "estimated";
+  remainingTokens: number;
+  remainingRatio: number;
+  utilizationRatio: number;
+  level: "healthy" | "warning" | "critical";
+  shouldCompact: boolean;
+  lifecycleState: "awake" | "tired" | "sleeping";
+  lastCompaction?: {
+    at: string;
+    reason: string;
+    status: "completed" | "failed";
+    estimatedTokensBefore?: number;
+    estimatedTokensAfter?: number;
+    error?: string;
+  };
+  updatedAt: string;
+};
+
 export type ContextEconomics = {
   id: string;
   sessionId: string;
   mode: Mode;
-  turnKind: "user" | "reminder_due";
+  turnKind: "user" | "reminder_due" | "world_director";
   systemHash: string;
   toolSchemaHash: string;
   messageCount: number;
@@ -126,7 +162,10 @@ export type ContextEconomics = {
   createdAt: string;
 };
 
-export type ContextEconomicsPlan = Omit<ContextPlan, "stableSystemContext" | "turnContext" | "query" | "retrieval"> & {
+export type ContextEconomicsPlan = Omit<
+  ContextPlan,
+  "stableSystemContext" | "volatileContext" | "memoryContext" | "turnContext" | "query" | "retrieval"
+> & {
   query: null;
   retrieval: Array<Omit<MemoryRetrievalPlan, "query" | "normalizedQuery" | "candidates"> & {
     query: null;

@@ -13,19 +13,25 @@ import {
   type VaultScope,
 } from "./types.js";
 
-const r2FrontmatterKeys = [
+const v1FrontmatterKeys = [
   "schemaVersion", "id", "kind", "realm", "scope", "type", "characterId", "sessionId",
   "validity", "confirmed", "sourceSessionId", "sourceMessageId", "createdAt", "updatedAt",
   "lastUsedAt", "revision", "supersedes", "tags", "quarantineReasons", "contentHash",
   "memoryKey", "salience", "confidence", "idempotencyKey", "scene",
 ] as const;
 
-const frontmatterKeys = [
+const v2FrontmatterKeys = [
   "schemaVersion", "id", "kind", "realm", "scope", "type", "characterId", "sessionId",
   "validity", "confirmed", "confirmationProvenance", "rejectedAt", "archivedAt", "deletedAt",
   "statusReason", "sourceSessionId", "sourceMessageId", "createdAt", "updatedAt", "lastUsedAt",
   "revision", "supersedes", "tags", "quarantineReasons", "contentHash", "memoryKey", "salience",
   "confidence", "idempotencyKey", "scene",
+] as const;
+
+const frontmatterKeys = [
+  ...v2FrontmatterKeys,
+  "personKey", "displayName", "aliases", "relationship", "visibility",
+  "visibleToCharacterIds", "sourceMemoryIds", "personConfidence",
 ] as const;
 
 export function parseVaultMarkdown(source: string, relativePath: string): VaultDocument {
@@ -95,21 +101,26 @@ export function hashVaultEntries(entries: Array<{ relativePath: string; document
 
 function validateFrontmatter(value: unknown, path: string): VaultFrontmatter {
   const record = object(value, path, "frontmatter must be a mapping");
-  const schemaVersion = record.schemaVersion === 1 ? 1 : literal(
+  const sourceSchemaVersion = oneOfNumber(
     record.schemaVersion,
-    MEMORY_VAULT_SCHEMA_VERSION,
+    [1, 2, MEMORY_VAULT_SCHEMA_VERSION],
     path,
     "schemaVersion",
   );
   const keys = Object.keys(record).sort();
-  const expected = [...(schemaVersion === 1 ? r2FrontmatterKeys : frontmatterKeys)].sort();
+  const sourceKeys = sourceSchemaVersion === 1
+    ? v1FrontmatterKeys
+    : sourceSchemaVersion === 2
+      ? v2FrontmatterKeys
+      : frontmatterKeys;
+  const expected = [...sourceKeys].sort();
   if (keys.length !== expected.length || keys.some((key, index) => key !== expected[index])) {
-    invalid(path, `frontmatter keys must be exactly: ${(schemaVersion === 1 ? r2FrontmatterKeys : frontmatterKeys).join(", ")}`);
+    invalid(path, `frontmatter keys must be exactly: ${sourceKeys.join(", ")}`);
   }
   const metadata: VaultFrontmatter = {
     schemaVersion: MEMORY_VAULT_SCHEMA_VERSION,
     id: identifier(record.id, path, "id"),
-    kind: oneOf(record.kind, ["user_profile", "character_soul", "scene", "memory"], path, "kind"),
+    kind: oneOf(record.kind, ["user_profile", "person_profile", "character_soul", "scene", "memory"], path, "kind"),
     realm: oneOf(record.realm, ["reality", "roleplay", "legacy"], path, "realm"),
     scope: oneOf(record.scope, ["global", "character", "session", "quarantine"], path, "scope"),
     type: nullableOneOf(record.type, ["user_fact", "preference", "goal", "person", "project", "relationship_event", "world_fact", "plot_event", "boundary"], path, "type"),
@@ -117,7 +128,7 @@ function validateFrontmatter(value: unknown, path: string): VaultFrontmatter {
     sessionId: nullableIdentifier(record.sessionId, path, "sessionId"),
     validity: nullableOneOf(record.validity, ["pending", "active", "superseded", "rejected", "archived", "deleted"], path, "validity"),
     confirmed: nullableBoolean(record.confirmed, path, "confirmed"),
-    confirmationProvenance: schemaVersion === 1
+    confirmationProvenance: sourceSchemaVersion === 1
       ? record.confirmed === true
         ? {
             kind: "trusted_control_plane",
@@ -129,10 +140,10 @@ function validateFrontmatter(value: unknown, path: string): VaultFrontmatter {
           }
         : null
       : nullableConfirmationProvenance(record.confirmationProvenance, path),
-    rejectedAt: schemaVersion === 1 ? null : nullableTimestamp(record.rejectedAt, path, "rejectedAt"),
-    archivedAt: schemaVersion === 1 ? null : nullableTimestamp(record.archivedAt, path, "archivedAt"),
-    deletedAt: schemaVersion === 1 ? null : nullableTimestamp(record.deletedAt, path, "deletedAt"),
-    statusReason: schemaVersion === 1 ? null : nullableString(record.statusReason, path, "statusReason"),
+    rejectedAt: sourceSchemaVersion === 1 ? null : nullableTimestamp(record.rejectedAt, path, "rejectedAt"),
+    archivedAt: sourceSchemaVersion === 1 ? null : nullableTimestamp(record.archivedAt, path, "archivedAt"),
+    deletedAt: sourceSchemaVersion === 1 ? null : nullableTimestamp(record.deletedAt, path, "deletedAt"),
+    statusReason: sourceSchemaVersion === 1 ? null : nullableString(record.statusReason, path, "statusReason"),
     sourceSessionId: nullableIdentifier(record.sourceSessionId, path, "sourceSessionId"),
     sourceMessageId: nullableIdentifier(record.sourceMessageId, path, "sourceMessageId"),
     createdAt: timestamp(record.createdAt, path, "createdAt"),
@@ -148,17 +159,52 @@ function validateFrontmatter(value: unknown, path: string): VaultFrontmatter {
     confidence: nullableUnitNumber(record.confidence, path, "confidence"),
     idempotencyKey: nullableString(record.idempotencyKey, path, "idempotencyKey"),
     scene: nullableScene(record.scene, path),
+    personKey: sourceSchemaVersion < 3 ? null : nullableString(record.personKey, path, "personKey"),
+    displayName: sourceSchemaVersion < 3 ? null : nullableString(record.displayName, path, "displayName"),
+    aliases: sourceSchemaVersion < 3 ? [] : stringArray(record.aliases, path, "aliases"),
+    relationship: sourceSchemaVersion < 3 ? null : nullableString(record.relationship, path, "relationship"),
+    visibility: sourceSchemaVersion < 3
+      ? null
+      : nullableOneOf(record.visibility, ["global", "selected_characters"], path, "visibility"),
+    visibleToCharacterIds: sourceSchemaVersion < 3
+      ? []
+      : identifierArray(record.visibleToCharacterIds, path, "visibleToCharacterIds"),
+    sourceMemoryIds: sourceSchemaVersion < 3
+      ? []
+      : identifierArray(record.sourceMemoryIds, path, "sourceMemoryIds"),
+    personConfidence: sourceSchemaVersion < 3
+      ? null
+      : nullableUnitNumber(record.personConfidence, path, "personConfidence"),
   };
-  validateKindContract(metadata, path, schemaVersion);
+  validateKindContract(metadata, path, sourceSchemaVersion);
   return metadata;
 }
 
-function validateKindContract(metadata: VaultFrontmatter, path: string, sourceSchemaVersion: 1 | 2): void {
+function validateKindContract(metadata: VaultFrontmatter, path: string, sourceSchemaVersion: 1 | 2 | 3): void {
   if (metadata.kind === "user_profile") {
     if (metadata.id !== "user-profile" || metadata.realm !== "reality" || metadata.scope !== "global") {
       invalid(path, "user_profile must use id=user-profile, realm=reality, scope=global");
     }
     assertStaticDocumentFields(metadata, path);
+  } else if (metadata.kind === "person_profile") {
+    if (
+      metadata.realm !== "reality" || metadata.scope !== "global" || !metadata.personKey ||
+      !metadata.displayName || !metadata.visibility || metadata.personConfidence === null
+    ) {
+      invalid(path, "person_profile must be reality/global with person identity, visibility, and confidence");
+    }
+    assertStaticDocumentFields(metadata, path, true);
+    if (metadata.visibility === "global" && metadata.visibleToCharacterIds.length) {
+      invalid(path, "global person_profile cannot contain visibleToCharacterIds");
+    }
+    if (
+      [...metadata.personKey].length > 240 || [...metadata.displayName].length > 80 ||
+      metadata.aliases.length > 20 || metadata.aliases.some((alias) => [...alias].length > 80) ||
+      (metadata.relationship !== null && [...metadata.relationship].length > 120) ||
+      metadata.sourceMemoryIds.length < 1
+    ) {
+      invalid(path, "person_profile identity or source metadata exceeds its limits");
+    }
   } else if (metadata.kind === "character_soul") {
     if (metadata.realm !== "roleplay" || metadata.scope !== "character" || !metadata.characterId) {
       invalid(path, "character_soul must be roleplay/character with characterId");
@@ -172,12 +218,13 @@ function validateKindContract(metadata: VaultFrontmatter, path: string, sourceSc
         metadata.confirmationProvenance || metadata.rejectedAt || metadata.archivedAt || metadata.deletedAt ||
         metadata.statusReason ||
         metadata.memoryKey || metadata.salience !== null || metadata.confidence !== null ||
-        metadata.quarantineReasons.length) {
+        metadata.quarantineReasons.length || hasPersonProfileFields(metadata)) {
       invalid(path, "scene contains memory-only frontmatter");
     }
   } else {
     if (!metadata.type || !metadata.validity || metadata.confirmed === null ||
-        metadata.salience === null || metadata.confidence === null || metadata.scene) {
+        metadata.salience === null || metadata.confidence === null || metadata.scene ||
+        hasPersonProfileFields(metadata)) {
       invalid(path, "memory requires type, validity, confirmed, salience, confidence, and scene=null");
     }
     if (metadata.realm === "roleplay") {
@@ -207,15 +254,24 @@ function validateKindContract(metadata: VaultFrontmatter, path: string, sourceSc
   }
 }
 
-function assertStaticDocumentFields(metadata: VaultFrontmatter, path: string): void {
+function assertStaticDocumentFields(metadata: VaultFrontmatter, path: string, allowPersonFields = false): void {
   if (metadata.type || metadata.sessionId || metadata.validity || metadata.confirmed !== null ||
       metadata.confirmationProvenance || metadata.rejectedAt || metadata.archivedAt || metadata.deletedAt ||
       metadata.statusReason ||
       metadata.sourceSessionId || metadata.sourceMessageId || metadata.lastUsedAt || metadata.supersedes ||
       metadata.quarantineReasons.length || metadata.memoryKey || metadata.salience !== null ||
-      metadata.confidence !== null || metadata.idempotencyKey || metadata.scene) {
+      metadata.confidence !== null || metadata.idempotencyKey || metadata.scene ||
+      (!allowPersonFields && hasPersonProfileFields(metadata))) {
     invalid(path, `${metadata.kind} contains memory or scene-only frontmatter`);
   }
+}
+
+function hasPersonProfileFields(metadata: VaultFrontmatter): boolean {
+  return Boolean(
+    metadata.personKey || metadata.displayName || metadata.aliases.length || metadata.relationship ||
+    metadata.visibility || metadata.visibleToCharacterIds.length || metadata.sourceMemoryIds.length ||
+    metadata.personConfidence !== null
+  );
 }
 
 function stableFrontmatter(value: VaultFrontmatter): VaultFrontmatter {
@@ -223,6 +279,9 @@ function stableFrontmatter(value: VaultFrontmatter): VaultFrontmatter {
     ...value,
     tags: [...new Set(value.tags.map((item) => item.trim()).filter(Boolean))].sort(),
     quarantineReasons: [...new Set(value.quarantineReasons.map((item) => item.trim()).filter(Boolean))].sort(),
+    aliases: [...new Set(value.aliases.map((item) => item.trim()).filter(Boolean))].sort(),
+    visibleToCharacterIds: [...new Set(value.visibleToCharacterIds)].sort(),
+    sourceMemoryIds: [...new Set(value.sourceMemoryIds)].sort(),
   };
   return Object.fromEntries(frontmatterKeys.map((key) => [key, canonical[key]])) as VaultFrontmatter;
 }
@@ -257,6 +316,11 @@ function oneOf<T extends string>(value: unknown, allowed: readonly T[], path: st
   return value as T;
 }
 
+function oneOfNumber<T extends number>(value: unknown, allowed: readonly T[], path: string, field: string): T {
+  if (typeof value !== "number" || !allowed.includes(value as T)) invalid(path, `${field} is invalid`);
+  return value as T;
+}
+
 function nullableOneOf<T extends string>(value: unknown, allowed: readonly T[], path: string, field: string): T | null {
   return value === null ? null : oneOf(value, allowed, path, field);
 }
@@ -282,6 +346,11 @@ function nullableUnitNumber(value: unknown, path: string, field: string): number
 function stringArray(value: unknown, path: string, field: string): string[] {
   if (!Array.isArray(value) || value.some((item) => typeof item !== "string")) invalid(path, `${field} must be a string array`);
   return [...new Set(value.map((item) => item.trim()).filter(Boolean))];
+}
+
+function identifierArray(value: unknown, path: string, field: string): string[] {
+  if (!Array.isArray(value)) invalid(path, `${field} must be an identifier array`);
+  return [...new Set(value.map((item) => identifier(item, path, field)))];
 }
 
 function timestamp(value: unknown, path: string, field: string): string {

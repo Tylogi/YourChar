@@ -374,7 +374,8 @@ test("economics keeps stable system hashes, exact LCP evidence, and actual usage
     const [second, first] = runtime.kernel.recentContextEconomics(2);
     assert.equal(second.systemHash, first.systemHash);
     assert.equal(second.toolSchemaHash, first.toolSchemaHash);
-    assert.equal(second.lcpMessageCount, first.messageCount);
+    assert.equal(second.lcpMessageCount, first.messageCount - 2);
+    assert.match(second.cacheBreakReason ?? "", /historical_volatile_context_filtered/);
     assert.ok(second.lcpEstimatedTokens > 0);
     assert.ok(second.prefixReuseRatio > 0 && second.prefixReuseRatio <= 1);
     assert.ok(second.estimatedInputTokens >= second.lcpEstimatedTokens + second.toolEstimatedTokens);
@@ -393,7 +394,7 @@ test("economics keeps stable system hashes, exact LCP evidence, and actual usage
   }
 });
 
-test("40 long turns reach a compaction bound, avoid resident repeats, and re-inject after compaction", async () => {
+test("30 long turns defer compaction until rest and preserve bounded memory context after waking", async () => {
   const stateDir = mkdtempSync(join(tmpdir(), "rp-agent-r4-long-"));
   const runtime = createTestRuntime({ stateDir, seed: "r4-long" });
   try {
@@ -404,11 +405,11 @@ test("40 long turns reach a compaction bound, avoid resident repeats, and re-inj
       tags: ["长会话核心"],
       salience: 0.96,
     });
-    runtime.model.enqueue(Array.from({ length: 40 }, (_, index) => ({
+    runtime.model.enqueue(Array.from({ length: 30 }, (_, index) => ({
       kind: "assistant_text" as const,
       text: `第${index + 1}轮回复。${"稳定记录".repeat(220)}`,
     })));
-    for (let index = 0; index < 40; index += 1) {
+    for (let index = 0; index < 30; index += 1) {
       await runtime.kernel.sendMessage("long-context", {
         mode: "sms",
         text: `第${index + 1}轮询问长会话核心。${"输入条件".repeat(220)}`,
@@ -416,21 +417,46 @@ test("40 long turns reach a compaction bound, avoid resident repeats, and re-inj
       runtime.clock.advance(60_000);
     }
     const handle = await runtime.kernel.sessionRuntime.getOrCreate("long-context", "sms");
+    assert.equal(handle.sessionManager.getEntries().some((entry) => entry.type === "compaction"), false);
+    assert.equal(runtime.kernel.listConversationMetadata().find((entry) =>
+      entry.id === "long-context"
+    )?.sleepState, "tired");
+
+    runtime.model.enqueue([
+      { kind: "assistant_text", text: "晚安，舰长。我也确实困了，等醒来再陪你继续。" },
+      { kind: "assistant_text", text: "我醒了，舰长。刚才的约定和边界我都还记得。" },
+    ]);
+    const sleeping = await runtime.kernel.sendMessage("long-context", {
+      mode: "sms",
+      text: "晚安咯",
+    });
+    assert.equal(sleeping.status, "completed");
     assert.ok(handle.sessionManager.getEntries().some((entry) => entry.type === "compaction"));
+    assert.equal(runtime.kernel.listConversationMetadata().find((entry) =>
+      entry.id === "long-context"
+    )?.sleepState, "sleeping");
+    const waking = await runtime.kernel.sendMessage("long-context", {
+      mode: "sms",
+      text: "醒了吗？",
+    });
+    assert.equal(waking.status, "completed");
+    assert.equal(runtime.kernel.listConversationMetadata().find((entry) =>
+      entry.id === "long-context"
+    )?.sleepState, "awake");
+
     const economics = runtime.kernel.recentContextEconomics(100)
       .filter((entry) => entry.sessionId === "long-context");
     const injections = economics.filter((entry) => entry.memoryIds.includes(core.id));
     const compactionCount = handle.sessionManager.getEntries().filter((entry) => entry.type === "compaction").length;
-    assert.ok(injections.length >= 2, "memory must be re-injected after resident state resets on compaction");
+    assert.ok(injections.length >= 1, "the selected memory must remain represented after compaction");
     assert.ok(injections.length <= compactionCount + 1, "re-injection must be bounded by compaction resets");
     const chronological = [...economics].reverse();
     const beforeFirstCompaction = chronological.slice(0, chronological.findIndex((entry) =>
       entry.cacheBreakReason?.includes("context_compacted")
     ));
     assert.equal(beforeFirstCompaction.filter((entry) => entry.memoryIds.includes(core.id)).length, 1);
-    assert.ok(Math.max(...economics.map((entry) => entry.estimatedInputTokens)) < 30_000);
-    assert.equal(chronological.at(-1)?.messageCount, chronological.at(-2)?.messageCount);
-    assert.ok((chronological.at(-1)?.messageCount ?? 100) <= 25);
+    assert.ok(Math.max(...economics.map((entry) => entry.estimatedInputTokens)) < 110_000);
+    assert.ok((chronological.at(-1)?.messageCount ?? 100) <= 35);
     const latestPayload = JSON.stringify(runtime.model.requests.at(-1)?.messages);
     assert.ok((latestPayload.match(/长会话核心边界是禁止自动公开私人草稿/g) ?? []).length <= 1);
     assert.ok((runtime.model.requests.at(-1)?.messages.length ?? 100) < 40);

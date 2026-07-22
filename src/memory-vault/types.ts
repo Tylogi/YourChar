@@ -1,8 +1,9 @@
-export const MEMORY_VAULT_SCHEMA_VERSION = 2 as const;
+export const MEMORY_VAULT_SCHEMA_VERSION = 3 as const;
 
-export type VaultDocumentKind = "user_profile" | "character_soul" | "scene" | "memory";
+export type VaultDocumentKind = "user_profile" | "person_profile" | "character_soul" | "scene" | "memory";
 export type VaultRealm = "reality" | "roleplay" | "legacy";
 export type VaultScope = "global" | "character" | "session" | "quarantine";
+export type PersonProfileVisibility = "global" | "selected_characters";
 export type VaultMemoryType =
   | "user_fact"
   | "preference"
@@ -61,6 +62,39 @@ export type VaultFrontmatter = {
   confidence: number | null;
   idempotencyKey: string | null;
   scene: VaultSceneData | null;
+  personKey: string | null;
+  displayName: string | null;
+  aliases: string[];
+  relationship: string | null;
+  visibility: PersonProfileVisibility | null;
+  visibleToCharacterIds: string[];
+  sourceMemoryIds: string[];
+  personConfidence: number | null;
+};
+
+export type PersonProfile = {
+  id: string;
+  personKey: string;
+  displayName: string;
+  aliases: string[];
+  relationship?: string;
+  visibility: PersonProfileVisibility;
+  visibleToCharacterIds: string[];
+  sourceMemoryIds: string[];
+  confidence: number;
+  markdown: string;
+  revision: number;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type UpdatePersonProfileInput = {
+  displayName?: string;
+  aliases?: string[];
+  relationship?: string | null;
+  visibility?: PersonProfileVisibility;
+  visibleToCharacterIds?: string[];
+  markdown?: string;
 };
 
 export type VaultDocument = {

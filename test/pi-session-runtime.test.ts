@@ -100,7 +100,7 @@ test("the turn after the index-14 kernel restart resumes in order", async () => 
   }
 });
 
-test("automatic compaction survives kernel restart and the next turn", async () => {
+test("a rest checkpoint survives kernel restart and wakes on the next turn", async () => {
   const stateDir = mkdtempSync(join(tmpdir(), "rp-agent-compaction-restart-"));
   const model = new ScriptedModelController("compaction-restart");
   let first: CompanionKernel | undefined;
@@ -119,15 +119,25 @@ test("automatic compaction survives kernel restart and the next turn", async () 
     for (let index = 0; index < 12; index += 1) {
       model.enqueue([{
         kind: "assistant_text",
-        text: `舰长，我认为第 ${index + 1} 轮数据有效。${"记录".repeat(350)}`,
+        text: `舰长，我认为第 ${index + 1} 轮数据有效。${"记录".repeat(900)}`,
       }]);
       const response: MessageResponse = await first.sendMessage("compact-restart", {
         mode: "sms",
         characterId: character.id,
-        text: `第 ${index + 1} 轮长上下文。${"条件".repeat(350)}`,
+        text: `第 ${index + 1} 轮长上下文。${"条件".repeat(900)}`,
       });
       assert.equal(response.status, "completed");
     }
+    model.enqueue([{
+      kind: "assistant_text",
+      text: "晚安，舰长。我休息一下，醒来再继续。",
+    }]);
+    const resting = await first.sendMessage("compact-restart", {
+      mode: "sms",
+      characterId: character.id,
+      text: "晚安咯",
+    });
+    assert.equal(resting.status, "completed");
     const firstHandle = await first.sessionRuntime.getOrCreate(
       "compact-restart",
       "sms",
@@ -138,6 +148,9 @@ test("automatic compaction survives kernel restart and the next turn", async () 
     assert.ok(firstHandle.session.messages.some((message) =>
       message.role === "custom" && message.customType === "rp-agent/turn_context" && message.display === false
     ));
+    assert.equal(first.listConversationMetadata().find((entry) =>
+      entry.id === "compact-restart"
+    )?.sleepState, "sleeping");
     first.dispose();
     first = undefined;
 
@@ -162,6 +175,10 @@ test("automatic compaction survives kernel restart and the next turn", async () 
     assert.match(JSON.stringify(model.requests.at(-1)?.messages), /较早对话已压缩/);
     assert.match(JSON.stringify(model.requests.at(-1)?.messages), /压缩重启后仍需记住玻璃温室的约定/);
     assert.doesNotMatch(model.requests.at(-1)?.systemPrompt ?? "", /玻璃温室|Current time/);
+    assert.match(JSON.stringify(model.requests.at(-1)?.messages), /state=\\?"waking/);
+    assert.equal(second.listConversationMetadata().find((entry) =>
+      entry.id === "compact-restart"
+    )?.sleepState, "awake");
   } finally {
     first?.dispose();
     second?.dispose();

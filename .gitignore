@@ -11,3 +11,4 @@ coverage/
 *.db
 browser-artifacts/
 eval-artifacts/
+backups/
