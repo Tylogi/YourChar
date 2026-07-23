@@ -156,6 +156,9 @@ test("server serves chat UI and debug model traces", async () => {
     assert.match(html, /\/assets\/marked\.umd\.js/);
     assert.match(html, /\/assets\/purify\.min\.js/);
     assert.match(html, /\/assets\/noto-emoji\/400\.css/);
+    assert.match(html, /rel="manifest" href="\/manifest\.webmanifest"/);
+    assert.match(html, /rel="apple-touch-icon" sizes="180x180"/);
+    assert.match(html, /name="theme-color" content="#07c160"/);
     assert.match(html, /renderMarkdown/);
     assert.match(html, /markdown-body/);
     assert.match(html, /function assistantBubbleSegments/);
@@ -196,6 +199,34 @@ test("server serves chat UI and debug model traces", async () => {
     assert.equal(emojiFont.status, 200);
     assert.equal(emojiFont.headers.get("content-type"), "font/woff2");
     assert.ok((await emojiFont.arrayBuffer()).byteLength > 50_000);
+
+    const manifestResponse = await fetch(`${baseUrl}/manifest.webmanifest`);
+    assert.equal(manifestResponse.status, 200);
+    assert.match(manifestResponse.headers.get("content-type") ?? "", /application\/manifest\+json/);
+    const manifest = await manifestResponse.json() as {
+      name: string;
+      theme_color: string;
+      icons: Array<{ src: string; sizes: string }>;
+    };
+    assert.equal(manifest.name, "RP Agent");
+    assert.equal(manifest.theme_color, "#07c160");
+    assert.equal(manifest.icons.some((icon) => icon.sizes === "192x192"), true);
+    assert.equal(manifest.icons.some((icon) => icon.sizes === "512x512"), true);
+
+    const appIcon = await fetch(`${baseUrl}/assets/icons/app-icon-192.png`);
+    assert.equal(appIcon.status, 200);
+    assert.equal(appIcon.headers.get("content-type"), "image/png");
+    const appIconBuffer = Buffer.from(await appIcon.arrayBuffer());
+    assert.equal(appIconBuffer.subarray(1, 4).toString("ascii"), "PNG");
+    assert.equal(appIconBuffer.readUInt32BE(16), 192);
+    assert.equal(appIconBuffer.readUInt32BE(20), 192);
+
+    const iosAppIcon = await fetch(`${baseUrl}/assets/icons/app-icon-1024.png`);
+    assert.equal(iosAppIcon.status, 200);
+    const iosAppIconBuffer = Buffer.from(await iosAppIcon.arrayBuffer());
+    assert.equal(iosAppIconBuffer.readUInt32BE(16), 1024);
+    assert.equal(iosAppIconBuffer.readUInt32BE(20), 1024);
+    assert.equal(iosAppIconBuffer[25], 2, "iOS master icon must be opaque RGB without an alpha channel");
 
     const pageWithSlash = await fetch(`${baseUrl}/ui/`);
     assert.equal(pageWithSlash.status, 200);

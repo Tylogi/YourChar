@@ -1256,6 +1256,12 @@ async function runDesktopWorkflow(browser, baseUrl, outputDir) {
   await page.getByRole("tab", { name: "功能测试", exact: true }).click();
   await page.locator("#featureTestPanel").waitFor({ state: "visible" });
   assert.ok(await page.locator("#featureTestList input[data-feature-test]").count() >= 10);
+  assert.ok(await page.locator("#featureTestTargetModel").inputValue());
+  assert.ok(await page.locator("#featureTestTargetModel option").count() >= 2);
+  assert.ok(await page.locator("#featureTestJudgeModel option").count() >= 2);
+  await assertPanelInsideMain(page, "#featureTestPanel");
+  await assertInteractiveBounds(page);
+  await captureValidatedScreenshot(page, resolve(outputDir, "debug-model-adaptation.png"));
   await page.getByRole("button", { name: "聊天", exact: true }).click();
 
   await page.screenshot({ path: resolve(outputDir, "desktop.png"), fullPage: false });
@@ -1507,6 +1513,13 @@ async function runMobileWorkflow(browser, baseUrl, outputDir) {
   await assertInteractiveBounds(page);
   await assertViewport(page);
   await page.screenshot({ path: resolve(outputDir, "mobile-debug-initiative.png"), fullPage: false });
+  await page.getByRole("tab", { name: "功能测试", exact: true }).click();
+  await page.locator("#featureTestPanel").waitFor({ state: "visible" });
+  await page.locator("#featureTestTargetModel").waitFor({ state: "visible" });
+  await assertPanelInsideMain(page, "#featureTestPanel");
+  await assertInteractiveBounds(page);
+  await assertViewport(page);
+  await captureValidatedScreenshot(page, resolve(outputDir, "mobile-model-adaptation.png"));
   await page.getByRole("button", { name: "管理", exact: true }).click();
   await page.locator("#managementPage").waitFor({ state: "visible" });
   await page.locator(".module-row").filter({ hasText: "Schedule MCP" }).waitFor();

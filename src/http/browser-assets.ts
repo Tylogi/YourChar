@@ -1,6 +1,7 @@
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { dirname, join, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 
 export type BrowserAsset = {
   body: Buffer;
@@ -13,12 +14,34 @@ const domPurifyEntry = require.resolve("dompurify");
 const lucideEntry = require.resolve("lucide");
 const emojiCssEntry = require.resolve("@fontsource/noto-emoji/400.css");
 const emojiPackageDirectory = dirname(emojiCssEntry);
+const moduleDirectory = dirname(fileURLToPath(import.meta.url));
+
+function projectAssetPath(...segments: string[]): string {
+  const relativePath = join("assets", ...segments);
+  const candidates = [
+    resolve(process.cwd(), relativePath),
+    resolve(moduleDirectory, "../../", relativePath),
+    resolve(moduleDirectory, "../../../", relativePath),
+  ];
+  const match = candidates.find((candidate) => existsSync(candidate));
+  if (!match) {
+    throw new Error(`Missing browser asset: ${relativePath}`);
+  }
+  return match;
+}
 
 const assetPaths: Array<[pathname: string, path: string, contentType: string]> = [
   ["/assets/marked.umd.js", join(dirname(markedEntry), "marked.umd.js"), "text/javascript; charset=utf-8"],
   ["/assets/purify.min.js", join(dirname(domPurifyEntry), "purify.min.js"), "text/javascript; charset=utf-8"],
   ["/assets/lucide.min.js", resolve(dirname(lucideEntry), "../umd/lucide.min.js"), "text/javascript; charset=utf-8"],
   ["/assets/noto-emoji/400.css", emojiCssEntry, "text/css; charset=utf-8"],
+  ["/manifest.webmanifest", projectAssetPath("manifest.webmanifest"), "application/manifest+json; charset=utf-8"],
+  ["/favicon.ico", projectAssetPath("icons", "favicon-32.png"), "image/png"],
+  ["/assets/icons/favicon-32.png", projectAssetPath("icons", "favicon-32.png"), "image/png"],
+  ["/assets/icons/apple-touch-icon-180.png", projectAssetPath("icons", "apple-touch-icon-180.png"), "image/png"],
+  ["/assets/icons/app-icon-192.png", projectAssetPath("icons", "app-icon-192.png"), "image/png"],
+  ["/assets/icons/app-icon-512.png", projectAssetPath("icons", "app-icon-512.png"), "image/png"],
+  ["/assets/icons/app-icon-1024.png", projectAssetPath("icons", "app-icon-1024.png"), "image/png"],
   ...Array.from({ length: 10 }, (_, index): [string, string, string] => [
     `/assets/noto-emoji/files/noto-emoji-${index}-400-normal.woff2`,
     join(emojiPackageDirectory, "files", `noto-emoji-${index}-400-normal.woff2`),

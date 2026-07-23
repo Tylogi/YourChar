@@ -89,6 +89,10 @@ configured-model evaluation are documented in
 The per-scenario background thinking controls, compatibility fallback, token
 ceilings, and configured-model corpus are documented in
 [`docs/background-thinking-policy.md`](docs/background-thinking-policy.md).
+Deterministic functional completeness, independent LLM-as-Judge quality scoring,
+target-model sandbox routing, aggregate labels, and report interpretation are
+documented in
+[`docs/model-adaptation-evaluation.md`](docs/model-adaptation-evaluation.md).
 
 The deterministic Agent test control API is disabled by default. Start a
 loopback-only test server with:

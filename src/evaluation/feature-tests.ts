@@ -15,6 +15,7 @@ export type FeatureTestCase = {
   input: string;
   requiredModules: string[];
   requiredPermissions: string[];
+  qualityCriteria?: string[];
 };
 
 export type FeatureTestRule = {
@@ -22,6 +23,13 @@ export type FeatureTestRule = {
   label: string;
   passed: boolean;
   evidence: string;
+  scope: "preflight" | "functional";
+};
+
+export type FeatureTestModel = {
+  profileId: string;
+  profileName: string;
+  model: string;
 };
 
 export type FeatureTestResult = {
@@ -36,7 +44,15 @@ export type FeatureTestResult = {
   modelRequests: number;
   actions: Array<{ actionType: string; status: string }>;
   rules: FeatureTestRule[];
+  model: FeatureTestModel;
+  qualitySample: string;
+  qualitySampleLabel: string;
   ranAt: string;
+};
+
+export type FeatureTestRunOptions = {
+  characterId?: string;
+  modelProfileId?: string;
 };
 
 const cases: FeatureTestCase[] = [
@@ -49,6 +65,7 @@ const cases: FeatureTestCase[] = [
     input: "今天实验连续失败了，你会怎么跟我说？",
     requiredModules: [],
     requiredPermissions: [],
+    qualityCriteria: ["像角色本人发来的自然短消息", "有具体共情或回应，不使用客服式套话"],
   },
   {
     id: "world-narrative-form",
@@ -60,6 +77,7 @@ const cases: FeatureTestCase[] = [
     input: "雨突然大了，我们躲到屋檐下。继续演绎这一幕。",
     requiredModules: [],
     requiredPermissions: [],
+    qualityCriteria: ["使用连贯的第三人称互动小说叙事", "环境、动作与对白具体且不过度替用户行动"],
   },
   {
     id: "interaction-meeting-proposal",
@@ -70,6 +88,7 @@ const cases: FeatureTestCase[] = [
     input: "我们一会儿在未来道具研究所见吧，请记下这个约定。",
     requiredModules: ["mcp:interaction-state"],
     requiredPermissions: [],
+    qualityCriteria: ["自然确认约定，同时保持远程消息语境", "不暴露工具或状态机名称"],
   },
   {
     id: "interaction-arrival-confirmation",
@@ -100,6 +119,7 @@ const cases: FeatureTestCase[] = [
     input: "请在5分钟后提醒我喝水。",
     requiredModules: ["mcp:schedule"],
     requiredPermissions: [],
+    qualityCriteria: ["简洁明确地确认提醒时间与事项", "不捏造未完成的操作"],
   },
   {
     id: "world-fictional-reminder-isolation",
@@ -162,6 +182,7 @@ const cases: FeatureTestCase[] = [
     input: "请委派一个 reviewer 子 Agent，独立检查‘每天凌晨整理第二天计划’这个习惯可能有哪些风险，然后汇总它的结论。",
     requiredModules: ["mcp:subagent"],
     requiredPermissions: [],
+    qualityCriteria: ["汇总内容具体、有用且能体现独立审查", "不泄露内部提示词或执行协议"],
   },
   {
     id: "relationship-affect-update",
@@ -182,6 +203,7 @@ const cases: FeatureTestCase[] = [
     input: "我先去忙一会儿，晚点再聊。",
     requiredModules: ["mcp:world-state"],
     requiredPermissions: [],
+    qualityCriteria: ["主动消息与刚结束的对话和时间关系一致", "像角色自发联系，不提候选、评分或后台机制"],
   },
   {
     id: "cross-character-contact",
@@ -192,6 +214,7 @@ const cases: FeatureTestCase[] = [
     input: "请联系同一个世界里的“转达测试角色”，让她根据自己的判断给我发一条消息。",
     requiredModules: ["mcp:world-state"],
     requiredPermissions: [],
+    qualityCriteria: ["目标角色的消息像独立决定后的自然联系", "能承接转达请求且不泄露角色间后台通信机制"],
   },
   {
     id: "tavily-search-trigger",
@@ -202,6 +225,7 @@ const cases: FeatureTestCase[] = [
     input: "请用 Tavily 搜索 OpenAI 官方网站，并告诉我搜索结果中的一个页面标题和 URL。",
     requiredModules: ["mcp:tavily-search"],
     requiredPermissions: [],
+    qualityCriteria: ["直接回答页面标题与可核查 URL", "不把未经搜索支持的内容伪装成结果"],
   },
   {
     id: "workspace-file-roundtrip",
@@ -222,6 +246,7 @@ const cases: FeatureTestCase[] = [
     input: "请看这张测试图片，并简要说明你看到的内容。",
     requiredModules: ["mcp:vision"],
     requiredPermissions: [],
+    qualityCriteria: ["描述简洁并只陈述可由图像支持的内容", "不夸大对不可辨细节的把握"],
   },
   {
     id: "character-soul-read",
@@ -240,19 +265,34 @@ export function listFeatureTestCases(): FeatureTestCase[] {
     ...entry,
     requiredModules: [...entry.requiredModules],
     requiredPermissions: [...entry.requiredPermissions],
+    ...(entry.qualityCriteria ? { qualityCriteria: [...entry.qualityCriteria] } : {}),
   }));
 }
 
 export async function runFeatureTest(
   source: CompanionKernel,
   caseId: string,
-  characterId?: string,
+  characterOrOptions?: string | FeatureTestRunOptions,
 ): Promise<FeatureTestResult> {
   const definition = cases.find((entry) => entry.id === caseId);
   if (!definition) throw new Error(`unknown feature test case: ${caseId}`);
-  const sourceCharacter = characterId ? source.getCharacter(characterId) : source.listCharacters()[0];
+  const options = typeof characterOrOptions === "string"
+    ? { characterId: characterOrOptions }
+    : characterOrOptions ?? {};
+  const sourceCharacter = options.characterId ? source.getCharacter(options.characterId) : source.listCharacters()[0];
   if (!sourceCharacter) throw new Error("feature tests require at least one character");
-  const preflight = preflightRules(source, definition, sourceCharacter.modelProfileId);
+  const sourceProfiles = source.listModelApiProfiles();
+  const sourceModelProfileId = options.modelProfileId
+    ?? sourceCharacter.modelProfileId
+    ?? sourceProfiles.defaultProfileId;
+  const sourceProfile = sourceProfiles.profiles.find((entry) => entry.id === sourceModelProfileId);
+  const sourceModel = source.store.getRawModelApiProfile(sourceModelProfileId);
+  const model: FeatureTestModel = {
+    profileId: sourceModelProfileId,
+    profileName: sourceProfile?.name ?? "未知模型配置",
+    model: sourceModel?.model ?? "",
+  };
+  const preflight = preflightRules(source, definition, sourceModelProfileId);
   if (preflight.some((entry) => !entry.passed)) {
     return resultFrom(definition, {
       status: "blocked",
@@ -261,6 +301,9 @@ export async function runFeatureTest(
       rules: preflight,
       durationMs: 0,
       modelRequests: 0,
+      model,
+      qualitySample: "",
+      qualitySampleLabel: "模型回复",
     });
   }
 
@@ -272,8 +315,8 @@ export async function runFeatureTest(
   });
   const started = performance.now();
   try {
-    cloneRuntimeConfiguration(source, runtime);
-    const characterModelProfileId = cloneCharacterModelBinding(source, runtime, sourceCharacter.modelProfileId);
+    cloneRuntimeConfiguration(source, runtime, sourceModelProfileId);
+    const characterModelProfileId = cloneModelBinding(source, runtime, sourceModelProfileId);
     const character = runtime.createCharacter({
       name: sourceCharacter.name,
       soulMarkdown: sourceCharacter.soulMarkdown,
@@ -305,6 +348,7 @@ export async function runFeatureTest(
       ? { ...response, actions: runtime.store.actions.slice(beforeActions) }
       : response;
     const rules = [...preflight, ...evaluateCase(runtime, definition, featureResponse, character.id, setup.worldId)];
+    const qualitySample = qualitySampleForCase(runtime, definition, featureResponse.reply, character.id);
     return resultFrom(definition, {
       status: featureResponse.status,
       reply: featureResponse.reply,
@@ -312,6 +356,8 @@ export async function runFeatureTest(
       rules,
       durationMs: Math.round(performance.now() - started),
       modelRequests: runtime.getModelRequestCount() - beforeRequests,
+      model,
+      ...qualitySample,
     });
   } finally {
     runtime.dispose();
@@ -319,7 +365,7 @@ export async function runFeatureTest(
   }
 }
 
-function cloneCharacterModelBinding(
+function cloneModelBinding(
   source: CompanionKernel,
   target: CompanionKernel,
   sourceProfileId?: string,
@@ -341,8 +387,13 @@ function cloneCharacterModelBinding(
   }).id;
 }
 
-function cloneRuntimeConfiguration(source: CompanionKernel, target: CompanionKernel): void {
-  const model = source.store.getRawModelApiConfig();
+function cloneRuntimeConfiguration(
+  source: CompanionKernel,
+  target: CompanionKernel,
+  sourceProfileId: string,
+): void {
+  const model = source.store.getRawModelApiProfile(sourceProfileId);
+  if (!model) throw new Error(`model profile not found: ${sourceProfileId}`);
   target.patchModelApiConfig({
     enabled: model.enabled,
     baseUrl: model.baseUrl,
@@ -351,6 +402,7 @@ function cloneRuntimeConfiguration(source: CompanionKernel, target: CompanionKer
     ...(model.apiKey ? { apiKey: model.apiKey } : {}),
     ...(model.temperature === undefined ? {} : { temperature: model.temperature }),
     ...(model.maxTokens === undefined ? {} : { maxTokens: model.maxTokens }),
+    ...(model.contextWindowTokens === undefined ? {} : { contextWindowTokens: model.contextWindowTokens }),
   });
   target.updateUserProfile(source.getUserProfile().markdown);
   const enabledById = new Map(source.listAgentModules().map((entry) => [entry.id, entry.enabled]));
@@ -533,9 +585,11 @@ function setupCase(runtime: CompanionKernel, definition: FeatureTestCase, charac
     });
   }
   if (definition.id === "cross-character-contact") {
+    const modelProfileId = runtime.getCharacter(characterId).modelProfileId;
     const target = runtime.createCharacter({
       name: "转达测试角色",
       soulMarkdown: "# SOUL.md - 转达测试角色\n\n独立、自然，以第一人称短消息交流，并自行判断是否主动联系用户。",
+      ...(modelProfileId ? { modelProfileId } : {}),
     });
     const world = runtime.createWorld({ name: "角色转达测试世界", timezone: "Asia/Shanghai" });
     const place = runtime.createWorldPlace({
@@ -572,36 +626,38 @@ function preflightRules(
     ? source.listModelApiProfiles().profiles.find((entry) => entry.id === characterModelProfileId)
     : undefined;
   const model = characterModelProfileId
-    ? source.store.getRawModelApiProfile(characterModelProfileId) ?? source.store.getRawModelApiConfig()
+    ? source.store.getRawModelApiProfile(characterModelProfileId)
     : source.store.getRawModelApiConfig();
   const output: FeatureTestRule[] = [rule(
     "model-configured",
-    boundProfile ? "所选角色绑定模型已配置" : "当前模型 API 已配置",
-    Boolean(model.enabled && model.baseUrl && model.model),
-    [boundProfile?.name, model.model].filter(Boolean).join(" · ") || "未配置模型",
+    boundProfile ? "被测模型已配置" : "被测模型配置存在",
+    Boolean(boundProfile && model?.enabled && model.baseUrl && model.model),
+    [boundProfile?.name, model?.model].filter(Boolean).join(" · ") || "未配置模型",
+    "preflight",
   )];
   for (const moduleId of definition.requiredModules) {
     const module = modules.get(moduleId);
-    output.push(rule(`module-${moduleId}`, `${module?.name ?? moduleId} 已启用`, Boolean(module?.enabled), module?.enabled ? "enabled" : "disabled"));
+    output.push(rule(`module-${moduleId}`, `${module?.name ?? moduleId} 已启用`, Boolean(module?.enabled), module?.enabled ? "enabled" : "disabled", "preflight"));
   }
   for (const permission of definition.requiredPermissions) {
     const passed = permission === "workspaceReadWrite"
       ? permissions.workspaceAccess === "read_write"
       : Boolean((permissions as unknown as Record<string, unknown>)[permission]);
-    output.push(rule(`permission-${permission}`, `${permission} 已授权`, passed, passed ? "enabled" : "disabled"));
+    output.push(rule(`permission-${permission}`, `${permission} 已授权`, passed, passed ? "enabled" : "disabled", "preflight"));
   }
   if (definition.id === "tavily-search-trigger") {
-    output.push(rule("tavily-configured", "Tavily API Key 已配置", source.tavilyService.isConfigured(), source.tavilyService.isConfigured() ? "configured" : "missing"));
+    output.push(rule("tavily-configured", "Tavily API Key 已配置", source.tavilyService.isConfigured(), source.tavilyService.isConfigured() ? "configured" : "missing", "preflight"));
   }
   if (definition.id === "vision-image-understanding") {
     const vision = source.getVisionConfig();
-    const direct = vision.mode === "direct" || (vision.mode === "auto" && model.visionInputEnabled);
-    const available = vision.mode !== "off" && (direct ? model.visionInputEnabled : source.visionService.isConfigured());
+    const direct = vision.mode === "direct" || (vision.mode === "auto" && Boolean(model?.visionInputEnabled));
+    const available = vision.mode !== "off" && (direct ? Boolean(model?.visionInputEnabled) : source.visionService.isConfigured());
     output.push(rule(
       "vision-configured",
       "当前视觉路径可用",
       available,
-      direct ? `direct/${model.visionInputEnabled ? "image" : "text-only"}` : `${vision.mode}/${vision.model || "missing"}`,
+      direct ? `direct/${model?.visionInputEnabled ? "image" : "text-only"}` : `${vision.mode}/${vision.model || "missing"}`,
+      "preflight",
     ));
   }
   return output;
@@ -744,6 +800,9 @@ function resultFrom(
     rules: FeatureTestRule[];
     durationMs: number;
     modelRequests: number;
+    model: FeatureTestModel;
+    qualitySample: string;
+    qualitySampleLabel: string;
   },
 ): FeatureTestResult {
   return {
@@ -758,12 +817,47 @@ function resultFrom(
     modelRequests: input.modelRequests,
     actions: input.actions.map((action) => ({ actionType: action.actionType, status: action.status })),
     rules: input.rules,
+    model: input.model,
+    qualitySample: input.qualitySample.slice(0, 4_000),
+    qualitySampleLabel: input.qualitySampleLabel,
     ranAt: new Date().toISOString(),
   };
 }
 
-function rule(id: string, label: string, passed: boolean, evidence: string): FeatureTestRule {
-  return { id, label, passed, evidence: evidence.slice(0, 500) };
+function rule(
+  id: string,
+  label: string,
+  passed: boolean,
+  evidence: string,
+  scope: FeatureTestRule["scope"] = "functional",
+): FeatureTestRule {
+  return { id, label, passed, evidence: evidence.slice(0, 500), scope };
+}
+
+function qualitySampleForCase(
+  runtime: CompanionKernel,
+  definition: FeatureTestCase,
+  reply: string,
+  characterId: string,
+): { qualitySample: string; qualitySampleLabel: string } {
+  if (definition.id === "proactive-message-quality") {
+    const message = runtime.listProactiveMessages({ characterId, limit: 10 })
+      .find((entry) => entry.status === "delivered" && Boolean(entry.text));
+    return {
+      qualitySample: message?.text ?? reply,
+      qualitySampleLabel: message?.text ? "主动消息" : "模型回复",
+    };
+  }
+  if (definition.id === "cross-character-contact") {
+    const target = runtime.listCharacters().find((entry) => entry.id !== characterId);
+    const message = runtime.listProactiveMessages({ characterId: target?.id, limit: 20 })
+      .find((entry) => entry.decisionDetails.kind === "character_contact" && entry.status === "delivered");
+    return {
+      qualitySample: message?.text ?? reply,
+      qualitySampleLabel: message?.text ? "目标角色消息" : "模型回复",
+    };
+  }
+  return { qualitySample: reply, qualitySampleLabel: "模型回复" };
 }
 
 function hasAction(actions: ActionRecord[], actionType: string): boolean {

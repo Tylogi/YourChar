@@ -126,6 +126,10 @@ import {
   type BackgroundThinkingScenario,
 } from "../model/background-thinking-policy.js";
 import {
+  createOpenAiCompatibleModel,
+  normalizeOpenAiCompatibleBaseUrl,
+} from "../model/openai-compatible.js";
+import {
   RelationshipRepository,
   RelationshipService,
   type RelationshipExtractor,
@@ -5362,34 +5366,6 @@ function modelAvailable(config: RawModelApiConfig): boolean {
   return Boolean(config.enabled && config.baseUrl && config.model);
 }
 
-function createOpenAiCompatibleModel(config: RawModelApiConfig): Model<"openai-completions"> {
-  return {
-    id: config.model,
-    name: config.model,
-    api: "openai-completions",
-    provider: "rp-openai-compatible",
-    baseUrl: normalizeOpenAiCompatibleBaseUrl(config.baseUrl),
-    reasoning: false,
-    input: config.visionInputEnabled ? ["text", "image"] : ["text"],
-    cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
-    contextWindow: config.contextWindowTokens ?? 131072,
-    maxTokens: config.maxTokens ?? 4096,
-    compat: {
-      supportsStore: false,
-      supportsDeveloperRole: false,
-      supportsReasoningEffort: false,
-      supportsUsageInStreaming: false,
-      maxTokensField: "max_tokens",
-      requiresToolResultName: false,
-      requiresAssistantAfterToolResult: false,
-      requiresThinkingAsText: false,
-      requiresReasoningContentOnAssistantMessages: false,
-      thinkingFormat: "openai",
-      supportsStrictMode: false,
-    },
-  };
-}
-
 function backgroundTracePayload(
   config: RawModelApiConfig,
   scenario: BackgroundThinkingScenario,
@@ -5412,11 +5388,6 @@ function interactiveTracePayload(config: RawModelApiConfig, payload: unknown): R
     ...current,
     chat_template_kwargs: { ...existing, ...templateKwargs },
   };
-}
-
-function normalizeOpenAiCompatibleBaseUrl(baseUrl: string): string {
-  const normalized = baseUrl.trim().replace(/\/+$/, "");
-  return normalized.replace(/\/chat\/completions$/i, "");
 }
 
 function modelHeaders(apiKey?: string): Record<string, string> {

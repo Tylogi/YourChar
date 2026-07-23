@@ -4,7 +4,14 @@ export function renderAppHtml(): string {
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-content" />
+  <meta name="theme-color" content="#07c160" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="default" />
+  <meta name="apple-mobile-web-app-title" content="RP Agent" />
   <title>RP Agent</title>
+  <link rel="manifest" href="/manifest.webmanifest" />
+  <link rel="icon" type="image/png" sizes="32x32" href="/assets/icons/favicon-32.png" />
+  <link rel="apple-touch-icon" sizes="180x180" href="/assets/icons/apple-touch-icon-180.png" />
   <link rel="stylesheet" href="/assets/noto-emoji/400.css" />
   <style>
     :root {
@@ -2536,6 +2543,32 @@ export function renderAppHtml(): string {
       flex-wrap: wrap;
     }
     .feature-test-toolbar select { min-width: 180px; }
+    .feature-test-field { min-width: 180px; display: grid; gap: 3px; }
+    .feature-test-field > span { color: var(--muted); font-size: 10px; line-height: 1; }
+    .feature-test-field select { width: 100%; }
+    .feature-test-state { min-width: 140px; color: var(--muted); font-size: 11px; }
+    .feature-test-report { border-bottom: 1px solid var(--line); background: #ffffff; }
+    .feature-test-score-grid {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 1px;
+      background: var(--line);
+    }
+    .feature-test-score-grid > div { min-width: 0; padding: 12px 14px; background: #ffffff; display: grid; gap: 4px; }
+    .feature-test-score-grid span { color: var(--muted); font-size: 10px; }
+    .feature-test-score-grid strong { font: 650 22px/1 Arial, sans-serif; font-variant-numeric: tabular-nums; }
+    .feature-test-score-grid strong.good { color: #087d45; }
+    .feature-test-score-grid strong.warn { color: #9a6507; }
+    .feature-test-score-grid strong.bad { color: var(--danger); }
+    .feature-test-report-meta { padding: 9px 14px; color: var(--muted); font-size: 11px; line-height: 1.5; }
+    .feature-test-history { padding: 0 14px; background: #ffffff; }
+    .feature-test-history details { padding: 10px 0; }
+    .feature-test-history summary { cursor: pointer; color: #3f4b45; font-size: 12px; }
+    .feature-test-history-table { width: 100%; margin-top: 8px; border-collapse: collapse; font-size: 11px; }
+    .feature-test-history-table th,
+    .feature-test-history-table td { padding: 7px 6px; border-top: 1px solid var(--line); text-align: left; }
+    .feature-test-history-table th { color: var(--muted); font-weight: 500; }
+    .feature-test-history-table td:not(:first-child) { white-space: nowrap; font-variant-numeric: tabular-nums; }
     .feature-test-list,
     .feature-test-results { padding: 0 14px; }
     .feature-test-case {
@@ -2550,15 +2583,25 @@ export function renderAppHtml(): string {
     .feature-test-case input { width: 16px; height: 16px; margin-top: 2px; }
     .feature-test-case strong { font-size: 13px; }
     .feature-test-case p { margin: 4px 0; color: var(--muted); font-size: 12px; line-height: 1.45; }
+    .feature-test-criteria { display: block; margin: 5px 0; color: #536c5e; font-size: 10px; line-height: 1.45; }
     .feature-test-input { display: block; padding: 5px 7px; background: #eeeeee; font-size: 11px; white-space: pre-wrap; overflow-wrap: anywhere; }
     .feature-test-result { padding: 14px 0; border-top: 1px solid var(--line); }
     .feature-test-result-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
     .feature-test-result-head strong { font-size: 13px; }
+    .feature-test-result-scores { display: flex; align-items: center; gap: 8px; font: 600 11px/1.2 Arial, sans-serif; font-variant-numeric: tabular-nums; }
     .feature-test-status.pass { color: #087d45; }
     .feature-test-status.fail { color: var(--danger); }
     .feature-test-rules { margin: 8px 0 0; padding: 0; list-style: none; display: grid; gap: 5px; }
     .feature-test-rules li { font-size: 11px; line-height: 1.45; }
     .feature-test-reply { max-height: 180px; margin-top: 9px; padding: 8px; overflow: auto; background: #ffffff; font-size: 12px; }
+    .feature-test-quality { margin-top: 9px; border-top: 1px solid #ededed; }
+    .feature-test-quality summary { padding-top: 8px; cursor: pointer; font-size: 11px; }
+    .feature-test-quality-summary { margin: 8px 0; color: #39453f; font-size: 11px; line-height: 1.55; }
+    .feature-test-dimensions { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 1px; background: var(--line); }
+    .feature-test-dimension { min-width: 0; padding: 7px; background: #ffffff; }
+    .feature-test-dimension strong { display: block; margin-bottom: 3px; font: 650 13px/1 Arial, sans-serif; }
+    .feature-test-dimension span { display: block; color: var(--muted); font-size: 9px; }
+    .feature-test-dimension p { margin: 5px 0 0; color: #505a55; font-size: 10px; line-height: 1.4; }
     .initiative-debug-panel { min-height: 0; overflow: auto; background: #f7f7f7; }
     .initiative-summary {
       padding: 12px 14px;
@@ -3356,6 +3399,11 @@ export function renderAppHtml(): string {
     .chat-image-stage img { display: block; max-width: 100%; max-height: 100%; object-fit: contain; }
 
     @media (max-width: 900px) {
+      .feature-test-toolbar { align-items: end; }
+      .feature-test-field { min-width: min(100%, 210px); flex: 1 1 180px; }
+      .feature-test-score-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+      .feature-test-dimensions { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+      .feature-test-history { overflow-x: auto; }
       .settings-shell { padding: 0; }
       .management-head,
       .settings-head { align-items: flex-start; }
@@ -4103,13 +4151,18 @@ export function renderAppHtml(): string {
         </div>
         <section id="featureTestPanel" class="feature-test-panel" hidden>
           <div class="feature-test-toolbar">
-            <select id="featureTestCharacter" aria-label="测试角色"><option value="">选择测试角色</option></select>
+            <label class="feature-test-field"><span>测试角色</span><select id="featureTestCharacter" aria-label="测试角色"><option value="">选择测试角色</option></select></label>
+            <label class="feature-test-field"><span>被测模型</span><select id="featureTestTargetModel" aria-label="被测模型"><option value="">选择被测模型</option></select></label>
+            <label class="feature-test-field"><span>Judge 模型</span><select id="featureTestJudgeModel" aria-label="Judge 模型"><option value="">仅功能评分</option></select></label>
             <button id="selectAllFeatureTestsBtn" class="secondary" type="button">全选</button>
-            <button id="runFeatureTestsBtn" class="primary" type="button">运行所选测试</button>
-            <span id="featureTestState" class="muted"></span>
+            <button id="runFeatureTestsBtn" class="primary" type="button"><i data-lucide="play" aria-hidden="true"></i><span>运行所选测试</span></button>
+            <button id="exportFeatureTestReportBtn" class="secondary" type="button" disabled><i data-lucide="download" aria-hidden="true"></i><span>导出 JSON</span></button>
+            <span id="featureTestState" class="feature-test-state"></span>
           </div>
-          <div id="featureTestList" class="feature-test-list"></div>
+          <div id="featureTestReport" class="feature-test-report"></div>
+          <div id="featureTestHistory" class="feature-test-history"></div>
           <div id="featureTestResults" class="feature-test-results"></div>
+          <div id="featureTestList" class="feature-test-list"></div>
         </section>
         <section id="initiativeDebugPanel" class="initiative-debug-panel" hidden>
           <div class="feature-test-toolbar">
@@ -4680,6 +4733,10 @@ export function renderAppHtml(): string {
       debugDataset: "traces",
       featureTestCases: [],
       featureTestResults: [],
+      featureTestReports: [],
+      featureTestTargetModelId: "",
+      featureTestJudgeModelId: "",
+      featureTestModelOptionsInitialized: false,
       featureTestsRunning: false,
       conversationListOpen: false,
       conversationBatchMode: false,
@@ -4827,9 +4884,14 @@ export function renderAppHtml(): string {
       debugFeatureTestsBtn: document.getElementById("debugFeatureTestsBtn"),
       debugInitiativeBtn: document.getElementById("debugInitiativeBtn"),
       featureTestCharacter: document.getElementById("featureTestCharacter"),
+      featureTestTargetModel: document.getElementById("featureTestTargetModel"),
+      featureTestJudgeModel: document.getElementById("featureTestJudgeModel"),
       selectAllFeatureTestsBtn: document.getElementById("selectAllFeatureTestsBtn"),
       runFeatureTestsBtn: document.getElementById("runFeatureTestsBtn"),
+      exportFeatureTestReportBtn: document.getElementById("exportFeatureTestReportBtn"),
       featureTestState: document.getElementById("featureTestState"),
+      featureTestReport: document.getElementById("featureTestReport"),
+      featureTestHistory: document.getElementById("featureTestHistory"),
       featureTestList: document.getElementById("featureTestList"),
       featureTestResults: document.getElementById("featureTestResults"),
       traceIndex: document.getElementById("traceIndex"),
@@ -5245,6 +5307,13 @@ export function renderAppHtml(): string {
     nodes.initiativeDecisionFilter.addEventListener("change", renderInitiativeDebug);
     nodes.selectAllFeatureTestsBtn.addEventListener("click", toggleAllFeatureTests);
     nodes.runFeatureTestsBtn.addEventListener("click", runSelectedFeatureTests);
+    nodes.exportFeatureTestReportBtn.addEventListener("click", exportLatestFeatureTestReport);
+    nodes.featureTestTargetModel.addEventListener("change", () => {
+      state.featureTestTargetModelId = nodes.featureTestTargetModel.value;
+    });
+    nodes.featureTestJudgeModel.addEventListener("change", () => {
+      state.featureTestJudgeModelId = nodes.featureTestJudgeModel.value;
+    });
     nodes.traceIndex.addEventListener("click", selectTraceFromIndex);
     nodes.mobileTraceSelect.addEventListener("change", selectTraceFromMobile);
     nodes.traceSemanticBtn.addEventListener("click", () => setTraceView("semantic"));
@@ -8191,7 +8260,10 @@ export function renderAppHtml(): string {
       nodes.chatCharacterSelect.innerHTML = '<option value="">请创建或选择角色</option>' + options;
       nodes.chatCharacterSelect.value = state.selectedCharacterId;
       nodes.featureTestCharacter.innerHTML = '<option value="">选择测试角色</option>' + options;
-      nodes.featureTestCharacter.value = state.selectedCharacterId || state.characters[0]?.id || "";
+      const featureCharacterBefore = nodes.featureTestCharacter.value;
+      nodes.featureTestCharacter.value = state.characters.some((character) => character.id === featureCharacterBefore)
+        ? featureCharacterBefore
+        : state.selectedCharacterId || state.characters[0]?.id || "";
       const initiativeCharacterBefore = nodes.initiativeCharacterFilter.value;
       nodes.initiativeCharacterFilter.innerHTML = '<option value="">全部角色</option>' + options;
       nodes.initiativeCharacterFilter.value = state.characters.some((character) => character.id === initiativeCharacterBefore)
@@ -12211,6 +12283,8 @@ export function renderAppHtml(): string {
       nodes.initiativeDebugPanel.hidden = !initiative;
       if (featureTests) {
         renderFeatureTestCases();
+        renderFeatureTestReport();
+        renderFeatureTestHistory();
         renderFeatureTestResults();
         return;
       }
@@ -12281,7 +12355,11 @@ export function renderAppHtml(): string {
         '<label class="feature-test-case"><input type="checkbox" data-feature-test value="' + escapeHtml(testCase.id) + '"' +
           (selected.has(testCase.id) ? ' checked' : '') + (state.featureTestsRunning ? ' disabled' : '') + ' />' +
           '<span><strong>' + escapeHtml(testCase.name) + '</strong> <span class="memory-badge">' + escapeHtml(featureCategoryLabel(testCase.category)) + '</span>' +
-          '<p>' + escapeHtml(testCase.description) + '</p><code class="feature-test-input">' + escapeHtml(testCase.input) + '</code></span></label>'
+          '<p>' + escapeHtml(testCase.description) + '</p>' +
+          (Array.isArray(testCase.qualityCriteria) && testCase.qualityCriteria.length
+            ? '<span class="feature-test-criteria">Judge · ' + escapeHtml(testCase.qualityCriteria.join('；')) + '</span>'
+            : '') +
+          '<code class="feature-test-input">' + escapeHtml(testCase.input) + '</code></span></label>'
       ).join("");
     }
 
@@ -12312,6 +12390,8 @@ export function renderAppHtml(): string {
       if (state.featureTestsRunning) return;
       const ids = [...nodes.featureTestList.querySelectorAll("input[data-feature-test]:checked")].map((input) => input.value);
       const characterId = nodes.featureTestCharacter.value;
+      const modelProfileId = nodes.featureTestTargetModel.value;
+      const judgeModelProfileId = nodes.featureTestJudgeModel.value;
       if (!ids.length) {
         nodes.featureTestState.textContent = "请至少选择一条测试。";
         return;
@@ -12321,11 +12401,20 @@ export function renderAppHtml(): string {
         nodes.featureTestCharacter.focus();
         return;
       }
+      if (!modelProfileId) {
+        nodes.featureTestState.textContent = "请选择被测模型。";
+        nodes.featureTestTargetModel.focus();
+        return;
+      }
       state.featureTestsRunning = true;
       state.featureTestResults = [];
       nodes.runFeatureTestsBtn.disabled = true;
+      nodes.exportFeatureTestReportBtn.disabled = true;
       nodes.featureTestCharacter.disabled = true;
+      nodes.featureTestTargetModel.disabled = true;
+      nodes.featureTestJudgeModel.disabled = true;
       renderFeatureTestCases();
+      renderFeatureTestReport();
       renderFeatureTestResults();
       try {
         for (let index = 0; index < ids.length; index += 1) {
@@ -12335,38 +12424,219 @@ export function renderAppHtml(): string {
             const response = await fetch("/api/v1/feature-tests/" + encodeURIComponent(ids[index]) + "/run", {
               method: "POST",
               headers: { "content-type": "application/json" },
-              body: JSON.stringify({ characterId }),
+              body: JSON.stringify({ characterId, modelProfileId, judgeModelProfileId }),
             });
             const body = await response.json();
             if (!response.ok) throw new Error(body.error || "测试执行失败");
-            state.featureTestResults.push(body.result);
+            state.featureTestResults.push({
+              result: body.result,
+              functional: body.functional,
+              quality: body.quality
+            });
           } catch (error) {
             state.featureTestResults.push({
-              caseId: ids[index], name: testCase?.name || ids[index], passed: false, status: "failed",
-              durationMs: 0, modelRequests: 0, reply: "", rules: [{ label: "测试执行", passed: false, evidence: error.message || String(error) }],
+              result: {
+                caseId: ids[index], name: testCase?.name || ids[index], passed: false, status: "failed",
+                durationMs: 0, modelRequests: 0, reply: "", qualitySample: "", qualitySampleLabel: "模型回复",
+                rules: [{ label: "测试执行", passed: false, evidence: error.message || String(error), scope: "functional" }]
+              },
+              functional: { score: 0, passedRules: 0, totalRules: 1, blocked: false, blockers: [] },
+              quality: judgeModelProfileId ? {
+                status: "failed", score: null, dimensions: [], summary: "回复质量评分不可用",
+                error: sanitizeAdaptationError(error.message || String(error)), modelRequests: 0, durationMs: 0, inputTokens: 0, outputTokens: 0
+              } : undefined
             });
           }
+          renderFeatureTestReport();
           renderFeatureTestResults();
         }
-        const passed = state.featureTestResults.filter((entry) => entry.passed).length;
-        nodes.featureTestState.textContent = "完成 · " + passed + "/" + state.featureTestResults.length + " 通过";
+        const report = createFeatureTestReport(characterId, modelProfileId, judgeModelProfileId);
+        state.featureTestReports.unshift(report);
+        state.featureTestReports = state.featureTestReports.slice(0, 10);
+        const passed = report.summary.passedCases;
+        nodes.featureTestState.textContent = "完成 · " + passed + "/" + report.summary.selectedCases + " 通过";
+        nodes.exportFeatureTestReportBtn.disabled = false;
+        renderFeatureTestReport();
+        renderFeatureTestHistory();
       } finally {
         state.featureTestsRunning = false;
         nodes.runFeatureTestsBtn.disabled = false;
         nodes.featureTestCharacter.disabled = false;
+        nodes.featureTestTargetModel.disabled = false;
+        nodes.featureTestJudgeModel.disabled = false;
         renderFeatureTestCases();
       }
     }
 
     function renderFeatureTestResults() {
-      nodes.featureTestResults.innerHTML = state.featureTestResults.map((result) =>
+      nodes.featureTestResults.innerHTML = state.featureTestResults.map((evaluation) => {
+        const result = evaluation.result || {};
+        const functional = evaluation.functional || {};
+        const quality = evaluation.quality;
+        const functionalLabel = functional.score === null || functional.score === undefined ? "功能 --" : "功能 " + formatAdaptationScore(functional.score);
+        const qualityLabel = !quality ? "" : quality.status === "scored" ? "质量 " + formatAdaptationScore(quality.score) : "质量 --";
+        const qualitySample = result.qualitySample && result.qualitySample !== result.reply
+          ? '<details class="feature-test-reply"><summary>' + escapeHtml(result.qualitySampleLabel || "评分文本") + '</summary><div class="markdown-body">' + renderMarkdown(result.qualitySample) + '</div></details>'
+          : '';
+        return (
         '<section class="feature-test-result"><div class="feature-test-result-head"><strong>' + escapeHtml(result.name) + '</strong>' +
-          '<span class="feature-test-status ' + (result.passed ? 'pass' : 'fail') + '">' + (result.passed ? 'PASS' : 'FAIL') + '</span></div>' +
+          '<span class="feature-test-result-scores"><span class="feature-test-status ' + (result.passed ? 'pass' : 'fail') + '">' + (result.passed ? 'PASS' : 'FAIL') + '</span>' +
+          '<span>' + escapeHtml(functionalLabel) + '</span>' + (qualityLabel ? '<span>' + escapeHtml(qualityLabel) + '</span>' : '') + '</span></div>' +
           '<div class="memory-source">' + escapeHtml((result.durationMs || 0) + " ms · " + (result.modelRequests || 0) + " model requests · " + (result.status || "unknown")) + '</div>' +
           '<ul class="feature-test-rules">' + (result.rules || []).map((entry) => '<li class="' + (entry.passed ? 'feature-test-status pass' : 'feature-test-status fail') + '">' +
-            (entry.passed ? 'PASS · ' : 'FAIL · ') + escapeHtml(entry.label) + ' <span class="muted">' + escapeHtml(entry.evidence || "") + '</span></li>').join("") + '</ul>' +
+            (entry.scope === "preflight" ? 'ENV · ' : entry.passed ? 'PASS · ' : 'FAIL · ') + escapeHtml(entry.label) + ' <span class="muted">' + escapeHtml(entry.evidence || "") + '</span></li>').join("") + '</ul>' +
+          renderFeatureTestQuality(quality) + qualitySample +
           (result.reply ? '<details class="feature-test-reply"><summary>模型回复</summary><div class="markdown-body">' + renderMarkdown(result.reply) + '</div></details>' : '') + '</section>'
-      ).join("");
+        );
+      }).join("");
+      refreshIcons();
+    }
+
+    function renderFeatureTestQuality(quality) {
+      if (!quality) return "";
+      if (quality.status !== "scored") {
+        const detail = quality.error || quality.summary || (quality.status === "skipped" ? "没有可评分文本" : "Judge 调用失败");
+        return '<details class="feature-test-quality"><summary>Judge · ' + escapeHtml(quality.status === "skipped" ? "已跳过" : "评分不可用") +
+          '</summary><p class="feature-test-quality-summary">' + escapeHtml(detail) + '</p></details>';
+      }
+      return '<details class="feature-test-quality"><summary>Judge · ' + escapeHtml(formatAdaptationScore(quality.score)) +
+        ' · 置信度 ' + escapeHtml(Math.round(Number(quality.confidence || 0) * 100) + "%") + '</summary>' +
+        '<p class="feature-test-quality-summary">' + escapeHtml(quality.summary || "") + '</p>' +
+        (Array.isArray(quality.flags) && quality.flags.length ? '<p class="feature-test-quality-summary">Flags · ' + escapeHtml(quality.flags.join('；')) + '</p>' : '') +
+        '<div class="feature-test-dimensions">' + (quality.dimensions || []).map((entry) =>
+          '<div class="feature-test-dimension"><strong>' + escapeHtml(String(entry.score)) + '/5</strong><span>' + escapeHtml(entry.label || entry.id) +
+          '</span><p>' + escapeHtml(entry.reason || "") + '</p></div>'
+        ).join("") + '</div>' +
+        '<div class="memory-source">Judge ' + escapeHtml((quality.modelRequests || 0) + " requests · " +
+          (quality.inputTokens || 0) + " in / " + (quality.outputTokens || 0) + " out tokens · " + (quality.durationMs || 0) + " ms") + '</div></details>';
+    }
+
+    function summarizeFeatureTestEvaluations(evaluations) {
+      const executed = evaluations.filter((entry) => Number.isFinite(entry.functional?.score));
+      const judged = evaluations.filter((entry) => entry.quality?.status === "scored" && Number.isFinite(entry.quality?.score));
+      const functionalScore = averageAdaptationScore(executed.map((entry) => Number(entry.functional.score)));
+      const qualityScore = averageAdaptationScore(judged.map((entry) => Number(entry.quality.score)));
+      const overallScore = functionalScore === null ? null : qualityScore === null
+        ? functionalScore
+        : roundAdaptationScore(functionalScore * 0.7 + qualityScore * 0.3);
+      return {
+        functionalScore,
+        qualityScore,
+        overallScore,
+        executionCoverage: evaluations.length ? executed.length / evaluations.length : 0,
+        qualityCoverage: evaluations.length ? judged.length / evaluations.length : 0,
+        passedCases: evaluations.filter((entry) => entry.result?.passed).length,
+        selectedCases: evaluations.length,
+        blockedCases: evaluations.filter((entry) => entry.functional?.blocked).length,
+        judgedCases: judged.length,
+        failedJudgments: evaluations.filter((entry) => entry.quality?.status === "failed").length,
+        compatibility: adaptationCompatibility(overallScore)
+      };
+    }
+
+    function renderFeatureTestReport() {
+      if (!state.featureTestResults.length) {
+        nodes.featureTestReport.innerHTML = "";
+        return;
+      }
+      const summary = summarizeFeatureTestEvaluations(state.featureTestResults);
+      const target = state.modelProfiles.find((profile) => profile.id === nodes.featureTestTargetModel.value);
+      const judge = state.modelProfiles.find((profile) => profile.id === nodes.featureTestJudgeModel.value);
+      const compatibilityDetail = adaptationCompatibilityLabel(summary.compatibility) +
+        (judge && summary.qualityScore === null ? " · 仅功能" : "") +
+        (summary.executionCoverage < 1 ? " · 覆盖不足" : "");
+      nodes.featureTestReport.innerHTML = '<div class="feature-test-score-grid">' +
+        adaptationScoreCell("综合适配", summary.overallScore, compatibilityDetail) +
+        adaptationScoreCell("功能完整度", summary.functionalScore, summary.passedCases + "/" + summary.selectedCases + " 用例通过") +
+        adaptationScoreCell("回复质量", summary.qualityScore, judge ? summary.judgedCases + "/" + summary.selectedCases + " 已评分" : "未启用 Judge") +
+        adaptationScoreCell("执行覆盖", summary.executionCoverage * 100, summary.blockedCases + " 条被前置条件阻塞") +
+        '</div><div class="feature-test-report-meta">被测 · ' + escapeHtml(target?.name || "未知模型") +
+        (target?.model ? ' / ' + escapeHtml(target.model) : '') + '　Judge · ' + escapeHtml(judge?.name || "未启用") +
+        '　综合权重 · 功能 70% + 质量 30%' +
+        (target && judge && target.id === judge.id ? '　注意 · 当前为同模型自评' : '') + '</div>';
+    }
+
+    function adaptationScoreCell(label, score, detail) {
+      return '<div><span>' + escapeHtml(label) + '</span><strong class="' + adaptationScoreClass(score) + '">' +
+        escapeHtml(formatAdaptationScore(score)) + '</strong><span>' + escapeHtml(detail) + '</span></div>';
+    }
+
+    function createFeatureTestReport(characterId, modelProfileId, judgeModelProfileId) {
+      const target = state.modelProfiles.find((profile) => profile.id === modelProfileId);
+      const judge = state.modelProfiles.find((profile) => profile.id === judgeModelProfileId);
+      const character = state.characters.find((entry) => entry.id === characterId);
+      return {
+        version: 1,
+        id: "model-adaptation-" + Date.now(),
+        ranAt: new Date().toISOString(),
+        target: target ? { profileId: target.id, profileName: target.name, model: target.model } : { profileId: modelProfileId },
+        judge: judge ? { profileId: judge.id, profileName: judge.name, model: judge.model } : null,
+        character: character ? { id: character.id, name: character.name } : { id: characterId },
+        scoring: { functionalWeight: 0.7, qualityWeight: 0.3, qualityDimensions: ["instruction_following", "role_fidelity", "coherence", "naturalness", "contextual_fit"] },
+        summary: summarizeFeatureTestEvaluations(state.featureTestResults),
+        evaluations: state.featureTestResults
+      };
+    }
+
+    function renderFeatureTestHistory() {
+      if (!state.featureTestReports.length) {
+        nodes.featureTestHistory.innerHTML = "";
+        return;
+      }
+      nodes.featureTestHistory.innerHTML = '<details><summary>本页模型对比 · ' + state.featureTestReports.length + ' 次评测</summary>' +
+        '<table class="feature-test-history-table"><thead><tr><th>被测模型</th><th>Judge</th><th>功能</th><th>质量</th><th>综合</th><th>覆盖</th></tr></thead><tbody>' +
+        state.featureTestReports.map((report) => '<tr><td>' + escapeHtml(report.target?.profileName || report.target?.model || "未知") +
+          '</td><td>' + escapeHtml(report.judge?.profileName || "未启用") + '</td><td>' + escapeHtml(formatAdaptationScore(report.summary.functionalScore)) +
+          '</td><td>' + escapeHtml(formatAdaptationScore(report.summary.qualityScore)) + '</td><td>' + escapeHtml(formatAdaptationScore(report.summary.overallScore)) +
+          '</td><td>' + escapeHtml(Math.round(report.summary.executionCoverage * 100) + "% · " + report.summary.selectedCases + " 项") + '</td></tr>').join("") +
+        '</tbody></table></details>';
+    }
+
+    function exportLatestFeatureTestReport() {
+      const report = state.featureTestReports[0];
+      if (!report) return;
+      const blob = new Blob([JSON.stringify(report, null, 2)], { type: "application/json" });
+      const objectUrl = URL.createObjectURL(blob);
+      const anchor = document.createElement("a");
+      const model = String(report.target?.model || "model").replace(/[^A-Za-z0-9._-]+/g, "-").slice(0, 60) || "model";
+      anchor.href = objectUrl;
+      anchor.download = "rp-agent-adaptation-" + model + "-" + report.ranAt.replace(/[:.]/g, "-") + ".json";
+      anchor.click();
+      setTimeout(() => URL.revokeObjectURL(objectUrl), 0);
+    }
+
+    function formatAdaptationScore(score) {
+      return Number.isFinite(score) ? Math.round(Number(score) * 10) / 10 + "/100" : "--";
+    }
+
+    function roundAdaptationScore(score) {
+      return Math.round(score * 10) / 10;
+    }
+
+    function averageAdaptationScore(values) {
+      return values.length ? roundAdaptationScore(values.reduce((sum, value) => sum + value, 0) / values.length) : null;
+    }
+
+    function adaptationCompatibility(score) {
+      if (!Number.isFinite(score)) return "unavailable";
+      if (score >= 90) return "excellent";
+      if (score >= 80) return "good";
+      if (score >= 65) return "usable";
+      if (score >= 50) return "limited";
+      return "poor";
+    }
+
+    function adaptationCompatibilityLabel(value) {
+      return ({ excellent: "高度适配", good: "良好适配", usable: "可用", limited: "有限适配", poor: "不适配", unavailable: "暂无评分" })[value] || value;
+    }
+
+    function adaptationScoreClass(score) {
+      if (!Number.isFinite(score)) return "";
+      return score >= 80 ? "good" : score >= 65 ? "warn" : "bad";
+    }
+
+    function sanitizeAdaptationError(value) {
+      return String(value || "").replace(/https?:\\/\\/[^\\s"'<>]+/gi, "[redacted-url]").replace(/bearer\\s+[^\\s"'<>]+/gi, "Bearer [redacted]").slice(0, 500);
     }
 
     async function loadModelProfiles(preferredId) {
@@ -12385,7 +12655,33 @@ export function renderAppHtml(): string {
       nodes.apiProfileSelect.value = state.selectedModelProfileId;
       nodes.deleteApiProfileBtn.disabled = state.modelProfiles.length <= 1;
       nodes.defaultApiProfileBtn.disabled = state.selectedModelProfileId === state.defaultModelProfileId;
+      renderFeatureTestModelOptions();
       return state.modelProfiles.find((profile) => profile.id === state.selectedModelProfileId);
+    }
+
+    function renderFeatureTestModelOptions() {
+      const options = state.modelProfiles.map((profile) =>
+        '<option value="' + escapeHtml(profile.id) + '">' + escapeHtml(profile.name) +
+          (profile.model ? ' · ' + escapeHtml(profile.model) : '') + (profile.isDefault ? '（默认）' : '') + '</option>'
+      ).join("");
+      const targetCandidate = state.featureTestTargetModelId || state.defaultModelProfileId || state.modelProfiles[0]?.id || "";
+      state.featureTestTargetModelId = state.modelProfiles.some((profile) => profile.id === targetCandidate)
+        ? targetCandidate
+        : state.defaultModelProfileId || state.modelProfiles[0]?.id || "";
+      nodes.featureTestTargetModel.innerHTML = '<option value="">选择被测模型</option>' + options;
+      nodes.featureTestTargetModel.value = state.featureTestTargetModelId;
+
+      if (!state.featureTestModelOptionsInitialized) {
+        state.featureTestJudgeModelId = state.modelProfiles.find((profile) =>
+          profile.enabled && profile.id !== state.featureTestTargetModelId
+        )?.id ?? state.defaultModelProfileId ?? state.featureTestTargetModelId;
+        state.featureTestModelOptionsInitialized = true;
+      }
+      if (state.featureTestJudgeModelId && !state.modelProfiles.some((profile) => profile.id === state.featureTestJudgeModelId)) {
+        state.featureTestJudgeModelId = "";
+      }
+      nodes.featureTestJudgeModel.innerHTML = '<option value="">仅功能评分</option>' + options;
+      nodes.featureTestJudgeModel.value = state.featureTestJudgeModelId;
     }
 
     async function loadApiSettings(preferredId) {

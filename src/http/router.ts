@@ -79,6 +79,10 @@ import {
 } from "../okf/index.js";
 import { listFeatureTestCases, runFeatureTest } from "../evaluation/feature-tests.js";
 import {
+  judgeFeatureTestQuality,
+  scoreFeatureTestResult,
+} from "../evaluation/model-adaptation.js";
+import {
   MAX_WORKSPACE_UPLOAD_BYTES,
   WorkspaceFileError,
   type WorkspaceFileAsset,
@@ -304,12 +308,22 @@ async function route(input: {
   const featureTestMatch = pathname.match(/^\/api\/v1\/feature-tests\/([^/]+)\/run$/);
   if (featureTestMatch && method === "POST") {
     const body = asRecord(await readJson(input.request));
+    const characterId = optionalString(body.characterId) ?? kernel.listCharacters()[0]?.id;
+    const result = await runFeatureTest(
+      kernel,
+      decodeURIComponent(featureTestMatch[1]),
+      {
+        characterId,
+        modelProfileId: optionalString(body.modelProfileId),
+      },
+    );
+    const judgeModelProfileId = optionalString(body.judgeModelProfileId);
     sendJson(input.response, 200, {
-      result: await runFeatureTest(
-        kernel,
-        decodeURIComponent(featureTestMatch[1]),
-        optionalString(body.characterId),
-      ),
+      result,
+      functional: scoreFeatureTestResult(result),
+      ...(judgeModelProfileId
+        ? { quality: await judgeFeatureTestQuality(kernel, result, judgeModelProfileId, characterId) }
+        : {}),
     });
     return;
   }
