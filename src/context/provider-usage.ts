@@ -19,3 +19,14 @@ export function normalizeActualProviderUsage(usage: {
     cacheWriteTokens: usage.cacheWrite,
   };
 }
+
+export function measuredContextInputTokens(usage: ActualProviderUsage): number | null {
+  const parts = [
+    usage.inputTokens,
+    usage.cacheReadTokens,
+    usage.cacheWriteTokens,
+  ];
+  if (parts.every((value) => value === null)) return null;
+  // Pi reports uncached, cache-read, and cache-write input as disjoint components.
+  return parts.reduce<number>((total, value) => total + (value ?? 0), 0);
+}

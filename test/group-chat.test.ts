@@ -35,7 +35,12 @@ test("group chat routes each character through its model and later gates see ear
     const address = modelServer.address();
     assert.ok(address && typeof address === "object");
     const baseUrl = `http://127.0.0.1:${address.port}/v1`;
-    kernel = new CompanionKernel({ stateDir, startScheduler: false });
+    kernel = new CompanionKernel({
+      stateDir,
+      startScheduler: false,
+      characterFunctionInferer: false,
+      characterSkillReflector: false,
+    });
     kernel.setAgentModuleEnabled("mcp:memory-coordinator", false);
     kernel.patchModelApiConfig({ enabled: true, baseUrl, model: "alice-model" });
     const bobProfile = kernel.createModelApiProfile({ name: "Bob 模型", enabled: true, baseUrl, model: "bob-model" });
@@ -113,7 +118,12 @@ test("group chat validates membership and enforces speaker and per-character mes
   try {
     const address = modelServer.address();
     assert.ok(address && typeof address === "object");
-    kernel = new CompanionKernel({ stateDir, startScheduler: false });
+    kernel = new CompanionKernel({
+      stateDir,
+      startScheduler: false,
+      characterFunctionInferer: false,
+      characterSkillReflector: false,
+    });
     kernel.setAgentModuleEnabled("mcp:memory-coordinator", false);
     kernel.patchModelApiConfig({
       enabled: true,

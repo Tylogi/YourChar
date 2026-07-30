@@ -54,7 +54,12 @@ test("characters use their bound model profile and fall back after deletion", as
     const address = modelServer.address();
     assert.ok(address && typeof address === "object");
     const baseUrl = `http://127.0.0.1:${address.port}/v1`;
-    kernel = new CompanionKernel({ stateDir, startScheduler: false });
+    kernel = new CompanionKernel({
+      stateDir,
+      startScheduler: false,
+      characterFunctionInferer: false,
+      characterSkillReflector: false,
+    });
     kernel.patchModelApiConfig({ enabled: true, baseUrl, model: "default-model" });
     const special = kernel.createModelApiProfile({
       name: "角色专属",

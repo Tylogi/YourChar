@@ -1,3 +1,9 @@
+import type {
+  CharacterTaskSkill,
+  CharacterTaskIdentity,
+  CharacterTaskRoute,
+} from "../organization/types.js";
+
 export const worldCapabilities = {
   rest: { label: "休息", defaultActivity: "安静休息" },
   work: { label: "工作", defaultActivity: "处理手头的工作" },
@@ -84,13 +90,17 @@ export type CharacterAutonomyPolicy = {
   characterId: string;
   enabled: boolean;
   proactiveEnabled: boolean;
+  socialEnabled: boolean;
   dailyMessageLimit: number;
+  socialDailyLimit: number;
   proactiveCooldownMinutes: number;
+  socialCooldownMinutes: number;
   quietStart: string;
   quietEnd: string;
   proactivePausedUntil?: string;
   lastPlannedDate?: string;
   lastProactiveAt?: string;
+  lastSocialAt?: string;
   updatedAt: string;
 };
 
@@ -426,7 +436,8 @@ export type CharacterWorldAssignmentInput = {
 export type CharacterAutonomyPolicyPatch = Partial<
   Pick<
     CharacterAutonomyPolicy,
-    "enabled" | "proactiveEnabled" | "dailyMessageLimit" | "proactiveCooldownMinutes" |
+    "enabled" | "proactiveEnabled" | "socialEnabled" | "dailyMessageLimit" |
+      "socialDailyLimit" | "proactiveCooldownMinutes" | "socialCooldownMinutes" |
       "quietStart" | "quietEnd"
   >
 > & { proactivePausedUntil?: string | null };
@@ -520,6 +531,7 @@ export type WorldCharacterDirectoryEntry = {
   activity: string;
   availability: CharacterAvailability;
   contactable: boolean;
+  peerReachable: boolean;
 };
 
 export type CharacterContactRequest = {
@@ -542,5 +554,123 @@ export type WorldAutonomyTickResult = {
   planned: number;
   settled: number;
   delivered: number;
+  socialEpisodes: number;
+  failed: number;
+};
+
+export type CharacterChannelEpisodeKind = "social" | "collaboration" | "contact";
+export type CharacterChannelEpisodeSource = "autonomy" | "agent_tool" | "manual" | "system";
+export type CharacterChannelEpisodeStatus =
+  | "queued"
+  | "running"
+  | "completed"
+  | "declined"
+  | "failed"
+  | "cancelled";
+export type CharacterChannelMessageKind = "message" | "task" | "result" | "status";
+
+export type CharacterChannel = {
+  id: string;
+  worldId: string;
+  firstCharacterId: string;
+  secondCharacterId: string;
+  unreadCount: number;
+  lastUnreadAt?: string;
+  lastReadAt?: string;
+  lastMessageAt?: string;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type CharacterChannelEpisode = {
+  id: string;
+  channelId: string;
+  worldId: string;
+  kind: CharacterChannelEpisodeKind;
+  source: CharacterChannelEpisodeSource;
+  initiatorCharacterId: string;
+  targetCharacterId: string;
+  parentSessionId?: string;
+  title: string;
+  objective: string;
+  status: CharacterChannelEpisodeStatus;
+  modelCalls: number;
+  messageCount: number;
+  idempotencyKey: string;
+  resultText?: string;
+  failureReason?: string;
+  createdAt: string;
+  updatedAt: string;
+  completedAt?: string;
+};
+
+export type CharacterChannelMessage = {
+  id: string;
+  channelId: string;
+  episodeId: string;
+  sequence: number;
+  senderType: "character" | "system";
+  senderCharacterId?: string;
+  kind: CharacterChannelMessageKind;
+  content: string;
+  createdAt: string;
+};
+
+export type CharacterChannelSummary = CharacterChannel & {
+  characterIds: [string, string];
+  characterNames: [string, string];
+  preview: string;
+  latestEpisodeStatus?: CharacterChannelEpisodeStatus;
+};
+
+export type CharacterChannelSnapshot = {
+  channel: CharacterChannelSummary;
+  episodes: CharacterChannelEpisode[];
+  messages: CharacterChannelMessage[];
+};
+
+export type CharacterInteractionPurpose =
+  | "social_opening"
+  | "social_reply"
+  | "direct_reply"
+  | "collaboration_result";
+
+export type CharacterInteractionActorInput = {
+  purpose: CharacterInteractionPurpose;
+  channelId: string;
+  episodeId: string;
+  actorCharacterId: string;
+  actorName: string;
+  actorSoulMarkdown: string;
+  peerCharacterId: string;
+  peerName: string;
+  world: RoleWorld;
+  actorRuntime?: CharacterRuntimeState;
+  peerRuntime?: CharacterRuntimeState;
+  actorPlace?: WorldPlace;
+  peerPlace?: WorldPlace;
+  relationship?: WorldCharacterRelationship;
+  recentMessages: CharacterChannelMessage[];
+  objective?: string;
+  openingMessage?: string;
+  taskIdentity?: CharacterTaskIdentity;
+  taskSkill?: CharacterTaskSkill;
+  currentTime: string;
+};
+
+export type CharacterInteractionActor = (
+  input: CharacterInteractionActorInput,
+) => Promise<string>;
+
+export type CharacterInteractionResult = {
+  channel: CharacterChannel;
+  episode: CharacterChannelEpisode;
+  messages: CharacterChannelMessage[];
+  responseText?: string;
+  routing?: CharacterTaskRoute;
+};
+
+export type CharacterSocialTickResult = {
+  created: number;
   failed: number;
 };

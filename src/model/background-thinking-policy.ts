@@ -5,6 +5,9 @@ export type BackgroundThinkingScenario =
   | "post_turn_analysis"
   | "world_planning"
   | "proactive_message"
+  | "character_interaction"
+  | "character_function_inference"
+  | "character_skill_reflection"
   | "quality_judge"
   | "world_analysis";
 
@@ -41,6 +44,9 @@ const budgets: Record<BackgroundThinkingScenario, { thinkingOff: number; fallbac
   post_turn_analysis: { thinkingOff: 1_024, fallback: 2_400 },
   world_planning: { thinkingOff: 1_200, fallback: 2_400 },
   proactive_message: { thinkingOff: 640, fallback: 1_200 },
+  character_interaction: { thinkingOff: 900, fallback: 1_600 },
+  character_function_inference: { thinkingOff: 900, fallback: 1_600 },
+  character_skill_reflection: { thinkingOff: 900, fallback: 1_600 },
   quality_judge: { thinkingOff: 1_200, fallback: 2_800 },
   world_analysis: { thinkingOff: 1_400, fallback: 2_800 },
 };

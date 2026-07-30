@@ -9,6 +9,8 @@ test("server serves chat UI and debug model traces", async () => {
   const kernel = new CompanionKernel({
     stateDir: false,
     clock: new VirtualClock("2026-07-09T12:00:00.000Z"),
+    characterFunctionInferer: false,
+    characterSkillReflector: false,
   });
   const character = kernel.createCharacter({ name: "UI 测试角色" });
   const server = createHttpServer({
@@ -30,7 +32,12 @@ test("server serves chat UI and debug model traces", async () => {
     assert.match(html, /上下文调试/);
     assert.match(html, /Provider Trace/);
     assert.match(html, /Context Economics/);
-    assert.match(html, /model-traces\?limit=10/);
+    assert.match(html, /model-traces\?scope=conversation&limit=10/);
+    assert.match(html, /model-traces\?scope=background&limit=10/);
+    assert.match(html, /id="conversationTraceScopeBtn"/);
+    assert.match(html, /id="backgroundTraceScopeBtn"/);
+    assert.match(html, /角色职能推断/);
+    assert.match(html, /角色 Skill 反思/);
     assert.match(html, /语义上下文/);
     assert.match(html, /原始 JSON/);
     assert.match(html, /复制 Payload/);
@@ -40,6 +47,20 @@ test("server serves chat UI and debug model traces", async () => {
     assert.match(html, /id="apiModel"/);
     assert.match(html, /id="apiContextWindowTokens"/);
     assert.match(html, /id="systemPromptCustom"/);
+    assert.match(html, /id="systemPromptSettingsViewBtn"/);
+    assert.match(html, /id="meetingPresetSettingsViewBtn"/);
+    assert.match(html, /远程私聊与约见等待继续使用 SMS 默认编排/);
+    assert.match(html, /退出见面后立即恢复 SMS 默认的系统提示词、用户画像和上下文编排/);
+    assert.match(html, /id="meetingPresetImportInput"[^>]+accept="\.json,application\/json"/);
+    assert.match(html, /id="meetingPresetImportOrder"/);
+    assert.match(html, /id="meetingPresetParametersEnabled"/);
+    assert.match(html, /id="meetingPresetCompatibility"/);
+    assert.match(html, /id="meetingPresetPromptList"/);
+    assert.match(html, /function loadMeetingPresetCatalog/);
+    assert.match(html, /function selectMeetingPresetImport/);
+    assert.match(html, /function saveMeetingPreset/);
+    assert.match(html, /api\/v1\/meeting-presets/);
+    assert.match(html, /JSON 文件超过 900 KB/);
     assert.match(html, /id="workspaceFilesPanel"/);
     assert.match(html, /id="chatAttachmentInput"/);
     assert.match(html, /id="emojiPickerBtn"/);
@@ -54,6 +75,10 @@ test("server serves chat UI and debug model traces", async () => {
     assert.match(html, /function renderOkfImportPreview/);
     assert.match(html, /id="chatImageDialog"/);
     assert.match(html, /id="characterProfileDialog"/);
+    assert.match(html, /id="characterChannelDialog"/);
+    assert.match(html, /data-character-channel-id/);
+    assert.match(html, /function openCharacterChannel/);
+    assert.match(html, /api\/v1\/character-channels/);
     assert.match(html, /data-character-profile-id/);
     assert.match(html, /function openCharacterProfile/);
     const characterProfileDialog = html.match(/<dialog id="characterProfileDialog"[\s\S]*?<\/dialog>/)?.[0] ?? "";
@@ -75,6 +100,8 @@ test("server serves chat UI and debug model traces", async () => {
     assert.match(html, /id="sceneInfoDialog"/);
     assert.match(html, /id="contextBudgetBtn"/);
     assert.match(html, /id="contextBudgetDialog"/);
+    assert.match(html, /Provider 实测（含缓存）/);
+    assert.match(html, /\["本地估算", formatTokenCount\(budget\.estimatedInputTokens\)\]/);
     assert.match(html, /api\/v1\/sessions\/.*\/context-budget/);
     assert.match(html, /function compactCurrentContext/);
     assert.match(html, /id="sidebarArchivedSessionsBtn"/);
@@ -123,8 +150,24 @@ test("server serves chat UI and debug model traces", async () => {
     assert.match(html, /角色设定/);
     assert.match(html, /id="characterDetail" class="character-detail" hidden/);
     assert.match(html, /id="characterMemoryPanel"/);
+    assert.match(html, /id="characterFunctionTabBtn"/);
+    assert.match(html, /id="characterFunctionPanel"/);
+    assert.match(html, /id="characterCapabilityList"/);
+    assert.match(html, /id="characterFunctionAutomatic"/);
+    assert.match(html, /id="refreshCharacterFunctionBtn"/);
+    assert.match(html, /id="characterSkillVersionSelect"/);
+    assert.match(html, /id="characterSkillMarkdown"/);
+    assert.match(html, /id="characterFunctionAdvanced"/);
+    assert.match(html, /function loadCharacterFunction/);
+    assert.match(html, /function saveCharacterFunction/);
+    assert.match(html, /function renderCharacterSkillDocument/);
+    assert.match(html, /api\/v1\/characters\/.*\/function-profile/);
+    assert.match(html, /skill-versions/);
     assert.match(html, /id="characterLifePanel"/);
     assert.match(html, /id="lifeProactiveCooldown"/);
+    assert.match(html, /id="lifeSocialEnabled"/);
+    assert.match(html, /id="lifeSocialDailyLimit"/);
+    assert.match(html, /id="lifeSocialCooldown"/);
     assert.match(html, /id="lifeProactiveList"/);
     assert.match(html, /id="lifeTopicPolicyList"/);
     assert.match(html, /id="resumeProactiveBtn"/);
@@ -138,6 +181,8 @@ test("server serves chat UI and debug model traces", async () => {
     assert.doesNotMatch(characterMemoryForm, /<option value="preference">/);
     assert.match(characterMemoryForm, /<option value="relationship_event">/);
     assert.match(html, /characterSoulMarkdown/);
+    assert.match(html, /id="characterMeetingPreset"/);
+    assert.match(html, /meetingPresetId: nodes\.characterMeetingPreset\.value \|\| null/);
     assert.match(html, /SOUL\.md/);
     assert.match(html, /loadCharacters/);
     assert.match(html, /id="managementPage"/);

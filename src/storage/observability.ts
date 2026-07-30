@@ -1,4 +1,11 @@
-import type { ActionRecord, ContextLogEntry, Mode, ModelContextTrace } from "../domain/types.js";
+import { modelContextTraceScope } from "../domain/types.js";
+import type {
+  ActionRecord,
+  ContextLogEntry,
+  Mode,
+  ModelContextTrace,
+  ModelContextTraceScope,
+} from "../domain/types.js";
 import type { AppDatabase } from "./database.js";
 
 type Row = Record<string, unknown>;
@@ -8,7 +15,7 @@ export interface ObservabilitySink {
   recordContextLog(log: ContextLogEntry): void;
   recordModelContextTrace(trace: ModelContextTrace): void;
   recentContextLogs(limit: number): ContextLogEntry[];
-  recentModelContextTraces(limit: number): ModelContextTrace[];
+  recentModelContextTraces(limit: number, scope?: ModelContextTraceScope): ModelContextTrace[];
   allActions(): ActionRecord[];
 }
 
@@ -87,19 +94,30 @@ export class ObservabilityRepository implements ObservabilitySink {
     this.trim();
   }
 
-  recentModelContextTraces(limit: number): ModelContextTrace[] {
+  recentModelContextTraces(
+    limit: number,
+    scope?: ModelContextTraceScope,
+  ): ModelContextTrace[] {
     const rows = this.database.connection.prepare(
       "SELECT * FROM model_context_traces ORDER BY sequence DESC LIMIT ?",
-    ).all(Math.min(Math.max(limit, 1), 10)) as Row[];
-    return rows.map((row) => ({
-      id: String(row.id),
-      sessionId: String(row.session_id),
-      mode: row.mode as Mode,
-      turnKind: row.turn_kind as ModelContextTrace["turnKind"],
-      requestText: String(row.request_text),
-      payload: parseJson<Record<string, unknown>>(row.payload_json, {}),
-      createdAt: String(row.created_at),
-    }));
+    ).all(20) as Row[];
+    const bounded = Math.min(Math.max(limit, 1), scope ? 10 : 20);
+    return rows
+      .map((row) => {
+        const turnKind = row.turn_kind as ModelContextTrace["turnKind"];
+        return {
+          id: String(row.id),
+          sessionId: String(row.session_id),
+          mode: row.mode as Mode,
+          turnKind,
+          scope: modelContextTraceScope(turnKind),
+          requestText: String(row.request_text),
+          payload: parseJson<Record<string, unknown>>(row.payload_json, {}),
+          createdAt: String(row.created_at),
+        };
+      })
+      .filter((trace) => !scope || trace.scope === scope)
+      .slice(0, bounded);
   }
 
   allActions(): ActionRecord[] {
@@ -122,8 +140,21 @@ export class ObservabilityRepository implements ObservabilitySink {
       DELETE FROM context_log_summaries WHERE id NOT IN (
         SELECT id FROM context_log_summaries ORDER BY created_at DESC, id DESC LIMIT 200
       );
-      DELETE FROM model_context_traces WHERE sequence NOT IN (
-        SELECT sequence FROM model_context_traces ORDER BY sequence DESC LIMIT 10
+      DELETE FROM model_context_traces WHERE sequence IN (
+        SELECT sequence FROM (
+          SELECT
+            sequence,
+            ROW_NUMBER() OVER (
+              PARTITION BY CASE
+                WHEN turn_kind IN ('user', 'group_gate', 'group_reply', 'subagent', 'world_director')
+                  THEN 'conversation'
+                ELSE 'background'
+              END
+              ORDER BY sequence DESC
+            ) AS scope_rank
+          FROM model_context_traces
+        )
+        WHERE scope_rank > 10
       );
     `);
   }

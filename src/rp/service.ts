@@ -72,6 +72,7 @@ export class RpService {
       id,
       name,
       modelProfileId: optionalModelProfileId(input.modelProfileId),
+      meetingPresetId: optionalMeetingPresetId(input.meetingPresetId),
       soulMarkdown: soul.markdown,
       soulCharacterCount: soul.characterCount,
       soulMaxCharacters: soul.maxCharacters,
@@ -132,6 +133,9 @@ export class RpService {
       modelProfileId: patch.modelProfileId === undefined
         ? current.modelProfileId
         : optionalModelProfileId(patch.modelProfileId),
+      meetingPresetId: patch.meetingPresetId === undefined
+        ? current.meetingPresetId
+        : optionalMeetingPresetId(patch.meetingPresetId),
       soulMarkdown: soul.markdown,
       soulCharacterCount: soul.characterCount,
       soulMaxCharacters: soul.maxCharacters,
@@ -430,6 +434,14 @@ export class RpService {
 function optionalModelProfileId(value: string | null | undefined): string | undefined {
   if (value === null || value === undefined) return undefined;
   return value.trim() || undefined;
+}
+
+function optionalMeetingPresetId(value: string | null | undefined): string | undefined {
+  if (value === undefined || value === null) return undefined;
+  const normalized = value.trim();
+  if (!normalized) return undefined;
+  if (normalized.length > 200) throw new Error("meeting preset id is too long");
+  return normalized;
 }
 
 function requiredText(value: string, field: string): string {

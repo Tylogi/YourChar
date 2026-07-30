@@ -2,7 +2,7 @@
 
 Status: implemented trial baseline with controlled initiative
 Audience: maintainers, coding agents, reviewers, and test agents
-Last updated: 2026-07-21
+Last updated: 2026-07-24
 
 ## 1. Product Contract
 
@@ -12,6 +12,7 @@ This feature gives characters a small canonical life outside the current chat:
 - a world contains user-managed places with fixed functional capabilities;
 - each character has a home, current place, activity, availability, energy, and autonomy policy;
 - the background Coordinator may create character calendar events, settle completed activities into world events and RP memories, and send a bounded proactive SMS;
+- same-world characters may use a persistent private channel for one-hop messages, bounded collaboration, and opt-in autonomous social exchanges;
 - the Agent can inspect and mutate its own fictional state through a fixed MCP.
 
 Canonical world state has two projections. A private `sms` thread lets one
@@ -34,10 +35,12 @@ Character UI / HTTP API
     WorldRepository -------- WorldConversationService ----- World timeline
         |
  SQLite schema 19 + initiative schema 25 + conversation schema 26
+                   + character-channel schema 29 + capability schema 30
+                   + character Skill schema 31
         |
  WorldAutonomyCoordinator (60 s tick)
-        |             |                 |
- character calendar  RP plot memory    proactive SMS queue
+        |             |                 |                    |
+ character calendar  RP plot memory    proactive SMS queue  character channels
 ```
 
 `WorldService` owns validation, assignment, runtime state, context projections,
@@ -70,6 +73,15 @@ Migration 26 adds the canonical shared timeline, story-event transitions,
 observer-scoped knowledge, and directional inter-character relationships. Its
 storage contract is defined in `world-conversation-mode.md` rather than
 duplicated here.
+
+Migration 29 adds:
+
+| Table or field | Ownership and purpose |
+|---|---|
+| `character_channels` | one persistent canonical channel for each world/character pair, with user-facing unread state |
+| `character_channel_episodes` | idempotent social, collaboration, or contact execution with source, objective, result, failure, and model-call status |
+| `character_channel_messages` | append-only character or system messages ordered within the channel |
+| `character_autonomy_policies.social_*` | independent opt-in, local-day limit, cooldown, and last-exchange time for autonomous character social activity |
 
 Character deletion cascades through its world state. Deleting a world requires
 removing all memberships first. Moving or removing a character from a world
@@ -105,6 +117,7 @@ For each world member, one tick performs this order:
 4. If autonomy is enabled and the local day has not been planned, create a daily plan.
 5. Deliver at most one eligible pending proactive message.
 6. Refresh runtime state again.
+7. Attempt at most one eligible autonomous character exchange per world.
 
 Daily planning uses the model profile bound to that character. The call receives
 a bounded SOUL excerpt, bounded world rules, compact place IDs/names/capability
@@ -201,6 +214,28 @@ hook. It creates one valid event at the current/home/first place and immediately
 attempts proactive delivery while still respecting the daily limit, global
 pause, topic mute, co-presence, and active conversation ownership.
 
+Autonomous character social activity is independent from daily schedule
+planning and disabled by default. Both characters must enable it, be free,
+remain outside quiet hours and cooldown, and not participate in an active World
+story event. The initiator's local-day limit is between zero and five; the
+default is one exchange with a four-hour cooldown. A tick creates at most one
+exchange per world, so increasing the number of characters cannot create an
+unbounded model-call burst.
+
+One autonomous exchange has at most two actor calls: the initiator writes an
+opening and the target independently replies or declines. Each actor uses its
+own bound model profile and SOUL. The bounded input contains the world card,
+trusted current time, both public runtime states, the directed relationship,
+and the latest 16 messages from that pair channel. It never contains either
+character's private user SMS transcript, user profile, private memory store,
+tools, or model credentials.
+
+A completed exchange creates a shared interaction event, one direct observation
+and one character-bound RP memory for each participant, and small directional
+relationship updates. Failed model calls create a visible channel status and an
+audit action. A completed visible exchange remains completed if secondary
+memory or relationship settlement fails; that failure is audited separately.
+
 ## 6. Context and Token Economics
 
 The context contract is deliberately split:
@@ -230,10 +265,15 @@ The `World State MCP` schema is loaded only when all conditions are true:
 
 It is not sent to unrelated SMS sessions or World actors. World actors receive a
 bounded service projection without an MCP schema or tools. The UI estimate is
-approximately 760 tokens per loaded private turn. Background MLX planning
+approximately 860 tokens per loaded private turn. Background MLX planning
 and proactive calls explicitly disable thinking and use 1,200 and 640 output
 tokens respectively; providers without the MLX control use conservative 2,400
 and 1,200 fallbacks.
+
+Character-channel actor calls also disable MLX thinking. They use 900 output
+tokens with enforced thinking-off control or a 1,600-token fallback. Their
+stable prefix is the actor SOUL plus world card; current runtime, relationship,
+objective, and bounded pair history remain in the dynamic message.
 
 ## 7. MCP Contract
 
@@ -242,6 +282,8 @@ and 1,200 fallbacks.
 - `get_character_world_state`: read the bound character's runtime and recent events;
 - `list_world_places`: read places and their fixed capabilities;
 - `list_world_characters`: list same-world character identity and public runtime availability without private context;
+- `send_character_message`: send one message through the persistent pair channel and wait for the target's own-model reply;
+- `request_character_help`: delegate one bounded reasoning or planning task and return the target's result to the source Agent;
 - `request_character_contact`: queue a bounded request for another same-world character to consider contacting the user;
 - `perform_place_action`: record an action that happens now; travel means immediate arrival at its destination.
 
@@ -250,6 +292,20 @@ a different `characterId` or `worldId`. `perform_place_action` uses the Pi tool
 call ID as its idempotency key, writes an audited action, and may create a
 salient RP memory. It never creates a proactive message from the same foreground
 turn.
+
+`send_character_message` and `request_character_help` are synchronous, one-hop
+character-to-character operations. The source Agent receives the actual target
+result and can then answer the user without impersonating the target. The
+target sees only the minimum task/message, shared public world state, directed
+relationship, and persistent pair-channel history. It receives no tools and
+cannot recursively delegate, browse, mutate files, contact the user, or claim
+external work. Actor failures return a factual failed tool result instead of
+causing the source Agent to invent a response or repeatedly retry the MCP.
+
+Character channels are shown as indented two-avatar rows beneath their world in
+the conversation sidebar. Opening one shows a read-only transcript and marks
+its unread counter as read. These channels are durable across process restart
+and included in export/delete-all and operational SQLite backup flows.
 
 `request_character_contact` is available only from a character-bound SMS
 thread. Source and target must be different characters in the same canonical
@@ -261,10 +317,11 @@ interaction event with both characters as participants and one proactive
 candidate owned by the target.
 
 The target then uses its own bound model profile, SOUL, relationship, current
-world runtime and canonical private-thread context to return a structured
-`send` or `decline` decision. A sent message is appended only to the target's
-private thread and remains unread until that thread is opened. A decline is
-stored as `character_declined` and creates no visible message. Quiet hours,
+world runtime and canonical private-thread context to return an ordinary SMS or
+an explicit `[DECLINE]` decision. Legacy JSON decisions remain accepted during
+migration. A sent message is appended only to the target's private thread and
+remains unread until that thread is opened. A decline is stored as
+`character_declined` and creates no visible message. Quiet hours,
 daily budget, pause, global/topic cooldown, recent activity, busy-thread and
 co-presence gates continue to apply. Tool success means only that the request
 was queued; the source character must never claim that the target replied.
@@ -308,6 +365,11 @@ POST   /api/v1/world-autonomy/tick
 GET    /api/v1/proactive-messages
 POST   /api/v1/proactive-messages/read
 POST   /api/v1/proactive-messages/{id}/feedback
+
+GET    /api/v1/character-channels
+POST   /api/v1/character-channels/exchanges
+GET    /api/v1/character-channels/{id}
+POST   /api/v1/character-channels/{id}/read
 ```
 
 Example character update:
@@ -320,8 +382,11 @@ Example character update:
   "policy": {
     "enabled": true,
     "proactiveEnabled": true,
+    "socialEnabled": true,
     "dailyMessageLimit": 1,
+    "socialDailyLimit": 1,
     "proactiveCooldownMinutes": 120,
+    "socialCooldownMinutes": 240,
     "quietStart": "23:00",
     "quietEnd": "08:00"
   }
@@ -344,7 +409,7 @@ they must not sleep for real timer intervals.
 1. Open **角色**, select a character, then open **生活**.
 2. Open **管理世界**, create a world, and add at least one place with capabilities.
 3. Bind the character to the world and save the home/current place.
-4. Enable **自主安排日程** and optionally **允许主动发消息**.
+4. Enable **自主安排日程** and optionally **允许主动发消息** or **允许自主角色私聊**.
 5. Use **安排今日** to inspect generated entries in the character calendar.
 6. Use **模拟生活片段** to verify runtime, event memory, and optional proactive SMS.
 7. Open the character's private SMS conversation to send direct feedback, then
@@ -358,6 +423,12 @@ they must not sleep for real timer intervals.
    unread counter as ordinary character replies. A red badge appears on the
    Characters section and target private thread only after the target actually
    sends, and remains until that visible, focused conversation is opened.
+9. To test direct collaboration, ask one character to message or request help
+   from another. The source Agent should call `send_character_message` or
+   `request_character_help`, report the returned result, and create a two-avatar
+   read-only channel beneath the shared world.
+10. To test autonomous social activity, enable **允许自主角色私聊** on both
+    characters, keep them free and outside quiet hours, and run a World tick.
 
 ## 10. Required Invariants and Tests
 
@@ -376,14 +447,19 @@ Automated coverage must preserve these rules:
 - feedback atomically updates topic policy and can reset or resume without resurrecting stale candidates;
 - contact requests reject self/cross-world targets, preserve quoted request metadata across ranking, and use the target model binding;
 - a target decline creates no transcript message, while a send enters only the target thread and remains unread until opened;
+- character channels reject self/cross-world pairs, persist idempotent episodes, and serialize concurrent work per pair;
+- each channel actor uses its own model/SOUL and receives no private user-thread transcript or tools;
+- autonomous social activity requires both opt-ins and obeys availability, story-event, quiet-hour, local-day, and cooldown gates;
+- completed channel exchanges settle only character-bound observations, memories, and directional relationships;
 - same-world setting updates preserve runtime state;
 - switching worlds cancels old plans and pending proactive work;
 - module disable removes tools and both context sections;
-- schemas 19, 25, and 26 survive backup/restore and delete-all;
+- schemas 19, 25, 26, 29, and 30 survive backup/restore and delete-all;
 - desktop and mobile browser workflows can create, bind, plan, and simulate.
 
 The focused suites are `test/world-autonomy.test.ts` and
-`test/character-contact.test.ts`; the full browser workflow is `test/browser.mjs`.
+`test/character-contact.test.ts`, plus `test/character-channel.test.ts`; the full
+browser workflow is `test/browser.mjs`.
 
 ## 11. Deferred Extensions
 
@@ -411,6 +487,10 @@ world history into every prompt.
 - `src/world/conversation-repository.ts`: schema-26 World timeline persistence
 - `src/world/conversation-service.ts`: events, observations, relationships, and unread state
 - `src/world/conversation-prompts.ts`: World narrative and Analyzer output contracts
+- `src/world/character-channel-repository.ts`: schema-29 pair channels, episodes, messages, and unread state
+- `src/world/character-channel-service.ts`: same-world validation and persistent channel operations
+- `src/world/character-interaction-coordinator.ts`: one-hop messaging, collaboration, autonomous social gating, and settlement
+- `src/organization/`: schema-31 automatic profiles, one versioned Skill per character, evidence, and trusted task routing
 - `src/mcp/world-server.ts`: fixed character-bound MCP
 - `src/context/planner.ts`: stable/dynamic placement and budgets
 - `src/domain/kernel.ts`: model calls, lifecycle wiring, public control plane

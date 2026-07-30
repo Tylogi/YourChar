@@ -41,6 +41,7 @@ export type WorldAutonomyCoordinatorOptions = {
   proactiveBlockReason?: (sessionId: string, characterId: string) => ProactiveBlockReason | undefined;
   canProjectRuntime?: (characterId: string) => boolean;
   storySnapshot?: (worldId: string) => { activeEvent?: WorldStoryEvent };
+  socialTick?: (characterId?: string) => Promise<{ created: number; failed: number }>;
   intervalMs?: number;
 };
 
@@ -483,6 +484,7 @@ export class WorldAutonomyCoordinator {
       planned: 0,
       settled: 0,
       delivered: 0,
+      socialEpisodes: 0,
       failed: 0,
     };
     for (const membership of memberships) {
@@ -496,6 +498,15 @@ export class WorldAutonomyCoordinator {
         }
         result.delivered += await this.deliverPending(membership.characterId);
         this.refreshCharacterRuntime(membership.characterId);
+      } catch {
+        result.failed += 1;
+      }
+    }
+    if (this.options.socialTick) {
+      try {
+        const social = await this.options.socialTick(characterId);
+        result.socialEpisodes += social.created;
+        result.failed += social.failed;
       } catch {
         result.failed += 1;
       }

@@ -34,8 +34,9 @@ export class RpRepository {
     this.database.connection.prepare(`
       INSERT INTO characters(
         id, name, identity, voice, narrative_perspective, behavior,
-        relationship_defaults, boundaries_json, model_profile_id, created_at, updated_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        relationship_defaults, boundaries_json, model_profile_id,
+        meeting_preset_id, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       character.id,
       character.name,
@@ -46,6 +47,7 @@ export class RpRepository {
       "",
       "[]",
       character.modelProfileId ?? null,
+      character.meetingPresetId ?? null,
       character.createdAt,
       character.updatedAt,
     );
@@ -63,11 +65,13 @@ export class RpRepository {
 
   updateCharacter(character: CharacterProfile): CharacterProfile {
     this.database.connection.prepare(`
-      UPDATE characters SET name = ?, model_profile_id = ?, updated_at = ?
+      UPDATE characters
+      SET name = ?, model_profile_id = ?, meeting_preset_id = ?, updated_at = ?
       WHERE id = ?
     `).run(
       character.name,
       character.modelProfileId ?? null,
+      character.meetingPresetId ?? null,
       character.updatedAt,
       character.id,
     );
@@ -484,6 +488,7 @@ function mapCharacter(row: Row): CharacterProfile {
     id: String(row.id),
     name: String(row.name),
     modelProfileId: optionalString(row.model_profile_id),
+    meetingPresetId: optionalString(row.meeting_preset_id),
     soulMarkdown,
     soulCharacterCount: [...soulMarkdown].length,
     soulMaxCharacters: CHARACTER_SOUL_MAX_CHARACTERS,

@@ -47,6 +47,9 @@ export class DataManagementRepository {
         DELETE FROM reminder_occurrences;
         DELETE FROM proactive_messages;
         DELETE FROM proactive_topic_policies;
+        DELETE FROM character_channel_messages;
+        DELETE FROM character_channel_episodes;
+        DELETE FROM character_channels;
         DELETE FROM world_narrative_prompt_messages;
         DELETE FROM world_narrative_contexts;
         DELETE FROM world_story_event_transitions;
@@ -72,11 +75,16 @@ export class DataManagementRepository {
         DELETE FROM private_message_inbox;
         DELETE FROM interaction_transition_events;
         DELETE FROM conversation_interaction_states;
+        DELETE FROM character_capability_evidence;
+        DELETE FROM character_skill_versions;
+        DELETE FROM character_capabilities;
+        DELETE FROM character_function_profiles;
         DELETE FROM rp_memories_fts;
         DELETE FROM rp_memories;
         DELETE FROM scene_states;
         DELETE FROM role_sessions;
         DELETE FROM characters;
+        DELETE FROM meeting_presets;
         DELETE FROM user_profiles;
         DELETE FROM agent_module_settings;
         DELETE FROM memory_extraction_jobs;

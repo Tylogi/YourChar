@@ -186,32 +186,42 @@ export class WorldRepository {
   upsertPolicy(policy: CharacterAutonomyPolicy): CharacterAutonomyPolicy {
     this.database.connection.prepare(`
       INSERT INTO character_autonomy_policies(
-        character_id, enabled, proactive_enabled, daily_message_limit,
-        proactive_cooldown_minutes, quiet_start, quiet_end, proactive_paused_until,
-        last_planned_date, last_proactive_at, updated_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        character_id, enabled, proactive_enabled, social_enabled,
+        daily_message_limit, social_daily_limit,
+        proactive_cooldown_minutes, social_cooldown_minutes,
+        quiet_start, quiet_end, proactive_paused_until,
+        last_planned_date, last_proactive_at, last_social_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT(character_id) DO UPDATE SET
         enabled = excluded.enabled,
         proactive_enabled = excluded.proactive_enabled,
+        social_enabled = excluded.social_enabled,
         daily_message_limit = excluded.daily_message_limit,
+        social_daily_limit = excluded.social_daily_limit,
         proactive_cooldown_minutes = excluded.proactive_cooldown_minutes,
+        social_cooldown_minutes = excluded.social_cooldown_minutes,
         quiet_start = excluded.quiet_start,
         quiet_end = excluded.quiet_end,
         proactive_paused_until = excluded.proactive_paused_until,
         last_planned_date = excluded.last_planned_date,
         last_proactive_at = excluded.last_proactive_at,
+        last_social_at = excluded.last_social_at,
         updated_at = excluded.updated_at
     `).run(
       policy.characterId,
       policy.enabled ? 1 : 0,
       policy.proactiveEnabled ? 1 : 0,
+      policy.socialEnabled ? 1 : 0,
       policy.dailyMessageLimit,
+      policy.socialDailyLimit,
       policy.proactiveCooldownMinutes,
+      policy.socialCooldownMinutes,
       policy.quietStart,
       policy.quietEnd,
       policy.proactivePausedUntil ?? null,
       policy.lastPlannedDate ?? null,
       policy.lastProactiveAt ?? null,
+      policy.lastSocialAt ?? null,
       policy.updatedAt,
     );
     return this.getPolicy(policy.characterId)!;
@@ -672,18 +682,23 @@ function mapMembership(row: Row): CharacterWorldMembership {
 function mapPolicy(row: Row): CharacterAutonomyPolicy {
   const lastPlannedDate = nullableString(row.last_planned_date);
   const lastProactiveAt = nullableString(row.last_proactive_at);
+  const lastSocialAt = nullableString(row.last_social_at);
   const proactivePausedUntil = nullableString(row.proactive_paused_until);
   return {
     characterId: String(row.character_id),
     enabled: Boolean(row.enabled),
     proactiveEnabled: Boolean(row.proactive_enabled),
+    socialEnabled: Boolean(row.social_enabled),
     dailyMessageLimit: Number(row.daily_message_limit),
+    socialDailyLimit: Number(row.social_daily_limit),
     proactiveCooldownMinutes: Number(row.proactive_cooldown_minutes),
+    socialCooldownMinutes: Number(row.social_cooldown_minutes),
     quietStart: String(row.quiet_start),
     quietEnd: String(row.quiet_end),
     ...(proactivePausedUntil ? { proactivePausedUntil } : {}),
     ...(lastPlannedDate ? { lastPlannedDate } : {}),
     ...(lastProactiveAt ? { lastProactiveAt } : {}),
+    ...(lastSocialAt ? { lastSocialAt } : {}),
     updatedAt: String(row.updated_at),
   };
 }

@@ -42,6 +42,8 @@ test("readiness, model diagnostics, export, and confirmed deletion form a closed
   const kernel = new CompanionKernel({
     stateDir: false,
     clock: new VirtualClock("2026-07-12T09:00:00.000Z"),
+    characterFunctionInferer: false,
+    characterSkillReflector: false,
   });
   kernel.patchModelApiConfig({
     enabled: true,
@@ -202,7 +204,7 @@ test("bounded audit summaries survive restart", async () => {
   }
 });
 
-test("model context traces retain the latest ten, redact credentials, and survive restart", () => {
+test("model context traces retain the latest ten per scope, redact credentials, and survive restart", () => {
   const stateDir = mkdtempSync(join(tmpdir(), "rp-agent-traces-"));
   const clock = new VirtualClock("2026-07-12T09:00:00.000Z");
   try {
@@ -219,16 +221,33 @@ test("model context traces retain the latest ten, redact credentials, and surviv
           messages: [{ role: "user", content: `full-context-${index}` }],
         },
       });
+      first.store.addModelContextTrace({
+        sessionId: "character-function:trace-character",
+        mode: "sms",
+        turnKind: "character_function_inference",
+        requestText: `background-${index}`,
+        payload: {
+          model: "model-a",
+          messages: [{ role: "user", content: `background-context-${index}` }],
+        },
+      });
     }
     first.dispose();
 
     const second = new CompanionKernel({ stateDir, clock, startScheduler: false });
-    const traces = second.recentModelContextTraces(100);
-    assert.equal(traces.length, 10);
-    assert.equal(traces[0].requestText, "trace-11");
-    assert.equal(traces[9].requestText, "trace-2");
-    assert.equal(traces[0].payload.authorization, "[REDACTED]");
-    assert.match(JSON.stringify(traces[0].payload), /full-context-11/);
+    const conversationTraces = second.recentModelContextTraces(100, "conversation");
+    const backgroundTraces = second.recentModelContextTraces(100, "background");
+    assert.equal(conversationTraces.length, 10);
+    assert.equal(backgroundTraces.length, 10);
+    assert.equal(second.recentModelContextTraces(100).length, 20);
+    assert.equal(conversationTraces[0].requestText, "trace-11");
+    assert.equal(conversationTraces[9].requestText, "trace-2");
+    assert.equal(backgroundTraces[0].requestText, "background-11");
+    assert.equal(backgroundTraces[9].requestText, "background-2");
+    assert.equal(conversationTraces[0].scope, "conversation");
+    assert.equal(backgroundTraces[0].scope, "background");
+    assert.equal(conversationTraces[0].payload.authorization, "[REDACTED]");
+    assert.match(JSON.stringify(conversationTraces[0].payload), /full-context-11/);
 
     second.store.addModelContextTrace({
       sessionId: "trace-session",
@@ -237,10 +256,11 @@ test("model context traces retain the latest ten, redact credentials, and surviv
       requestText: "trace-12",
       payload: { messages: [{ role: "user", content: "after-restart" }] },
     });
-    const merged = second.recentModelContextTraces();
+    const merged = second.recentModelContextTraces(10, "conversation");
     assert.equal(merged.length, 10);
     assert.equal(merged[0].requestText, "trace-12");
     assert.equal(merged[9].requestText, "trace-3");
+    assert.equal(second.recentModelContextTraces(10, "background")[0].requestText, "background-11");
     second.dispose();
   } finally {
     rmSync(stateDir, { recursive: true, force: true });

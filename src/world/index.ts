@@ -6,3 +6,6 @@ export * from "./proactive-policy.js";
 export * from "./conversation-repository.js";
 export * from "./conversation-service.js";
 export * from "./conversation-prompts.js";
+export * from "./character-channel-repository.js";
+export * from "./character-channel-service.js";
+export * from "./character-interaction-coordinator.js";

@@ -111,6 +111,8 @@ async function verifyProviderCacheContract(mode: Mode): Promise<void> {
     clock,
     startScheduler: false,
     quietHours: false,
+    characterFunctionInferer: false,
+    characterSkillReflector: false,
   });
   try {
     const address = modelServer.address();

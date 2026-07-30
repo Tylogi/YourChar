@@ -21,9 +21,17 @@ import type { MemoryExtractor } from "../memory-coordinator/types.js";
 import type { RelationshipExtractor } from "../relationship/types.js";
 import type { VisionService } from "../vision/service.js";
 import type { WebReaderService } from "../web-reader/service.js";
-import type { ProactiveMessenger, WorldPlanner } from "../world/types.js";
+import type {
+  CharacterInteractionActor,
+  ProactiveMessenger,
+  WorldPlanner,
+} from "../world/types.js";
 import type { PrivateInboxCoordinatorOptions } from "../inbox/index.js";
 import type { PostTurnAnalyzer } from "../post-turn/index.js";
+import type {
+  CharacterFunctionInferer,
+  CharacterSkillReflector,
+} from "../organization/index.js";
 
 export type ScriptedModelResponse = (
   | {
@@ -57,6 +65,9 @@ export type CreateTestRuntimeOptions = {
   postTurnAnalyzer?: PostTurnAnalyzer;
   worldPlanner?: WorldPlanner;
   worldMessenger?: ProactiveMessenger;
+  characterInteractionActor?: CharacterInteractionActor;
+  characterFunctionInferer?: CharacterFunctionInferer | false;
+  characterSkillReflector?: CharacterSkillReflector | false;
   visionService?: VisionService;
   webReaderService?: WebReaderService;
   conversationLifecycleThresholds?: Partial<ConversationLifecycleThresholds>;
@@ -193,6 +204,9 @@ export class TestRuntime {
         : options.relationshipExtractor ?? (async () => ({ significant: false, confidence: 0 })),
       worldPlanner: options.worldPlanner,
       worldMessenger: options.worldMessenger,
+      characterInteractionActor: options.characterInteractionActor,
+      characterFunctionInferer: options.characterFunctionInferer ?? false,
+      characterSkillReflector: options.characterSkillReflector ?? false,
       conversationLifecycleThresholds: options.conversationLifecycleThresholds,
       privateInboxOptions: options.privateInboxOptions,
       startPrivateInboxCoordinator: options.startPrivateInboxCoordinator,

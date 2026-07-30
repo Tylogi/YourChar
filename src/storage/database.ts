@@ -1437,6 +1437,277 @@ const migrations: Migration[] = [
         ON world_narrative_prompt_messages(context_id, sequence);
     `,
   },
+  {
+    version: 29,
+    sql: `
+      ALTER TABLE character_autonomy_policies
+        ADD COLUMN social_enabled INTEGER NOT NULL DEFAULT 0
+          CHECK (social_enabled IN (0, 1));
+      ALTER TABLE character_autonomy_policies
+        ADD COLUMN social_daily_limit INTEGER NOT NULL DEFAULT 1
+          CHECK (social_daily_limit BETWEEN 0 AND 5);
+      ALTER TABLE character_autonomy_policies
+        ADD COLUMN social_cooldown_minutes INTEGER NOT NULL DEFAULT 240
+          CHECK (social_cooldown_minutes BETWEEN 30 AND 1440);
+      ALTER TABLE character_autonomy_policies
+        ADD COLUMN last_social_at TEXT;
+
+      CREATE TABLE character_channels (
+        id TEXT PRIMARY KEY,
+        world_id TEXT NOT NULL REFERENCES role_worlds(id) ON DELETE CASCADE,
+        first_character_id TEXT NOT NULL REFERENCES characters(id) ON DELETE CASCADE,
+        second_character_id TEXT NOT NULL REFERENCES characters(id) ON DELETE CASCADE,
+        unread_count INTEGER NOT NULL DEFAULT 0 CHECK (unread_count >= 0),
+        last_unread_at TEXT,
+        last_read_at TEXT,
+        last_message_at TEXT,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        UNIQUE(world_id, first_character_id, second_character_id),
+        CHECK (first_character_id < second_character_id)
+      );
+      CREATE INDEX character_channels_world_idx
+        ON character_channels(world_id, updated_at DESC, id DESC);
+      CREATE INDEX character_channels_first_idx
+        ON character_channels(first_character_id, updated_at DESC);
+      CREATE INDEX character_channels_second_idx
+        ON character_channels(second_character_id, updated_at DESC);
+
+      CREATE TABLE character_channel_episodes (
+        id TEXT PRIMARY KEY,
+        channel_id TEXT NOT NULL REFERENCES character_channels(id) ON DELETE CASCADE,
+        world_id TEXT NOT NULL REFERENCES role_worlds(id) ON DELETE CASCADE,
+        kind TEXT NOT NULL CHECK (kind IN ('social', 'collaboration', 'contact')),
+        source TEXT NOT NULL CHECK (source IN ('autonomy', 'agent_tool', 'manual', 'system')),
+        initiator_character_id TEXT NOT NULL REFERENCES characters(id) ON DELETE CASCADE,
+        target_character_id TEXT NOT NULL REFERENCES characters(id) ON DELETE CASCADE,
+        parent_session_id TEXT,
+        title TEXT NOT NULL DEFAULT '',
+        objective TEXT NOT NULL DEFAULT '',
+        status TEXT NOT NULL CHECK (
+          status IN ('queued', 'running', 'completed', 'declined', 'failed', 'cancelled')
+        ),
+        model_calls INTEGER NOT NULL DEFAULT 0 CHECK (model_calls >= 0),
+        message_count INTEGER NOT NULL DEFAULT 0 CHECK (message_count >= 0),
+        idempotency_key TEXT NOT NULL UNIQUE,
+        result_text TEXT,
+        failure_reason TEXT,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        completed_at TEXT,
+        CHECK (initiator_character_id <> target_character_id)
+      );
+      CREATE INDEX character_channel_episodes_channel_idx
+        ON character_channel_episodes(channel_id, created_at DESC, id DESC);
+      CREATE INDEX character_channel_episodes_world_idx
+        ON character_channel_episodes(world_id, created_at DESC, id DESC);
+      CREATE INDEX character_channel_episodes_initiator_idx
+        ON character_channel_episodes(initiator_character_id, created_at DESC);
+
+      CREATE TABLE character_channel_messages (
+        id TEXT PRIMARY KEY,
+        channel_id TEXT NOT NULL REFERENCES character_channels(id) ON DELETE CASCADE,
+        episode_id TEXT NOT NULL REFERENCES character_channel_episodes(id) ON DELETE CASCADE,
+        sequence INTEGER NOT NULL CHECK (sequence >= 1),
+        sender_type TEXT NOT NULL CHECK (sender_type IN ('character', 'system')),
+        sender_character_id TEXT REFERENCES characters(id) ON DELETE CASCADE,
+        kind TEXT NOT NULL CHECK (kind IN ('message', 'task', 'result', 'status')),
+        content TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        UNIQUE(channel_id, sequence),
+        CHECK (
+          (sender_type = 'character' AND sender_character_id IS NOT NULL) OR
+          (sender_type = 'system' AND sender_character_id IS NULL)
+        )
+      );
+      CREATE INDEX character_channel_messages_channel_idx
+        ON character_channel_messages(channel_id, sequence DESC);
+      CREATE INDEX character_channel_messages_episode_idx
+        ON character_channel_messages(episode_id, sequence);
+    `,
+  },
+  {
+    version: 30,
+    sql: `
+      CREATE TABLE character_function_profiles (
+        character_id TEXT PRIMARY KEY REFERENCES characters(id) ON DELETE CASCADE,
+        public_role TEXT NOT NULL DEFAULT '',
+        task_preferences TEXT NOT NULL DEFAULT '',
+        avoided_tasks TEXT NOT NULL DEFAULT '',
+        max_concurrent_tasks INTEGER NOT NULL DEFAULT 1
+          CHECK (max_concurrent_tasks BETWEEN 1 AND 5),
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      );
+
+      CREATE TABLE character_capabilities (
+        character_id TEXT NOT NULL REFERENCES characters(id) ON DELETE CASCADE,
+        capability_id TEXT NOT NULL CHECK (capability_id IN (
+          'research.web',
+          'research.analysis',
+          'software.debug',
+          'software.implementation',
+          'planning.schedule',
+          'organization.coordination',
+          'communication.social',
+          'creative.writing',
+          'creative.visual',
+          'world.knowledge'
+        )),
+        level INTEGER NOT NULL CHECK (level BETWEEN 1 AND 5),
+        responsibility TEXT NOT NULL CHECK (responsibility IN ('primary', 'support')),
+        auto_accept INTEGER NOT NULL DEFAULT 0 CHECK (auto_accept IN (0, 1)),
+        module_ids_json TEXT NOT NULL DEFAULT '[]',
+        notes TEXT NOT NULL DEFAULT '',
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        PRIMARY KEY(character_id, capability_id)
+      );
+      CREATE INDEX character_capabilities_capability_idx
+        ON character_capabilities(capability_id, auto_accept, level DESC);
+
+      CREATE TABLE character_capability_evidence (
+        id TEXT PRIMARY KEY,
+        character_id TEXT NOT NULL REFERENCES characters(id) ON DELETE CASCADE,
+        capability_id TEXT NOT NULL CHECK (capability_id IN (
+          'research.web',
+          'research.analysis',
+          'software.debug',
+          'software.implementation',
+          'planning.schedule',
+          'organization.coordination',
+          'communication.social',
+          'creative.writing',
+          'creative.visual',
+          'world.knowledge'
+        )),
+        source_task_id TEXT NOT NULL,
+        outcome TEXT NOT NULL CHECK (outcome IN ('completed', 'declined', 'failed', 'cancelled')),
+        functional_score REAL CHECK (
+          functional_score IS NULL OR (functional_score >= 0 AND functional_score <= 100)
+        ),
+        judge_score REAL CHECK (
+          judge_score IS NULL OR (judge_score >= 0 AND judge_score <= 100)
+        ),
+        summary TEXT NOT NULL DEFAULT '',
+        created_at TEXT NOT NULL,
+        UNIQUE(source_task_id, capability_id)
+      );
+      CREATE INDEX character_capability_evidence_character_idx
+        ON character_capability_evidence(character_id, created_at DESC, id DESC);
+      CREATE INDEX character_capability_evidence_capability_idx
+        ON character_capability_evidence(capability_id, outcome, created_at DESC);
+    `,
+  },
+  {
+    version: 31,
+    sql: `
+      ALTER TABLE character_function_profiles
+        ADD COLUMN manual_locked INTEGER NOT NULL DEFAULT 0 CHECK (manual_locked IN (0, 1));
+      ALTER TABLE character_function_profiles
+        ADD COLUMN inference_status TEXT NOT NULL DEFAULT 'uninitialized'
+          CHECK (inference_status IN ('uninitialized', 'pending', 'ready', 'failed'));
+      ALTER TABLE character_function_profiles
+        ADD COLUMN source_soul_hash TEXT NOT NULL DEFAULT '';
+      ALTER TABLE character_function_profiles
+        ADD COLUMN inference_error TEXT NOT NULL DEFAULT '';
+      ALTER TABLE character_function_profiles
+        ADD COLUMN inference_started_at TEXT;
+      ALTER TABLE character_function_profiles
+        ADD COLUMN inferred_at TEXT;
+
+      ALTER TABLE character_capabilities
+        ADD COLUMN source TEXT NOT NULL DEFAULT 'manual'
+          CHECK (source IN ('inferred', 'manual'));
+      ALTER TABLE character_capabilities
+        ADD COLUMN confidence REAL NOT NULL DEFAULT 1
+          CHECK (confidence >= 0 AND confidence <= 1);
+
+      ALTER TABLE character_capability_evidence
+        ADD COLUMN lesson TEXT NOT NULL DEFAULT '';
+
+      CREATE TABLE character_skill_versions (
+        id TEXT PRIMARY KEY,
+        character_id TEXT NOT NULL REFERENCES characters(id) ON DELETE CASCADE,
+        version INTEGER NOT NULL CHECK (version >= 1),
+        status TEXT NOT NULL CHECK (status IN ('active', 'superseded', 'rejected')),
+        markdown TEXT NOT NULL,
+        change_summary TEXT NOT NULL DEFAULT '',
+        source TEXT NOT NULL CHECK (source IN ('bootstrap', 'character_reflection', 'manual')),
+        source_task_id TEXT,
+        content_hash TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        activated_at TEXT,
+        superseded_at TEXT,
+        UNIQUE(character_id, version),
+        UNIQUE(character_id, source_task_id)
+      );
+      CREATE UNIQUE INDEX character_skill_versions_active_idx
+        ON character_skill_versions(character_id)
+        WHERE status = 'active';
+      CREATE INDEX character_skill_versions_history_idx
+        ON character_skill_versions(character_id, version DESC);
+
+      UPDATE character_function_profiles
+      SET
+        manual_locked = 1,
+        inference_status = 'ready'
+      WHERE
+        public_role <> '' OR task_preferences <> '' OR avoided_tasks <> '' OR
+        EXISTS (
+          SELECT 1 FROM character_capabilities
+          WHERE character_capabilities.character_id = character_function_profiles.character_id
+        );
+
+      DROP INDEX model_context_traces_session_idx;
+      ALTER TABLE model_context_traces RENAME TO model_context_traces_v30;
+      CREATE TABLE model_context_traces (
+        sequence INTEGER PRIMARY KEY AUTOINCREMENT,
+        id TEXT NOT NULL UNIQUE,
+        session_id TEXT NOT NULL,
+        mode TEXT NOT NULL CHECK (mode IN ('sms', 'rp')),
+        turn_kind TEXT NOT NULL CHECK (turn_kind IN (
+          'user', 'reminder_due', 'group_gate', 'group_reply', 'subagent',
+          'memory_extraction', 'relationship_extraction', 'post_turn_analysis',
+          'world_planning', 'proactive_message', 'world_director',
+          'world_actor', 'world_analysis', 'character_function_inference',
+          'character_skill_reflection'
+        )),
+        request_text TEXT NOT NULL,
+        payload_json TEXT NOT NULL,
+        created_at TEXT NOT NULL
+      );
+      INSERT INTO model_context_traces(
+        sequence, id, session_id, mode, turn_kind, request_text, payload_json, created_at
+      )
+      SELECT sequence, id, session_id, mode, turn_kind, request_text, payload_json, created_at
+      FROM model_context_traces_v30;
+      DROP TABLE model_context_traces_v30;
+      CREATE INDEX model_context_traces_session_idx
+        ON model_context_traces(session_id, sequence DESC);
+    `,
+  },
+  {
+    version: 32,
+    sql: `
+      CREATE TABLE meeting_presets (
+        id TEXT PRIMARY KEY,
+        name TEXT NOT NULL,
+        format TEXT NOT NULL CHECK (format IN ('sillytavern_openai')),
+        data_json TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      );
+      CREATE INDEX meeting_presets_updated_idx
+        ON meeting_presets(updated_at DESC, name, id);
+
+      ALTER TABLE characters
+        ADD COLUMN meeting_preset_id TEXT
+        REFERENCES meeting_presets(id) ON DELETE SET NULL;
+      CREATE INDEX characters_meeting_preset_idx
+        ON characters(meeting_preset_id);
+    `,
+  },
 ];
 
 export class AppDatabase {

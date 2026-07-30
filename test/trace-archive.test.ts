@@ -91,6 +91,51 @@ test("trace archive setting is exposed through the HTTP API", async () => {
   }
 });
 
+test("debug model trace API separates conversation and background requests", async () => {
+  const kernel = new CompanionKernel({ stateDir: false, startScheduler: false });
+  kernel.store.addModelContextTrace({
+    sessionId: "conversation-trace",
+    mode: "sms",
+    turnKind: "user",
+    requestText: "用户发起的消息",
+    payload: { messages: [{ role: "user", content: "你好" }] },
+  });
+  kernel.store.addModelContextTrace({
+    sessionId: "character-skill:trace-character",
+    mode: "sms",
+    turnKind: "character_skill_reflection",
+    requestText: "角色自主复盘",
+    payload: { messages: [{ role: "user", content: "复盘任务经验" }] },
+  });
+  const app = createHttpServer({ kernel });
+  await new Promise<void>((resolve) => app.listen(0, "127.0.0.1", resolve));
+  try {
+    const address = app.address();
+    assert.ok(address && typeof address === "object");
+    const baseUrl = `http://127.0.0.1:${address.port}`;
+    const conversation = await (await fetch(
+      `${baseUrl}/api/debug/model-traces?scope=conversation&limit=10`,
+    )).json() as { traces: Array<{ requestText: string; scope: string }> };
+    const background = await (await fetch(
+      `${baseUrl}/api/debug/model-traces?scope=background&limit=10`,
+    )).json() as { traces: Array<{ requestText: string; scope: string }> };
+    assert.deepEqual(
+      conversation.traces.map((trace) => [trace.requestText, trace.scope]),
+      [["用户发起的消息", "conversation"]],
+    );
+    assert.deepEqual(
+      background.traces.map((trace) => [trace.requestText, trace.scope]),
+      [["角色自主复盘", "background"]],
+    );
+    const invalid = await fetch(`${baseUrl}/api/debug/model-traces?scope=unknown`);
+    assert.equal(invalid.status, 400);
+    assert.equal(((await invalid.json()) as { code: string }).code, "INVALID_TRACE_SCOPE");
+  } finally {
+    await new Promise<void>((resolve, reject) => app.close((error) => error ? reject(error) : resolve()));
+    kernel.dispose();
+  }
+});
+
 test("an unserializable API result returns JSON without crashing the HTTP server", async () => {
   const kernel = new CompanionKernel({ stateDir: false, startScheduler: false });
   const original = kernel.recentModelContextTraces.bind(kernel);

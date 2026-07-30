@@ -12,3 +12,5 @@ export * from "../interaction/index.js";
 export * from "../inbox/index.js";
 export * from "../post-turn/index.js";
 export * from "../user-insight/index.js";
+export * from "../organization/index.js";
+export * from "../meeting-preset/index.js";

@@ -232,7 +232,7 @@ test("relationship reset suppresses only that consumer while an in-flight depart
   }
 });
 
-test("schema 21 upgrades coordinator state through schema 28 world narrative contexts", () => {
+test("schema 21 upgrades coordinator state through schema 32 meeting preset support", () => {
   const directory = mkdtempSync(join(tmpdir(), "rp-agent-post-turn-migration-"));
   const path = join(directory, "state.sqlite");
   const legacy = new DatabaseSync(path);
@@ -338,7 +338,38 @@ test("schema 21 upgrades coordinator state through schema 28 world narrative con
   try {
     assert.equal(
       Number((upgraded.connection.prepare("SELECT MAX(version) AS version FROM schema_migrations").get() as { version: number }).version),
-      28,
+      32,
+    );
+    const autonomyColumns = upgraded.connection.prepare(
+      "PRAGMA table_info(character_autonomy_policies)",
+    ).all() as Array<{ name: string }>;
+    assert.equal(autonomyColumns.some((column) => column.name === "social_enabled"), true);
+    assert.equal(autonomyColumns.some((column) => column.name === "social_daily_limit"), true);
+    assert.equal(autonomyColumns.some((column) => column.name === "social_cooldown_minutes"), true);
+    assert.equal(autonomyColumns.some((column) => column.name === "last_social_at"), true);
+    for (const table of [
+      "character_channels",
+      "character_channel_episodes",
+      "character_channel_messages",
+      "character_function_profiles",
+      "character_capabilities",
+      "character_capability_evidence",
+      "character_skill_versions",
+      "meeting_presets",
+    ]) {
+      assert.equal(
+        (upgraded.connection.prepare(`
+          SELECT name FROM sqlite_master WHERE type = 'table' AND name = ?
+        `).get(table) as { name?: string } | undefined)?.name,
+        table,
+      );
+    }
+    const characterColumns = upgraded.connection.prepare(
+      "PRAGMA table_info(characters)",
+    ).all() as Array<{ name: string }>;
+    assert.equal(
+      characterColumns.some((column) => column.name === "meeting_preset_id"),
+      true,
     );
     const storyEventColumns = upgraded.connection.prepare("PRAGMA table_info(world_story_events)").all() as Array<{ name: string }>;
     assert.equal(storyEventColumns.some((column) => column.name === "settlement_summary"), true);

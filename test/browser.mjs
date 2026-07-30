@@ -171,6 +171,19 @@ kernel.store.addModelContextTrace({
     tools: [{ type: "function", function: { name: "list_schedule_items", description: "Return complete schedule state. ".repeat(12), parameters: { type: "object" } } }],
   },
 });
+kernel.store.addModelContextTrace({
+  sessionId: "character-function:browser-character",
+  mode: "sms",
+  turnKind: "character_function_inference",
+  requestText: "为角色推断初始职能",
+  payload: {
+    model: "browser-model",
+    messages: [
+      { role: "system", content: "Infer a concise character function profile." },
+      { role: "user", content: "根据角色人设推断擅长的任务。" },
+    ],
+  },
+});
 const server = createHttpServer({ kernel });
 await new Promise((resolvePromise) => server.listen(0, "127.0.0.1", resolvePromise));
 const address = server.address();
@@ -219,6 +232,8 @@ async function runDesktopWorkflow(browser, baseUrl, outputDir) {
   await page.getByRole("button", { name: "Debug" }).click();
   await page.locator("#debugPane").waitFor({ state: "visible" });
   await page.locator(".trace-index-item.active").waitFor({ state: "visible" });
+  assert.equal(await page.locator("#conversationTraceCount").textContent(), "2");
+  assert.equal(await page.locator("#backgroundTraceCount").textContent(), "1");
   assert.equal(await page.locator(".trace-index-item").count(), 2);
   assert.equal(await page.locator(".trace-block.system").count(), 1);
   assert.equal(await page.locator(".trace-block.user").count(), 1);
@@ -231,6 +246,12 @@ async function runDesktopWorkflow(browser, baseUrl, outputDir) {
   await quantitySummary.filter({ hasText: "System" }).filter({ hasText: "User" })
     .filter({ hasText: "Assistant" }).filter({ hasText: "Tool Schema" }).waitFor();
   assert.match(await page.locator(".trace-index-item.active .trace-index-meta").textContent(), /4 条上下文 · 1 个 Schema/);
+  await page.locator("#backgroundTraceScopeBtn").click();
+  await page.locator("#traceDetailTitle").filter({ hasText: "为角色推断初始职能" }).waitFor();
+  assert.equal(await page.locator(".trace-index-item").count(), 1);
+  await page.locator("#traceDetailMeta").filter({ hasText: "会话外" }).filter({ hasText: "角色职能推断" }).waitFor();
+  await page.locator("#conversationTraceScopeBtn").click();
+  await page.locator("#traceDetailTitle").filter({ hasText: "帮我检查完整上下文" }).waitFor();
   await page.getByRole("tab", { name: "Context Economics" }).click();
   await page.locator("#traceDetailTitle").filter({ hasText: "420 estimated tokens" }).waitFor();
   await page.locator("#traceContent").filter({ hasText: "Cache read" }).filter({ hasText: "unknown" }).waitFor();
@@ -269,7 +290,7 @@ async function runDesktopWorkflow(browser, baseUrl, outputDir) {
   await page.locator(".module-row").filter({ hasText: "Tavily Search MCP" }).locator(".module-token").filter({ hasText: "约 350 tokens/轮" }).waitFor();
   await page.locator(".module-row").filter({ hasText: "Vision MCP" }).locator(".module-token").filter({ hasText: "约 420 tokens/轮" }).waitFor();
   await page.locator(".module-row").filter({ hasText: "Web Reader MCP" }).locator(".module-token").filter({ hasText: "约 260 tokens/轮" }).waitFor();
-  await page.locator(".module-row").filter({ hasText: "World State MCP" }).locator(".module-token").filter({ hasText: "约 760 tokens/轮" }).waitFor();
+  await page.locator(".module-row").filter({ hasText: "World State MCP" }).locator(".module-token").filter({ hasText: "约 860 tokens/轮" }).waitFor();
   await page.locator(".module-row").filter({ hasText: "Interaction State MCP" }).locator(".module-token").filter({ hasText: "约 650 tokens/轮" }).waitFor();
   await planningModule.locator(".module-token").filter({ hasText: /索引约 .*全文约 .*tokens\/调用/ }).waitFor();
   await page.locator("#permissionRuntime").filter({ hasText: "Bubblewrap 可用" }).waitFor();
@@ -429,6 +450,33 @@ async function runDesktopWorkflow(browser, baseUrl, outputDir) {
   await assertInteractiveBounds(page);
   await page.locator("#charactersPage").evaluate((element) => { element.scrollTop = 0; });
   await page.screenshot({ path: resolve(outputDir, "characters-cards.png"), fullPage: false });
+  await page.getByRole("tab", { name: "职责能力", exact: true }).click();
+  await page.locator("#characterFunctionAdvanced > summary").click();
+  await page.locator("#characterCapabilityList .capability-row").first().waitFor();
+  assert.equal(await page.locator("#characterCapabilityList .capability-row").count(), 10);
+  await page.locator("#characterPublicRole").fill("研究与规划负责人");
+  await page.locator("#characterMaxConcurrentTasks").selectOption("2");
+  await page.locator("#characterTaskPreferences").fill("优先处理来源清晰、结果可验证的任务。");
+  const webResearchCapability = page.locator(
+    '#characterCapabilityList [data-capability-id="research.web"]',
+  );
+  await webResearchCapability.locator("[data-capability-enabled]").check();
+  await webResearchCapability.locator("[data-capability-level]").selectOption("4");
+  await webResearchCapability.getByRole("button", { name: "主责", exact: true }).click();
+  await webResearchCapability.locator("[data-capability-auto]").check();
+  await webResearchCapability.locator("summary").click();
+  await webResearchCapability.locator(".capability-module-option")
+    .filter({ hasText: "Tavily Search MCP" })
+    .locator("input")
+    .check();
+  await page.getByRole("button", { name: "保存高级设置", exact: true }).click();
+  await page.locator("#characterFunctionState").filter({ hasText: "已保存" }).waitFor();
+  await page.locator("#characterCapabilityCount").filter({ hasText: "1 项" }).waitFor();
+  await page.locator("#characterSkillMarkdown").filter({ hasText: "工作方法" }).waitFor();
+  await page.locator("#characterFunctionPanel").evaluate((element) =>
+    element.scrollIntoView({ block: "start" }));
+  await assertInteractiveBounds(page);
+  await captureValidatedScreenshot(page, resolve(outputDir, "characters-capabilities.png"));
   await page.getByRole("tab", { name: "长期记忆", exact: true }).click();
   await page.getByRole("button", { name: "添加记忆", exact: true }).click();
   await page.locator("#memoryEditorDialog").waitFor({ state: "visible" });
@@ -727,7 +775,11 @@ async function runDesktopWorkflow(browser, baseUrl, outputDir) {
   assert.match(await contextBudgetButton.textContent(), /%/);
   await contextBudgetButton.click();
   await page.locator("#contextBudgetDialog").waitFor({ state: "visible" });
-  await page.locator("#contextBudgetMetrics").filter({ hasText: "模型窗口" }).filter({ hasText: "安全保留" }).waitFor();
+  await page.locator("#contextBudgetMetrics")
+    .filter({ hasText: "本地估算" })
+    .filter({ hasText: "模型窗口" })
+    .filter({ hasText: "安全保留" })
+    .waitFor();
   await assertElementUnclipped(page, "#contextBudgetDialog");
   await captureValidatedScreenshot(page, resolve(outputDir, "chat-context-budget.png"));
   await page.getByRole("button", { name: "关闭上下文余量" }).click();
@@ -830,8 +882,52 @@ async function runDesktopWorkflow(browser, baseUrl, outputDir) {
     quietStart: "00:00",
     quietEnd: "00:00",
   });
+  const seededCharacterChannel = kernel.characterChannels.startEpisode({
+    initiatorCharacterId: sourceCharacter.id,
+    targetCharacterId: targetCharacter.id,
+    kind: "collaboration",
+    source: "manual",
+    idempotencyKey: "browser-character-channel",
+    title: "整理河岸散步路线",
+    objective: "一起确认雨后适合散步的路线。",
+  });
+  kernel.characterChannels.updateEpisode(seededCharacterChannel.episode.id, { status: "running" });
+  kernel.characterChannels.appendCharacterMessage({
+    channelId: seededCharacterChannel.channel.id,
+    episodeId: seededCharacterChannel.episode.id,
+    senderCharacterId: sourceCharacter.id,
+    kind: "task",
+    content: "顾遥，能帮我确认一下雨后河岸哪一段更适合散步吗？",
+  });
+  kernel.characterChannels.appendCharacterMessage({
+    channelId: seededCharacterChannel.channel.id,
+    episodeId: seededCharacterChannel.episode.id,
+    senderCharacterId: targetCharacter.id,
+    kind: "result",
+    content: "书店往东的石板路积水少，我可以先去看一眼，再把路线告诉你。",
+  });
+  kernel.characterChannels.updateEpisode(seededCharacterChannel.episode.id, {
+    status: "completed",
+    resultText: "书店往东的石板路积水少。",
+    completed: true,
+  });
   await page.getByRole("button", { name: "聊天", exact: true }).click();
   await page.evaluate(() => window.loadSessions());
+  const characterChannelItem = page.locator(
+    `#conversationList button[data-character-channel-id="${seededCharacterChannel.channel.id}"]`,
+  );
+  await characterChannelItem.waitFor();
+  assert.equal(await characterChannelItem.locator(".character-channel-avatar > span").count(), 2);
+  await characterChannelItem.locator(".conversation-unread").filter({ hasText: "2" }).waitFor();
+  await characterChannelItem.click();
+  await page.locator("#characterChannelDialog").waitFor({ state: "visible" });
+  await page.locator("#characterChannelParticipants").filter({ hasText: "林澈 与 顾遥" }).filter({ hasText: "已完成" }).waitFor();
+  await page.locator("#characterChannelMessages").filter({ hasText: "哪一段更适合散步" }).filter({ hasText: "石板路积水少" }).waitFor();
+  assert.equal(await page.locator("#characterChannelMessages .character-channel-message-avatar").count(), 2);
+  await assertInteractiveBounds(page);
+  await captureValidatedScreenshot(page, resolve(outputDir, "character-private-channel.png"));
+  await page.getByRole("button", { name: "关闭角色通信", exact: true }).click();
+  await page.locator("#characterChannelDialog").waitFor({ state: "hidden" });
   await page.getByRole("button", { name: "新建对话" }).click();
   await page.locator("#newConversationDialog").waitFor({ state: "visible" });
   assert.equal(await page.locator("#newConversationCharacter option:checked").textContent(), "顾遥");
@@ -1585,6 +1681,21 @@ async function runMobileWorkflow(browser, baseUrl, outputDir) {
   await page.waitForFunction(() => document.querySelector("#characterSoulMarkdown")?.value.includes("长期信任"));
   const mobileSoul = await page.locator("#characterSoulMarkdown").inputValue();
   assert.equal(await page.locator("#characterSoulCount").textContent(), `${[...mobileSoul].length} / 8000`);
+  await page.getByRole("tab", { name: "职责能力", exact: true }).click();
+  await page.locator("#characterFunctionRole").filter({ hasText: "研究与规划负责人" }).waitFor();
+  await page.locator("#characterSkillMarkdown").filter({ hasText: "工作方法" }).waitFor();
+  await assertPanelInsideMain(page, "#charactersPage");
+  await assertInteractiveBounds(page);
+  await page.screenshot({ path: resolve(outputDir, "mobile-character-skill.png"), fullPage: false });
+  await page.locator("#characterFunctionAdvanced > summary").click();
+  await page.locator("#characterPublicRole").waitFor({ state: "visible" });
+  await page.waitForFunction(() =>
+    document.querySelector("#characterPublicRole")?.value === "研究与规划负责人");
+  assert.equal(await page.locator("#characterPublicRole").inputValue(), "研究与规划负责人");
+  await page.locator('#characterCapabilityList [data-capability-id="research.web"].enabled').waitFor();
+  await assertPanelInsideMain(page, "#charactersPage");
+  await assertInteractiveBounds(page);
+  await page.screenshot({ path: resolve(outputDir, "mobile-character-capabilities.png"), fullPage: false });
   await page.getByRole("tab", { name: "关系", exact: true }).click();
   await page.locator("#relationshipOverview").filter({ hasText: "初识" }).waitFor();
   await page.locator("#relationshipOverview").filter({ hasText: "尚未建立浪漫关系" }).waitFor();

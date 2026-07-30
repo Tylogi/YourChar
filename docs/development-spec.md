@@ -8,10 +8,13 @@ Canonical multi-character World timelines and retired RP/group migration are
 specified in [`world-conversation-mode.md`](./world-conversation-mode.md).
 Private SMS meeting state and in-person narrative transitions are specified in
 [`interaction-state.md`](./interaction-state.md).
+Character specialization, trusted same-world task routing, one versioned
+character-owned Skill, and gated Skill improvement are specified in
+[`character-organization-v2.md`](./character-organization-v2.md).
 
 Status: Approved development baseline
 Audience: maintainers, coding agents, reviewers, and test agents
-Last updated: 2026-07-21
+Last updated: 2026-07-24
 
 Implementation status: M0-M11 and the M13 baseline are implemented; M12 remains
 an incremental experience-quality program. Scheduling uses SQLite,
@@ -77,6 +80,18 @@ legacy SMS session is retained per character (or the latest archived one when
 none are active), and all earlier SMS sessions are archived without transcript
 merging or deletion. Queued input from those older sessions is reassigned to the
 retained conversation.
+Schema 30 adds a separate functional profile for each character, a fixed
+capability registry, declared module bindings, concurrency limits, and
+idempotent collaboration evidence. World MCP collaboration can keep an explicit
+target or request one to three capability IDs for deterministic same-world
+routing. Capability declarations never grant module or sandbox permissions.
+Schema 31 adds conservative SOUL-based function inference and exactly one
+versioned `SKILL.md` per character. The active Skill is visible in the character
+manager and loaded only into that character's collaboration workbench. Completed
+task milestones let the character-bound model propose a bounded replacement;
+static privilege checks, immutable history, and rollback keep this separate
+from MCP, shell, network, and workspace authority. Advanced manual edits lock
+automatic inference until explicitly re-enabled.
 Chat bubbles expose a collapsible execution summary built from sanitized Pi
 lifecycle events. It shows request preparation, response generation, tool names,
 tool completion, safe reasoning start/end status, and retries, but never tool

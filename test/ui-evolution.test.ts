@@ -127,6 +127,8 @@ test("feature test catalog is available and blocked preflight does not call a mo
     const catalogBody = await catalog.json() as { cases: Array<{ id: string }> };
     assert.equal(catalogBody.cases.length >= 10, true);
     assert.equal(catalogBody.cases.some((entry) => entry.id === "schedule-relative-reminder"), true);
+    assert.equal(catalogBody.cases.some((entry) => entry.id === "cross-character-collaboration"), true);
+    assert.equal(catalogBody.cases.some((entry) => entry.id === "character-capability-routing"), true);
 
     const run = await fetch(`${baseUrl}/api/v1/feature-tests/sms-character-voice/run`, {
       method: "POST",

@@ -61,10 +61,14 @@ import type { VisionService } from "../vision/service.js";
 import type { RelationshipService } from "../relationship/service.js";
 import type { WorldService } from "../world/service.js";
 import type { WorldAutonomyCoordinator } from "../world/coordinator.js";
+import type { CharacterInteractionCoordinator } from "../world/character-interaction-coordinator.js";
 import type { InteractionService } from "../interaction/service.js";
 import type { ContextEconomicsRepository } from "../context/economics-repository.js";
 import { assumedContextWindowTokens, buildContextBudget } from "../context/budget.js";
-import { normalizeActualProviderUsage } from "../context/provider-usage.js";
+import {
+  measuredContextInputTokens,
+  normalizeActualProviderUsage,
+} from "../context/provider-usage.js";
 import { memoryContextVersion } from "../context/memory-version.js";
 import { estimateTokens, roundMetric, stableHash } from "../context/tokens.js";
 import type { ContextBudgetSnapshot, ContextEconomicsPlan, ContextPlan } from "../context/types.js";
@@ -152,6 +156,10 @@ export type PiModelResolver = (
 
 export type ProviderPayloadOptions = {
   temperature?: number;
+  topP?: number;
+  frequencyPenalty?: number;
+  presencePenalty?: number;
+  seed?: number;
   maxTokens?: number;
   contextWindowTokens?: number;
   modelProfileId?: string;
@@ -171,6 +179,7 @@ export type PiSessionRuntimeOptions = {
   relationshipService: RelationshipService;
   worldService: WorldService;
   worldCoordinator: WorldAutonomyCoordinator;
+  characterInteractionCoordinator: CharacterInteractionCoordinator;
   interactionService: InteractionService;
   stateDir?: string | false;
   cwd?: string;
@@ -178,6 +187,14 @@ export type PiSessionRuntimeOptions = {
   modelResolver: PiModelResolver;
   systemPromptFor: (mode: Mode) => string;
   providerPayloadOptions?: (appSessionId: string) => ProviderPayloadOptions;
+  providerPayloadTransform?: (input: {
+    appSessionId: string;
+    mode: Mode;
+    payload: Record<string, unknown>;
+    currentUserText: string;
+    timezone: string;
+    now: Date;
+  }) => Record<string, unknown>;
   moduleCatalog: AgentModuleCatalog;
   permissionCatalog: AgentPermissionCatalog;
   memoryLifecycle: MemoryLifecycleService;
@@ -265,6 +282,7 @@ export class PiSessionRuntime {
   private readonly relationshipService: RelationshipService;
   private readonly worldService: WorldService;
   private readonly worldCoordinator: WorldAutonomyCoordinator;
+  private readonly characterInteractionCoordinator: CharacterInteractionCoordinator;
   private readonly interactionService: InteractionService;
   private readonly stateDir?: string;
   private readonly cwd: string;
@@ -273,6 +291,7 @@ export class PiSessionRuntime {
   private readonly modelResolver: PiModelResolver;
   private readonly systemPromptFor: (mode: Mode) => string;
   private readonly providerPayloadOptions?: (appSessionId: string) => ProviderPayloadOptions;
+  private readonly providerPayloadTransform?: PiSessionRuntimeOptions["providerPayloadTransform"];
   private readonly moduleCatalog: AgentModuleCatalog;
   private readonly permissionCatalog: AgentPermissionCatalog;
   private readonly memoryLifecycle: MemoryLifecycleService;
@@ -302,6 +321,7 @@ export class PiSessionRuntime {
     this.relationshipService = options.relationshipService;
     this.worldService = options.worldService;
     this.worldCoordinator = options.worldCoordinator;
+    this.characterInteractionCoordinator = options.characterInteractionCoordinator;
     this.interactionService = options.interactionService;
     this.stateDir = options.stateDir === false ? undefined : options.stateDir ?? options.store.stateDir;
     this.cwd = resolve(options.cwd ?? process.cwd());
@@ -311,6 +331,7 @@ export class PiSessionRuntime {
     this.modelResolver = options.modelResolver;
     this.systemPromptFor = options.systemPromptFor;
     this.providerPayloadOptions = options.providerPayloadOptions;
+    this.providerPayloadTransform = options.providerPayloadTransform;
     this.moduleCatalog = options.moduleCatalog;
     this.permissionCatalog = options.permissionCatalog;
     this.memoryLifecycle = options.memoryLifecycle;
@@ -1034,6 +1055,7 @@ export class PiSessionRuntime {
       mcpBridges.push(await createWorldMcpBridge({
         worldService: this.worldService,
         coordinator: this.worldCoordinator,
+        interactionCoordinator: this.characterInteractionCoordinator,
         store: this.store,
         sessionId: metadata.id,
         characterId: metadata.characterId,
@@ -1578,9 +1600,21 @@ export class PiSessionRuntime {
           }
           const options = this.providerPayloadOptions?.(toolState.sessionId) ?? {};
           toolState.interactiveThinkingRequired = options.requireThinking === true;
-          const payload = { ...event.payload };
+          let payload = { ...event.payload };
           if (typeof options.temperature === "number") {
             payload.temperature = options.temperature;
+          }
+          if (typeof options.topP === "number") {
+            payload.top_p = options.topP;
+          }
+          if (typeof options.frequencyPenalty === "number") {
+            payload.frequency_penalty = options.frequencyPenalty;
+          }
+          if (typeof options.presencePenalty === "number") {
+            payload.presence_penalty = options.presencePenalty;
+          }
+          if (typeof options.seed === "number") {
+            payload.seed = options.seed;
           }
           if (typeof options.maxTokens === "number") {
             payload.max_tokens = options.maxTokens;
@@ -1591,6 +1625,14 @@ export class PiSessionRuntime {
               ...options.chatTemplateKwargs,
             };
           }
+          payload = this.providerPayloadTransform?.({
+            appSessionId: toolState.sessionId,
+            mode,
+            payload,
+            currentUserText: toolState.currentUserText,
+            timezone: toolState.timezone,
+            now: this.clock.now(),
+          }) ?? payload;
           try {
             this.store.addModelContextTrace({
               sessionId: toolState.sessionId,
@@ -1873,7 +1915,7 @@ export class PiSessionRuntime {
       ? latest.estimatedInputTokens
       : metadata.lastCompactionEstimatedTokensAfter ?? historyEstimate;
     const actualInputTokens = projectedAdditionalTokens === 0 && latest && latestAfterCompaction
-      ? latest.actual.inputTokens
+      ? measuredContextInputTokens(latest.actual)
       : null;
     return buildContextBudget({
       sessionId: metadata.id,
@@ -2495,6 +2537,8 @@ const mutatingTools = new Set([
   "bash",
   "tavily_search",
   "delegate_task",
+  "send_character_message",
+  "request_character_help",
   "request_character_contact",
   "propose_meeting",
   "begin_meeting",

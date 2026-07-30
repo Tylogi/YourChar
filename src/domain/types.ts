@@ -105,11 +105,47 @@ export type ContextLogEntry = {
   createdAt: string;
 };
 
+export type ModelContextTraceTurnKind =
+  | "user"
+  | "reminder_due"
+  | "group_gate"
+  | "group_reply"
+  | "subagent"
+  | "memory_extraction"
+  | "relationship_extraction"
+  | "post_turn_analysis"
+  | "world_planning"
+  | "proactive_message"
+  | "world_director"
+  | "world_actor"
+  | "world_analysis"
+  | "character_function_inference"
+  | "character_skill_reflection";
+
+export type ModelContextTraceScope = "conversation" | "background";
+
+const conversationModelContextTraceTurnKinds = new Set<ModelContextTraceTurnKind>([
+  "user",
+  "group_gate",
+  "group_reply",
+  "subagent",
+  "world_director",
+]);
+
+export function modelContextTraceScope(
+  turnKind: ModelContextTraceTurnKind,
+): ModelContextTraceScope {
+  return conversationModelContextTraceTurnKinds.has(turnKind)
+    ? "conversation"
+    : "background";
+}
+
 export type ModelContextTrace = {
   id: string;
   sessionId: string;
   mode: Mode;
-  turnKind: "user" | "reminder_due" | "group_gate" | "group_reply" | "subagent" | "memory_extraction" | "relationship_extraction" | "post_turn_analysis" | "world_planning" | "proactive_message" | "world_director" | "world_actor" | "world_analysis";
+  turnKind: ModelContextTraceTurnKind;
+  scope: ModelContextTraceScope;
   requestText: string;
   payload: Record<string, unknown>;
   createdAt: string;

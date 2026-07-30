@@ -122,6 +122,39 @@ test("the target character may decline a contact request without creating a visi
   }
 });
 
+test("plain-text target replies are accepted for character contact delivery", async () => {
+  const modelServer = createServer((_request, response) => {
+    writeChatCompletionStream(response, "target-model", "刚看到你的消息。怎么啦？");
+  });
+  await new Promise<void>((resolve) => modelServer.listen(0, "127.0.0.1", resolve));
+
+  const runtime = createTestRuntime({ now: "2026-07-20T04:00:00.000Z", seed: "character-contact-plain" });
+  try {
+    const address = modelServer.address();
+    assert.ok(address && typeof address === "object");
+    runtime.kernel.patchModelApiConfig({
+      enabled: true,
+      baseUrl: `http://127.0.0.1:${address.port}/v1`,
+      model: "target-model",
+    });
+    const setup = setupSharedWorld(runtime);
+    runtime.kernel.worldCoordinator.requestCharacterContact({
+      sourceCharacterId: setup.source.id,
+      targetCharacterId: setup.target.id,
+      sourceSessionId: "source-private-thread",
+      requestText: "用户希望你方便时联系他。",
+      idempotencyKey: "contact-plain-once",
+    });
+    assert.equal((await runtime.worldTick(setup.target.id)).delivered, 1);
+    const delivered = runtime.kernel.listProactiveMessages({ characterId: setup.target.id, limit: 10 })[0];
+    assert.equal(delivered.status, "delivered");
+    assert.equal(delivered.text, "刚看到你的消息。怎么啦？");
+  } finally {
+    runtime.dispose();
+    await new Promise<void>((resolve, reject) => modelServer.close((error) => error ? reject(error) : resolve()));
+  }
+});
+
 test("World State MCP queues a bounded contact request and rejects invalid targets", async () => {
   const deliveries: string[] = [];
   const runtime = createTestRuntime({

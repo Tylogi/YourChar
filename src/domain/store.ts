@@ -6,6 +6,7 @@ import type { IdGenerator } from "../app/id-generator.js";
 import { SystemIdGenerator } from "../app/id-generator.js";
 import type { ObservabilitySink } from "../storage/observability.js";
 import { TraceArchive } from "../storage/trace-archive.js";
+import { modelContextTraceScope } from "./types.js";
 import type {
   ActionRecord,
   ContextLogEntry,
@@ -15,6 +16,7 @@ import type {
   ModelApiProfileCollection,
   ModelApiProfilePatch,
   ModelContextTrace,
+  ModelContextTraceScope,
   TraceArchiveStatus,
 } from "./types.js";
 
@@ -113,31 +115,35 @@ export class CompanionStore {
   }
 
   addModelContextTrace(
-    entry: Omit<ModelContextTrace, "id" | "createdAt" | "payload"> & {
+    entry: Omit<ModelContextTrace, "id" | "createdAt" | "payload" | "scope"> & {
       payload: Record<string, unknown>;
     },
   ): ModelContextTrace {
     this.modelRequestCount += 1;
     const trace: ModelContextTrace = {
       ...entry,
+      scope: modelContextTraceScope(entry.turnKind),
       payload: sanitizeTracePayload(entry.payload),
       id: this.idGenerator.next("model-trace"),
       createdAt: this.clock.now().toISOString(),
     };
     this.modelContextTraces.unshift(trace);
-    if (this.modelContextTraces.length > 10) {
-      this.modelContextTraces.length = 10;
-    }
+    trimModelContextTraceScope(this.modelContextTraces, trace.scope, 10);
     this.traceArchive.append(trace);
     this.observability?.recordModelContextTrace(trace);
     return trace;
   }
 
-  recentModelContextTraces(limit = 10): ModelContextTrace[] {
+  recentModelContextTraces(
+    limit = 10,
+    scope?: ModelContextTraceScope,
+  ): ModelContextTrace[] {
     const requested = Number.isFinite(limit) ? limit : 10;
-    const bounded = Math.max(1, Math.min(requested, 10));
-    const traces = this.observability?.recentModelContextTraces(bounded) ??
-      this.modelContextTraces.slice(0, bounded);
+    const bounded = Math.max(1, Math.min(requested, scope ? 10 : 20));
+    const traces = this.observability?.recentModelContextTraces(bounded, scope) ??
+      this.modelContextTraces
+        .filter((trace) => !scope || trace.scope === scope)
+        .slice(0, bounded);
     return traces.map((trace) => ({
       ...trace,
       payload: sanitizeTracePayload(trace.payload),
@@ -305,6 +311,21 @@ function defaultModelApiDocument(): StoredModelApiDocument {
 function removeWhere<T>(entries: T[], predicate: (entry: T) => boolean): void {
   for (let index = entries.length - 1; index >= 0; index -= 1) {
     if (predicate(entries[index])) entries.splice(index, 1);
+  }
+}
+
+function trimModelContextTraceScope(
+  traces: ModelContextTrace[],
+  scope: ModelContextTraceScope,
+  limit: number,
+): void {
+  let retained = 0;
+  for (let index = 0; index < traces.length; index += 1) {
+    if (traces[index].scope !== scope) continue;
+    retained += 1;
+    if (retained <= limit) continue;
+    traces.splice(index, 1);
+    index -= 1;
   }
 }
 

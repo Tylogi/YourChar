@@ -4,6 +4,7 @@ export type CharacterProfile = {
   id: string;
   name: string;
   modelProfileId?: string;
+  meetingPresetId?: string;
   soulMarkdown: string;
   soulCharacterCount: number;
   soulMaxCharacters: number;
@@ -14,6 +15,7 @@ export type CharacterProfile = {
 export type CreateCharacterInput = {
   name: string;
   modelProfileId?: string | null;
+  meetingPresetId?: string | null;
   soulMarkdown?: string;
   // Legacy fields remain accepted so existing API clients migrate without data loss.
   identity?: string;

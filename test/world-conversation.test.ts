@@ -70,6 +70,8 @@ test("world turns use one world narrative model and never invoke character-bound
       startScheduler: false,
       startWorldCoordinator: false,
       startPrivateInboxCoordinator: false,
+      characterFunctionInferer: false,
+      characterSkillReflector: false,
       postTurnAnalyzer: async () => ({
         relationship: { significant: false, confidence: 1 },
         interaction: { decision: "not_applicable", confidence: 1, reasonCode: "none" },

@@ -22,6 +22,10 @@ import {
   WorldNotFoundError,
   WorldValidationError,
   WorldConversationValidationError,
+  CharacterInteractionExecutionError,
+  CharacterCapabilityValidationError,
+  CharacterFunctionInferenceUnavailableError,
+  CharacterTaskRoutingError,
   InteractionValidationError,
   PrivateInboxMutationError,
 } from "../domain/index.js";
@@ -30,6 +34,9 @@ import type {
   ModelApiConfigPatch,
   ModelApiProfilePatch,
   PrivateInboxEvent,
+  CharacterCapabilityId,
+  CharacterFunctionProfileUpdate,
+  ModelContextTraceScope,
 } from "../domain/index.js";
 import type {
   CreateScheduleItemInput,
@@ -99,6 +106,11 @@ import type {
   ProactiveMessageStatus,
   WorldCapabilityId,
 } from "../world/index.js";
+import {
+  MeetingPresetNotFoundError,
+  MeetingPresetValidationError,
+  type UpdateMeetingPresetInput,
+} from "../meeting-preset/index.js";
 
 export type HttpServerOptions = {
   kernel?: CompanionKernel;
@@ -165,6 +177,22 @@ export function createHttpServer(options: HttpServerOptions = {}) {
         sendJson(response, 400, { code: error.code, error: error.message });
       } else if (error instanceof WorldConversationValidationError) {
         sendJson(response, 409, { code: error.code, error: error.message });
+      } else if (error instanceof CharacterInteractionExecutionError) {
+        sendJson(response, 502, {
+          code: error.code,
+          error: error.message,
+          episodeId: error.episodeId,
+        });
+      } else if (error instanceof CharacterCapabilityValidationError) {
+        sendJson(response, 400, { code: error.code, error: error.message });
+      } else if (error instanceof CharacterFunctionInferenceUnavailableError) {
+        sendJson(response, 409, { code: error.code, error: error.message });
+      } else if (error instanceof CharacterTaskRoutingError) {
+        sendJson(response, 409, {
+          code: error.code,
+          error: error.message,
+          ...(error.route ? { route: error.route } : {}),
+        });
       } else if (error instanceof InteractionValidationError) {
         const conflict = error.code === "INTERACTION_CONFLICT" || error.code === "INTERACTION_UNDO_UNAVAILABLE";
         sendJson(response, conflict ? 409 : 422, { code: error.code, error: error.message });
@@ -182,6 +210,10 @@ export function createHttpServer(options: HttpServerOptions = {}) {
         sendJson(response, 404, { code: "NOT_FOUND", error: error.message });
       } else if (error instanceof RpMemoryValidationError) {
         sendJson(response, 400, { code: error.code, error: error.message });
+      } else if (error instanceof MeetingPresetNotFoundError) {
+        sendJson(response, 404, { code: "MEETING_PRESET_NOT_FOUND", error: error.message });
+      } else if (error instanceof MeetingPresetValidationError) {
+        sendJson(response, 400, { code: "MEETING_PRESET_INVALID", error: error.message });
       } else if (error instanceof UserProfileValidationError) {
         sendJson(response, 400, { code: "USER_PROFILE_INVALID", error: error.message });
       } else if (error instanceof SystemPromptValidationError) {
@@ -1369,6 +1401,84 @@ async function route(input: {
     return;
   }
 
+  if (pathname === "/api/v1/character-channels" && method === "GET") {
+    sendJson(input.response, 200, {
+      channels: kernel.listCharacterChannels({
+        ...(url.searchParams.get("worldId") ? { worldId: url.searchParams.get("worldId")! } : {}),
+        ...(url.searchParams.get("characterId") ? { characterId: url.searchParams.get("characterId")! } : {}),
+        limit: Number(url.searchParams.get("limit") ?? "100"),
+      }),
+    });
+    return;
+  }
+
+  if (pathname === "/api/v1/character-channels/exchanges" && method === "POST") {
+    const body = asRecord(await readJson(input.request));
+    const kind = requiredString(body.kind, "kind");
+    const sourceCharacterId = requiredString(body.sourceCharacterId, "sourceCharacterId");
+    const targetCharacterId = optionalString(body.targetCharacterId);
+    const clientRequestId = requiredString(body.clientRequestId, "clientRequestId");
+    const idempotencyKey = `character-channel-http:${kind}:${clientRequestId}`;
+    if (kind === "message") {
+      sendJson(input.response, 200, await kernel.sendCharacterChannelMessage({
+        sourceCharacterId,
+        targetCharacterId: requiredString(targetCharacterId, "targetCharacterId"),
+        message: requiredString(body.message, "message"),
+        idempotencyKey,
+        source: "manual",
+      }));
+      return;
+    }
+    if (kind === "collaboration") {
+      sendJson(input.response, 200, await kernel.requestCharacterCollaboration({
+        sourceCharacterId,
+        ...(targetCharacterId ? { targetCharacterId } : {}),
+        ...(body.requiredCapabilityIds === undefined
+          ? {}
+          : {
+              requiredCapabilityIds: optionalStringArray(
+                body.requiredCapabilityIds,
+              ) as CharacterCapabilityId[],
+            }),
+        task: requiredString(body.task, "task"),
+        ...(optionalString(body.context) ? { context: optionalString(body.context) } : {}),
+        ...(optionalString(body.message) ? { message: optionalString(body.message) } : {}),
+        idempotencyKey,
+      }));
+      return;
+    }
+    if (kind === "social") {
+      sendJson(input.response, 200, await kernel.startCharacterSocialExchange({
+        sourceCharacterId,
+        targetCharacterId: requiredString(targetCharacterId, "targetCharacterId"),
+        ...(optionalString(body.topic) ? { topic: optionalString(body.topic) } : {}),
+        idempotencyKey,
+      }));
+      return;
+    }
+    throw new WorldValidationError("character channel exchange kind must be message, collaboration, or social");
+  }
+
+  const characterChannelReadMatch = pathname.match(/^\/api\/v1\/character-channels\/([^/]+)\/read$/);
+  if (characterChannelReadMatch && method === "POST") {
+    sendJson(input.response, 200, {
+      channel: kernel.markCharacterChannelRead(decodeURIComponent(characterChannelReadMatch[1])),
+    });
+    return;
+  }
+
+  const characterChannelMatch = pathname.match(/^\/api\/v1\/character-channels\/([^/]+)$/);
+  if (characterChannelMatch && method === "GET") {
+    sendJson(input.response, 200, {
+      snapshot: kernel.getCharacterChannel(
+        decodeURIComponent(characterChannelMatch[1]),
+        Number(url.searchParams.get("messageLimit") ?? "120"),
+        Number(url.searchParams.get("episodeLimit") ?? "40"),
+      ),
+    });
+    return;
+  }
+
   const worldConversationMatch = pathname.match(/^\/api\/v1\/worlds\/([^/]+)\/conversation$/);
   if (worldConversationMatch && method === "GET") {
     sendJson(input.response, 200, {
@@ -1659,9 +1769,210 @@ async function route(input: {
         name: requiredString(body.name, "name"),
         soulMarkdown: optionalDocumentString(body.soulMarkdown, "soulMarkdown"),
         modelProfileId: optionalNullableString(body.modelProfileId, "modelProfileId"),
+        meetingPresetId: optionalNullableString(body.meetingPresetId, "meetingPresetId"),
         boundaries: optionalStringArray(body.boundaries),
       });
       sendJson(input.response, 201, { character: withCharacterAvatar(kernel, character) });
+      return;
+    }
+  }
+
+  if (pathname === "/api/v1/meeting-presets") {
+    if (method === "GET") {
+      sendJson(input.response, 200, { presets: kernel.listMeetingPresets() });
+      return;
+    }
+  }
+
+  if (pathname === "/api/v1/meeting-presets/import" && method === "POST") {
+    const body = asRecord(await readJson(input.request));
+    sendJson(input.response, 201, {
+      preset: kernel.importMeetingPreset({
+        name: requiredString(body.name, "name"),
+        source: body.source,
+        ...(body.promptOrderCharacterId === undefined
+          ? {}
+          : {
+              promptOrderCharacterId:
+                typeof body.promptOrderCharacterId === "number"
+                  ? body.promptOrderCharacterId
+                  : requiredString(body.promptOrderCharacterId, "promptOrderCharacterId"),
+            }),
+      }),
+    });
+    return;
+  }
+
+  const meetingPresetMatch = pathname.match(/^\/api\/v1\/meeting-presets\/([^/]+)$/);
+  if (meetingPresetMatch) {
+    const id = decodeURIComponent(meetingPresetMatch[1]);
+    if (method === "GET") {
+      sendJson(input.response, 200, { preset: kernel.getMeetingPreset(id) });
+      return;
+    }
+    if (method === "PATCH") {
+      const body = asRecord(await readJson(input.request));
+      const patch: UpdateMeetingPresetInput = {
+        ...(body.name === undefined ? {} : { name: requiredString(body.name, "name") }),
+        ...(body.parametersEnabled === undefined
+          ? {}
+          : {
+              parametersEnabled: requiredBoolean(
+                body.parametersEnabled,
+                "parametersEnabled",
+              ),
+            }),
+        ...(body.parameters === undefined
+          ? {}
+          : { parameters: requiredMeetingPresetParameters(body.parameters) }),
+        ...(body.prompts === undefined
+          ? {}
+          : {
+              prompts: requiredMeetingPresetPromptPatches(body.prompts),
+            }),
+      };
+      sendJson(input.response, 200, {
+        preset: kernel.updateMeetingPreset(id, patch),
+      });
+      return;
+    }
+    if (method === "DELETE") {
+      sendJson(input.response, 200, { deleted: kernel.deleteMeetingPreset(id) });
+      return;
+    }
+  }
+
+  if (pathname === "/api/v1/character-task-routing/preview" && method === "POST") {
+    const body = asRecord(await readJson(input.request));
+    sendJson(input.response, 200, {
+      route: kernel.previewCharacterTaskRoute({
+        sourceCharacterId: requiredString(body.sourceCharacterId, "sourceCharacterId"),
+        task: requiredString(body.task, "task"),
+        ...(optionalString(body.targetCharacterId)
+          ? { targetCharacterId: optionalString(body.targetCharacterId) }
+          : {}),
+        ...(body.requiredCapabilityIds === undefined
+          ? {}
+          : {
+              requiredCapabilityIds: optionalStringArray(
+                body.requiredCapabilityIds,
+              ) as CharacterCapabilityId[],
+            }),
+      }),
+    });
+    return;
+  }
+
+  const characterFunctionInferMatch = pathname.match(
+    /^\/api\/v1\/characters\/([^/]+)\/function-profile\/infer$/,
+  );
+  if (characterFunctionInferMatch && method === "POST") {
+    const characterId = decodeURIComponent(characterFunctionInferMatch[1]);
+    sendJson(input.response, 200, {
+      functionProfile: await kernel.inferCharacterFunctionProfile(characterId),
+    });
+    return;
+  }
+
+  const characterFunctionAutomationMatch = pathname.match(
+    /^\/api\/v1\/characters\/([^/]+)\/function-profile\/automation$/,
+  );
+  if (characterFunctionAutomationMatch && method === "PATCH") {
+    const characterId = decodeURIComponent(characterFunctionAutomationMatch[1]);
+    const body = asRecord(await readJson(input.request));
+    sendJson(input.response, 200, {
+      functionProfile: await kernel.setCharacterFunctionAutomatic(
+        characterId,
+        requiredBoolean(body.automatic, "automatic"),
+      ),
+    });
+    return;
+  }
+
+  const characterSkillVersionsMatch = pathname.match(
+    /^\/api\/v1\/characters\/([^/]+)\/skill-versions$/,
+  );
+  if (characterSkillVersionsMatch && method === "GET") {
+    const characterId = decodeURIComponent(characterSkillVersionsMatch[1]);
+    sendJson(input.response, 200, {
+      skillVersions: kernel.listCharacterSkillVersions(
+        characterId,
+        optionalPositiveInteger(url.searchParams.get("limit")) ?? 50,
+      ),
+    });
+    return;
+  }
+
+  const characterSkillActivateMatch = pathname.match(
+    /^\/api\/v1\/characters\/([^/]+)\/skill-versions\/([^/]+)\/activate$/,
+  );
+  if (characterSkillActivateMatch && method === "POST") {
+    const characterId = decodeURIComponent(characterSkillActivateMatch[1]);
+    const version = Number(decodeURIComponent(characterSkillActivateMatch[2]));
+    if (!Number.isInteger(version) || version < 1) {
+      throw new SyntaxError("skill version must be a positive integer");
+    }
+    sendJson(input.response, 200, {
+      activeSkill: kernel.rollbackCharacterSkill(characterId, version),
+      functionProfile: kernel.getCharacterFunctionProfile(characterId),
+    });
+    return;
+  }
+
+  const characterFunctionMatch = pathname.match(
+    /^\/api\/v1\/characters\/([^/]+)\/function-profile$/,
+  );
+  if (characterFunctionMatch) {
+    const characterId = decodeURIComponent(characterFunctionMatch[1]);
+    if (method === "GET") {
+      sendJson(input.response, 200, {
+        functionProfile: kernel.getCharacterFunctionProfile(characterId),
+      });
+      return;
+    }
+    if (method === "PUT") {
+      const body = asRecord(await readJson(input.request));
+      if (!Array.isArray(body.capabilities)) {
+        throw new SyntaxError("capabilities must be an array");
+      }
+      const update: CharacterFunctionProfileUpdate = {
+        publicRole: body.publicRole === undefined ? undefined : String(body.publicRole),
+        taskPreferences: body.taskPreferences === undefined
+          ? undefined
+          : String(body.taskPreferences),
+        avoidedTasks: body.avoidedTasks === undefined ? undefined : String(body.avoidedTasks),
+        maxConcurrentTasks: body.maxConcurrentTasks === undefined
+          ? undefined
+          : requiredNumber(body.maxConcurrentTasks, "maxConcurrentTasks"),
+        manualLocked: body.manualLocked === undefined
+          ? undefined
+          : requiredBoolean(body.manualLocked, "manualLocked"),
+        capabilities: body.capabilities.map((raw, index) => {
+          const capability = asRecord(raw);
+          return {
+            capabilityId: requiredString(
+              capability.capabilityId,
+              `capabilities[${index}].capabilityId`,
+            ) as CharacterCapabilityId,
+            level: requiredNumber(capability.level, `capabilities[${index}].level`),
+            responsibility: requiredString(
+              capability.responsibility,
+              `capabilities[${index}].responsibility`,
+            ) as "primary" | "support",
+            autoAccept: requiredBoolean(
+              capability.autoAccept,
+              `capabilities[${index}].autoAccept`,
+            ),
+            moduleIds: capability.moduleIds === undefined
+              ? []
+              : optionalStringArray(capability.moduleIds),
+            notes: capability.notes === undefined ? "" : String(capability.notes),
+          };
+        }),
+      };
+      sendJson(input.response, 200, {
+        functionProfile: kernel.updateCharacterFunctionProfile(characterId, update),
+      });
       return;
     }
   }
@@ -1730,13 +2041,25 @@ async function route(input: {
         if (policy.proactiveEnabled !== undefined) {
           patch.proactiveEnabled = requiredBoolean(policy.proactiveEnabled, "policy.proactiveEnabled");
         }
+        if (policy.socialEnabled !== undefined) {
+          patch.socialEnabled = requiredBoolean(policy.socialEnabled, "policy.socialEnabled");
+        }
         if (policy.dailyMessageLimit !== undefined) {
           patch.dailyMessageLimit = requiredNumber(policy.dailyMessageLimit, "policy.dailyMessageLimit");
+        }
+        if (policy.socialDailyLimit !== undefined) {
+          patch.socialDailyLimit = requiredNumber(policy.socialDailyLimit, "policy.socialDailyLimit");
         }
         if (policy.proactiveCooldownMinutes !== undefined) {
           patch.proactiveCooldownMinutes = requiredNumber(
             policy.proactiveCooldownMinutes,
             "policy.proactiveCooldownMinutes",
+          );
+        }
+        if (policy.socialCooldownMinutes !== undefined) {
+          patch.socialCooldownMinutes = requiredNumber(
+            policy.socialCooldownMinutes,
+            "policy.socialCooldownMinutes",
           );
         }
         if (policy.quietStart !== undefined) patch.quietStart = requiredString(policy.quietStart, "policy.quietStart");
@@ -1807,6 +2130,9 @@ async function route(input: {
           modelProfileId: body.modelProfileId === undefined
             ? undefined
             : optionalNullableString(body.modelProfileId, "modelProfileId"),
+          meetingPresetId: body.meetingPresetId === undefined
+            ? undefined
+            : optionalNullableString(body.meetingPresetId, "meetingPresetId"),
           boundaries: body.boundaries === undefined ? undefined : optionalStringArray(body.boundaries),
         })),
       });
@@ -1967,7 +2293,18 @@ async function route(input: {
 
   if (method === "GET" && pathname === "/api/debug/model-traces") {
     const limit = Number(url.searchParams.get("limit") ?? "10");
-    sendJson(input.response, 200, { traces: kernel.recentModelContextTraces(limit) });
+    const requestedScope = url.searchParams.get("scope");
+    if (requestedScope && requestedScope !== "conversation" && requestedScope !== "background") {
+      sendJson(input.response, 400, {
+        code: "INVALID_TRACE_SCOPE",
+        error: "scope must be conversation or background",
+      });
+      return;
+    }
+    const scope = requestedScope as ModelContextTraceScope | null;
+    sendJson(input.response, 200, {
+      traces: kernel.recentModelContextTraces(limit, scope ?? undefined),
+    });
     return;
   }
 
@@ -2485,6 +2822,60 @@ function requiredNumber(value: unknown, field: string): number {
 function requiredBoolean(value: unknown, field: string): boolean {
   if (typeof value !== "boolean") throw new Error(`${field} must be a boolean`);
   return value;
+}
+
+function requiredMeetingPresetParameters(
+  value: unknown,
+): NonNullable<UpdateMeetingPresetInput["parameters"]> {
+  const input = asRecord(value);
+  const output: NonNullable<UpdateMeetingPresetInput["parameters"]> = {};
+  for (const key of [
+    "temperature",
+    "topP",
+    "frequencyPenalty",
+    "presencePenalty",
+    "maxTokens",
+    "seed",
+  ] as const) {
+    if (input[key] !== undefined) output[key] = requiredNumber(input[key], `parameters.${key}`);
+  }
+  return output;
+}
+
+function requiredMeetingPresetPromptPatches(
+  value: unknown,
+): NonNullable<UpdateMeetingPresetInput["prompts"]> {
+  if (!Array.isArray(value)) throw new Error("prompts must be an array");
+  return value.map((entry, index) => {
+    const input = asRecord(entry);
+    const role = input.role;
+    if (
+      role !== undefined &&
+      role !== "system" &&
+      role !== "user" &&
+      role !== "assistant"
+    ) {
+      throw new Error(`prompts[${index}].role must be system, user, or assistant`);
+    }
+    return {
+      id: requiredString(input.id, `prompts[${index}].id`),
+      ...(input.name === undefined
+        ? {}
+        : { name: optionalDocumentString(input.name, `prompts[${index}].name`) }),
+      ...(role === undefined ? {} : { role }),
+      ...(input.content === undefined
+        ? {}
+        : {
+            content: optionalDocumentString(
+              input.content,
+              `prompts[${index}].content`,
+            ),
+          }),
+      ...(input.enabled === undefined
+        ? {}
+        : { enabled: requiredBoolean(input.enabled, `prompts[${index}].enabled`) }),
+    };
+  });
 }
 
 function requiredMode(value: unknown): "sms" | "rp" {

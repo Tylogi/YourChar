@@ -217,6 +217,28 @@ const cases: FeatureTestCase[] = [
     qualityCriteria: ["目标角色的消息像独立决定后的自然联系", "能承接转达请求且不泄露角色间后台通信机制"],
   },
   {
+    id: "cross-character-collaboration",
+    category: "initiative",
+    name: "角色间私聊协作",
+    description: "验证当前角色通过持久角色频道向另一角色委托任务，取得对方实际结果后再向用户汇报。",
+    mode: "sms",
+    input: "请私聊同一个世界里的“协作测试角色”，请她给出三步实验记录检查法，然后把她的实际回复告诉我。",
+    requiredModules: ["mcp:world-state"],
+    requiredPermissions: [],
+    qualityCriteria: ["明确区分当前角色和协作角色的贡献", "只汇报实际工具返回的结果，不伪造对方回复或泄露后台机制"],
+  },
+  {
+    id: "character-capability-routing",
+    category: "character",
+    name: "角色专业能力路由",
+    description: "验证当前角色按固定能力请求可信路由，由最高匹配且可接单的同世界角色完成任务并留下证据。",
+    mode: "sms",
+    input: "请找这个世界里最适合做网页研究的人，委托她给出两条核对公开资料的原则，再把实际结果告诉我。不要由你自己代答。",
+    requiredModules: ["mcp:world-state"],
+    requiredPermissions: [],
+    qualityCriteria: ["清楚说明实际由哪位专业角色完成", "结果具体且不暴露能力评分、路由器或后台协议"],
+  },
+  {
     id: "tavily-search-trigger",
     category: "search",
     name: "Tavily 搜索触发",
@@ -612,6 +634,73 @@ function setupCase(runtime: CompanionKernel, definition: FeatureTestCase, charac
       quietEnd: "00:00",
     });
   }
+  if (definition.id === "cross-character-collaboration") {
+    const modelProfileId = runtime.getCharacter(characterId).modelProfileId;
+    const target = runtime.createCharacter({
+      name: "协作测试角色",
+      soulMarkdown: "# SOUL.md - 协作测试角色\n\n善于把实验检查流程整理为具体、简洁的步骤，并会独立回答同伴。",
+      ...(modelProfileId ? { modelProfileId } : {}),
+    });
+    const world = runtime.createWorld({ name: "角色协作测试世界", timezone: "Asia/Shanghai" });
+    const place = runtime.createWorldPlace({
+      worldId: world.id,
+      name: "共同实验室",
+      capabilityIds: ["work", "study", "socialize", "communicate"],
+    });
+    for (const id of [characterId, target.id]) {
+      runtime.assignCharacterWorld(id, {
+        worldId: world.id,
+        homePlaceId: place.id,
+        currentPlaceId: place.id,
+      });
+    }
+  }
+  if (definition.id === "character-capability-routing") {
+    const modelProfileId = runtime.getCharacter(characterId).modelProfileId;
+    const expert = runtime.createCharacter({
+      name: "专业研究员",
+      soulMarkdown: "# SOUL.md - 专业研究员\n\n严谨、重视来源，会用简洁原则帮助同伴核对公开资料。",
+      ...(modelProfileId ? { modelProfileId } : {}),
+    });
+    const support = runtime.createCharacter({
+      name: "研究助理",
+      soulMarkdown: "# SOUL.md - 研究助理\n\n认真但经验较少，适合协助整理资料。",
+      ...(modelProfileId ? { modelProfileId } : {}),
+    });
+    const world = runtime.createWorld({ name: "专业能力测试世界", timezone: "Asia/Shanghai" });
+    const place = runtime.createWorldPlace({
+      worldId: world.id,
+      name: "资料室",
+      capabilityIds: ["work", "study", "communicate"],
+    });
+    for (const id of [characterId, expert.id, support.id]) {
+      runtime.assignCharacterWorld(id, {
+        worldId: world.id,
+        homePlaceId: place.id,
+        currentPlaceId: place.id,
+      });
+    }
+    runtime.updateCharacterFunctionProfile(expert.id, {
+      publicRole: "网页研究负责人",
+      maxConcurrentTasks: 1,
+      capabilities: [{
+        capabilityId: "research.web",
+        level: 5,
+        responsibility: "primary",
+        autoAccept: true,
+      }],
+    });
+    runtime.updateCharacterFunctionProfile(support.id, {
+      publicRole: "研究助理",
+      maxConcurrentTasks: 2,
+      capabilities: [{
+        capabilityId: "research.web",
+        level: 2,
+        responsibility: "support",
+        autoAccept: true,
+      }],
+    });
+  }
   return { attachments: [] };
 }
 
@@ -771,6 +860,70 @@ function evaluateCase(
       "目标角色完成独立发送或拒绝决策",
       message?.status === "delivered" || message?.decisionCode === "character_declined",
       message ? `${message.status}/${message.decisionCode}` : "missing",
+    ));
+  } else if (definition.id === "cross-character-collaboration") {
+    const target = runtime.listCharacters().find((entry) => entry.id !== characterId);
+    const channel = runtime.listCharacterChannels({ characterId })[0];
+    const snapshot = channel ? runtime.getCharacterChannel(channel.id) : undefined;
+    const collaboration = snapshot?.episodes.find((episode) => episode.kind === "collaboration");
+    const targetResult = snapshot?.messages.find((message) =>
+      message.episodeId === collaboration?.id &&
+      message.senderCharacterId === target?.id &&
+      message.kind === "result");
+    rules.push(rule(
+      "collaboration-tool",
+      "当前角色调用角色协作工具",
+      hasAction(completedActions, "request_character_help"),
+      actionEvidence(completedActions),
+    ));
+    rules.push(rule(
+      "channel-persisted",
+      "协作回合写入双方持久频道",
+      collaboration?.status === "completed" && Boolean(targetResult?.content),
+      collaboration ? `${collaboration.status}/${snapshot?.messages.length ?? 0} messages` : "missing",
+    ));
+    rules.push(rule(
+      "parent-reports-result",
+      "当前角色向用户汇报目标角色的实际结果",
+      Boolean(targetResult?.content) && reply.length > 0,
+      excerpt(targetResult?.content ?? reply),
+    ));
+  } else if (definition.id === "character-capability-routing") {
+    const expert = runtime.listCharacters().find((entry) => entry.name === "专业研究员");
+    const channel = runtime.listCharacterChannels({ characterId })[0];
+    const snapshot = channel ? runtime.getCharacterChannel(channel.id) : undefined;
+    const collaboration = snapshot?.episodes.find((episode) => episode.kind === "collaboration");
+    const targetResult = snapshot?.messages.find((message) =>
+      message.episodeId === collaboration?.id &&
+      message.senderCharacterId === expert?.id &&
+      message.kind === "result");
+    const evidence = expert
+      ? runtime.getCharacterFunctionProfile(expert.id).evidence
+        .find((entry) => entry.capabilityId === "research.web")
+      : undefined;
+    rules.push(rule(
+      "capability-route-tool",
+      "当前角色调用专业协作路由",
+      hasAction(completedActions, "request_character_help"),
+      actionEvidence(completedActions),
+    ));
+    rules.push(rule(
+      "highest-match-selected",
+      "最高匹配的专业研究员被实际选中",
+      collaboration?.targetCharacterId === expert?.id && Boolean(targetResult?.content),
+      collaboration ? `${collaboration.targetCharacterId}/${expert?.id ?? "missing"}` : "missing",
+    ));
+    rules.push(rule(
+      "capability-evidence",
+      "专业任务留下幂等完成证据",
+      evidence?.completed === 1 && evidence.total === 1,
+      evidence ? `${evidence.completed}/${evidence.total}` : "missing",
+    ));
+    rules.push(rule(
+      "specialist-result-reported",
+      "当前角色汇报专业角色的实际结果",
+      Boolean(targetResult?.content) && reply.length > 0,
+      excerpt(targetResult?.content ?? reply),
     ));
   } else if (definition.id === "tavily-search-trigger") {
     rules.push(rule("tavily-tool", "调用 tavily_search", hasAction(completedActions, "tavily_search"), actionEvidence(completedActions)));

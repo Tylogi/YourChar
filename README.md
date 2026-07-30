@@ -21,6 +21,7 @@ and adds the RP companion domain on top:
 - optional SSRF-restricted Web Reader MCP for readable public URL contents;
 - direct or independent Vision MCP image understanding for text-only primary models;
 - optional isolated private-chat subagents for bounded work, research, planning, and review;
+- automatic SOUL-derived functional roles, fixed capabilities, one visible versioned Skill per character, and trusted same-world specialist routing;
 - optional per-character relationship and decaying affect state with trusted bounded updates;
 - a 2000-character profile summary plus durable reality/global memory;
 - persistent, retryable post-turn Memory Coordinator jobs with trusted review;
@@ -93,6 +94,9 @@ Deterministic functional completeness, independent LLM-as-Judge quality scoring,
 target-model sandbox routing, aggregate labels, and report interpretation are
 documented in
 [`docs/model-adaptation-evaluation.md`](docs/model-adaptation-evaluation.md).
+Character organization, specialist workbench boundaries, capability routing,
+task evidence, and gated Skill improvement are documented in
+[`docs/character-organization-v2.md`](docs/character-organization-v2.md).
 
 The deterministic Agent test control API is disabled by default. Start a
 loopback-only test server with:

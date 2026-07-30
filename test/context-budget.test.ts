@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { buildContextBudget } from "../src/context/index.js";
+import { measuredContextInputTokens } from "../src/context/provider-usage.js";
 import { createHttpServer } from "../src/http/router.js";
 import { createTestRuntime } from "../src/testing/index.js";
 
@@ -23,6 +24,46 @@ test("context budget deducts output and safety reserves from a configured model 
   assert.equal(budget.usageSource, "measured");
   assert.equal(budget.remainingTokens, 18_098);
   assert.equal(budget.level, "healthy");
+});
+
+test("cached provider input counts toward the occupied context window", async () => {
+  assert.equal(measuredContextInputTokens({
+    inputTokens: 913,
+    outputTokens: 247,
+    cacheReadTokens: 24_064,
+    cacheWriteTokens: 0,
+  }), 24_977);
+
+  const runtime = createTestRuntime({ seed: "context-budget-cache-usage" });
+  try {
+    runtime.kernel.patchModelApiConfig({
+      contextWindowTokens: 131_072,
+      maxTokens: 4_096,
+    });
+    const character = runtime.kernel.createCharacter({ name: "缓存预算角色" });
+    runtime.model.enqueue([{
+      kind: "assistant_text",
+      text: "缓存上下文也属于模型本轮实际读取的输入。",
+      usage: { input: 913, output: 247, cacheRead: 24_064 },
+    }]);
+    await runtime.kernel.sendMessage("cached-context-budget", {
+      mode: "sms",
+      characterId: character.id,
+      text: "检查缓存后的上下文余量",
+    });
+
+    const actual = runtime.kernel.recentContextEconomics(1)[0].actual;
+    const measured = measuredContextInputTokens(actual);
+    assert.notEqual(measured, null);
+    assert.ok((actual.cacheReadTokens ?? 0) > 0 || (actual.cacheWriteTokens ?? 0) > 0);
+    const budget = await runtime.kernel.getConversationContextBudget("cached-context-budget");
+    assert.equal(budget.actualInputTokens, measured);
+    assert.equal(budget.usedInputTokens, measured);
+    assert.ok(budget.usedInputTokens > (actual.inputTokens ?? 0));
+    assert.equal(budget.remainingTokens, budget.usableInputTokens - budget.usedInputTokens);
+  } finally {
+    runtime.dispose();
+  }
 });
 
 test("a character-bound session reports its model budget and manual compaction through HTTP", async () => {

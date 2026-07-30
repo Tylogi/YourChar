@@ -283,12 +283,19 @@ export class WorldService {
       ...current,
       enabled: patch.enabled ?? current.enabled,
       proactiveEnabled: patch.proactiveEnabled ?? current.proactiveEnabled,
+      socialEnabled: patch.socialEnabled ?? current.socialEnabled,
       dailyMessageLimit: patch.dailyMessageLimit === undefined
         ? current.dailyMessageLimit
         : boundedInteger(patch.dailyMessageLimit, 0, 5, "daily message limit"),
+      socialDailyLimit: patch.socialDailyLimit === undefined
+        ? current.socialDailyLimit
+        : boundedInteger(patch.socialDailyLimit, 0, 5, "social daily limit"),
       proactiveCooldownMinutes: patch.proactiveCooldownMinutes === undefined
         ? current.proactiveCooldownMinutes
         : boundedInteger(patch.proactiveCooldownMinutes, 15, 1_440, "proactive cooldown"),
+      socialCooldownMinutes: patch.socialCooldownMinutes === undefined
+        ? current.socialCooldownMinutes
+        : boundedInteger(patch.socialCooldownMinutes, 30, 1_440, "social cooldown"),
       quietStart: patch.quietStart === undefined ? current.quietStart : validClockTime(patch.quietStart),
       quietEnd: patch.quietEnd === undefined ? current.quietEnd : validClockTime(patch.quietEnd),
       ...(proactivePausedUntil ? { proactivePausedUntil } : {}),
@@ -449,6 +456,7 @@ export class WorldService {
         activity: runtime.activity,
         availability: runtime.availability,
         contactable: this.repository.getPolicy(character.id)?.proactiveEnabled === true,
+        peerReachable: character.id !== characterId,
       };
     }).sort((left, right) => Number(right.self) - Number(left.self) ||
       left.name.localeCompare(right.name, "zh-CN") || left.characterId.localeCompare(right.characterId));
@@ -664,8 +672,11 @@ function defaultPolicy(characterId: string, now: string): CharacterAutonomyPolic
     characterId,
     enabled: false,
     proactiveEnabled: false,
+    socialEnabled: false,
     dailyMessageLimit: 1,
+    socialDailyLimit: 1,
     proactiveCooldownMinutes: 120,
+    socialCooldownMinutes: 240,
     quietStart: "23:00",
     quietEnd: "08:00",
     updatedAt: now,
