@@ -87,6 +87,115 @@ test("character channels persist exchanges, unread state, relationships, and sco
   }
 });
 
+test("model-facing character tools separate conversation from delegated work", async () => {
+  const runtime = createTestRuntime({
+    seed: "character-tool-intent-contract",
+    characterInteractionActor: async () => "这条 actor 回复不应被调用。",
+  });
+  try {
+    const setup = setupSharedWorld(runtime);
+    runtime.model.enqueue([{
+      kind: "assistant_text",
+      text: "我明白你的意思。",
+    }]);
+    await runtime.kernel.sendMessage("character-tool-intent-contract", {
+      mode: "sms",
+      characterId: setup.source.id,
+      text: "先正常聊一句。",
+    });
+
+    const tools = runtime.model.requests[0].providerPayload.tools as Array<{
+      name?: string;
+      description?: string;
+      parameters?: {
+        properties?: Record<string, { description?: string }>;
+        required?: string[];
+      };
+    }>;
+    const sendMessage = tools.find((tool) => tool.name === "send_character_message");
+    const requestHelp = tools.find((tool) => tool.name === "request_character_help");
+    assert.ok(sendMessage, "send_character_message must be exposed to a same-world SMS character");
+    assert.ok(requestHelp, "request_character_help must be exposed to a same-world SMS character");
+
+    const sendDescription = (sendMessage.description ?? "").toLowerCase();
+    assert.match(
+      sendDescription,
+      /\bordinary\b/u,
+      "send_character_message must identify ordinary messaging as its positive use case",
+    );
+    assert.match(
+      sendDescription,
+      /\brelays?\b/u,
+      "send_character_message must identify relaying a message as its positive use case",
+    );
+    assert.match(
+      sendDescription,
+      /\bsocial conversation\b/u,
+      "send_character_message must identify social conversation as its positive use case",
+    );
+    assert.match(
+      sendDescription,
+      /\bdo not use\b/u,
+      "send_character_message must redirect result-bearing delegated work to request_character_help",
+    );
+    assert.match(sendDescription, /\b(?:collaboration|delegation)\b/u);
+    assert.match(sendDescription, /\b(?:work result|answer\/result|deliverable)\b/u);
+    assert.match(sendDescription, /\brequest_character_help\b/u);
+
+    const helpDescription = (requestHelp.description ?? "").toLowerCase();
+    assert.match(helpDescription, /\bdelegate\b/u);
+    assert.match(helpDescription, /\bbounded task\b/u);
+    assert.match(
+      helpDescription,
+      /\b(?:actual result|answer|deliverable)\b/u,
+      "request_character_help must promise a concrete returned result",
+    );
+    assert.match(helpDescription, /\btask intent\b/u);
+    assert.match(
+      helpDescription,
+      /\btakes precedence\b/u,
+      "request_character_help must make task intent override conversational surface wording",
+    );
+    for (const surfaceWord of ["ask", "message", "chat", "check"]) {
+      assert.match(
+        helpDescription,
+        new RegExp(`\\b${surfaceWord}\\b`, "u"),
+        `request_character_help must cover the misleading surface verb ${surfaceWord}`,
+      );
+    }
+
+    assert.deepEqual(
+      Object.keys(sendMessage.parameters?.properties ?? {}).sort(),
+      ["message", "targetCharacterId"],
+    );
+    assert.deepEqual(
+      [...(sendMessage.parameters?.required ?? [])].sort(),
+      ["message", "targetCharacterId"],
+    );
+    assert.equal(
+      Object.hasOwn(sendMessage.parameters?.properties ?? {}, "task"),
+      false,
+      "send_character_message must not expose a delegated task argument",
+    );
+    const sendInputDescription =
+      sendMessage.parameters?.properties?.message?.description ?? "";
+    assert.match(sendInputDescription, /\b(?:social|coordination)\b/i);
+    assert.match(sendInputDescription, /\b(?:delegated task|work product)\b/i);
+    assert.match(sendInputDescription, /\brequest_character_help\b/i);
+    assert.deepEqual(
+      Object.keys(requestHelp.parameters?.properties ?? {}).sort(),
+      ["context", "message", "requiredCapabilityIds", "targetCharacterId", "task"],
+    );
+    assert.deepEqual(requestHelp.parameters?.required, ["task"]);
+    assert.match(
+      requestHelp.parameters?.properties?.task?.description ?? "",
+      /\bdelegated task\b.*\bclear expected (?:answer|result|deliverable)\b/i,
+    );
+  } finally {
+    runtime.dispose();
+  }
+});
+
 test("World MCP delegates to another character and returns the result to the parent character", async () => {
   const actorInputs: CharacterInteractionActorInput[] = [];
   const runtime = createTestRuntime({

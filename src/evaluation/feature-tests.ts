@@ -222,7 +222,7 @@ const cases: FeatureTestCase[] = [
     name: "角色间私聊协作",
     description: "验证当前角色通过持久角色频道向另一角色委托任务，取得对方实际结果后再向用户汇报。",
     mode: "sms",
-    input: "请私聊同一个世界里的“协作测试角色”，请她给出三步实验记录检查法，然后把她的实际回复告诉我。",
+    input: "你让同一个世界里的“协作测试角色”帮你看看实验记录该怎么检查，给出三步做法，然后回来告诉我她的结果。",
     requiredModules: ["mcp:world-state"],
     requiredPermissions: [],
     qualityCriteria: ["明确区分当前角色和协作角色的贡献", "只汇报实际工具返回的结果，不伪造对方回复或泄露后台机制"],

@@ -60,8 +60,8 @@ const mcpDetails: Record<string, string> = {
 - \`get_character_world_state\`: read the selected character's current place, activity, availability, and recent events.
 - \`list_world_places\`: list shared-world places and their fixed capability IDs.
 - \`list_world_characters\`: list same-world characters, public runtime availability, public role, and bounded capability summaries without exposing private context.
-- \`send_character_message\`: send one bounded message through a persistent same-world character channel and wait for the target's independent reply.
-- \`request_character_help\`: delegate one bounded task to an explicit same-world character, or provide fixed capability IDs for trusted automatic specialist routing.
+- \`send_character_message\`: ordinary social conversation, check-ins, simple relays, clarification, coordination, and questions about the target's own state, feelings, preferences, availability, or willingness.
+- \`request_character_help\`: delegate bounded work and return the target's actual task result or deliverable; explicit collaboration and requests for lookup, research, analysis, planning, checklists, evaluation, solutions, or task-focused advice use this tool even when phrased as “ask” or “message”.
 - \`request_character_contact\`: queue a request for another same-world character to consider contacting the user.
 - \`perform_place_action\`: record an action that happens now; travel arrives at its destination immediately.
 
@@ -398,7 +398,7 @@ export class AgentModuleCatalog {
         ? "Capability status: Relationship State is enabled. Reflect the trusted qualitative snapshot implicitly; never expose or invent internal metrics."
         : "Capability status: Relationship State is disabled. Do not claim to track relationship or affect metrics.",
       this.isEnabled(worldStateMcpModuleId)
-        ? "Capability status: World State is enabled for characters assigned to a canonical shared world in SMS mode. Use fixed place capabilities. When asked to talk to or seek help from another character, use the persistent character-message or help tool and report only the actual result. Use request_character_contact only when the target should contact the user directly; never impersonate the target or claim unconfirmed delivery."
+        ? "Capability status: World State is enabled for characters assigned to a canonical shared world in SMS mode. Use fixed place capabilities. Character-tool routing follows the expected work product, not surface wording: request_character_help is mandatory when another character must do bounded work or produce a lookup, research result, analysis, plan, checklist, evaluation, task-focused advice, decision, solution, or other deliverable for the current character to use or relay, including task requests phrased as asking, messaging, privately chatting with, or checking with them. send_character_message is for ordinary social conversation, check-ins, simple relays, clarification, coordination, and questions about the target's own current state, feelings, preferences, availability, or willingness, even when the reply will be relayed. Use request_character_contact only when the target should contact the user directly; never impersonate the target or claim unconfirmed delivery."
         : "Capability status: World State is disabled. Do not claim to know or change canonical character locations or offscreen events.",
       this.isEnabled(interactionStateMcpModuleId)
         ? "Capability status: Interaction State MCP is enabled in canonical private SMS. Confirm meeting facts, never technical modes; begin_meeting requires explicit user arrival evidence."
