@@ -132,8 +132,15 @@ export class CharacterChannelService {
           title: episode.title,
           objective: episode.objective,
           status: episode.status,
+          stage: collaborationStage(episode),
+          elapsedMs: collaborationElapsedMs(episode, this.clock.now()),
           messageCount: episode.messageCount,
           ...(episode.reportStatus ? { reportStatus: episode.reportStatus } : {}),
+          queuedAt: episode.queuedAt ?? episode.createdAt,
+          ...(episode.startedAt ? { startedAt: episode.startedAt } : {}),
+          ...(episode.settledAt ?? episode.completedAt
+            ? { settledAt: episode.settledAt ?? episode.completedAt }
+            : {}),
           ...(episode.reportedAt ? { reportedAt: episode.reportedAt } : {}),
           createdAt: episode.createdAt,
           updatedAt: episode.updatedAt,
@@ -316,6 +323,11 @@ export class CharacterChannelService {
         : cleanText(patch.failureReason, 800)
           ? { failureReason: cleanText(patch.failureReason, 800) }
           : {}),
+      ...(current.startedAt
+        ? { startedAt: current.startedAt }
+        : patch.status === "running"
+          ? { startedAt: now }
+          : {}),
       updatedAt: now,
       ...(patch.completed ? { completedAt: now } : (current.completedAt ? { completedAt: current.completedAt } : {})),
     };
@@ -326,6 +338,31 @@ export class CharacterChannelService {
       delete next.failureReason;
     }
     return this.repository.updateEpisode(next);
+  }
+
+  recordTargetModelRequest(episodeId: string): CharacterChannelEpisode {
+    return this.repository.incrementEpisodeModelCalls(
+      episodeId,
+      this.clock.now().toISOString(),
+    );
+  }
+
+  recordTargetExecutionDuration(
+    episodeId: string,
+    durationMs: number,
+  ): CharacterChannelEpisode {
+    return this.repository.addEpisodeTargetExecutionMs(
+      episodeId,
+      durationMs,
+      this.clock.now().toISOString(),
+    );
+  }
+
+  recordReportModelRequest(episodeId: string): CharacterChannelEpisode {
+    return this.repository.incrementEpisodeReportModelCalls(
+      episodeId,
+      this.clock.now().toISOString(),
+    );
   }
 
   appendCharacterMessage(input: {
@@ -429,4 +466,29 @@ function cleanIdentifier(value: string | undefined): string {
 
 function cleanText(value: string | undefined, maximum: number): string {
   return [...String(value ?? "").trim()].slice(0, maximum).join("");
+}
+
+function collaborationStage(
+  episode: CharacterChannelEpisode,
+): CharacterCollaborationSummary["stage"] {
+  if (episode.status === "queued") return "queued";
+  if (episode.status === "running") return "executing";
+  if (episode.reportStatus === "pending" || episode.reportStatus === "delivering") {
+    return "reporting";
+  }
+  return "settled";
+}
+
+function collaborationElapsedMs(episode: CharacterChannelEpisode, now: Date): number {
+  const started = new Date(episode.queuedAt ?? episode.createdAt).getTime();
+  const stillActive = episode.status === "queued" ||
+    episode.status === "running" ||
+    episode.reportStatus === "pending" ||
+    episode.reportStatus === "delivering";
+  const endedValue = stillActive
+    ? now.toISOString()
+    : episode.reportedAt ?? episode.settledAt ?? episode.completedAt ?? episode.updatedAt;
+  const ended = new Date(endedValue).getTime();
+  if (!Number.isFinite(started) || !Number.isFinite(ended)) return 0;
+  return Math.max(0, Math.floor(ended - started));
 }

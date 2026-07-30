@@ -13750,6 +13750,8 @@ export function renderAppHtml(): string {
           collaborationChannelId: String(entry.channelId || ""),
           collaborationStatus: String(entry.status || "queued"),
           collaborationReportStatus: String(entry.reportStatus || ""),
+          collaborationStage: String(entry.stage || ""),
+          collaborationElapsedMs: Number(entry.elapsedMs || 0),
           initiatorCharacterId: String(entry.initiatorCharacterId || ""),
           initiatorCharacterName: String(entry.initiatorCharacterName || "角色"),
           targetCharacterId: String(entry.targetCharacterId || ""),
@@ -14009,7 +14011,13 @@ export function renderAppHtml(): string {
       const resultNeedsVisit =
         status === "completed" && (reportStatus === "failed" || reportStatus === "skipped");
       const displayStatus = resultOnItsWay ? "running" : status;
-      const statusLabel = collaborationStatusLabel(status, reportStatus);
+      const elapsedLabel = message.collaborationStage !== "settled"
+        ? collaborationElapsedLabel(message.collaborationElapsedMs)
+        : "";
+      const statusLabel = [
+        collaborationStatusLabel(status, reportStatus),
+        elapsedLabel
+      ].filter(Boolean).join(" · ");
       const title = ({
         queued: initiatorName + "正在请" + targetName + "帮忙",
         running: initiatorName + "和" + targetName + "正在一起处理",
@@ -14081,6 +14089,46 @@ export function renderAppHtml(): string {
       const firstLine = String(value || "").split("\\n").map((entry) => entry.trim()).find(Boolean) || "";
       const characters = Array.from(firstLine);
       return characters.length > 120 ? characters.slice(0, 120).join("") + "…" : firstLine;
+    }
+
+    function collaborationElapsedLabel(value) {
+      const milliseconds = Math.max(0, Number(value) || 0);
+      if (milliseconds < 1_000) return "刚刚";
+      const seconds = Math.max(1, Math.round(milliseconds / 1_000));
+      if (seconds < 60) return seconds + "秒";
+      const minutes = Math.floor(seconds / 60);
+      const remainingSeconds = seconds % 60;
+      if (minutes < 60) {
+        return minutes + "分" + (remainingSeconds ? remainingSeconds + "秒" : "");
+      }
+      const hours = Math.floor(minutes / 60);
+      const remainingMinutes = minutes % 60;
+      return hours + "小时" + (remainingMinutes ? remainingMinutes + "分" : "");
+    }
+
+    function collaborationTimingSummary(episode, channel, names) {
+      if (!episode || episode.kind !== "collaboration") return "";
+      const characterName = (characterId, fallback) => {
+        const configured = state.characters.find((entry) => entry.id === characterId)?.name;
+        const channelIndex = channel?.characterIds?.indexOf(characterId) ?? -1;
+        return configured || names?.[channelIndex] || fallback;
+      };
+      const targetName = characterName(episode.targetCharacterId, "对方");
+      const sourceName = characterName(episode.initiatorCharacterId, "原角色");
+      const parts = [];
+      if (Number(episode.targetExecutionMs) > 0) {
+        parts.push(targetName + "处理 " + collaborationElapsedLabel(episode.targetExecutionMs));
+      }
+      if (Number(episode.reportWaitMs) > 0) {
+        parts.push("等待衔接 " + collaborationElapsedLabel(episode.reportWaitMs));
+      }
+      if (Number(episode.reportGenerationMs) > 0) {
+        parts.push(sourceName + "整理 " + collaborationElapsedLabel(episode.reportGenerationMs));
+      }
+      if (Number(episode.reportDeliveryMs) > 0) {
+        parts.push("送回会话 " + collaborationElapsedLabel(episode.reportDeliveryMs));
+      }
+      return parts.join(" · ");
     }
 
     function renderWorldTimeline() {
@@ -14533,6 +14581,7 @@ export function renderAppHtml(): string {
               episodeTime.toLocaleString("zh-CN", {
                 month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit"
               });
+            const timingSummary = collaborationTimingSummary(episode, channel, names);
             const episodeHeader = '<header class="character-channel-episode-head">' +
               '<span class="character-channel-episode-kind">' + escapeHtml(kindLabel) + '</span>' +
               '<strong>' + escapeHtml(episode.title || names.join(" 与 ")) + '</strong>' +
@@ -14541,6 +14590,9 @@ export function renderAppHtml(): string {
               (episode.objective
                 ? '<p class="character-channel-episode-objective">' +
                     escapeHtml(episode.objective) + '</p>'
+                : '') +
+              (timingSummary
+                ? '<p class="memory-source">协作耗时 · ' + escapeHtml(timingSummary) + '</p>'
                 : '') +
               '</header>';
             const episodeBody = episodeMessages.length

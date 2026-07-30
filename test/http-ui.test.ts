@@ -84,6 +84,8 @@ test("server serves chat UI and debug model traces", async () => {
     assert.match(html, /api\/v1\/sessions\/.*\/character-collaborations/);
     assert.match(html, /function mergeCharacterCollaborations/);
     assert.match(html, /function renderCollaborationEvent/);
+    assert.match(html, /function collaborationElapsedLabel/);
+    assert.match(html, /协作耗时/);
     assert.match(html, /character-collaboration-card/);
     assert.match(html, /rejectedWithoutEpisode/);
     assert.match(html, /outcome\.status === "blocked"/);

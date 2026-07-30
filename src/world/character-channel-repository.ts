@@ -185,7 +185,8 @@ export class CharacterChannelRepository {
     this.database.connection.prepare(`
       UPDATE character_channel_episodes SET
         title = ?, objective = ?, status = ?, model_calls = ?, message_count = ?,
-        result_text = ?, failure_reason = ?, updated_at = ?, completed_at = ?
+        result_text = ?, failure_reason = ?, started_at = ?,
+        target_execution_ms = ?, updated_at = ?, completed_at = ?
       WHERE id = ?
     `).run(
       episode.title,
@@ -195,11 +196,54 @@ export class CharacterChannelRepository {
       episode.messageCount,
       episode.resultText ?? null,
       episode.failureReason ?? null,
+      episode.startedAt ?? null,
+      episode.targetExecutionMs ?? 0,
       episode.updatedAt,
       episode.completedAt ?? null,
       episode.id,
     );
     return this.getEpisode(episode.id)!;
+  }
+
+  incrementEpisodeModelCalls(episodeId: string, now: string): CharacterChannelEpisode {
+    const result = this.database.connection.prepare(`
+      UPDATE character_channel_episodes
+      SET model_calls = model_calls + 1, updated_at = ?
+      WHERE id = ?
+    `).run(now, episodeId);
+    if (Number(result.changes) !== 1) {
+      throw new Error(`character channel episode not found: ${episodeId}`);
+    }
+    return this.getEpisode(episodeId)!;
+  }
+
+  addEpisodeTargetExecutionMs(
+    episodeId: string,
+    durationMs: number,
+    now: string,
+  ): CharacterChannelEpisode {
+    const duration = nonNegativeInteger(durationMs);
+    const result = this.database.connection.prepare(`
+      UPDATE character_channel_episodes
+      SET target_execution_ms = target_execution_ms + ?, updated_at = ?
+      WHERE id = ?
+    `).run(duration, now, episodeId);
+    if (Number(result.changes) !== 1) {
+      throw new Error(`character channel episode not found: ${episodeId}`);
+    }
+    return this.getEpisode(episodeId)!;
+  }
+
+  incrementEpisodeReportModelCalls(episodeId: string, now: string): CharacterChannelEpisode {
+    const result = this.database.connection.prepare(`
+      UPDATE character_channel_episodes
+      SET report_model_calls = report_model_calls + 1, updated_at = ?
+      WHERE id = ?
+    `).run(now, episodeId);
+    if (Number(result.changes) !== 1) {
+      throw new Error(`character channel episode not found: ${episodeId}`);
+    }
+    return this.getEpisode(episodeId)!;
   }
 
   listEpisodes(channelId: string, limit = 40): CharacterChannelEpisode[] {
@@ -454,9 +498,9 @@ export class CharacterChannelRepository {
       if (Number(result.changes) !== 1) return undefined;
       this.database.connection.prepare(`
         UPDATE character_channel_episodes
-        SET status = 'running', updated_at = ?
+        SET status = 'running', started_at = COALESCE(started_at, ?), updated_at = ?
         WHERE id = ? AND status IN ('queued', 'running')
-      `).run(now, episodeId);
+      `).run(now, now, episodeId);
       return this.getCollaborationJob(episodeId);
     });
   }
@@ -555,7 +599,8 @@ export class CharacterChannelRepository {
       const failEpisode = this.database.connection.prepare(`
         UPDATE character_channel_episodes
         SET status = 'failed', failure_reason = ?, updated_at = ?, completed_at = ?,
-            report_status = COALESCE(report_status, 'pending')
+            report_status = COALESCE(report_status, 'pending'),
+            report_queued_at = COALESCE(report_queued_at, completed_at, ?)
         WHERE id = ? AND status IN ('queued', 'running')
       `);
       let failed = 0;
@@ -563,7 +608,7 @@ export class CharacterChannelRepository {
         const result = failJob.run(reason, now, now, row.episode_id);
         if (Number(result.changes) !== 1) continue;
         failed += 1;
-        failEpisode.run(reason, now, now, row.episode_id);
+        failEpisode.run(reason, now, now, now, row.episode_id);
       }
       return failed;
     });
@@ -604,7 +649,9 @@ export class CharacterChannelRepository {
       `).run(now, now);
       this.database.connection.prepare(`
         UPDATE character_channel_episodes
-        SET report_status = 'pending', updated_at = ?
+        SET report_status = 'pending',
+            report_queued_at = COALESCE(report_queued_at, completed_at, ?),
+            updated_at = ?
         WHERE report_status IS NULL
           AND status IN ('completed', 'declined', 'failed', 'cancelled')
           AND EXISTS (
@@ -612,7 +659,7 @@ export class CharacterChannelRepository {
             WHERE episode_id = character_channel_episodes.id
               AND status IN ('completed', 'failed', 'cancelled')
           )
-      `).run(now);
+      `).run(now, now);
       return Number(result.changes);
     });
   }
@@ -672,11 +719,23 @@ export class CharacterChannelRepository {
     leaseExpiresAt: string,
   ): CharacterChannelEpisode | undefined {
     return this.database.transaction(() => {
+      const current = this.getEpisode(episodeId);
+      if (!current) return undefined;
+      const waitMs = elapsedMs(
+        current.reportQueuedAt ?? current.completedAt ?? current.createdAt,
+        now,
+      );
       const result = this.database.connection.prepare(`
         UPDATE character_channel_episodes
         SET report_status = 'delivering', report_attempts = report_attempts + 1,
             report_error = NULL, report_owner_id = ?, report_claim_token = ?,
-            report_lease_expires_at = ?, updated_at = ?
+            report_lease_expires_at = ?,
+            report_started_at = COALESCE(report_started_at, ?),
+            report_wait_ms = CASE
+              WHEN report_started_at IS NULL THEN ?
+              ELSE report_wait_ms
+            END,
+            updated_at = ?
         WHERE id = ?
           AND status IN ('completed', 'declined', 'failed', 'cancelled')
           AND (
@@ -686,7 +745,16 @@ export class CharacterChannelRepository {
               AND (report_lease_expires_at IS NULL OR report_lease_expires_at <= ?)
             )
           )
-      `).run(ownerId, claimToken, leaseExpiresAt, now, episodeId, now);
+      `).run(
+        ownerId,
+        claimToken,
+        leaseExpiresAt,
+        now,
+        waitMs,
+        now,
+        episodeId,
+        now,
+      );
       return Number(result.changes) === 1 ? this.getEpisode(episodeId) : undefined;
     });
   }
@@ -709,13 +777,23 @@ export class CharacterChannelRepository {
   finishCollaborationReport(
     episodeId: string,
     status: Exclude<CharacterCollaborationReportStatus, "pending" | "delivering">,
-    error: string | undefined,
+    patch: {
+      error?: string;
+      reportQueueWaitMs?: number;
+      reportGenerationMs?: number;
+      reportDeliveryMs?: number;
+      reportModelCalls?: number;
+    },
     now: string,
     claim: { ownerId: string; claimToken: string },
   ): boolean {
     return Number(this.database.connection.prepare(`
       UPDATE character_channel_episodes
       SET report_status = ?, reported_at = ?, report_error = ?, updated_at = ?,
+          report_wait_ms = report_wait_ms + ?,
+          report_generation_ms = report_generation_ms + ?,
+          report_delivery_ms = report_delivery_ms + ?,
+          report_model_calls = report_model_calls + ?,
           report_owner_id = NULL, report_claim_token = NULL,
           report_lease_expires_at = NULL
       WHERE id = ? AND report_status = 'delivering'
@@ -723,8 +801,12 @@ export class CharacterChannelRepository {
     `).run(
       status,
       now,
-      error ?? null,
+      patch.error ?? null,
       now,
+      nonNegativeInteger(patch.reportQueueWaitMs),
+      nonNegativeInteger(patch.reportGenerationMs),
+      nonNegativeInteger(patch.reportDeliveryMs),
+      nonNegativeInteger(patch.reportModelCalls),
       episodeId,
       claim.ownerId,
       claim.claimToken,
@@ -743,9 +825,11 @@ export class CharacterChannelRepository {
   private markCollaborationReportPending(episodeId: string, now: string): void {
     this.database.connection.prepare(`
       UPDATE character_channel_episodes
-      SET report_status = COALESCE(report_status, 'pending'), updated_at = ?
+      SET report_status = COALESCE(report_status, 'pending'),
+          report_queued_at = COALESCE(report_queued_at, completed_at, ?),
+          updated_at = ?
       WHERE id = ? AND status IN ('completed', 'declined', 'failed', 'cancelled')
-    `).run(now, episodeId);
+    `).run(now, now, episodeId);
   }
 }
 
@@ -776,7 +860,11 @@ function mapEpisode(row: Row): CharacterChannelEpisode {
     | undefined;
   const reportedAt = optionalString(row.reported_at);
   const reportError = optionalString(row.report_error);
+  const startedAt = optionalString(row.started_at);
+  const reportQueuedAt = optionalString(row.report_queued_at);
+  const reportStartedAt = optionalString(row.report_started_at);
   const completedAt = optionalString(row.completed_at);
+  const createdAt = String(row.created_at);
   return {
     id: String(row.id),
     channelId: String(row.channel_id),
@@ -800,7 +888,17 @@ function mapEpisode(row: Row): CharacterChannelEpisode {
       : { reportAttempts: Number(row.report_attempts) }),
     ...(reportedAt ? { reportedAt } : {}),
     ...(reportError ? { reportError } : {}),
-    createdAt: String(row.created_at),
+    queuedAt: createdAt,
+    ...(startedAt ? { startedAt } : {}),
+    ...(completedAt ? { settledAt: completedAt } : {}),
+    targetExecutionMs: Number(row.target_execution_ms ?? 0),
+    ...(reportQueuedAt ? { reportQueuedAt } : {}),
+    ...(reportStartedAt ? { reportStartedAt } : {}),
+    reportWaitMs: Number(row.report_wait_ms ?? 0),
+    reportGenerationMs: Number(row.report_generation_ms ?? 0),
+    reportDeliveryMs: Number(row.report_delivery_ms ?? 0),
+    reportModelCalls: Number(row.report_model_calls ?? 0),
+    createdAt,
     updatedAt: String(row.updated_at),
     ...(completedAt ? { completedAt } : {}),
   };
@@ -848,4 +946,16 @@ function mapMessage(row: Row): CharacterChannelMessage {
 
 function optionalString(value: unknown): string | undefined {
   return typeof value === "string" && value ? value : undefined;
+}
+
+function nonNegativeInteger(value: number | undefined): number {
+  if (!Number.isFinite(value)) return 0;
+  return Math.max(0, Math.floor(value ?? 0));
+}
+
+function elapsedMs(start: string, end: string): number {
+  const startedAt = new Date(start).getTime();
+  const endedAt = new Date(end).getTime();
+  if (!Number.isFinite(startedAt) || !Number.isFinite(endedAt)) return 0;
+  return Math.max(0, Math.floor(endedAt - startedAt));
 }

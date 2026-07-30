@@ -596,10 +596,14 @@ export class CharacterInteractionCoordinator {
       this.channels.repository.finishCollaborationReport(
         claimed.id,
         normalized.status,
-        normalized.status === "failed" ? normalized.error : undefined,
+        {
+          ...(normalized.status === "failed" ? { error: normalized.error } : {}),
+          ...(normalized.metrics ?? {}),
+        },
         this.now(),
         claim,
       );
+      const measured = this.channels.repository.getEpisode(claimed.id);
       this.options.onAction?.(
         "character_collaboration_report",
         normalized.status === "failed" ? "failed" : "completed",
@@ -607,6 +611,10 @@ export class CharacterInteractionCoordinator {
           episodeId: claimed.id,
           channelId: claimed.channelId,
           reportStatus: normalized.status,
+          reportWaitMs: measured?.reportWaitMs ?? claimed.reportWaitMs ?? 0,
+          reportGenerationMs: measured?.reportGenerationMs ?? 0,
+          reportDeliveryMs: measured?.reportDeliveryMs ?? 0,
+          reportModelCalls: measured?.reportModelCalls ?? 0,
           ...(normalized.status === "failed" ? { error: normalized.error } : {}),
           ...(normalized.status === "skipped" && normalized.reason
             ? { reason: normalized.reason }
@@ -620,7 +628,7 @@ export class CharacterInteractionCoordinator {
       this.channels.repository.finishCollaborationReport(
         claimed.id,
         "failed",
-        message,
+        { error: message },
         this.now(),
         claim,
       );
@@ -710,15 +718,16 @@ export class CharacterInteractionCoordinator {
         this.recordCollaborationEvidence(completed, routing);
         return this.resultFor(channel, completed, existingResponse.content, routing);
       }
-      const response = await this.callActor(
+      const tracked = await this.callTrackedActor(
         running,
         running.targetCharacterId,
         purpose,
         opening,
         signal,
       );
+      const response = tracked.response;
+      running = tracked.episode;
       assertInteractionActive(signal, claimActive);
-      running = this.channels.updateEpisode(running.id, { modelCalls: running.modelCalls + 1 });
       const declineReason = parseDecline(response);
       if (declineReason !== undefined) {
         const declined = this.channels.updateEpisode(running.id, {
@@ -743,6 +752,7 @@ export class CharacterInteractionCoordinator {
           episodeId: declined.id,
           channelId: channel.id,
           reason: declineReason || "declined",
+          ...targetExecutionMetrics(declined),
         });
         this.recordCollaborationEvidence(declined, routing);
         return this.resultFor(channel, declined, undefined, routing);
@@ -765,6 +775,7 @@ export class CharacterInteractionCoordinator {
         episodeId: completed.id,
         channelId: channel.id,
         kind: completed.kind,
+        ...targetExecutionMetrics(completed),
       });
       this.recordCollaborationEvidence(completed, routing);
       return this.resultFor(channel, completed, reply, routing);
@@ -794,8 +805,13 @@ export class CharacterInteractionCoordinator {
       let opening = existing.find((message) =>
         message.senderCharacterId === running.initiatorCharacterId)?.content;
       if (!opening) {
-        const generated = await this.callActor(running, running.initiatorCharacterId, "social_opening");
-        running = this.channels.updateEpisode(running.id, { modelCalls: running.modelCalls + 1 });
+        const tracked = await this.callTrackedActor(
+          running,
+          running.initiatorCharacterId,
+          "social_opening",
+        );
+        const generated = tracked.response;
+        running = tracked.episode;
         const declineReason = parseDecline(generated);
         if (declineReason !== undefined) {
           const declined = this.channels.updateEpisode(running.id, {
@@ -814,8 +830,14 @@ export class CharacterInteractionCoordinator {
           content: opening,
         });
       }
-      const response = await this.callActor(running, running.targetCharacterId, "social_reply", opening);
-      running = this.channels.updateEpisode(running.id, { modelCalls: running.modelCalls + 1 });
+      const tracked = await this.callTrackedActor(
+        running,
+        running.targetCharacterId,
+        "social_reply",
+        opening,
+      );
+      const response = tracked.response;
+      running = tracked.episode;
       const declineReason = parseDecline(response);
       if (declineReason !== undefined) {
         this.channels.appendSystemMessage({
@@ -850,6 +872,7 @@ export class CharacterInteractionCoordinator {
         channelId: channel.id,
         sourceCharacterId: completed.initiatorCharacterId,
         targetCharacterId: completed.targetCharacterId,
+        ...targetExecutionMetrics(completed),
       });
       return this.resultFor(channel, completed, reply);
     } catch (error) {
@@ -909,6 +932,60 @@ export class CharacterInteractionCoordinator {
       ...(signal ? { signal } : {}),
     };
     return this.options.actor(input);
+  }
+
+  private async callTrackedActor(
+    episode: CharacterChannelEpisode,
+    actorCharacterId: string,
+    purpose: CharacterInteractionActorInput["purpose"],
+    openingMessage?: string,
+    signal?: AbortSignal,
+  ): Promise<{ response: string; episode: CharacterChannelEpisode }> {
+    let counted = episode;
+    const executionStartedAt = performance.now();
+    try {
+      const response = await this.callActor(
+        episode,
+        actorCharacterId,
+        purpose,
+        openingMessage,
+        signal,
+      );
+      if (!signal?.aborted) {
+        counted = this.recordTargetExecutionDurationSafely(
+          episode.id,
+          performance.now() - executionStartedAt,
+          counted,
+        );
+      }
+      return { response, episode: counted };
+    } catch (error) {
+      if (!signal?.aborted) {
+        this.recordTargetExecutionDurationSafely(
+          episode.id,
+          performance.now() - executionStartedAt,
+          counted,
+        );
+      }
+      throw error;
+    }
+  }
+
+  private recordTargetExecutionDurationSafely(
+    episodeId: string,
+    durationMs: number,
+    fallback: CharacterChannelEpisode,
+  ): CharacterChannelEpisode {
+    try {
+      return this.channels.recordTargetExecutionDuration(episodeId, durationMs);
+    } catch (error) {
+      this.options.onAction?.("character_collaboration_metrics", "failed", {
+        episodeId,
+        metric: "targetExecutionMs",
+        error: errorText(error),
+      });
+      return this.channels.repository.getEpisode(episodeId) ?? fallback;
+    }
   }
 
   private settleEpisode(episode: CharacterChannelEpisode): void {
@@ -1037,6 +1114,7 @@ export class CharacterInteractionCoordinator {
       episodeId: failed.id,
       channelId: failed.channelId,
       error: reason,
+      ...targetExecutionMetrics(failed),
     });
     return failed;
   }
@@ -1149,22 +1227,53 @@ function collaborationJobStatusFor(
 function normalizeReportOutcome(
   outcome: CharacterCollaborationReportOutcome,
 ): CharacterCollaborationReportOutcome {
-  if (outcome?.status === "delivered") return { status: "delivered" };
+  const metrics = normalizeReportMetrics(outcome?.metrics);
+  if (outcome?.status === "delivered") {
+    return { status: "delivered", ...(metrics ? { metrics } : {}) };
+  }
   if (outcome?.status === "skipped") {
     return {
       status: "skipped",
       ...(boundedOptional(outcome.reason, 800) ? {
         reason: boundedOptional(outcome.reason, 800),
       } : {}),
+      ...(metrics ? { metrics } : {}),
     };
   }
   if (outcome?.status === "failed") {
     return {
       status: "failed",
       error: boundedOptional(outcome.error, 800) || "collaboration settlement delivery failed",
+      ...(metrics ? { metrics } : {}),
     };
   }
   throw new Error("invalid collaboration settlement outcome");
+}
+
+function normalizeReportMetrics(
+  metrics: CharacterCollaborationReportOutcome["metrics"],
+): NonNullable<CharacterCollaborationReportOutcome["metrics"]> | undefined {
+  if (!metrics) return undefined;
+  return {
+    reportQueueWaitMs: nonNegativeInteger(metrics.reportQueueWaitMs),
+    reportGenerationMs: nonNegativeInteger(metrics.reportGenerationMs),
+    reportDeliveryMs: nonNegativeInteger(metrics.reportDeliveryMs),
+    reportModelCalls: nonNegativeInteger(metrics.reportModelCalls),
+  };
+}
+
+function nonNegativeInteger(value: number): number {
+  if (!Number.isFinite(value)) return 0;
+  return Math.max(0, Math.floor(value));
+}
+
+function targetExecutionMetrics(
+  episode: CharacterChannelEpisode,
+): { targetExecutionMs: number; targetModelCalls: number } {
+  return {
+    targetExecutionMs: nonNegativeInteger(episode.targetExecutionMs ?? 0),
+    targetModelCalls: nonNegativeInteger(episode.modelCalls),
+  };
 }
 
 function isTerminal(status: CharacterChannelEpisode["status"]): boolean {

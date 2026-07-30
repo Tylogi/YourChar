@@ -1763,6 +1763,43 @@ const migrations: Migration[] = [
         WHERE report_status IN ('pending', 'delivering');
     `,
   },
+  {
+    version: 35,
+    sql: `
+      ALTER TABLE character_channel_episodes
+        ADD COLUMN started_at TEXT;
+      ALTER TABLE character_channel_episodes
+        ADD COLUMN target_execution_ms INTEGER NOT NULL DEFAULT 0
+          CHECK (target_execution_ms >= 0);
+      ALTER TABLE character_channel_episodes
+        ADD COLUMN report_queued_at TEXT;
+      ALTER TABLE character_channel_episodes
+        ADD COLUMN report_started_at TEXT;
+      ALTER TABLE character_channel_episodes
+        ADD COLUMN report_wait_ms INTEGER NOT NULL DEFAULT 0
+          CHECK (report_wait_ms >= 0);
+      ALTER TABLE character_channel_episodes
+        ADD COLUMN report_generation_ms INTEGER NOT NULL DEFAULT 0
+          CHECK (report_generation_ms >= 0);
+      ALTER TABLE character_channel_episodes
+        ADD COLUMN report_delivery_ms INTEGER NOT NULL DEFAULT 0
+          CHECK (report_delivery_ms >= 0);
+      ALTER TABLE character_channel_episodes
+        ADD COLUMN report_model_calls INTEGER NOT NULL DEFAULT 0
+          CHECK (report_model_calls >= 0);
+
+      UPDATE character_channel_episodes
+      SET report_queued_at = completed_at
+      WHERE completed_at IS NOT NULL
+        AND EXISTS (
+          SELECT 1 FROM character_collaboration_jobs
+          WHERE episode_id = character_channel_episodes.id
+        );
+      UPDATE character_channel_episodes
+      SET report_started_at = reported_at
+      WHERE reported_at IS NOT NULL;
+    `,
+  },
 ];
 
 export class AppDatabase {

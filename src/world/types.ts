@@ -580,6 +580,11 @@ export type CharacterCollaborationReportStatus =
   | "delivered"
   | "skipped"
   | "failed";
+export type CharacterCollaborationStage =
+  | "queued"
+  | "executing"
+  | "reporting"
+  | "settled";
 
 export type CharacterChannel = {
   id: string;
@@ -615,6 +620,16 @@ export type CharacterChannelEpisode = {
   reportAttempts?: number;
   reportedAt?: string;
   reportError?: string;
+  queuedAt?: string;
+  startedAt?: string;
+  settledAt?: string;
+  targetExecutionMs?: number;
+  reportQueuedAt?: string;
+  reportStartedAt?: string;
+  reportWaitMs?: number;
+  reportGenerationMs?: number;
+  reportDeliveryMs?: number;
+  reportModelCalls?: number;
   createdAt: string;
   updatedAt: string;
   completedAt?: string;
@@ -656,8 +671,13 @@ export type CharacterCollaborationSummary = {
   title: string;
   objective: string;
   status: CharacterChannelEpisodeStatus;
+  stage: CharacterCollaborationStage;
+  elapsedMs: number;
   messageCount: number;
   reportStatus?: CharacterCollaborationReportStatus;
+  queuedAt: string;
+  startedAt?: string;
+  settledAt?: string;
   reportedAt?: string;
   createdAt: string;
   updatedAt: string;
@@ -724,9 +744,18 @@ export type CharacterCollaborationJob = {
 };
 
 export type CharacterCollaborationReportOutcome =
-  | { status: "delivered" }
-  | { status: "skipped"; reason?: string }
-  | { status: "failed"; error: string };
+  (
+    | { status: "delivered" }
+    | { status: "skipped"; reason?: string }
+    | { status: "failed"; error: string }
+  ) & {
+    metrics?: {
+      reportQueueWaitMs: number;
+      reportGenerationMs: number;
+      reportDeliveryMs: number;
+      reportModelCalls: number;
+    };
+  };
 
 export type CharacterSocialTickResult = {
   created: number;

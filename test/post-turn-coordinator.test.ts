@@ -232,7 +232,7 @@ test("relationship reset suppresses only that consumer while an in-flight depart
   }
 });
 
-test("schema 21 upgrades coordinator state through schema 34 collaboration projection support", () => {
+test("schema 21 upgrades coordinator state through schema 35 collaboration timing support", () => {
   const directory = mkdtempSync(join(tmpdir(), "rp-agent-post-turn-migration-"));
   const path = join(directory, "state.sqlite");
   const legacy = new DatabaseSync(path);
@@ -338,7 +338,7 @@ test("schema 21 upgrades coordinator state through schema 34 collaboration proje
   try {
     assert.equal(
       Number((upgraded.connection.prepare("SELECT MAX(version) AS version FROM schema_migrations").get() as { version: number }).version),
-      34,
+      35,
     );
     const autonomyColumns = upgraded.connection.prepare(
       "PRAGMA table_info(character_autonomy_policies)",
@@ -351,6 +351,7 @@ test("schema 21 upgrades coordinator state through schema 34 collaboration proje
       "character_channels",
       "character_channel_episodes",
       "character_channel_messages",
+      "character_collaboration_jobs",
       "character_function_profiles",
       "character_capabilities",
       "character_capability_evidence",
@@ -362,6 +363,25 @@ test("schema 21 upgrades coordinator state through schema 34 collaboration proje
           SELECT name FROM sqlite_master WHERE type = 'table' AND name = ?
         `).get(table) as { name?: string } | undefined)?.name,
         table,
+      );
+    }
+    const collaborationEpisodeColumns = upgraded.connection.prepare(
+      "PRAGMA table_info(character_channel_episodes)",
+    ).all() as Array<{ name: string }>;
+    for (const column of [
+      "started_at",
+      "target_execution_ms",
+      "report_queued_at",
+      "report_started_at",
+      "report_wait_ms",
+      "report_generation_ms",
+      "report_delivery_ms",
+      "report_model_calls",
+    ]) {
+      assert.equal(
+        collaborationEpisodeColumns.some((entry) => entry.name === column),
+        true,
+        `schema 35 must add ${column}`,
       );
     }
     const characterColumns = upgraded.connection.prepare(
