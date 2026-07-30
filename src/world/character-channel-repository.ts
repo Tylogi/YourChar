@@ -168,6 +168,32 @@ export class CharacterChannelRepository {
     `).all(channelId, bounded) as Row[]).map(mapEpisode);
   }
 
+  listCollaborationEpisodesByParentSession(
+    parentSessionId: string,
+    initiatorCharacterId: string,
+    limit = 100,
+  ): CharacterChannelEpisode[] {
+    const bounded = Number.isFinite(limit)
+      ? Math.max(1, Math.min(Math.floor(limit), 200))
+      : 100;
+    return (this.database.connection.prepare(`
+      SELECT * FROM character_channel_episodes
+      WHERE parent_session_id = ?
+        AND initiator_character_id = ?
+        AND kind = 'collaboration'
+      ORDER BY created_at DESC, id DESC
+      LIMIT ?
+    `).all(parentSessionId, initiatorCharacterId, bounded) as Row[]).map(mapEpisode);
+  }
+
+  unlinkParentSession(parentSessionId: string): number {
+    return Number(this.database.connection.prepare(`
+      UPDATE character_channel_episodes
+      SET parent_session_id = NULL
+      WHERE parent_session_id = ?
+    `).run(parentSessionId).changes);
+  }
+
   countAutonomySocialEpisodes(
     initiatorCharacterId: string,
     startsAt: string,
@@ -249,6 +275,16 @@ export class CharacterChannelRepository {
       ORDER BY sequence
     `).all(channelId, bounded) as Row[];
     return rows.map(mapMessage);
+  }
+
+  listEpisodeMessages(episodeId: string, limit = 500): CharacterChannelMessage[] {
+    const bounded = Math.max(1, Math.min(Math.floor(limit), 500));
+    return (this.database.connection.prepare(`
+      SELECT * FROM character_channel_messages
+      WHERE episode_id = ?
+      ORDER BY sequence
+      LIMIT ?
+    `).all(episodeId, bounded) as Row[]).map(mapMessage);
   }
 
   latestMessage(channelId: string): CharacterChannelMessage | undefined {

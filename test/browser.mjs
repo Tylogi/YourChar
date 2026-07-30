@@ -888,6 +888,7 @@ async function runDesktopWorkflow(browser, baseUrl, outputDir) {
     kind: "collaboration",
     source: "manual",
     idempotencyKey: "browser-character-channel",
+    parentSessionId: smsSessionId,
     title: "整理河岸散步路线",
     objective: "一起确认雨后适合散步的路线。",
   });
@@ -911,6 +912,35 @@ async function runDesktopWorkflow(browser, baseUrl, outputDir) {
     resultText: "书店往东的石板路积水少。",
     completed: true,
   });
+  browserRuntime.clock.advance(1_000);
+  const laterCharacterChannelEpisode = kernel.characterChannels.startEpisode({
+    initiatorCharacterId: targetCharacter.id,
+    targetCharacterId: sourceCharacter.id,
+    kind: "social",
+    source: "manual",
+    idempotencyKey: "browser-character-channel-later",
+    title: "聊起书店的新书",
+    objective: "确认下一次见面时想看的书。",
+  });
+  kernel.characterChannels.updateEpisode(laterCharacterChannelEpisode.episode.id, {
+    status: "running",
+  });
+  kernel.characterChannels.appendCharacterMessage({
+    channelId: laterCharacterChannelEpisode.channel.id,
+    episodeId: laterCharacterChannelEpisode.episode.id,
+    senderCharacterId: targetCharacter.id,
+    content: "我还看到一本新到的旅行随笔。",
+  });
+  kernel.characterChannels.appendCharacterMessage({
+    channelId: laterCharacterChannelEpisode.channel.id,
+    episodeId: laterCharacterChannelEpisode.episode.id,
+    senderCharacterId: sourceCharacter.id,
+    content: "那我们下次一起翻翻。",
+  });
+  const unreadBeforeCollaborationFocus = kernel.listCharacterChannels({
+    worldId: sourceLife.world.id,
+  }).find((entry) => entry.id === seededCharacterChannel.channel.id)?.unreadCount;
+  assert.ok(unreadBeforeCollaborationFocus);
   await page.getByRole("button", { name: "聊天", exact: true }).click();
   await page.evaluate(() => window.loadSessions());
   const characterChannelItem = page.locator(
@@ -918,12 +948,62 @@ async function runDesktopWorkflow(browser, baseUrl, outputDir) {
   );
   await characterChannelItem.waitFor();
   assert.equal(await characterChannelItem.locator(".character-channel-avatar > span").count(), 2);
-  await characterChannelItem.locator(".conversation-unread").filter({ hasText: "2" }).waitFor();
-  await characterChannelItem.click();
+  await characterChannelItem.locator(".conversation-unread")
+    .filter({ hasText: String(unreadBeforeCollaborationFocus) }).waitFor();
+  await page.locator(`#conversationList button[data-session-id="${smsSessionId}"]`).click();
+  const collaborationCard = page.locator(
+    `#messages .message-row.collaboration[data-character-episode-id="${seededCharacterChannel.episode.id}"]`,
+  );
+  await collaborationCard.filter({ hasText: "林澈请顾遥一起处理了这件事" })
+    .filter({ hasText: "已完成" })
+    .filter({ hasText: "确认雨后适合散步的路线" })
+    .waitFor();
+  await collaborationCard.getByRole("button", {
+    name: "查看林澈与顾遥的往来",
+    exact: true,
+  }).click();
   await page.locator("#characterChannelDialog").waitFor({ state: "visible" });
   await page.locator("#characterChannelParticipants").filter({ hasText: "林澈 与 顾遥" }).filter({ hasText: "已完成" }).waitFor();
   await page.locator("#characterChannelMessages").filter({ hasText: "哪一段更适合散步" }).filter({ hasText: "石板路积水少" }).waitFor();
-  assert.equal(await page.locator("#characterChannelMessages .character-channel-message-avatar").count(), 2);
+  const focusedCollaboration = page.locator(
+    `#characterChannelMessages [data-character-channel-episode-id="${seededCharacterChannel.episode.id}"]`,
+  );
+  await focusedCollaboration.filter({ hasText: "整理河岸散步路线" }).waitFor();
+  assert.equal(await focusedCollaboration.evaluate((element) => element.classList.contains("focused")), true);
+  const laterEpisode = page.locator(
+    `#characterChannelMessages [data-character-channel-episode-id="${laterCharacterChannelEpisode.episode.id}"]`,
+  ).filter({ hasText: "聊起书店的新书" });
+  await laterEpisode.filter({ hasText: "交流中" }).waitFor();
+  assert.equal(await focusedCollaboration.locator(".character-channel-message-avatar").count(), 2);
+  assert.equal(await laterEpisode.locator(".character-channel-message-avatar").count(), 2);
+  await page.waitForTimeout(350);
+  assert.equal(await focusedCollaboration.evaluate((element) => {
+    const container = element.closest("#characterChannelMessages");
+    if (!container) return false;
+    const target = element.getBoundingClientRect();
+    const viewport = container.getBoundingClientRect();
+    return target.bottom > viewport.top && target.top < viewport.bottom;
+  }), true);
+  assert.equal(
+    kernel.listCharacterChannels({ worldId: sourceLife.world.id })
+      .find((entry) => entry.id === seededCharacterChannel.channel.id)?.unreadCount,
+    unreadBeforeCollaborationFocus,
+  );
+  await characterChannelItem.locator(".conversation-unread")
+    .filter({ hasText: String(unreadBeforeCollaborationFocus) }).waitFor();
+  const channelScrollBeforeRefresh = await page.locator("#characterChannelMessages")
+    .evaluate((element) => {
+      element.scrollTop = element.scrollHeight;
+      return element.scrollTop;
+    });
+  await page.evaluate(
+    async (channelId) => window.openCharacterChannel(channelId, true),
+    seededCharacterChannel.channel.id,
+  );
+  assert.equal(
+    await page.locator("#characterChannelMessages").evaluate((element) => element.scrollTop),
+    channelScrollBeforeRefresh,
+  );
   await assertInteractiveBounds(page);
   await captureValidatedScreenshot(page, resolve(outputDir, "character-private-channel.png"));
   await page.getByRole("button", { name: "关闭角色通信", exact: true }).click();

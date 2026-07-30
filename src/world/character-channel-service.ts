@@ -13,6 +13,7 @@ import type {
   CharacterChannelMessageKind,
   CharacterChannelSnapshot,
   CharacterChannelSummary,
+  CharacterCollaborationSummary,
 } from "./types.js";
 
 const MAX_CHANNEL_TEXT = 4_000;
@@ -75,13 +76,72 @@ export class CharacterChannelService {
   snapshot(channelId: string, options: {
     messageLimit?: number;
     episodeLimit?: number;
+    focusEpisodeId?: string;
   } = {}): CharacterChannelSnapshot {
     const channel = this.getChannel(channelId);
+    const episodes = this.repository.listEpisodes(channel.id, options.episodeLimit ?? 40);
+    const messages = this.repository.listMessages(channel.id, options.messageLimit ?? 120);
+    const focusEpisodeId = cleanText(options.focusEpisodeId, 240);
+    if (focusEpisodeId) {
+      const focusedEpisode = this.repository.getEpisode(focusEpisodeId);
+      if (!focusedEpisode || focusedEpisode.channelId !== channel.id) {
+        throw new WorldValidationError(
+          `character channel episode not found in channel: ${focusEpisodeId}`,
+        );
+      }
+      if (!episodes.some((episode) => episode.id === focusedEpisode.id)) {
+        episodes.push(focusedEpisode);
+        episodes.sort(compareEpisodesNewestFirst);
+      }
+      const focusedMessages = this.repository.listEpisodeMessages(focusedEpisode.id);
+      const messageIds = new Set(messages.map((message) => message.id));
+      for (const message of focusedMessages) {
+        if (!messageIds.has(message.id)) messages.push(message);
+      }
+      messages.sort((left, right) => left.sequence - right.sequence);
+    }
     return {
       channel: this.summarize(channel),
-      episodes: this.repository.listEpisodes(channel.id, options.episodeLimit ?? 40),
-      messages: this.repository.listMessages(channel.id, options.messageLimit ?? 120),
+      episodes,
+      messages,
     };
+  }
+
+  listSessionCollaborations(
+    parentSessionId: string,
+    initiatorCharacterId: string,
+    limit = 100,
+  ): CharacterCollaborationSummary[] {
+    const sessionId = requiredIdentifier(parentSessionId, "parent session id");
+    const characterId = requiredText(initiatorCharacterId, "initiator character id", 240);
+    this.rpService.getCharacter(characterId);
+    return this.repository.listCollaborationEpisodesByParentSession(sessionId, characterId, limit)
+      .reverse()
+      .map((episode) => {
+        const initiator = this.rpService.getCharacter(episode.initiatorCharacterId);
+        const target = this.rpService.getCharacter(episode.targetCharacterId);
+        return {
+          episodeId: episode.id,
+          channelId: episode.channelId,
+          worldId: episode.worldId,
+          initiatorCharacterId: initiator.id,
+          initiatorCharacterName: initiator.name,
+          targetCharacterId: target.id,
+          targetCharacterName: target.name,
+          title: episode.title,
+          objective: episode.objective,
+          status: episode.status,
+          messageCount: episode.messageCount,
+          createdAt: episode.createdAt,
+          updatedAt: episode.updatedAt,
+          ...(episode.completedAt ? { completedAt: episode.completedAt } : {}),
+        };
+      });
+  }
+
+  unlinkSession(parentSessionId: string): number {
+    const sessionId = requiredIdentifier(parentSessionId, "parent session id");
+    return this.repository.unlinkParentSession(sessionId);
   }
 
   markRead(channelId: string): CharacterChannelSummary {
@@ -112,6 +172,7 @@ export class CharacterChannelService {
     }
     const channel = this.ensureDirectChannel(input.initiatorCharacterId, input.targetCharacterId);
     const now = this.clock.now().toISOString();
+    const parentSessionId = cleanIdentifier(input.parentSessionId);
     const episode = this.repository.createEpisode({
       id: this.idGenerator.next("character-channel-episode"),
       channelId: channel.id,
@@ -120,9 +181,7 @@ export class CharacterChannelService {
       source: input.source,
       initiatorCharacterId: input.initiatorCharacterId,
       targetCharacterId: input.targetCharacterId,
-      ...(cleanText(input.parentSessionId, 240) ? {
-        parentSessionId: cleanText(input.parentSessionId, 240),
-      } : {}),
+      ...(parentSessionId ? { parentSessionId } : {}),
       title: cleanText(input.title, 160),
       objective: cleanText(input.objective, MAX_OBJECTIVE_TEXT),
       status: "queued",
@@ -252,10 +311,27 @@ function canonicalPair(firstCharacterId: string, secondCharacterId: string): [st
     : [secondCharacterId, firstCharacterId];
 }
 
+function compareEpisodesNewestFirst(
+  left: CharacterChannelEpisode,
+  right: CharacterChannelEpisode,
+): number {
+  return right.createdAt.localeCompare(left.createdAt) || right.id.localeCompare(left.id);
+}
+
 function requiredText(value: string, label: string, maximum: number): string {
   const normalized = cleanText(value, maximum);
   if (!normalized) throw new WorldValidationError(`${label} is required`);
   return normalized;
+}
+
+function requiredIdentifier(value: string, label: string): string {
+  const normalized = cleanIdentifier(value);
+  if (!normalized) throw new WorldValidationError(`${label} is required`);
+  return normalized;
+}
+
+function cleanIdentifier(value: string | undefined): string {
+  return String(value ?? "").trim();
 }
 
 function cleanText(value: string | undefined, maximum: number): string {

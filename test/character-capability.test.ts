@@ -427,7 +427,7 @@ test("invalid character Skill reflection cannot grant permissions or replace the
   }
 });
 
-test("functional profile and route preview HTTP APIs expose schema 32 behavior", async () => {
+test("functional profile and route preview HTTP APIs expose schema 33 behavior", async () => {
   const runtime = createTestRuntime({ seed: "character-capability-http" });
   const setup = setupWorld(runtime, ["HTTP 发起者", "HTTP 专家"]);
   const [source, target] = setup.characters;
@@ -513,7 +513,7 @@ test("functional profile and route preview HTTP APIs expose schema 32 behavior",
     const migration = runtime.kernel.database.connection.prepare(
       "SELECT MAX(version) AS version FROM schema_migrations",
     ).get() as { version: number };
-    assert.equal(Number(migration.version), 32);
+    assert.equal(Number(migration.version), 33);
   } finally {
     await new Promise<void>((resolve, reject) =>
       server.close((error) => error ? reject(error) : resolve()));

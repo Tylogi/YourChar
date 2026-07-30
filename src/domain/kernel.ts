@@ -1092,10 +1092,14 @@ export class CompanionKernel {
   async deleteConversation(sessionId: string, confirmation: string) {
     this.assertPrivateInboxIdle(sessionId);
     const session = await this.sessionRuntime.deleteConversation(sessionId, confirmation);
+    const characterCollaborationLinks = this.characterChannels.unlinkSession(sessionId);
     const rp = this.rpService.deleteSessionData(sessionId);
     const observability = this.dataManagement.deleteSessionObservability(sessionId);
     this.store.deleteSessionRuntimeData(sessionId);
-    return { session, cleanup: { ...rp, ...observability } };
+    return {
+      session,
+      cleanup: { ...rp, ...observability, characterCollaborationLinks },
+    };
   }
 
   assertConversationDeletable(sessionId: string, confirmation: string) {
@@ -1410,8 +1414,32 @@ export class CompanionKernel {
     return this.characterChannels.listChannels(input);
   }
 
-  getCharacterChannel(channelId: string, messageLimit?: number, episodeLimit?: number) {
-    return this.characterChannels.snapshot(channelId, { messageLimit, episodeLimit });
+  getCharacterChannel(
+    channelId: string,
+    messageLimit?: number,
+    episodeLimit?: number,
+    focusEpisodeId?: string,
+  ) {
+    return this.characterChannels.snapshot(channelId, {
+      messageLimit,
+      episodeLimit,
+      focusEpisodeId,
+    });
+  }
+
+  listSessionCharacterCollaborations(
+    sessionId: string,
+    limit?: number,
+  ) {
+    const metadata = this.sessionRuntime.getConversationMetadata()
+      .find((entry) => entry.id === sessionId);
+    if (!metadata) throw new ConversationNotFoundError(sessionId);
+    if (!metadata.characterId) return [];
+    return this.characterChannels.listSessionCollaborations(
+      sessionId,
+      metadata.characterId,
+      limit,
+    );
   }
 
   markCharacterChannelRead(channelId: string) {

@@ -390,6 +390,7 @@ async function route(input: {
       visionSettings: "GET/PATCH /api/settings/vision",
       traceArchiveSettings: "GET/PATCH /api/settings/trace-archive",
       interactionState: "GET/POST /api/v1/sessions/{id}/interaction",
+      characterCollaborations: "GET /api/v1/sessions/{id}/character-collaborations",
       contextBudget: "GET /api/v1/sessions/{id}/context-budget",
       compactContext: "POST /api/v1/sessions/{id}/compact",
     });
@@ -826,6 +827,20 @@ async function route(input: {
   if (messageMatch && method === "GET") {
     const messages = await kernel.getConversationTranscript(decodeURIComponent(messageMatch[1]));
     sendJson(input.response, 200, visibleConversationMessages(messages));
+    return;
+  }
+
+  const sessionCollaborationsMatch =
+    pathname.match(/^\/api\/v1\/sessions\/([^/]+)\/character-collaborations$/);
+  if (sessionCollaborationsMatch && method === "GET") {
+    const sessionId = decodeURIComponent(sessionCollaborationsMatch[1]);
+    assertCharacterBoundSession(kernel, sessionId);
+    sendJson(input.response, 200, {
+      collaborations: kernel.listSessionCharacterCollaborations(
+        sessionId,
+        optionalPositiveInteger(url.searchParams.get("limit")) ?? 100,
+      ),
+    });
     return;
   }
 
@@ -1472,8 +1487,9 @@ async function route(input: {
     sendJson(input.response, 200, {
       snapshot: kernel.getCharacterChannel(
         decodeURIComponent(characterChannelMatch[1]),
-        Number(url.searchParams.get("messageLimit") ?? "120"),
-        Number(url.searchParams.get("episodeLimit") ?? "40"),
+        optionalPositiveInteger(url.searchParams.get("messageLimit")) ?? 120,
+        optionalPositiveInteger(url.searchParams.get("episodeLimit")) ?? 40,
+        optionalString(url.searchParams.get("focusEpisodeId")),
       ),
     });
     return;
@@ -2772,6 +2788,7 @@ function requireMessageAttachments(value: unknown): NonNullable<MessageRequest["
 
 function assertCharacterBoundSession(kernel: CompanionKernel, sessionId: string): void {
   const metadata = kernel.listConversationMetadata().find((entry) => entry.id === sessionId);
+  if (!metadata) throw new ConversationNotFoundError(sessionId);
   if (metadata?.archivedAt) throw new ConversationArchivedError(sessionId);
   if (!metadata?.characterId) {
     throw new CharacterBindingRequiredError(

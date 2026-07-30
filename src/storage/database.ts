@@ -1708,6 +1708,16 @@ const migrations: Migration[] = [
         ON characters(meeting_preset_id);
     `,
   },
+  {
+    version: 33,
+    sql: `
+      CREATE INDEX character_channel_episodes_parent_session_idx
+        ON character_channel_episodes(
+          parent_session_id, initiator_character_id, created_at DESC, id DESC
+        )
+        WHERE parent_session_id IS NOT NULL AND kind = 'collaboration';
+    `,
+  },
 ];
 
 export class AppDatabase {

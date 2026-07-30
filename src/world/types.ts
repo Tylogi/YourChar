@@ -629,6 +629,23 @@ export type CharacterChannelSnapshot = {
   messages: CharacterChannelMessage[];
 };
 
+export type CharacterCollaborationSummary = {
+  episodeId: string;
+  channelId: string;
+  worldId: string;
+  initiatorCharacterId: string;
+  initiatorCharacterName: string;
+  targetCharacterId: string;
+  targetCharacterName: string;
+  title: string;
+  objective: string;
+  status: CharacterChannelEpisodeStatus;
+  messageCount: number;
+  createdAt: string;
+  updatedAt: string;
+  completedAt?: string;
+};
+
 export type CharacterInteractionPurpose =
   | "social_opening"
   | "social_reply"

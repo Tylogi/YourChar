@@ -1328,6 +1328,58 @@ export function renderAppHtml(): string {
       background: #ededed;
       overscroll-behavior: contain;
     }
+    .character-channel-episode {
+      margin: 0 0 18px;
+      padding: 0 0 2px;
+      border-radius: 9px;
+      scroll-margin: 18px;
+      transition: box-shadow 180ms ease, background 180ms ease;
+    }
+    .character-channel-episode.focused {
+      background: rgba(235, 249, 240, 0.72);
+      box-shadow: 0 0 0 3px rgba(69, 150, 96, 0.34);
+    }
+    .character-channel-episode-head {
+      margin: 0 auto 13px;
+      width: min(92%, 540px);
+      padding: 8px 10px;
+      border: 1px solid rgba(0, 0, 0, 0.08);
+      border-radius: 7px;
+      display: grid;
+      grid-template-columns: auto minmax(0, 1fr) auto;
+      align-items: center;
+      gap: 7px;
+      background: rgba(255, 255, 255, 0.78);
+      color: #59625d;
+    }
+    .character-channel-episode-kind {
+      padding: 2px 5px;
+      border-radius: 4px;
+      background: #e5f1e9;
+      color: #39704d;
+      font-size: 9px;
+      font-weight: 650;
+      white-space: nowrap;
+    }
+    .character-channel-episode-head strong {
+      min-width: 0;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      font-size: 11px;
+      font-weight: 620;
+    }
+    .character-channel-episode-status { color: #7a827e; font-size: 9px; white-space: nowrap; }
+    .character-channel-episode-objective {
+      grid-column: 1 / -1;
+      margin: 0;
+      color: #737b77;
+      font-size: 10px;
+      line-height: 1.45;
+      overflow-wrap: anywhere;
+      white-space: pre-wrap;
+    }
+    .character-channel-episode-messages { padding-inline: 4px; }
     .character-channel-message {
       margin: 0 0 14px;
       display: grid;
@@ -2471,6 +2523,98 @@ export function renderAppHtml(): string {
       cursor: pointer;
     }
     .interaction-event-actions button.primary { border-color: #70bf8e; background: #eaf7ef; color: #24613b; }
+    .message-row.collaboration {
+      width: min(100%, 980px);
+      justify-content: center;
+      padding: 2px 42px;
+    }
+    .character-collaboration-card {
+      width: min(620px, 100%);
+      min-width: 0;
+      padding: 13px 14px;
+      border: 1px solid #d8e3dc;
+      border-radius: 10px;
+      display: grid;
+      grid-template-columns: auto minmax(0, 1fr) auto;
+      align-items: center;
+      gap: 12px;
+      background: linear-gradient(135deg, #fbfdfb, #f3f8f5);
+      color: #35423a;
+      box-shadow: 0 2px 8px rgba(36, 77, 51, 0.05);
+    }
+    .character-collaboration-avatars {
+      width: 48px;
+      display: flex;
+      align-items: center;
+    }
+    .character-collaboration-avatar {
+      width: 31px;
+      height: 31px;
+      border: 2px solid #fff;
+      border-radius: 50%;
+      display: grid;
+      place-items: center;
+      overflow: hidden;
+      background: hsl(var(--avatar-hue, 145) 50% 47%);
+      color: #fff;
+      font-size: 10px;
+      font-weight: 700;
+      box-shadow: 0 1px 4px rgba(0, 0, 0, 0.14);
+    }
+    .character-collaboration-avatar + .character-collaboration-avatar { margin-left: -13px; }
+    .character-collaboration-avatar img { width: 100%; height: 100%; object-fit: cover; }
+    .character-collaboration-copy { min-width: 0; display: grid; gap: 4px; }
+    .character-collaboration-title {
+      min-width: 0;
+      display: flex;
+      align-items: center;
+      flex-wrap: wrap;
+      gap: 6px;
+      font-size: 13px;
+      line-height: 1.45;
+    }
+    .character-collaboration-title strong { font-weight: 650; overflow-wrap: anywhere; }
+    .character-collaboration-status {
+      padding: 2px 6px;
+      border-radius: 999px;
+      background: #e8f3eb;
+      color: #35704a;
+      font-size: 10px;
+      font-weight: 600;
+      white-space: nowrap;
+    }
+    .character-collaboration-status.queued,
+    .character-collaboration-status.running { background: #e9f1f8; color: #3f6687; }
+    .character-collaboration-status.declined,
+    .character-collaboration-status.cancelled { background: #f1efea; color: #746b5c; }
+    .character-collaboration-status.failed { background: #f8eaea; color: #a24c4c; }
+    .character-collaboration-objective {
+      margin: 0;
+      color: #69736d;
+      font-size: 11px;
+      line-height: 1.45;
+      overflow: hidden;
+      display: -webkit-box;
+      -webkit-box-orient: vertical;
+      -webkit-line-clamp: 2;
+      overflow-wrap: anywhere;
+    }
+    .character-collaboration-link {
+      min-height: 32px;
+      padding: 0 10px;
+      border: 1px solid #bfd3c5;
+      border-radius: 6px;
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+      background: #fff;
+      color: #326247;
+      font-size: 11px;
+      white-space: nowrap;
+      cursor: pointer;
+    }
+    .character-collaboration-link:hover { border-color: #74a886; background: #f4faf6; }
+    .character-collaboration-link svg { width: 14px; height: 14px; }
     .archived-dialog,
     .session-action-dialog,
     .world-manager-dialog {
@@ -4251,6 +4395,17 @@ export function renderAppHtml(): string {
       .interaction-event { flex-wrap: wrap; gap: 6px; }
       .interaction-event::before,
       .interaction-event::after { width: 18px; }
+      .message-row.collaboration { padding-inline: 4px; }
+      .character-collaboration-card {
+        grid-template-columns: auto minmax(0, 1fr);
+        gap: 9px;
+        padding: 11px;
+      }
+      .character-collaboration-link {
+        grid-column: 2;
+        width: fit-content;
+        min-height: 30px;
+      }
       main { grid-column: 1; grid-row: 2; }
       .header-left { height: calc(60px + env(safe-area-inset-bottom, 0px)); padding-bottom: env(safe-area-inset-bottom, 0px); }
       .composer { padding-bottom: max(9px, env(safe-area-inset-bottom, 0px)); }
@@ -5474,6 +5629,8 @@ export function renderAppHtml(): string {
       worldConversations: [],
       characterChannels: [],
       activeCharacterChannelId: "",
+      activeCharacterChannelEpisodeId: "",
+      pendingCharacterChannelEpisodeId: "",
       activeCharacterChannelSnapshot: null,
       activeConversationKind: "direct",
       activeGroupId: "",
@@ -6395,6 +6552,7 @@ export function renderAppHtml(): string {
     nodes.messages.addEventListener("click", handleMessageMediaClick);
     nodes.messages.addEventListener("click", handleCharacterProfileClick);
     nodes.messages.addEventListener("click", handleInteractionEventAction);
+    nodes.messages.addEventListener("click", handleCharacterCollaborationClick);
     nodes.textInput.addEventListener("compositionstart", () => {
       state.composingMessage = true;
     });
@@ -12098,19 +12256,35 @@ export function renderAppHtml(): string {
       const sessionId = encodeURIComponent(requestedSessionId);
       if (!silent) setStatus("加载会话...");
       try {
-        const [response, interactionResponse, inboxResponse, budgetResponse, proactiveResponse] = await Promise.all([
+        const [
+          response,
+          interactionResponse,
+          inboxResponse,
+          budgetResponse,
+          proactiveResponse,
+          collaborationResponse
+        ] = await Promise.all([
           fetch("/api/v1/sessions/" + sessionId + "/messages"),
           fetch("/api/v1/sessions/" + sessionId + "/interaction"),
           fetch("/api/v1/sessions/" + sessionId + "/inbox"),
           fetch("/api/v1/sessions/" + sessionId + "/context-budget"),
-          fetch("/api/v1/proactive-messages?sessionId=" + sessionId + "&status=delivered&limit=100")
+          fetch("/api/v1/proactive-messages?sessionId=" + sessionId + "&status=delivered&limit=100"),
+          fetch("/api/v1/sessions/" + sessionId + "/character-collaborations?limit=100")
         ]);
-        const [body, interactionBody, inboxBody, budgetBody, proactiveBody] = await Promise.all([
+        const [
+          body,
+          interactionBody,
+          inboxBody,
+          budgetBody,
+          proactiveBody,
+          collaborationBody
+        ] = await Promise.all([
           response.json(),
           interactionResponse.json().catch(() => ({})),
           inboxResponse.json().catch(() => ({})),
           budgetResponse.json().catch(() => ({})),
-          proactiveResponse.json().catch(() => ({}))
+          proactiveResponse.json().catch(() => ({})),
+          collaborationResponse.json().catch(() => ({}))
         ]);
         if (!response.ok) {
           throw new Error(body.error || "加载会话失败");
@@ -12141,9 +12315,14 @@ export function renderAppHtml(): string {
           ? mergeToolResultsIntoMessages(dedupeSystemEvents(body.map(normalizeStoredMessage).filter(Boolean)))
           : [];
         const withInbox = mergePrivateInboxMessages(storedMessages, state.privateInboxMessages);
-        const messages = annotateProactiveMessages(mergeInteractionEvents(
-          preserveActiveBurstMessages(withInbox, state.privateInboxMessages),
-          state.interactionEvents
+        const messages = annotateProactiveMessages(mergeCharacterCollaborations(
+          mergeInteractionEvents(
+            preserveActiveBurstMessages(withInbox, state.privateInboxMessages),
+            state.interactionEvents
+          ),
+          collaborationResponse.ok && Array.isArray(collaborationBody.collaborations)
+            ? collaborationBody.collaborations
+            : []
         ), state.activeProactiveMessages);
         const latestOutcome = [...messages].reverse().find((message) => message.status);
         if (latestOutcome) {
@@ -13240,6 +13419,40 @@ export function renderAppHtml(): string {
         .map((entry) => entry.message);
     }
 
+    function mergeCharacterCollaborations(messages, collaborations) {
+      const events = (Array.isArray(collaborations) ? collaborations : [])
+        .filter((entry) => entry?.episodeId && entry?.channelId)
+        .map((entry) => {
+          const timestampMs = entry.createdAt ? new Date(entry.createdAt).getTime() : 0;
+          return {
+            role: "collaboration",
+            collaborationEpisodeId: String(entry.episodeId),
+            collaborationChannelId: String(entry.channelId),
+            collaborationStatus: String(entry.status || "queued"),
+            initiatorCharacterId: String(entry.initiatorCharacterId || ""),
+            initiatorCharacterName: String(entry.initiatorCharacterName || "角色"),
+            targetCharacterId: String(entry.targetCharacterId || ""),
+            targetCharacterName: String(entry.targetCharacterName || "角色"),
+            title: String(entry.title || ""),
+            objective: String(entry.objective || ""),
+            timestampMs: Number.isFinite(timestampMs) ? timestampMs : 0,
+            at: entry.createdAt ? new Date(entry.createdAt).toLocaleTimeString() : ""
+          };
+        });
+      return [...messages, ...events]
+        .map((message, index) => ({ message, index }))
+        .sort((left, right) => {
+          const timestampOrder =
+            (left.message.timestampMs || 0) - (right.message.timestampMs || 0);
+          if (timestampOrder) return timestampOrder;
+          const rank = { user: 0, interaction: 1, collaboration: 2, assistant: 3, system: 4 };
+          const roleOrder = (rank[left.message.role] ?? 2) - (rank[right.message.role] ?? 2);
+          if (roleOrder) return roleOrder;
+          return left.index - right.index;
+        })
+        .map((entry) => entry.message);
+    }
+
     function extractMessagePresentation(value) {
       const source = String(value || "").trim();
       const marker = "[附件已上传到 Workspace]";
@@ -13413,6 +13626,7 @@ export function renderAppHtml(): string {
     }
 
     function renderStandardMessage(message, index) {
+        if (message.role === "collaboration") return renderCollaborationEvent(message);
         if (message.role === "interaction") return renderInteractionEvent(message);
         if (message.role === "system") {
           return '<div class="message-row system" role="status">' +
@@ -13443,6 +13657,59 @@ export function renderAppHtml(): string {
               renderMessageActions(message, index) + '</div>' +
           '</div>' +
         '</div>';
+    }
+
+    function renderCollaborationEvent(message) {
+      const initiator = state.characters.find((entry) => entry.id === message.initiatorCharacterId);
+      const target = state.characters.find((entry) => entry.id === message.targetCharacterId);
+      const initiatorName = initiator?.name || message.initiatorCharacterName || "角色";
+      const targetName = target?.name || message.targetCharacterName || "角色";
+      const status = ["queued", "running", "completed", "declined", "failed", "cancelled"]
+        .includes(message.collaborationStatus)
+        ? message.collaborationStatus
+        : "queued";
+      const statusLabel = ({
+        queued: "等待中",
+        running: "进行中",
+        completed: "已完成",
+        declined: "未继续",
+        failed: "未完成",
+        cancelled: "已取消"
+      })[status];
+      const title = ({
+        queued: initiatorName + "正在联系" + targetName,
+        running: initiatorName + "和" + targetName + "正在商量",
+        completed: initiatorName + "请" + targetName + "一起处理了这件事",
+        declined: initiatorName + "和" + targetName + "这次没有继续",
+        failed: initiatorName + "和" + targetName + "这次没有完成",
+        cancelled: "这次协作已经取消"
+      })[status];
+      const objective = collaborationObjectiveSummary(message.objective || message.title);
+      const avatar = (character, name) =>
+        '<span class="character-collaboration-avatar" style="--avatar-hue:' + avatarHue(name) + '">' +
+          avatarImageOrInitial(character?.avatarUrl, name) + '</span>';
+      const collaborationLabel = initiatorName + "与" + targetName + "的协作";
+      return '<div class="message-row collaboration" data-character-episode-id="' +
+        escapeHtml(message.collaborationEpisodeId) + '"><article class="character-collaboration-card" aria-label="' +
+        escapeHtml(collaborationLabel) + '">' +
+        '<div class="character-collaboration-avatars" aria-hidden="true">' +
+          avatar(initiator, initiatorName) + avatar(target, targetName) + '</div>' +
+        '<div class="character-collaboration-copy"><div class="character-collaboration-title"><strong>' +
+          escapeHtml(title) + '</strong><span class="character-collaboration-status ' + escapeHtml(status) + '">' +
+          escapeHtml(statusLabel) + '</span></div>' +
+          (objective ? '<p class="character-collaboration-objective">' + escapeHtml(objective) + '</p>' : '') +
+        '</div><button class="character-collaboration-link" type="button" data-character-channel-id="' +
+          escapeHtml(message.collaborationChannelId) + '" data-character-channel-episode-id="' +
+          escapeHtml(message.collaborationEpisodeId) + '" aria-label="' +
+          escapeHtml("查看" + initiatorName + "与" + targetName + "的往来") +
+          '"><span>查看他们的往来</span>' +
+          '<i data-lucide="arrow-right" aria-hidden="true"></i></button></article></div>';
+    }
+
+    function collaborationObjectiveSummary(value) {
+      const firstLine = String(value || "").split("\\n").map((entry) => entry.trim()).find(Boolean) || "";
+      const characters = Array.from(firstLine);
+      return characters.length > 120 ? characters.slice(0, 120).join("") + "…" : firstLine;
     }
 
     function renderWorldTimeline() {
@@ -13768,32 +14035,61 @@ export function renderAppHtml(): string {
       void openCharacterProfile(characterId);
     }
 
-    async function openCharacterChannel(channelId, refreshOnly) {
+    function handleCharacterCollaborationClick(event) {
+      const trigger = event.target.closest("button[data-character-channel-episode-id]");
+      if (!trigger) return;
+      const channelId = trigger.dataset.characterChannelId || "";
+      const episodeId = trigger.dataset.characterChannelEpisodeId || "";
+      if (!channelId || !episodeId) return;
+      event.preventDefault();
+      void openCharacterChannel(channelId, false, episodeId);
+    }
+
+    async function openCharacterChannel(channelId, refreshOnly, episodeId) {
+      if (episodeId) {
+        state.activeCharacterChannelEpisodeId = episodeId;
+        state.pendingCharacterChannelEpisodeId = episodeId;
+      } else if (!refreshOnly || state.activeCharacterChannelId !== channelId) {
+        state.activeCharacterChannelEpisodeId = "";
+        state.pendingCharacterChannelEpisodeId = "";
+      }
       const channel = state.characterChannels.find((entry) => entry.id === channelId);
       state.activeCharacterChannelId = channelId;
-      nodes.characterChannelTitle.textContent = channel?.characterNames?.join(" 与 ") || "角色通信";
-      nodes.characterChannelParticipants.innerHTML = channel
-        ? characterChannelAvatar(channel) + '<strong>' + escapeHtml(channel.characterNames.join(" 与 ")) +
-          '</strong><span>加载中...</span>'
-        : '<strong>角色通信</strong><span>加载中...</span>';
-      nodes.characterChannelMessages.innerHTML = '<div class="character-channel-empty">正在加载</div>';
+      const showLoading = !refreshOnly || !nodes.characterChannelDialog.open;
+      if (showLoading) {
+        nodes.characterChannelTitle.textContent = channel?.characterNames?.join(" 与 ") || "角色通信";
+        nodes.characterChannelParticipants.innerHTML = channel
+          ? characterChannelAvatar(channel) + '<strong>' + escapeHtml(channel.characterNames.join(" 与 ")) +
+            '</strong><span>加载中...</span>'
+          : '<strong>角色通信</strong><span>加载中...</span>';
+        nodes.characterChannelMessages.innerHTML = '<div class="character-channel-empty">正在加载</div>';
+      }
       if (!nodes.characterChannelDialog.open) nodes.characterChannelDialog.showModal();
       refreshIcons();
       try {
-        const response = await fetch("/api/v1/character-channels/" + encodeURIComponent(channelId));
+        const focus = state.activeCharacterChannelEpisodeId
+          ? "?focusEpisodeId=" + encodeURIComponent(state.activeCharacterChannelEpisodeId)
+          : "";
+        const response = await fetch(
+          "/api/v1/character-channels/" + encodeURIComponent(channelId) + focus
+        );
         const body = await response.json();
         if (!response.ok) throw new Error(body.error || "角色通信加载失败");
         if (state.activeCharacterChannelId !== channelId) return;
         state.activeCharacterChannelSnapshot = body.snapshot;
-        renderCharacterChannel(body.snapshot);
-        const readResponse = await fetch(
-          "/api/v1/character-channels/" + encodeURIComponent(channelId) + "/read",
-          { method: "POST" }
-        );
-        if (readResponse.ok) {
-          const summary = state.characterChannels.find((entry) => entry.id === channelId);
-          if (summary) summary.unreadCount = 0;
-          renderConversationList();
+        renderCharacterChannel(body.snapshot, Boolean(refreshOnly));
+        const focusedEpisodeId = state.activeCharacterChannelEpisodeId;
+        const latestEpisodeId = body.snapshot?.episodes?.[0]?.id || "";
+        if (!focusedEpisodeId || focusedEpisodeId === latestEpisodeId) {
+          const readResponse = await fetch(
+            "/api/v1/character-channels/" + encodeURIComponent(channelId) + "/read",
+            { method: "POST" }
+          );
+          if (readResponse.ok) {
+            const summary = state.characterChannels.find((entry) => entry.id === channelId);
+            if (summary) summary.unreadCount = 0;
+            renderConversationList();
+          }
         }
         if (!refreshOnly) {
           setConversationListOpen(false);
@@ -13805,46 +14101,139 @@ export function renderAppHtml(): string {
       }
     }
 
-    function renderCharacterChannel(snapshot) {
+    function renderCharacterChannel(snapshot, preserveScroll) {
       const channel = snapshot?.channel;
       if (!channel) return;
+      const previousScrollTop = nodes.characterChannelMessages.scrollTop;
       const names = channel.characterNames || ["角色", "角色"];
       nodes.characterChannelTitle.textContent = names.join(" 与 ");
-      const latestEpisode = (snapshot.episodes || [])[0];
+      const episodes = Array.isArray(snapshot.episodes) ? snapshot.episodes : [];
+      const focusedEpisode = episodes.find((entry) =>
+        entry.id === state.activeCharacterChannelEpisodeId
+      );
+      const latestEpisode = focusedEpisode || episodes[0];
       const statusLabel = ({
         queued: "等待中", running: "交流中", completed: "已完成",
         declined: "未继续", failed: "未完成", cancelled: "已取消"
       })[latestEpisode?.status] || "角色私聊";
       nodes.characterChannelParticipants.innerHTML = characterChannelAvatar(channel) +
         '<strong>' + escapeHtml(names.join(" 与 ")) + '</strong><span>' + escapeHtml(statusLabel) + '</span>';
-      const messages = snapshot.messages || [];
-      nodes.characterChannelMessages.innerHTML = messages.length
-        ? messages.map((message) => {
-            if (message.senderType === "system") {
-              return '<div class="character-channel-system">' + escapeHtml(message.content) + '</div>';
-            }
-            const character = state.characters.find((entry) => entry.id === message.senderCharacterId);
-            const fallbackIndex = channel.characterIds?.indexOf(message.senderCharacterId) ?? -1;
-            const name = character?.name || names[fallbackIndex] || "角色";
-            const time = new Date(message.createdAt);
-            const timeLabel = Number.isNaN(time.getTime()) ? "" : time.toLocaleString("zh-CN", {
-              month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit"
-            });
-            return '<div class="character-channel-message">' +
-              '<span class="character-channel-message-avatar" style="--avatar-hue:' + avatarHue(name) + '">' +
-                avatarImageOrInitial(character?.avatarUrl, name) + '</span>' +
-              '<div class="character-channel-message-copy"><span class="character-channel-message-meta">' +
-                escapeHtml(name + (timeLabel ? " · " + timeLabel : "")) + '</span>' +
-                '<div class="character-channel-message-bubble">' + escapeHtml(message.content) + '</div></div></div>';
+      const messages = Array.isArray(snapshot.messages) ? snapshot.messages : [];
+      const knownEpisodeIds = new Set(episodes.map((entry) => entry.id));
+      const orphanEpisodes = [];
+      for (const message of messages) {
+        if (!message.episodeId || knownEpisodeIds.has(message.episodeId)) continue;
+        knownEpisodeIds.add(message.episodeId);
+        orphanEpisodes.push({
+          id: message.episodeId,
+          kind: "contact",
+          title: "一次私下往来",
+          objective: "",
+          status: "completed",
+          createdAt: message.createdAt
+        });
+      }
+      const orderedEpisodes = [...episodes, ...orphanEpisodes].sort((left, right) =>
+        String(left.createdAt || "").localeCompare(String(right.createdAt || "")) ||
+        String(left.id || "").localeCompare(String(right.id || ""))
+      );
+      nodes.characterChannelMessages.innerHTML = orderedEpisodes.length
+        ? orderedEpisodes.map((episode) => {
+            const episodeMessages = messages.filter((message) => message.episodeId === episode.id);
+            const kindLabel = ({
+              collaboration: "一起处理",
+              contact: "私下联系",
+              social: "日常往来"
+            })[episode.kind] || "角色往来";
+            const episodeStatus = ({
+              queued: "等待中",
+              running: "交流中",
+              completed: "已完成",
+              declined: "未继续",
+              failed: "未完成",
+              cancelled: "已取消"
+            })[episode.status] || episode.status || "";
+            const episodeTime = new Date(episode.completedAt || episode.createdAt);
+            const episodeTimeLabel = Number.isNaN(episodeTime.getTime()) ? "" :
+              episodeTime.toLocaleString("zh-CN", {
+                month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit"
+              });
+            const episodeHeader = '<header class="character-channel-episode-head">' +
+              '<span class="character-channel-episode-kind">' + escapeHtml(kindLabel) + '</span>' +
+              '<strong>' + escapeHtml(episode.title || names.join(" 与 ")) + '</strong>' +
+              '<span class="character-channel-episode-status">' +
+                escapeHtml([episodeStatus, episodeTimeLabel].filter(Boolean).join(" · ")) + '</span>' +
+              (episode.objective
+                ? '<p class="character-channel-episode-objective">' +
+                    escapeHtml(episode.objective) + '</p>'
+                : '') +
+              '</header>';
+            const episodeBody = episodeMessages.length
+              ? episodeMessages.map((message) => {
+                  if (message.senderType === "system") {
+                    return '<div class="character-channel-system">' +
+                      escapeHtml(message.content) + '</div>';
+                  }
+                  const character = state.characters.find((entry) =>
+                    entry.id === message.senderCharacterId
+                  );
+                  const fallbackIndex =
+                    channel.characterIds?.indexOf(message.senderCharacterId) ?? -1;
+                  const name = character?.name || names[fallbackIndex] || "角色";
+                  const time = new Date(message.createdAt);
+                  const timeLabel = Number.isNaN(time.getTime()) ? "" :
+                    time.toLocaleString("zh-CN", {
+                      month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit"
+                    });
+                  return '<div class="character-channel-message">' +
+                    '<span class="character-channel-message-avatar" style="--avatar-hue:' +
+                      avatarHue(name) + '">' +
+                      avatarImageOrInitial(character?.avatarUrl, name) + '</span>' +
+                    '<div class="character-channel-message-copy">' +
+                      '<span class="character-channel-message-meta">' +
+                        escapeHtml(name + (timeLabel ? " · " + timeLabel : "")) + '</span>' +
+                      '<div class="character-channel-message-bubble">' +
+                        escapeHtml(message.content) + '</div></div></div>';
+                }).join("")
+              : '<div class="character-channel-system">' +
+                  (episode.status === "queued" || episode.status === "running"
+                    ? "尚未有回应"
+                    : "往来内容未在当前窗口中") +
+                '</div>';
+            return '<section class="character-channel-episode" data-character-channel-episode-id="' +
+              escapeHtml(episode.id) + '">' + episodeHeader +
+              '<div class="character-channel-episode-messages">' + episodeBody + '</div></section>';
           }).join("")
         : '<div class="character-channel-empty">尚无角色间消息</div>';
-      nodes.characterChannelMessages.scrollTop = nodes.characterChannelMessages.scrollHeight;
+      const renderedEpisodes = Array.from(
+        nodes.characterChannelMessages.querySelectorAll("[data-character-channel-episode-id]")
+      );
+      const activeEpisode = renderedEpisodes.find((entry) =>
+        entry.dataset.characterChannelEpisodeId === state.activeCharacterChannelEpisodeId
+      );
+      if (activeEpisode) activeEpisode.classList.add("focused");
+      const pendingEpisode = renderedEpisodes.find((entry) =>
+        entry.dataset.characterChannelEpisodeId === state.pendingCharacterChannelEpisodeId
+      );
+      if (pendingEpisode) {
+        state.pendingCharacterChannelEpisodeId = "";
+        requestAnimationFrame(() => pendingEpisode.scrollIntoView({
+          block: "center",
+          behavior: window.matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth"
+        }));
+      } else if (preserveScroll) {
+        nodes.characterChannelMessages.scrollTop = previousScrollTop;
+      } else {
+        nodes.characterChannelMessages.scrollTop = nodes.characterChannelMessages.scrollHeight;
+      }
       refreshIcons();
     }
 
     function closeCharacterChannel() {
       if (nodes.characterChannelDialog.open) nodes.characterChannelDialog.close();
       state.activeCharacterChannelId = "";
+      state.activeCharacterChannelEpisodeId = "";
+      state.pendingCharacterChannelEpisodeId = "";
       state.activeCharacterChannelSnapshot = null;
     }
 

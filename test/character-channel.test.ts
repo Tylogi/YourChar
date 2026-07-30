@@ -277,7 +277,7 @@ test("character-channel HTTP APIs expose exchanges, snapshots, read state, and s
     assert.equal(exchangeResponse.status, 200);
     const exchange = await exchangeResponse.json() as {
       channel: { id: string };
-      episode: { status: string };
+      episode: { id: string; status: string };
     };
     assert.equal(exchange.episode.status, "completed");
 
@@ -302,6 +302,42 @@ test("character-channel HTTP APIs expose exchanges, snapshots, read state, and s
     assert.equal(readResponse.status, 200);
     assert.equal((await readResponse.json() as { channel: { unreadCount: number } }).channel.unreadCount, 0);
 
+    runtime.clock.advance(1_000);
+    const laterExchange = await runtime.kernel.sendCharacterChannelMessage({
+      sourceCharacterId: setup.source.id,
+      targetCharacterId: setup.target.id,
+      message: "这是一段更晚的往来。",
+      idempotencyKey: "http-message-later",
+      source: "manual",
+    });
+    const focusedSnapshotResponse = await fetch(
+      `${baseUrl}/api/v1/character-channels/${encodeURIComponent(exchange.channel.id)}` +
+        `?messageLimit=1&episodeLimit=1&focusEpisodeId=${encodeURIComponent(exchange.episode.id)}`,
+    );
+    assert.equal(focusedSnapshotResponse.status, 200);
+    const focusedSnapshot = (await focusedSnapshotResponse.json() as {
+      snapshot: {
+        episodes: Array<{ id: string }>;
+        messages: Array<{ episodeId: string; content: string }>;
+      };
+    }).snapshot;
+    assert.deepEqual(
+      new Set(focusedSnapshot.episodes.map((episode) => episode.id)),
+      new Set([exchange.episode.id, laterExchange.episode.id]),
+    );
+    assert.equal(
+      focusedSnapshot.messages.filter((message) => message.episodeId === exchange.episode.id).length,
+      2,
+    );
+    assert.equal(
+      focusedSnapshot.messages.some((message) => message.content === "这是一段更晚的往来。"),
+      false,
+    );
+    assert.equal(
+      focusedSnapshot.messages.some((message) => message.content === "我收到啦。"),
+      true,
+    );
+
     const policyResponse = await fetch(
       `${baseUrl}/api/v1/characters/${encodeURIComponent(setup.source.id)}/life`,
       {
@@ -323,6 +359,210 @@ test("character-channel HTTP APIs expose exchanges, snapshots, read state, and s
     assert.equal(policy.socialEnabled, false);
     assert.equal(policy.socialDailyLimit, 3);
     assert.equal(policy.socialCooldownMinutes, 360);
+  } finally {
+    await new Promise<void>((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
+    runtime.dispose();
+  }
+});
+
+test("session collaboration HTTP projection is scoped to the bound character and omits execution details", async () => {
+  const runtime = createTestRuntime({
+    seed: "session-character-collaboration-http",
+    characterInteractionActor: async () => "内部协作结果：先核对时间，再检查遗漏。",
+  });
+  const server = createHttpServer({ kernel: runtime.kernel });
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  try {
+    const address = server.address();
+    assert.ok(address && typeof address === "object");
+    const baseUrl = `http://127.0.0.1:${address.port}`;
+    const sessionId = "character-collaboration-projection";
+    const setup = setupSharedWorld(runtime);
+
+    runtime.model.enqueue([{
+      kind: "assistant_text",
+      text: "我会请同伴一起核对。",
+    }]);
+    const boundSession = await runtime.kernel.sendMessage(sessionId, {
+      mode: "sms",
+      characterId: setup.source.id,
+      text: "请找同伴核对共享记录。",
+    });
+    assert.equal(boundSession.status, "completed");
+
+    const expected = await runtime.kernel.requestCharacterCollaboration({
+      sourceCharacterId: setup.source.id,
+      targetCharacterId: setup.target.id,
+      task: "核对共享记录的时间顺序",
+      context: "只核对共同工作室里的共享内容。",
+      idempotencyKey: "session-collaboration-visible",
+      parentSessionId: sessionId,
+    });
+    assert.equal(expected.episode.status, "completed");
+    assert.match(expected.episode.resultText ?? "", /内部协作结果/);
+
+    await runtime.kernel.requestCharacterCollaboration({
+      sourceCharacterId: setup.source.id,
+      targetCharacterId: setup.target.id,
+      task: "属于另一个用户会话的协作",
+      idempotencyKey: "session-collaboration-other-session",
+      parentSessionId: "another-session",
+    });
+    await runtime.kernel.sendCharacterChannelMessage({
+      sourceCharacterId: setup.source.id,
+      targetCharacterId: setup.target.id,
+      message: "这只是角色间联系，不是协作投影。",
+      idempotencyKey: "session-collaboration-contact",
+      parentSessionId: sessionId,
+    });
+
+    const forgedInitiator = runtime.kernel.createCharacter({
+      name: "伪造发起角色",
+      soulMarkdown: "# SOUL.md\n\n不属于当前绑定会话的发起角色。",
+    });
+    runtime.kernel.assignCharacterWorld(forgedInitiator.id, {
+      worldId: setup.world.id,
+      homePlaceId: setup.place.id,
+      currentPlaceId: setup.place.id,
+    });
+    await runtime.kernel.requestCharacterCollaboration({
+      sourceCharacterId: forgedInitiator.id,
+      targetCharacterId: setup.target.id,
+      task: "伪造相同 parentSessionId 的协作",
+      idempotencyKey: "session-collaboration-forged-initiator",
+      parentSessionId: sessionId,
+    });
+
+    const response = await fetch(
+      `${baseUrl}/api/v1/sessions/${encodeURIComponent(sessionId)}/character-collaborations`,
+    );
+    assert.equal(response.status, 200);
+    const body = await response.json() as {
+      collaborations: Array<Record<string, unknown>>;
+    };
+    assert.equal(body.collaborations.length, 1);
+    const projection = body.collaborations[0];
+    assert.deepEqual({
+      episodeId: projection.episodeId,
+      channelId: projection.channelId,
+      worldId: projection.worldId,
+      initiatorCharacterId: projection.initiatorCharacterId,
+      initiatorCharacterName: projection.initiatorCharacterName,
+      targetCharacterId: projection.targetCharacterId,
+      targetCharacterName: projection.targetCharacterName,
+      title: projection.title,
+      objective: projection.objective,
+      status: projection.status,
+    }, {
+      episodeId: expected.episode.id,
+      channelId: expected.channel.id,
+      worldId: setup.world.id,
+      initiatorCharacterId: setup.source.id,
+      initiatorCharacterName: setup.source.name,
+      targetCharacterId: setup.target.id,
+      targetCharacterName: setup.target.name,
+      title: `${setup.source.name}委托${setup.target.name}`,
+      objective: "核对共享记录的时间顺序\n补充背景：只核对共同工作室里的共享内容。",
+      status: "completed",
+    });
+    for (const privateField of [
+      "resultText",
+      "failureReason",
+      "idempotencyKey",
+      "parentSessionId",
+      "modelCalls",
+      "responseText",
+      "messages",
+    ]) {
+      assert.equal(
+        Object.hasOwn(projection, privateField),
+        false,
+        `collaboration projection must omit ${privateField}`,
+      );
+    }
+    const serialized = JSON.stringify(projection);
+    assert.doesNotMatch(serialized, /内部协作结果/);
+    assert.doesNotMatch(serialized, /session-collaboration-visible/);
+    assert.doesNotMatch(serialized, /属于另一个用户会话/);
+    assert.doesNotMatch(serialized, /这只是角色间联系/);
+    assert.doesNotMatch(serialized, /伪造相同 parentSessionId/);
+
+    const sharedLongPrefix = `long-session-${"x".repeat(260)}`;
+    const longSessionA = `${sharedLongPrefix}-a`;
+    const longSessionB = `${sharedLongPrefix}-b`;
+    for (const longSessionId of [longSessionA, longSessionB]) {
+      runtime.model.enqueue([{
+        kind: "assistant_text",
+        text: "长会话 ID 已绑定。",
+      }]);
+      await runtime.kernel.sendMessage(longSessionId, {
+        mode: "sms",
+        characterId: setup.source.id,
+        text: `绑定 ${longSessionId.endsWith("-a") ? "A" : "B"} 会话。`,
+      });
+    }
+    const longSessionCollaboration = await runtime.kernel.requestCharacterCollaboration({
+      sourceCharacterId: setup.source.id,
+      targetCharacterId: setup.target.id,
+      task: "只属于长 ID 会话 A 的协作",
+      idempotencyKey: "session-collaboration-long-id",
+      parentSessionId: longSessionA,
+    });
+    const longSessionAResponse = await fetch(
+      `${baseUrl}/api/v1/sessions/${encodeURIComponent(longSessionA)}/character-collaborations`,
+    );
+    const longSessionBResponse = await fetch(
+      `${baseUrl}/api/v1/sessions/${encodeURIComponent(longSessionB)}/character-collaborations`,
+    );
+    assert.equal(longSessionAResponse.status, 200);
+    assert.equal(longSessionBResponse.status, 200);
+    assert.deepEqual(
+      (await longSessionAResponse.json() as {
+        collaborations: Array<{ episodeId: string }>;
+      }).collaborations.map((entry) => entry.episodeId),
+      [longSessionCollaboration.episode.id],
+    );
+    assert.deepEqual(
+      (await longSessionBResponse.json() as { collaborations: unknown[] }).collaborations,
+      [],
+    );
+
+    const sessionTitle = runtime.kernel.listConversationMetadata()
+      .find((entry) => entry.id === sessionId)?.title;
+    assert.ok(sessionTitle);
+    const deleted = await runtime.kernel.deleteConversation(sessionId, sessionTitle);
+    assert.ok(deleted.cleanup.characterCollaborationLinks >= 1);
+    assert.equal(
+      runtime.kernel.getCharacterChannel(expected.channel.id).episodes
+        .find((episode) => episode.id === expected.episode.id)?.parentSessionId,
+      undefined,
+    );
+    runtime.model.enqueue([{
+      kind: "assistant_text",
+      text: "这是复用 ID 后的新会话。",
+    }]);
+    await runtime.kernel.sendMessage(sessionId, {
+      mode: "sms",
+      characterId: setup.source.id,
+      text: "重新创建同名会话。",
+    });
+    const reusedSession = await fetch(
+      `${baseUrl}/api/v1/sessions/${encodeURIComponent(sessionId)}/character-collaborations`,
+    );
+    assert.equal(reusedSession.status, 200);
+    assert.deepEqual(
+      (await reusedSession.json() as { collaborations: unknown[] }).collaborations,
+      [],
+    );
+
+    const missing = await fetch(
+      `${baseUrl}/api/v1/sessions/unknown-character-collaboration/character-collaborations`,
+    );
+    assert.equal(missing.status, 404);
+    assert.equal(
+      (await missing.json() as { code?: string }).code,
+      "SESSION_NOT_FOUND",
+    );
   } finally {
     await new Promise<void>((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
     runtime.dispose();

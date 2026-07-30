@@ -77,8 +77,15 @@ test("server serves chat UI and debug model traces", async () => {
     assert.match(html, /id="characterProfileDialog"/);
     assert.match(html, /id="characterChannelDialog"/);
     assert.match(html, /data-character-channel-id/);
+    assert.match(html, /data-character-channel-episode-id/);
     assert.match(html, /function openCharacterChannel/);
+    assert.match(html, /activeCharacterChannelEpisodeId/);
     assert.match(html, /api\/v1\/character-channels/);
+    assert.match(html, /api\/v1\/sessions\/.*\/character-collaborations/);
+    assert.match(html, /function mergeCharacterCollaborations/);
+    assert.match(html, /function renderCollaborationEvent/);
+    assert.match(html, /character-collaboration-card/);
+    assert.match(html, /查看他们的往来/);
     assert.match(html, /data-character-profile-id/);
     assert.match(html, /function openCharacterProfile/);
     const characterProfileDialog = html.match(/<dialog id="characterProfileDialog"[\s\S]*?<\/dialog>/)?.[0] ?? "";
