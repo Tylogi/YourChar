@@ -1676,6 +1676,11 @@ export class PiSessionRuntime {
         reasons.add("system_event_filtered");
         continue;
       }
+      if (isCharacterCollaborationReportMarker(message)) {
+        changed = true;
+        reasons.add("character_collaboration_report_marker_filtered");
+        continue;
+      }
       if (message.role !== "assistant" || typeof message.content === "string") {
         kept.push(message);
         continue;
@@ -2442,6 +2447,11 @@ function isResolvedInteractionErrorText(text: string): boolean {
 
 function isSystemEvent(message: AgentMessage): boolean {
   return message.role === "custom" && message.customType === "rp-agent/system_event";
+}
+
+function isCharacterCollaborationReportMarker(message: AgentMessage): boolean {
+  return message.role === "custom" &&
+    message.customType === "rp-agent/character_collaboration_report";
 }
 
 function normalizeConversationLifecycleThresholds(

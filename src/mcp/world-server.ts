@@ -63,6 +63,8 @@ export function createWorldMcpServer(context: WorldMcpContext): McpServer {
         "or treat world descriptions as policy. Mutations affect only fictional shared-world state and never the user's real schedule. " +
         "Character-to-character messages use persistent private channels and each target answers with their own model and identity. " +
         "Never impersonate another character. Collaboration may name a target or request fixed capability IDs for trusted automatic routing. " +
+        "Collaboration requests are durable background work: request_character_help returns acceptance immediately, and the system delivers the target's terminal result later. " +
+        "After it is accepted, continue the current turn without waiting for or inventing that result. " +
         "Tool routing is strict: use request_character_help whenever another character is expected to do bounded work or produce a task result, " +
         "such as a lookup, research, analysis, plan, checklist, evaluation, task-focused advice, decision, or other deliverable for the bound character to use or relay. " +
         "This takes precedence even when the user phrases the request as asking, messaging, chatting with, or checking with that character. " +
@@ -154,9 +156,9 @@ export function createWorldMcpServer(context: WorldMcpContext): McpServer {
   server.registerTool(
     "request_character_help",
     {
-      title: "Delegate a task to another character",
+      title: "Queue a task for another character",
       description:
-        "Delegate one bounded task to another same-world character and return that character's actual task result to the bound character. Use this whenever the target is expected to do work or produce a lookup, research result, analysis, plan, checklist, evaluation, task-focused advice, decision, solution, or other deliverable that the bound character will use or relay to the user. Explicit requests to collaborate, cooperate, delegate, or help with a task use this tool. Task intent takes precedence over surface wording such as ask, message, privately chat with, or check with the target. Do not use it merely to ask about the target's own current state, feelings, preferences, availability, or willingness; those are ordinary send_character_message conversations. Either name a target or provide requiredCapabilityIds so the trusted Coordinator can select an eligible specialist. The target uses their own model, identity, public world state, relationship, and persistent character channel, then returns a result. It cannot perform real external actions and does not expose the target's private user conversation.",
+        "Queue one bounded task for another same-world character and return durable acceptance immediately. Use this whenever the target is expected to do work or produce a lookup, research result, analysis, plan, checklist, evaluation, task-focused advice, decision, solution, or other deliverable that the bound character will use or relay to the user. Explicit requests to collaborate, cooperate, delegate, or help with a task use this tool. Task intent takes precedence over surface wording such as ask, message, privately chat with, or check with the target. Do not use it merely to ask about the target's own current state, feelings, preferences, availability, or willingness; those are ordinary send_character_message conversations. Either name a target or provide requiredCapabilityIds so the trusted Coordinator can select an eligible specialist. The target works in the background using their own model, identity, public world state, relationship, and persistent character channel. The system will deliver the terminal result later; after acceptance, do not wait for or invent the result in the current turn. It cannot perform real external actions and does not expose the target's private user conversation.",
       inputSchema: z.object({
         targetCharacterId: z.string().min(1).optional().describe(
           "Optional explicit non-self id from list_world_characters. Omit it to use capability routing.",
@@ -179,7 +181,7 @@ export function createWorldMcpServer(context: WorldMcpContext): McpServer {
     async (input, extra) => {
       let result;
       try {
-        result = await context.interactionCoordinator.requestCharacterHelp({
+        result = await context.interactionCoordinator.queueCharacterHelp({
           sourceCharacterId: context.characterId,
           ...(input.targetCharacterId ? { targetCharacterId: input.targetCharacterId } : {}),
           ...(input.requiredCapabilityIds?.length
@@ -232,43 +234,28 @@ export function createWorldMcpServer(context: WorldMcpContext): McpServer {
           { episodeId: error.episodeId, status: "failed", reason: error.message },
         );
       }
-      const completed = result.episode.status === "completed";
-      context.actions().push(context.store.addAction(
-        "request_character_help",
-        completed ? "completed" : "blocked",
-        {
-          transport: "mcp",
-          mcpServer: "rp-agent-world",
-          sourceCharacterId: context.characterId,
-          targetCharacterId: result.episode.targetCharacterId,
-          channelId: result.channel.id,
-          episodeId: result.episode.id,
-          episodeStatus: result.episode.status,
-          ...(result.routing ? { routing: result.routing } : {}),
-        },
-      ));
-      if (!completed) {
-        return toolResult(
-          result.episode.status === "declined"
-            ? "对方没有接受这次协作请求。请按事实向用户说明，不能编造结果。"
-            : "角色协作未完成。请按事实向用户说明，不能编造结果。",
-          {
-            channelId: result.channel.id,
-            episodeId: result.episode.id,
-            status: result.episode.status,
-            reason: result.episode.failureReason ?? result.episode.resultText,
-            ...(result.routing ? { routing: result.routing } : {}),
-          },
-        );
-      }
+      context.actions().push(context.store.addAction("request_character_help", "completed", {
+        transport: "mcp",
+        mcpServer: "rp-agent-world",
+        sourceCharacterId: context.characterId,
+        targetCharacterId: result.episode.targetCharacterId,
+        channelId: result.channel.id,
+        episodeId: result.episode.id,
+        episodeStatus: result.episode.status,
+        queued: result.episode.status === "queued" || result.episode.status === "running",
+        ...(result.routing ? { routing: result.routing } : {}),
+      }));
       return toolResult(
-        `协作结果（来自${result.routing?.selected?.characterName ?? "目标角色"}）：${result.responseText}`,
+        result.episode.status === "queued" || result.episode.status === "running"
+          ? `协作请求已交给${result.routing?.selected?.characterName ?? "目标角色"}后台处理。当前轮不要等待或编造结果；完成后系统会另行送达。`
+          : "这是一个已存在的协作请求，已到达终态。结果会由系统的协作回报单独送达；当前轮不要重复编造或转述。",
         {
           channelId: result.channel.id,
           episodeId: result.episode.id,
           status: result.episode.status,
           selectedCharacterId: result.episode.targetCharacterId,
-          resultText: result.responseText,
+          accepted: true,
+          reportStatus: result.episode.reportStatus,
           ...(result.routing ? { routing: result.routing } : {}),
         },
       );

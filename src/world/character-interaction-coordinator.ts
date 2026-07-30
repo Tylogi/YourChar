@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import type { Clock } from "../app/clock.js";
 import type { IdGenerator } from "../app/id-generator.js";
 import {
@@ -13,6 +14,8 @@ import type {
   CharacterChannel,
   CharacterChannelEpisode,
   CharacterChannelMessage,
+  CharacterCollaborationJob,
+  CharacterCollaborationReportOutcome,
   CharacterInteractionActor,
   CharacterInteractionActorInput,
   CharacterInteractionResult,
@@ -25,6 +28,10 @@ const ACTOR_TEXT_LIMIT = 4_000;
 
 export type CharacterInteractionCoordinatorOptions = {
   actor: CharacterInteractionActor;
+  onCollaborationSettled?: (
+    result: CharacterInteractionResult,
+    signal: AbortSignal,
+  ) => CharacterCollaborationReportOutcome | Promise<CharacterCollaborationReportOutcome>;
   onAction?: (
     actionType: string,
     status: "completed" | "failed" | "blocked",
@@ -33,7 +40,19 @@ export type CharacterInteractionCoordinatorOptions = {
 };
 
 export class CharacterInteractionCoordinator {
+  private readonly ownerId = randomUUID();
   private readonly channelQueues = new Map<string, Promise<unknown>>();
+  private readonly activeControllers = new Set<AbortController>();
+  private started = false;
+  private disposed = false;
+  private executionScheduled = false;
+  private reportScheduled = false;
+  private executionRescheduleRequested = false;
+  private reportRescheduleRequested = false;
+  private executionTimer?: NodeJS.Timeout;
+  private reportTimer?: NodeJS.Timeout;
+  private executionProcessing?: Promise<void>;
+  private reportProcessing?: Promise<void>;
 
   constructor(
     readonly channels: CharacterChannelService,
@@ -114,6 +133,124 @@ export class CharacterInteractionCoordinator {
         "collaboration_result",
         routing,
       ));
+  }
+
+  async queueCharacterHelp(input: {
+    sourceCharacterId: string;
+    targetCharacterId?: string;
+    requiredCapabilityIds?: CharacterCapabilityId[];
+    task: string;
+    context?: string;
+    message?: string;
+    idempotencyKey: string;
+    parentSessionId?: string;
+  }): Promise<CharacterInteractionResult> {
+    if (this.disposed) {
+      throw new WorldValidationError("character interaction coordinator is disposed");
+    }
+    const source = this.rpService.getCharacter(input.sourceCharacterId);
+    const task = boundedRequired(input.task, "collaboration task", 2_000);
+    const existingEpisode = this.channels.repository.findEpisodeByIdempotencyKey(
+      input.idempotencyKey,
+    );
+    if (existingEpisode) {
+      const existingJob = this.channels.repository.getCollaborationJob(existingEpisode.id);
+      if (
+        !existingJob ||
+        existingEpisode.kind !== "collaboration" ||
+        existingEpisode.initiatorCharacterId !== source.id
+      ) {
+        throw new WorldValidationError(
+          "idempotency key belongs to a different character interaction",
+        );
+      }
+      this.start();
+      this.scheduleExecutions();
+      this.scheduleReports();
+      return this.resultFor(
+        this.channels.getChannel(existingEpisode.channelId),
+        existingEpisode,
+        undefined,
+        existingJob.routing,
+      );
+    }
+    const routing = this.capabilities.routeTask({
+      sourceCharacterId: source.id,
+      task,
+      ...(input.targetCharacterId ? { targetCharacterId: input.targetCharacterId } : {}),
+      ...(input.requiredCapabilityIds?.length
+        ? { requiredCapabilityIds: input.requiredCapabilityIds }
+        : {}),
+    });
+    const target = this.rpService.getCharacter(routing.selected!.characterId);
+    const context = boundedOptional(input.context, 1_500);
+    const opening = boundedOptional(input.message, 2_000) ||
+      `${target.name}，能帮我处理一下这件事吗？${task}`;
+    const objective = [task, context ? `补充背景：${context}` : ""].filter(Boolean).join("\n");
+    const started = this.channels.startQueuedCollaboration({
+      initiatorCharacterId: source.id,
+      targetCharacterId: target.id,
+      idempotencyKey: input.idempotencyKey,
+      ...(input.parentSessionId ? { parentSessionId: input.parentSessionId } : {}),
+      title: `${source.name}委托${target.name}`,
+      objective,
+      openingMessage: opening,
+      routing,
+    });
+    this.start();
+    this.scheduleExecutions();
+    return this.resultFor(started.channel, started.episode, undefined, started.job.routing);
+  }
+
+  start(): void {
+    if (this.started || this.disposed) return;
+    this.started = true;
+    const now = this.now();
+    this.channels.repository.recoverInterruptedCollaborationJobs(now);
+    this.channels.repository.failExhaustedCollaborationJobs(
+      now,
+      "协作任务多次中断，已停止重试。",
+    );
+    this.channels.repository.reconcileTerminalCollaborationJobs(now);
+    this.channels.repository.recoverInterruptedCollaborationReports(now);
+    this.scheduleExecutions();
+    this.scheduleReports();
+  }
+
+  async drain(): Promise<void> {
+    if (this.disposed) return;
+    this.start();
+    this.scheduleExecutions();
+    this.scheduleReports();
+    while (
+      this.executionScheduled ||
+      this.reportScheduled ||
+      this.executionProcessing ||
+      this.reportProcessing
+    ) {
+      await Promise.all([
+        this.executionProcessing ?? Promise.resolve(),
+        this.reportProcessing ?? Promise.resolve(),
+      ]);
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    }
+  }
+
+  dispose(): void {
+    if (this.disposed) return;
+    this.disposed = true;
+    if (this.executionTimer) clearTimeout(this.executionTimer);
+    if (this.reportTimer) clearTimeout(this.reportTimer);
+    this.executionTimer = undefined;
+    this.reportTimer = undefined;
+    this.executionScheduled = false;
+    this.reportScheduled = false;
+    this.executionRescheduleRequested = false;
+    this.reportRescheduleRequested = false;
+    for (const controller of this.activeControllers) controller.abort();
+    const now = this.now();
+    this.channels.repository.releaseCollaborationOwner(this.ownerId, now);
+    this.channels.repository.releaseCollaborationReportOwner(this.ownerId, now);
   }
 
   async startSocialExchange(input: {
@@ -200,6 +337,305 @@ export class CharacterInteractionCoordinator {
     return result;
   }
 
+  private scheduleExecutions(): void {
+    if (!this.started || this.disposed) return;
+    if (this.executionProcessing) {
+      this.executionRescheduleRequested = true;
+      return;
+    }
+    if (this.executionScheduled) return;
+    this.executionScheduled = true;
+    this.executionTimer = setTimeout(() => {
+      this.executionTimer = undefined;
+      this.executionScheduled = false;
+      if (this.disposed) return;
+      const processing = this.processAvailableCollaborations().catch((error) => {
+        if (this.disposed) return;
+        this.options.onAction?.("character_collaboration_worker", "failed", {
+          error: errorText(error),
+        });
+      });
+      const tracked = processing.finally(() => {
+        if (this.executionProcessing !== tracked) return;
+        this.executionProcessing = undefined;
+        if (this.executionRescheduleRequested && !this.disposed) {
+          this.executionRescheduleRequested = false;
+          this.scheduleExecutions();
+        }
+      });
+      this.executionProcessing = tracked;
+    }, 0);
+    this.executionTimer.unref();
+  }
+
+  private scheduleReports(): void {
+    if (!this.started || this.disposed) return;
+    if (this.reportProcessing) {
+      this.reportRescheduleRequested = true;
+      return;
+    }
+    if (this.reportScheduled) return;
+    this.reportScheduled = true;
+    this.reportTimer = setTimeout(() => {
+      this.reportTimer = undefined;
+      this.reportScheduled = false;
+      if (this.disposed) return;
+      const processing = this.processAvailableCollaborationReports().catch((error) => {
+        if (this.disposed) return;
+        this.options.onAction?.("character_collaboration_reporter", "failed", {
+          error: errorText(error),
+        });
+      });
+      const tracked = processing.finally(() => {
+        if (this.reportProcessing !== tracked) return;
+        this.reportProcessing = undefined;
+        if (this.reportRescheduleRequested && !this.disposed) {
+          this.reportRescheduleRequested = false;
+          this.scheduleReports();
+        }
+      });
+      this.reportProcessing = tracked;
+    }, 0);
+    this.reportTimer.unref();
+  }
+
+  private async processAvailableCollaborations(): Promise<void> {
+    if (this.disposed) return;
+    const now = this.now();
+    this.channels.repository.recoverExpiredCollaborationJobs(now);
+    this.channels.repository.failExhaustedCollaborationJobs(
+      now,
+      "协作任务多次中断，已停止重试。",
+    );
+    this.channels.repository.reconcileTerminalCollaborationJobs(now);
+    for (const job of this.channels.repository.listRunnableCollaborationJobs(this.now(), 10)) {
+      if (this.disposed) return;
+      await this.processCollaborationJob(job);
+    }
+    if (this.disposed) return;
+    this.channels.repository.reconcileTerminalCollaborationJobs(this.now());
+    this.scheduleReports();
+    if (this.channels.repository.listRunnableCollaborationJobs(this.now(), 1).length) {
+      this.scheduleExecutions();
+    }
+  }
+
+  private async processCollaborationJob(job: CharacterCollaborationJob): Promise<void> {
+    if (this.disposed) return;
+    const claimToken = randomUUID();
+    const claimed = this.channels.repository.claimCollaborationJob(
+      job.episodeId,
+      this.ownerId,
+      claimToken,
+      this.now(),
+      this.leaseExpiry(),
+    );
+    if (!claimed) return;
+    const claim = { ownerId: this.ownerId, claimToken };
+    const controller = new AbortController();
+    this.activeControllers.add(controller);
+    let claimLost = false;
+    const renew = (): boolean => {
+      if (this.disposed || controller.signal.aborted || claimLost) return false;
+      try {
+        const active = this.channels.repository.renewCollaborationClaim(
+          claimed.episodeId,
+          this.ownerId,
+          claimToken,
+          this.leaseExpiry(),
+          this.now(),
+        );
+        if (!active) {
+          claimLost = true;
+          controller.abort();
+        }
+        return active;
+      } catch {
+        claimLost = true;
+        controller.abort();
+        return false;
+      }
+    };
+    const heartbeat = setInterval(renew, 10_000);
+    heartbeat.unref();
+    try {
+      const episode = this.channels.repository.getEpisode(claimed.episodeId);
+      if (!episode) throw new Error(`collaboration episode not found: ${claimed.episodeId}`);
+      const channel = this.channels.getChannel(episode.channelId);
+      const result = await this.runLocked(channel.id, async () => {
+        if (!renew()) throw new CharacterCollaborationClaimLostError();
+        return this.runSeededExchange(
+          channel,
+          episode,
+          claimed.openingMessage,
+          "collaboration_result",
+          claimed.routing,
+          controller.signal,
+          renew,
+        );
+      });
+      if (!renew()) return;
+      const status = collaborationJobStatusFor(result.episode.status);
+      if (!status) {
+        throw new Error(`collaboration did not reach a terminal state: ${result.episode.status}`);
+      }
+      const finished = this.channels.repository.finishCollaborationJob(
+        claimed.episodeId,
+        status,
+        {
+          ...(result.episode.failureReason
+            ? { lastError: result.episode.failureReason }
+            : {}),
+        },
+        this.now(),
+        claim,
+      );
+      if (finished) this.scheduleReports();
+    } catch (error) {
+      if (
+        this.disposed ||
+        controller.signal.aborted ||
+        claimLost ||
+        error instanceof CharacterCollaborationClaimLostError
+      ) {
+        return;
+      }
+      const current = this.channels.repository.getEpisode(claimed.episodeId);
+      let terminal = current;
+      if (current && !isTerminal(current.status)) {
+        terminal = this.failEpisode(current, error);
+        this.recordCollaborationEvidence(terminal, claimed.routing);
+      }
+      this.channels.repository.finishCollaborationJob(
+        claimed.episodeId,
+        terminal?.status === "cancelled" ? "cancelled" : "failed",
+        { lastError: terminal?.failureReason ?? errorText(error) },
+        this.now(),
+        claim,
+      );
+      this.scheduleReports();
+    } finally {
+      clearInterval(heartbeat);
+      this.activeControllers.delete(controller);
+      if (!controller.signal.aborted) controller.abort();
+    }
+  }
+
+  private async processAvailableCollaborationReports(): Promise<void> {
+    if (this.disposed) return;
+    this.channels.repository.recoverExpiredCollaborationReports(this.now());
+    for (
+      const episode of this.channels.repository.listReportableCollaborationEpisodes(
+        this.now(),
+        10,
+      )
+    ) {
+      if (this.disposed) return;
+      await this.processCollaborationReport(episode);
+    }
+    if (
+      !this.disposed &&
+      this.channels.repository.listReportableCollaborationEpisodes(this.now(), 1).length
+    ) {
+      this.scheduleReports();
+    }
+  }
+
+  private async processCollaborationReport(episode: CharacterChannelEpisode): Promise<void> {
+    if (this.disposed) return;
+    const claimToken = randomUUID();
+    const claimed = this.channels.repository.claimCollaborationReport(
+      episode.id,
+      this.ownerId,
+      claimToken,
+      this.now(),
+      this.leaseExpiry(),
+    );
+    if (!claimed) return;
+    const claim = { ownerId: this.ownerId, claimToken };
+    const controller = new AbortController();
+    this.activeControllers.add(controller);
+    let claimLost = false;
+    const renew = (): boolean => {
+      if (this.disposed || controller.signal.aborted || claimLost) return false;
+      try {
+        const active = this.channels.repository.renewCollaborationReportClaim(
+          claimed.id,
+          this.ownerId,
+          claimToken,
+          this.leaseExpiry(),
+          this.now(),
+        );
+        if (!active) {
+          claimLost = true;
+          controller.abort();
+        }
+        return active;
+      } catch {
+        claimLost = true;
+        controller.abort();
+        return false;
+      }
+    };
+    const heartbeat = setInterval(renew, 10_000);
+    heartbeat.unref();
+    try {
+      const job = this.channels.repository.getCollaborationJob(claimed.id);
+      if (!job) throw new Error(`collaboration job not found: ${claimed.id}`);
+      const result = this.resultFor(
+        this.channels.getChannel(claimed.channelId),
+        claimed,
+        undefined,
+        job.routing,
+      );
+      const outcome = this.options.onCollaborationSettled
+        ? await this.options.onCollaborationSettled(result, controller.signal)
+        : { status: "skipped" as const, reason: "no collaboration settlement handler" };
+      if (!renew()) return;
+      const normalized = normalizeReportOutcome(outcome);
+      this.channels.repository.finishCollaborationReport(
+        claimed.id,
+        normalized.status,
+        normalized.status === "failed" ? normalized.error : undefined,
+        this.now(),
+        claim,
+      );
+      this.options.onAction?.(
+        "character_collaboration_report",
+        normalized.status === "failed" ? "failed" : "completed",
+        {
+          episodeId: claimed.id,
+          channelId: claimed.channelId,
+          reportStatus: normalized.status,
+          ...(normalized.status === "failed" ? { error: normalized.error } : {}),
+          ...(normalized.status === "skipped" && normalized.reason
+            ? { reason: normalized.reason }
+            : {}),
+        },
+      );
+    } catch (error) {
+      if (this.disposed || controller.signal.aborted || claimLost) return;
+      if (!renew()) return;
+      const message = errorText(error);
+      this.channels.repository.finishCollaborationReport(
+        claimed.id,
+        "failed",
+        message,
+        this.now(),
+        claim,
+      );
+      this.options.onAction?.("character_collaboration_report", "failed", {
+        episodeId: claimed.id,
+        channelId: claimed.channelId,
+        error: message,
+      });
+    } finally {
+      clearInterval(heartbeat);
+      this.activeControllers.delete(controller);
+      if (!controller.signal.aborted) controller.abort();
+    }
+  }
+
   private selectSocialTarget(
     sourceCharacterId: string,
     worldId: string,
@@ -239,7 +675,10 @@ export class CharacterInteractionCoordinator {
     opening: string,
     purpose: "direct_reply" | "collaboration_result",
     routing?: CharacterTaskRoute,
+    signal?: AbortSignal,
+    claimActive?: () => boolean,
   ): Promise<CharacterInteractionResult> {
+    assertInteractionActive(signal, claimActive);
     const current = this.channels.repository.getEpisode(episode.id) ?? episode;
     if (isTerminal(current.status)) {
       this.recordCollaborationEvidence(current, routing);
@@ -258,20 +697,48 @@ export class CharacterInteractionCoordinator {
           content: opening,
         });
       }
-      const response = await this.callActor(running, running.targetCharacterId, purpose, opening);
+      const existingResponse = existingMessages.find((message) =>
+        message.senderCharacterId === running.targetCharacterId &&
+        message.kind === (running.kind === "collaboration" ? "result" : "message"));
+      if (existingResponse) {
+        const completed = this.channels.updateEpisode(running.id, {
+          status: "completed",
+          resultText: existingResponse.content,
+          completed: true,
+        });
+        this.settleEpisodeSafely(completed);
+        this.recordCollaborationEvidence(completed, routing);
+        return this.resultFor(channel, completed, existingResponse.content, routing);
+      }
+      const response = await this.callActor(
+        running,
+        running.targetCharacterId,
+        purpose,
+        opening,
+        signal,
+      );
+      assertInteractionActive(signal, claimActive);
       running = this.channels.updateEpisode(running.id, { modelCalls: running.modelCalls + 1 });
       const declineReason = parseDecline(response);
       if (declineReason !== undefined) {
-        this.channels.appendSystemMessage({
-          channelId: channel.id,
-          episodeId: running.id,
-          content: declineReason ? `对方暂未接受：${declineReason}` : "对方暂未接受这次交流。",
-        });
         const declined = this.channels.updateEpisode(running.id, {
           status: "declined",
           resultText: declineReason,
           completed: true,
         });
+        try {
+          this.channels.appendSystemMessage({
+            channelId: channel.id,
+            episodeId: running.id,
+            content: declineReason ? `对方暂未接受：${declineReason}` : "对方暂未接受这次交流。",
+          });
+        } catch (error) {
+          this.options.onAction?.("character_channel_status_message", "failed", {
+            episodeId: declined.id,
+            channelId: channel.id,
+            error: errorText(error),
+          });
+        }
         this.options.onAction?.("character_channel_exchange", "blocked", {
           episodeId: declined.id,
           channelId: channel.id,
@@ -302,6 +769,12 @@ export class CharacterInteractionCoordinator {
       this.recordCollaborationEvidence(completed, routing);
       return this.resultFor(channel, completed, reply, routing);
     } catch (error) {
+      if (
+        signal?.aborted ||
+        error instanceof CharacterCollaborationClaimLostError
+      ) {
+        throw new CharacterCollaborationClaimLostError();
+      }
       const failed = this.failEpisode(running, error);
       this.recordCollaborationEvidence(failed, routing);
       throw new CharacterInteractionExecutionError(failed.id, errorText(error));
@@ -390,6 +863,7 @@ export class CharacterInteractionCoordinator {
     actorCharacterId: string,
     purpose: CharacterInteractionActorInput["purpose"],
     openingMessage?: string,
+    signal?: AbortSignal,
   ): Promise<string> {
     const actor = this.rpService.getCharacter(actorCharacterId);
     const peerId = actorCharacterId === episode.initiatorCharacterId
@@ -432,6 +906,7 @@ export class CharacterInteractionCoordinator {
           }
         : {}),
       currentTime: this.clock.now().toISOString(),
+      ...(signal ? { signal } : {}),
     };
     return this.options.actor(input);
   }
@@ -544,20 +1019,20 @@ export class CharacterInteractionCoordinator {
     error: unknown,
   ): CharacterChannelEpisode {
     const reason = errorText(error);
-    try {
-      this.channels.appendSystemMessage({
-        channelId: episode.channelId,
-        episodeId: episode.id,
-        content: "本次角色交流未完成。",
-      });
-    } catch {
-      // Preserve the original execution failure.
-    }
     const failed = this.channels.updateEpisode(episode.id, {
       status: "failed",
       failureReason: reason,
       completed: true,
     });
+    try {
+      this.channels.appendSystemMessage({
+        channelId: failed.channelId,
+        episodeId: failed.id,
+        content: "本次角色交流未完成。",
+      });
+    } catch {
+      // Preserve the original execution failure.
+    }
     this.options.onAction?.("character_channel_exchange", "failed", {
       episodeId: failed.id,
       channelId: failed.channelId,
@@ -627,6 +1102,14 @@ export class CharacterInteractionCoordinator {
       if (this.channelQueues.get(channelId) === current) this.channelQueues.delete(channelId);
     });
   }
+
+  private now(): string {
+    return this.clock.now().toISOString();
+  }
+
+  private leaseExpiry(): string {
+    return new Date(this.clock.now().getTime() + 30_000).toISOString();
+  }
 }
 
 export class CharacterInteractionExecutionError extends Error {
@@ -636,6 +1119,52 @@ export class CharacterInteractionExecutionError extends Error {
     super(message);
     this.name = "CharacterInteractionExecutionError";
   }
+}
+
+class CharacterCollaborationClaimLostError extends Error {
+  constructor() {
+    super("character collaboration claim is no longer active");
+    this.name = "CharacterCollaborationClaimLostError";
+  }
+}
+
+function assertInteractionActive(
+  signal?: AbortSignal,
+  claimActive?: () => boolean,
+): void {
+  if (signal?.aborted || (claimActive && !claimActive())) {
+    throw new CharacterCollaborationClaimLostError();
+  }
+}
+
+function collaborationJobStatusFor(
+  status: CharacterChannelEpisode["status"],
+): Exclude<CharacterCollaborationJob["status"], "queued" | "running"> | undefined {
+  if (status === "completed" || status === "declined") return "completed";
+  if (status === "failed") return "failed";
+  if (status === "cancelled") return "cancelled";
+  return undefined;
+}
+
+function normalizeReportOutcome(
+  outcome: CharacterCollaborationReportOutcome,
+): CharacterCollaborationReportOutcome {
+  if (outcome?.status === "delivered") return { status: "delivered" };
+  if (outcome?.status === "skipped") {
+    return {
+      status: "skipped",
+      ...(boundedOptional(outcome.reason, 800) ? {
+        reason: boundedOptional(outcome.reason, 800),
+      } : {}),
+    };
+  }
+  if (outcome?.status === "failed") {
+    return {
+      status: "failed",
+      error: boundedOptional(outcome.error, 800) || "collaboration settlement delivery failed",
+    };
+  }
+  throw new Error("invalid collaboration settlement outcome");
 }
 
 function isTerminal(status: CharacterChannelEpisode["status"]): boolean {

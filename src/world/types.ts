@@ -568,6 +568,18 @@ export type CharacterChannelEpisodeStatus =
   | "failed"
   | "cancelled";
 export type CharacterChannelMessageKind = "message" | "task" | "result" | "status";
+export type CharacterCollaborationJobStatus =
+  | "queued"
+  | "running"
+  | "completed"
+  | "failed"
+  | "cancelled";
+export type CharacterCollaborationReportStatus =
+  | "pending"
+  | "delivering"
+  | "delivered"
+  | "skipped"
+  | "failed";
 
 export type CharacterChannel = {
   id: string;
@@ -599,6 +611,10 @@ export type CharacterChannelEpisode = {
   idempotencyKey: string;
   resultText?: string;
   failureReason?: string;
+  reportStatus?: CharacterCollaborationReportStatus;
+  reportAttempts?: number;
+  reportedAt?: string;
+  reportError?: string;
   createdAt: string;
   updatedAt: string;
   completedAt?: string;
@@ -641,6 +657,8 @@ export type CharacterCollaborationSummary = {
   objective: string;
   status: CharacterChannelEpisodeStatus;
   messageCount: number;
+  reportStatus?: CharacterCollaborationReportStatus;
+  reportedAt?: string;
   createdAt: string;
   updatedAt: string;
   completedAt?: string;
@@ -673,6 +691,7 @@ export type CharacterInteractionActorInput = {
   taskIdentity?: CharacterTaskIdentity;
   taskSkill?: CharacterTaskSkill;
   currentTime: string;
+  signal?: AbortSignal;
 };
 
 export type CharacterInteractionActor = (
@@ -686,6 +705,28 @@ export type CharacterInteractionResult = {
   responseText?: string;
   routing?: CharacterTaskRoute;
 };
+
+export type CharacterCollaborationJob = {
+  episodeId: string;
+  openingMessage: string;
+  routing: CharacterTaskRoute;
+  status: CharacterCollaborationJobStatus;
+  attempts: number;
+  maxAttempts: number;
+  lastError?: string;
+  ownerId?: string;
+  claimToken?: string;
+  leaseExpiresAt?: string;
+  availableAt: string;
+  createdAt: string;
+  updatedAt: string;
+  completedAt?: string;
+};
+
+export type CharacterCollaborationReportOutcome =
+  | { status: "delivered" }
+  | { status: "skipped"; reason?: string }
+  | { status: "failed"; error: string };
 
 export type CharacterSocialTickResult = {
   created: number;

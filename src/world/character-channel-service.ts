@@ -13,6 +13,7 @@ import type {
   CharacterChannelMessageKind,
   CharacterChannelSnapshot,
   CharacterChannelSummary,
+  CharacterCollaborationJob,
   CharacterCollaborationSummary,
 } from "./types.js";
 
@@ -132,6 +133,8 @@ export class CharacterChannelService {
           objective: episode.objective,
           status: episode.status,
           messageCount: episode.messageCount,
+          ...(episode.reportStatus ? { reportStatus: episode.reportStatus } : {}),
+          ...(episode.reportedAt ? { reportedAt: episode.reportedAt } : {}),
           createdAt: episode.createdAt,
           updatedAt: episode.updatedAt,
           ...(episode.completedAt ? { completedAt: episode.completedAt } : {}),
@@ -192,6 +195,96 @@ export class CharacterChannelService {
       updatedAt: now,
     });
     return { channel, episode, existing: false };
+  }
+
+  startQueuedCollaboration(input: {
+    initiatorCharacterId: string;
+    targetCharacterId: string;
+    idempotencyKey: string;
+    parentSessionId?: string;
+    title?: string;
+    objective?: string;
+    openingMessage: string;
+    routing: CharacterCollaborationJob["routing"];
+  }): {
+    channel: CharacterChannel;
+    episode: CharacterChannelEpisode;
+    job: CharacterCollaborationJob;
+    existing: boolean;
+  } {
+    const idempotencyKey = requiredText(input.idempotencyKey, "idempotency key", 500);
+    const existing = this.repository.findEpisodeByIdempotencyKey(idempotencyKey);
+    if (existing) {
+      const job = this.repository.getCollaborationJob(existing.id);
+      if (!job) {
+        throw new WorldValidationError(
+          `idempotency key belongs to a non-queued character exchange: ${idempotencyKey}`,
+        );
+      }
+      return {
+        channel: this.getChannel(existing.channelId),
+        episode: existing,
+        job,
+        existing: true,
+      };
+    }
+    const channel = this.ensureDirectChannel(input.initiatorCharacterId, input.targetCharacterId);
+    const now = this.clock.now().toISOString();
+    const parentSessionId = cleanIdentifier(input.parentSessionId);
+    const openingMessage = requiredText(
+      input.openingMessage,
+      "collaboration opening message",
+      MAX_CHANNEL_TEXT,
+    );
+    const episode: CharacterChannelEpisode = {
+      id: this.idGenerator.next("character-channel-episode"),
+      channelId: channel.id,
+      worldId: channel.worldId,
+      kind: "collaboration",
+      source: "agent_tool",
+      initiatorCharacterId: input.initiatorCharacterId,
+      targetCharacterId: input.targetCharacterId,
+      ...(parentSessionId ? { parentSessionId } : {}),
+      title: cleanText(input.title, 160),
+      objective: cleanText(input.objective, MAX_OBJECTIVE_TEXT),
+      status: "queued",
+      modelCalls: 0,
+      messageCount: 0,
+      idempotencyKey,
+      createdAt: now,
+      updatedAt: now,
+    };
+    const job: CharacterCollaborationJob = {
+      episodeId: episode.id,
+      openingMessage,
+      routing: input.routing,
+      status: "queued",
+      attempts: 0,
+      maxAttempts: 3,
+      availableAt: now,
+      createdAt: now,
+      updatedAt: now,
+    };
+    const created = this.repository.createQueuedCollaboration(
+      episode,
+      job,
+      {
+        id: this.idGenerator.next("character-channel-message"),
+        channelId: channel.id,
+        episodeId: episode.id,
+        senderType: "character",
+        senderCharacterId: episode.initiatorCharacterId,
+        kind: "task",
+        content: openingMessage,
+        createdAt: now,
+      },
+    );
+    return {
+      channel: this.getChannel(created.episode.channelId),
+      episode: created.episode,
+      job: created.job,
+      existing: created.existing,
+    };
   }
 
   updateEpisode(

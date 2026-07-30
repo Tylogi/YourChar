@@ -954,8 +954,8 @@ async function runDesktopWorkflow(browser, baseUrl, outputDir) {
   const collaborationCard = page.locator(
     `#messages .message-row.collaboration[data-character-episode-id="${seededCharacterChannel.episode.id}"]`,
   );
-  await collaborationCard.filter({ hasText: "林澈请顾遥一起处理了这件事" })
-    .filter({ hasText: "已完成" })
+  await collaborationCard.filter({ hasText: "顾遥已经把结果交给林澈" })
+    .filter({ hasText: "结果已返回" })
     .filter({ hasText: "确认雨后适合散步的路线" })
     .waitFor();
   await collaborationCard.getByRole("button", {
@@ -963,7 +963,7 @@ async function runDesktopWorkflow(browser, baseUrl, outputDir) {
     exact: true,
   }).click();
   await page.locator("#characterChannelDialog").waitFor({ state: "visible" });
-  await page.locator("#characterChannelParticipants").filter({ hasText: "林澈 与 顾遥" }).filter({ hasText: "已完成" }).waitFor();
+  await page.locator("#characterChannelParticipants").filter({ hasText: "林澈 与 顾遥" }).filter({ hasText: "结果已返回" }).waitFor();
   await page.locator("#characterChannelMessages").filter({ hasText: "哪一段更适合散步" }).filter({ hasText: "石板路积水少" }).waitFor();
   const focusedCollaboration = page.locator(
     `#characterChannelMessages [data-character-channel-episode-id="${seededCharacterChannel.episode.id}"]`,

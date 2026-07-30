@@ -1718,6 +1718,51 @@ const migrations: Migration[] = [
         WHERE parent_session_id IS NOT NULL AND kind = 'collaboration';
     `,
   },
+  {
+    version: 34,
+    sql: `
+      ALTER TABLE character_channel_episodes
+        ADD COLUMN report_status TEXT
+          CHECK (report_status IN ('pending', 'delivering', 'delivered', 'skipped', 'failed'));
+      ALTER TABLE character_channel_episodes
+        ADD COLUMN report_attempts INTEGER NOT NULL DEFAULT 0
+          CHECK (report_attempts >= 0);
+      ALTER TABLE character_channel_episodes
+        ADD COLUMN reported_at TEXT;
+      ALTER TABLE character_channel_episodes
+        ADD COLUMN report_error TEXT;
+      ALTER TABLE character_channel_episodes
+        ADD COLUMN report_owner_id TEXT;
+      ALTER TABLE character_channel_episodes
+        ADD COLUMN report_claim_token TEXT;
+      ALTER TABLE character_channel_episodes
+        ADD COLUMN report_lease_expires_at TEXT;
+
+      CREATE TABLE character_collaboration_jobs (
+        episode_id TEXT PRIMARY KEY
+          REFERENCES character_channel_episodes(id) ON DELETE CASCADE,
+        opening_message TEXT NOT NULL,
+        routing_json TEXT NOT NULL,
+        status TEXT NOT NULL
+          CHECK (status IN ('queued', 'running', 'completed', 'failed', 'cancelled')),
+        attempts INTEGER NOT NULL DEFAULT 0 CHECK (attempts >= 0),
+        max_attempts INTEGER NOT NULL DEFAULT 3 CHECK (max_attempts >= 1),
+        last_error TEXT,
+        owner_id TEXT,
+        claim_token TEXT,
+        lease_expires_at TEXT,
+        available_at TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        completed_at TEXT
+      );
+      CREATE INDEX character_collaboration_jobs_runnable_idx
+        ON character_collaboration_jobs(status, available_at, lease_expires_at, created_at);
+      CREATE INDEX character_channel_episodes_report_idx
+        ON character_channel_episodes(report_status, report_lease_expires_at, updated_at)
+        WHERE report_status IN ('pending', 'delivering');
+    `,
+  },
 ];
 
 export class AppDatabase {

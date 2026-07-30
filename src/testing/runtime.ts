@@ -11,7 +11,10 @@ import type { AgentMessage } from "@earendil-works/pi-agent-core";
 import type { Api, Model } from "@earendil-works/pi-ai/compat";
 import { SeededIdGenerator } from "../app/id-generator.js";
 import { VirtualClock } from "../app/clock.js";
-import { CompanionKernel } from "../domain/kernel.js";
+import {
+  CompanionKernel,
+  type CharacterCollaborationReporter,
+} from "../domain/kernel.js";
 import { CaptureNotificationSink } from "../notifications/sink.js";
 import type {
   ConversationLifecycleThresholds,
@@ -66,6 +69,7 @@ export type CreateTestRuntimeOptions = {
   worldPlanner?: WorldPlanner;
   worldMessenger?: ProactiveMessenger;
   characterInteractionActor?: CharacterInteractionActor;
+  characterCollaborationReporter?: CharacterCollaborationReporter;
   characterFunctionInferer?: CharacterFunctionInferer | false;
   characterSkillReflector?: CharacterSkillReflector | false;
   visionService?: VisionService;
@@ -205,6 +209,7 @@ export class TestRuntime {
       worldPlanner: options.worldPlanner,
       worldMessenger: options.worldMessenger,
       characterInteractionActor: options.characterInteractionActor,
+      characterCollaborationReporter: options.characterCollaborationReporter,
       characterFunctionInferer: options.characterFunctionInferer ?? false,
       characterSkillReflector: options.characterSkillReflector ?? false,
       conversationLifecycleThresholds: options.conversationLifecycleThresholds,

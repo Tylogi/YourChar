@@ -2615,6 +2615,12 @@ export function renderAppHtml(): string {
     }
     .character-collaboration-link:hover { border-color: #74a886; background: #f4faf6; }
     .character-collaboration-link svg { width: 14px; height: 14px; }
+    .character-collaboration-pending-copy {
+      color: #718078;
+      font-size: 10px;
+      line-height: 1.35;
+      white-space: nowrap;
+    }
     .archived-dialog,
     .session-action-dialog,
     .world-manager-dialog {
@@ -4406,6 +4412,7 @@ export function renderAppHtml(): string {
         width: fit-content;
         min-height: 30px;
       }
+      .character-collaboration-pending-copy { grid-column: 2; }
       main { grid-column: 1; grid-row: 2; }
       .header-left { height: calc(60px + env(safe-area-inset-bottom, 0px)); padding-bottom: env(safe-area-inset-bottom, 0px); }
       .composer { padding-bottom: max(9px, env(safe-area-inset-bottom, 0px)); }
@@ -5628,6 +5635,12 @@ export function renderAppHtml(): string {
       groupChats: [],
       worldConversations: [],
       characterChannels: [],
+      characterCollaborations: [],
+      pendingCharacterCollaborations: new Map(),
+      characterCollaborationSessionId: "",
+      characterCollaborationRefreshTimer: null,
+      characterCollaborationRefreshInFlight: false,
+      characterCollaborationRefreshFailures: 0,
       activeCharacterChannelId: "",
       activeCharacterChannelEpisodeId: "",
       pendingCharacterChannelEpisodeId: "",
@@ -8233,6 +8246,7 @@ export function renderAppHtml(): string {
       state.activeGroupId = "";
       state.activeWorldId = "";
       state.activeSessionId = generateSessionId();
+      resetCharacterCollaborationState(state.activeSessionId);
       state.sessionDraft = true;
       state.messages = [];
       state.privateInboxMessages = [];
@@ -8368,6 +8382,8 @@ export function renderAppHtml(): string {
     async function applySession(session) {
       const changedSession = state.activeSessionId !== session.id || state.activeConversationKind !== "direct";
       if (changedSession) closePrivateInboxEvents();
+      if (changedSession) resetCharacterCollaborationState(session.id);
+      else ensureCharacterCollaborationSession(session.id);
       state.activeConversationKind = "direct";
       state.activeGroupId = "";
       state.activeWorldId = "";
@@ -8407,6 +8423,7 @@ export function renderAppHtml(): string {
 
     async function applyWorldConversation(conversation) {
       closePrivateInboxEvents();
+      resetCharacterCollaborationState();
       state.activeConversationKind = "world";
       state.activeWorldId = conversation.worldId;
       state.activeGroupId = "";
@@ -8488,6 +8505,7 @@ export function renderAppHtml(): string {
 
     async function applyGroupChat(group) {
       closePrivateInboxEvents();
+      resetCharacterCollaborationState();
       state.activeConversationKind = "group";
       state.activeGroupId = group.id;
       state.activeSessionId = "";
@@ -12246,6 +12264,275 @@ export function renderAppHtml(): string {
       return rule;
     }
 
+    function resetCharacterCollaborationState(sessionId = "") {
+      if (state.characterCollaborationRefreshTimer) {
+        window.clearTimeout(state.characterCollaborationRefreshTimer);
+      }
+      state.characterCollaborations = [];
+      state.pendingCharacterCollaborations.clear();
+      state.characterCollaborationSessionId = sessionId;
+      state.characterCollaborationRefreshTimer = null;
+      state.characterCollaborationRefreshInFlight = false;
+      state.characterCollaborationRefreshFailures = 0;
+    }
+
+    function ensureCharacterCollaborationSession(sessionId) {
+      if (state.characterCollaborationSessionId === sessionId) return;
+      resetCharacterCollaborationState(sessionId);
+    }
+
+    function collaborationStatusRank(status) {
+      return ({ queued: 0, running: 1, completed: 2, declined: 2, failed: 2, cancelled: 2 })[status] ?? -1;
+    }
+
+    function mergeCharacterCollaborationSnapshots(incoming) {
+      const merged = new Map(
+        state.characterCollaborations
+          .filter((entry) => entry?.episodeId)
+          .map((entry) => [String(entry.episodeId), entry])
+      );
+      for (const entry of Array.isArray(incoming) ? incoming : []) {
+        if (!entry?.episodeId) continue;
+        const id = String(entry.episodeId);
+        const current = merged.get(id);
+        const currentUpdatedAt = String(current?.updatedAt || current?.createdAt || "");
+        const nextUpdatedAt = String(entry.updatedAt || entry.createdAt || "");
+        if (
+          !current ||
+          nextUpdatedAt > currentUpdatedAt ||
+          (
+            nextUpdatedAt === currentUpdatedAt &&
+            collaborationStatusRank(entry.status) >= collaborationStatusRank(current.status)
+          )
+        ) merged.set(id, entry);
+      }
+      return [...merged.values()].sort((left, right) =>
+        String(left.createdAt || "").localeCompare(String(right.createdAt || "")) ||
+        String(left.episodeId || "").localeCompare(String(right.episodeId || ""))
+      );
+    }
+
+    function reconcilePendingCharacterCollaborations(incoming) {
+      const sessionId = state.characterCollaborationSessionId;
+      const candidates = (Array.isArray(incoming) ? incoming : [])
+        .filter((entry) => entry?.episodeId)
+        .slice()
+        .sort((left, right) =>
+          String(left.createdAt || "").localeCompare(String(right.createdAt || "")) ||
+          String(left.episodeId || "").localeCompare(String(right.episodeId || ""))
+        );
+      const claimed = new Set();
+      const pending = [...state.pendingCharacterCollaborations.values()]
+        .filter((entry) => entry.sessionId === sessionId)
+        .sort((left, right) => left.startedAt - right.startedAt);
+      for (const local of pending) {
+        const match = candidates.find((entry) => {
+          const id = String(entry.episodeId);
+          if (claimed.has(id) || local.knownEpisodeIds.has(id)) return false;
+          return (
+            !entry.initiatorCharacterId ||
+            !local.initiatorCharacterId ||
+            entry.initiatorCharacterId === local.initiatorCharacterId
+          );
+        });
+        if (!match) continue;
+        claimed.add(String(match.episodeId));
+        state.pendingCharacterCollaborations.delete(local.toolCallId);
+      }
+    }
+
+    function prunePendingCharacterCollaborations() {
+      const now = Date.now();
+      for (const [toolCallId, entry] of state.pendingCharacterCollaborations) {
+        const endedTooLongAgo = entry.endedAt && now - entry.endedAt > 8_000;
+        const abandoned = now - entry.startedAt > 120_000;
+        if (endedTooLongAgo || abandoned) {
+          state.pendingCharacterCollaborations.delete(toolCallId);
+        }
+      }
+    }
+
+    function visibleCharacterCollaborations() {
+      const sessionId = state.characterCollaborationSessionId;
+      const optimistic = [...state.pendingCharacterCollaborations.values()]
+        .filter((entry) => entry.sessionId === sessionId)
+        .map((entry) => ({
+          episodeId: "pending:" + entry.toolCallId,
+          channelId: "",
+          initiatorCharacterId: entry.initiatorCharacterId,
+          initiatorCharacterName: entry.initiatorCharacterName,
+          targetCharacterId: "",
+          targetCharacterName: "另一位角色",
+          title: "正在发起角色协作",
+          objective: entry.status === "failed" ? "这次协作没有顺利建立。" : "正在确认协作内容与合适的人选。",
+          status: entry.status,
+          createdAt: entry.createdAt,
+          updatedAt: entry.updatedAt,
+          optimistic: true
+        }));
+      return [...state.characterCollaborations, ...optimistic];
+    }
+
+    function renderCurrentCharacterCollaborations() {
+      if (
+        state.activeConversationKind !== "direct" ||
+        state.activeSessionId !== state.characterCollaborationSessionId
+      ) return;
+      const messages = mergeCharacterCollaborations(
+        state.messages.filter((message) => message.role !== "collaboration"),
+        visibleCharacterCollaborations()
+      );
+      if (JSON.stringify(messages) === JSON.stringify(state.messages)) return;
+      state.messages = messages;
+      renderMessages({ preserveScroll: true });
+    }
+
+    function shouldRefreshCharacterCollaborations() {
+      if (
+        state.uiMode !== "normal" ||
+        state.activeConversationKind !== "direct" ||
+        state.sessionDraft ||
+        !state.activeSessionId ||
+        state.activeSessionId !== state.characterCollaborationSessionId
+      ) return false;
+      if (
+        [...state.pendingCharacterCollaborations.values()]
+          .some((entry) => entry.sessionId === state.activeSessionId)
+      ) return true;
+      return state.characterCollaborations.some((entry) =>
+        entry.status === "queued" ||
+        entry.status === "running" ||
+        entry.reportStatus === "pending" ||
+        entry.reportStatus === "delivering"
+      );
+    }
+
+    function scheduleCharacterCollaborationRefresh(delay = 700) {
+      if (!shouldRefreshCharacterCollaborations() || document.visibilityState !== "visible") {
+        if (state.characterCollaborationRefreshTimer) {
+          window.clearTimeout(state.characterCollaborationRefreshTimer);
+          state.characterCollaborationRefreshTimer = null;
+        }
+        return;
+      }
+      if (state.characterCollaborationRefreshTimer) {
+        if (delay > 0) return;
+        window.clearTimeout(state.characterCollaborationRefreshTimer);
+      }
+      const sessionId = state.activeSessionId;
+      state.characterCollaborationRefreshTimer = window.setTimeout(async () => {
+        state.characterCollaborationRefreshTimer = null;
+        if (
+          state.activeConversationKind !== "direct" ||
+          state.activeSessionId !== sessionId
+        ) return;
+        await refreshCharacterCollaborations();
+      }, Math.max(0, delay));
+    }
+
+    async function refreshCharacterCollaborations() {
+      if (
+        state.characterCollaborationRefreshInFlight ||
+        state.activeConversationKind !== "direct" ||
+        state.sessionDraft ||
+        !state.activeSessionId
+      ) return;
+      const requestedSessionId = state.activeSessionId;
+      ensureCharacterCollaborationSession(requestedSessionId);
+      state.characterCollaborationRefreshInFlight = true;
+      try {
+        const response = await fetch(
+          "/api/v1/sessions/" + encodeURIComponent(requestedSessionId) +
+          "/character-collaborations?limit=100"
+        );
+        const body = await response.json().catch(() => ({}));
+        if (!response.ok) {
+          throw new Error(body.error || "角色协作状态加载失败");
+        }
+        if (
+          state.activeConversationKind !== "direct" ||
+          state.activeSessionId !== requestedSessionId
+        ) return;
+        const incoming = Array.isArray(body.collaborations) ? body.collaborations : [];
+        reconcilePendingCharacterCollaborations(incoming);
+        state.characterCollaborations = mergeCharacterCollaborationSnapshots(incoming);
+        state.characterCollaborationRefreshFailures = 0;
+        prunePendingCharacterCollaborations();
+        renderCurrentCharacterCollaborations();
+      } catch {
+        // Collaboration status is auxiliary UI state; the regular chat refresh remains the fallback.
+        if (
+          state.activeConversationKind === "direct" &&
+          state.activeSessionId === requestedSessionId
+        ) state.characterCollaborationRefreshFailures += 1;
+      } finally {
+        state.characterCollaborationRefreshInFlight = false;
+        prunePendingCharacterCollaborations();
+        renderCurrentCharacterCollaborations();
+        const retryDelay = Math.min(
+          10_000,
+          700 * (2 ** Math.min(state.characterCollaborationRefreshFailures, 4))
+        );
+        scheduleCharacterCollaborationRefresh(retryDelay);
+      }
+    }
+
+    function beginOptimisticCharacterCollaboration(toolCallId) {
+      if (
+        !toolCallId ||
+        state.activeConversationKind !== "direct" ||
+        state.sessionDraft ||
+        !state.activeSessionId
+      ) return;
+      const sessionId = state.activeSessionId;
+      ensureCharacterCollaborationSession(sessionId);
+      if (state.pendingCharacterCollaborations.has(toolCallId)) return;
+      const initiator = state.characters.find((entry) => entry.id === state.selectedCharacterId);
+      const now = new Date();
+      state.pendingCharacterCollaborations.set(toolCallId, {
+        toolCallId,
+        sessionId,
+        initiatorCharacterId: initiator?.id || state.selectedCharacterId || "",
+        initiatorCharacterName: initiator?.name || "当前角色",
+        status: "queued",
+        startedAt: now.getTime(),
+        createdAt: now.toISOString(),
+        updatedAt: now.toISOString(),
+        knownEpisodeIds: new Set(state.characterCollaborations.map((entry) => String(entry.episodeId)))
+      });
+      renderCurrentCharacterCollaborations();
+      scheduleCharacterCollaborationRefresh(0);
+    }
+
+    function finishOptimisticCharacterCollaboration(toolCallId, failed, result) {
+      const pending = state.pendingCharacterCollaborations.get(toolCallId);
+      if (!pending) {
+        scheduleCharacterCollaborationRefresh(0);
+        return;
+      }
+      const outcome = result?.details && typeof result.details === "object"
+        ? result.details
+        : result?.structuredContent && typeof result.structuredContent === "object"
+          ? result.structuredContent
+          : {};
+      const rejectedWithoutEpisode = (
+        outcome.status === "blocked" ||
+        outcome.accepted === false ||
+        (outcome.status === "failed" && !outcome.episodeId)
+      ) && !outcome.episodeId;
+      if (rejectedWithoutEpisode) {
+        state.pendingCharacterCollaborations.delete(toolCallId);
+        renderCurrentCharacterCollaborations();
+        scheduleCharacterCollaborationRefresh(0);
+        return;
+      }
+      if (failed || outcome.status === "failed") pending.status = "failed";
+      pending.endedAt = Date.now();
+      pending.updatedAt = new Date().toISOString();
+      renderCurrentCharacterCollaborations();
+      scheduleCharacterCollaborationRefresh(0);
+    }
+
     async function loadSessionMessages() {
       return refreshSessionMessages(false);
     }
@@ -12253,6 +12540,7 @@ export function renderAppHtml(): string {
     async function refreshSessionMessages(silent) {
       if (!state.activeSessionId || state.sessionDraft) return;
       const requestedSessionId = state.activeSessionId;
+      ensureCharacterCollaborationSession(requestedSessionId);
       const sessionId = encodeURIComponent(requestedSessionId);
       if (!silent) setStatus("加载会话...");
       try {
@@ -12311,6 +12599,14 @@ export function renderAppHtml(): string {
         state.activeProactiveMessages = proactiveResponse.ok && Array.isArray(proactiveBody.messages)
           ? proactiveBody.messages
           : [];
+        if (collaborationResponse.ok && Array.isArray(collaborationBody.collaborations)) {
+          reconcilePendingCharacterCollaborations(collaborationBody.collaborations);
+          state.characterCollaborations = mergeCharacterCollaborationSnapshots(
+            collaborationBody.collaborations
+          );
+          state.characterCollaborationRefreshFailures = 0;
+        }
+        prunePendingCharacterCollaborations();
         const storedMessages = Array.isArray(body)
           ? mergeToolResultsIntoMessages(dedupeSystemEvents(body.map(normalizeStoredMessage).filter(Boolean)))
           : [];
@@ -12320,9 +12616,7 @@ export function renderAppHtml(): string {
             preserveActiveBurstMessages(withInbox, state.privateInboxMessages),
             state.interactionEvents
           ),
-          collaborationResponse.ok && Array.isArray(collaborationBody.collaborations)
-            ? collaborationBody.collaborations
-            : []
+          visibleCharacterCollaborations()
         ), state.activeProactiveMessages);
         const latestOutcome = [...messages].reverse().find((message) => message.status);
         if (latestOutcome) {
@@ -12333,9 +12627,10 @@ export function renderAppHtml(): string {
         preserveLocalMessageProgress(messages);
         if (JSON.stringify(messages) !== JSON.stringify(state.messages)) {
           state.messages = messages;
-          renderMessages();
+          renderMessages({ preserveScroll: Boolean(silent) });
         }
         updateDirectGenerationControls();
+        scheduleCharacterCollaborationRefresh();
         if (!silent) setStatus("就绪");
       } catch (error) {
         if (!silent) setStatus(error.message || String(error), true);
@@ -12739,11 +13034,21 @@ export function renderAppHtml(): string {
         updateMessageProgress(index, "reasoning", "模型推理",
           event.phase === "end" ? "completed" : "active", event.phase === "end");
       } else if (event.type === "tool_start") {
+        if (event.toolName === "request_character_help") {
+          beginOptimisticCharacterCollaboration(event.toolCallId);
+        }
         updateMessageProgress(index, "tool:" + event.toolCallId,
           "调用工具：" + toolDisplayName(event.toolName), "active", false,
           { toolName: event.toolName, toolCallId: event.toolCallId });
         setStatus("执行工具：" + toolDisplayName(event.toolName));
       } else if (event.type === "tool_end") {
+        if (event.toolName === "request_character_help") {
+          finishOptimisticCharacterCollaboration(
+            event.toolCallId,
+            Boolean(event.isError),
+            event.result
+          );
+        }
         updateMessageProgress(index, "tool:" + event.toolCallId,
           "调用工具：" + toolDisplayName(event.toolName),
           event.isError ? "failed" : "completed", false,
@@ -12897,6 +13202,7 @@ export function renderAppHtml(): string {
             : state.privateInboxMessages;
           state.privateInboxRunning = Boolean(body.inbox?.running);
           const wasDraft = state.sessionDraft;
+          ensureCharacterCollaborationSession(resolvedSessionId);
           state.activeSessionId = resolvedSessionId;
           state.sessionDraft = false;
           setSessionControlsLocked(true);
@@ -13420,26 +13726,46 @@ export function renderAppHtml(): string {
     }
 
     function mergeCharacterCollaborations(messages, collaborations) {
-      const events = (Array.isArray(collaborations) ? collaborations : [])
-        .filter((entry) => entry?.episodeId && entry?.channelId)
-        .map((entry) => {
-          const timestampMs = entry.createdAt ? new Date(entry.createdAt).getTime() : 0;
-          return {
-            role: "collaboration",
-            collaborationEpisodeId: String(entry.episodeId),
-            collaborationChannelId: String(entry.channelId),
-            collaborationStatus: String(entry.status || "queued"),
-            initiatorCharacterId: String(entry.initiatorCharacterId || ""),
-            initiatorCharacterName: String(entry.initiatorCharacterName || "角色"),
-            targetCharacterId: String(entry.targetCharacterId || ""),
-            targetCharacterName: String(entry.targetCharacterName || "角色"),
-            title: String(entry.title || ""),
-            objective: String(entry.objective || ""),
-            timestampMs: Number.isFinite(timestampMs) ? timestampMs : 0,
-            at: entry.createdAt ? new Date(entry.createdAt).toLocaleTimeString() : ""
-          };
-        });
-      return [...messages, ...events]
+      const byEpisodeId = new Map();
+      for (const entry of Array.isArray(collaborations) ? collaborations : []) {
+        if (!entry?.episodeId || (!entry.channelId && !entry.optimistic)) continue;
+        const id = String(entry.episodeId);
+        const current = byEpisodeId.get(id);
+        if (
+          !current ||
+          String(entry.updatedAt || entry.createdAt || "") >
+            String(current.updatedAt || current.createdAt || "") ||
+          (
+            String(entry.updatedAt || entry.createdAt || "") ===
+              String(current.updatedAt || current.createdAt || "") &&
+            collaborationStatusRank(entry.status) >= collaborationStatusRank(current.status)
+          )
+        ) byEpisodeId.set(id, entry);
+      }
+      const events = [...byEpisodeId.values()].map((entry) => {
+        const timestampMs = entry.createdAt ? new Date(entry.createdAt).getTime() : 0;
+        return {
+          role: "collaboration",
+          collaborationEpisodeId: String(entry.episodeId),
+          collaborationChannelId: String(entry.channelId || ""),
+          collaborationStatus: String(entry.status || "queued"),
+          collaborationReportStatus: String(entry.reportStatus || ""),
+          initiatorCharacterId: String(entry.initiatorCharacterId || ""),
+          initiatorCharacterName: String(entry.initiatorCharacterName || "角色"),
+          targetCharacterId: String(entry.targetCharacterId || ""),
+          targetCharacterName: String(entry.targetCharacterName || "角色"),
+          title: String(entry.title || ""),
+          objective: String(entry.objective || ""),
+          collaborationOptimistic: Boolean(entry.optimistic),
+          collaborationUpdatedAt: String(entry.updatedAt || entry.createdAt || ""),
+          timestampMs: Number.isFinite(timestampMs) ? timestampMs : 0,
+          at: entry.createdAt ? new Date(entry.createdAt).toLocaleTimeString() : ""
+        };
+      });
+      return [
+        ...messages.filter((message) => message.role !== "collaboration"),
+        ...events
+      ]
         .map((message, index) => ({ message, index }))
         .sort((left, right) => {
           const timestampOrder =
@@ -13585,7 +13911,11 @@ export function renderAppHtml(): string {
       return messages;
     }
 
-    function renderMessages() {
+    function renderMessages(options) {
+      const preserveScroll = Boolean(options?.preserveScroll);
+      const previousScrollTop = nodes.messages.scrollTop;
+      const wasNearBottom =
+        nodes.messages.scrollHeight - nodes.messages.scrollTop - nodes.messages.clientHeight < 72;
       const openProactiveFeedbackIds = new Set(
         Array.from(nodes.messages.querySelectorAll("details.proactive-feedback[open]"))
           .map((details) => details.querySelector("[data-proactive-message-id]")?.dataset.proactiveMessageId)
@@ -13622,7 +13952,12 @@ export function renderAppHtml(): string {
         if (details) details.open = true;
       }
       refreshIcons();
-      nodes.messages.scrollTop = nodes.messages.scrollHeight;
+      if (preserveScroll && !wasNearBottom) {
+        const maximum = Math.max(0, nodes.messages.scrollHeight - nodes.messages.clientHeight);
+        nodes.messages.scrollTop = Math.min(previousScrollTop, maximum);
+      } else {
+        nodes.messages.scrollTop = nodes.messages.scrollHeight;
+      }
     }
 
     function renderStandardMessage(message, index) {
@@ -13668,42 +14003,78 @@ export function renderAppHtml(): string {
         .includes(message.collaborationStatus)
         ? message.collaborationStatus
         : "queued";
-      const statusLabel = ({
-        queued: "等待中",
-        running: "进行中",
-        completed: "已完成",
-        declined: "未继续",
-        failed: "未完成",
-        cancelled: "已取消"
-      })[status];
+      const reportStatus = message.collaborationReportStatus || "";
+      const resultOnItsWay =
+        status === "completed" && (reportStatus === "pending" || reportStatus === "delivering");
+      const resultNeedsVisit =
+        status === "completed" && (reportStatus === "failed" || reportStatus === "skipped");
+      const displayStatus = resultOnItsWay ? "running" : status;
+      const statusLabel = collaborationStatusLabel(status, reportStatus);
       const title = ({
-        queued: initiatorName + "正在联系" + targetName,
-        running: initiatorName + "和" + targetName + "正在商量",
-        completed: initiatorName + "请" + targetName + "一起处理了这件事",
-        declined: initiatorName + "和" + targetName + "这次没有继续",
-        failed: initiatorName + "和" + targetName + "这次没有完成",
-        cancelled: "这次协作已经取消"
+        queued: initiatorName + "正在请" + targetName + "帮忙",
+        running: initiatorName + "和" + targetName + "正在一起处理",
+        completed: resultOnItsWay
+          ? targetName + "已经处理完，正在把结果带回来"
+          : resultNeedsVisit
+            ? targetName + "已经完成，结果留在他们的往来里"
+            : targetName + "已经把结果交给" + initiatorName,
+        declined: targetName + "这次没能参与",
+        failed: "这次协作没能顺利完成",
+        cancelled: "这次协作已取消"
       })[status];
       const objective = collaborationObjectiveSummary(message.objective || message.title);
       const avatar = (character, name) =>
         '<span class="character-collaboration-avatar" style="--avatar-hue:' + avatarHue(name) + '">' +
           avatarImageOrInitial(character?.avatarUrl, name) + '</span>';
       const collaborationLabel = initiatorName + "与" + targetName + "的协作";
+      const canOpenChannel = Boolean(
+        !message.collaborationOptimistic &&
+        message.collaborationChannelId &&
+        message.collaborationEpisodeId
+      );
+      const linkLabel = status === "queued" || status === "running" || resultOnItsWay
+        ? "查看进展"
+        : status === "completed"
+          ? (resultNeedsVisit ? "查看结果" : "查看他们的往来")
+          : "查看这次往来";
+      const action = canOpenChannel
+        ? '<button class="character-collaboration-link" type="button" data-character-channel-id="' +
+          escapeHtml(message.collaborationChannelId) + '" data-character-channel-episode-id="' +
+          escapeHtml(message.collaborationEpisodeId) + '" aria-label="' +
+          escapeHtml("查看" + initiatorName + "与" + targetName + "的往来") +
+          '"><span>' + escapeHtml(linkLabel) + '</span>' +
+          '<i data-lucide="arrow-right" aria-hidden="true"></i></button>'
+        : '<span class="character-collaboration-pending-copy">' +
+          (status === "failed" ? "暂时无法查看这次往来" : "正在建立角色间往来") +
+          '</span>';
       return '<div class="message-row collaboration" data-character-episode-id="' +
         escapeHtml(message.collaborationEpisodeId) + '"><article class="character-collaboration-card" aria-label="' +
         escapeHtml(collaborationLabel) + '">' +
         '<div class="character-collaboration-avatars" aria-hidden="true">' +
           avatar(initiator, initiatorName) + avatar(target, targetName) + '</div>' +
         '<div class="character-collaboration-copy"><div class="character-collaboration-title"><strong>' +
-          escapeHtml(title) + '</strong><span class="character-collaboration-status ' + escapeHtml(status) + '">' +
+          escapeHtml(title) + '</strong><span class="character-collaboration-status ' +
+          escapeHtml(displayStatus) + '">' +
           escapeHtml(statusLabel) + '</span></div>' +
           (objective ? '<p class="character-collaboration-objective">' + escapeHtml(objective) + '</p>' : '') +
-        '</div><button class="character-collaboration-link" type="button" data-character-channel-id="' +
-          escapeHtml(message.collaborationChannelId) + '" data-character-channel-episode-id="' +
-          escapeHtml(message.collaborationEpisodeId) + '" aria-label="' +
-          escapeHtml("查看" + initiatorName + "与" + targetName + "的往来") +
-          '"><span>查看他们的往来</span>' +
-          '<i data-lucide="arrow-right" aria-hidden="true"></i></button></article></div>';
+        '</div>' + action + '</article></div>';
+    }
+
+    function collaborationStatusLabel(status, reportStatus = "") {
+      if (status === "completed" && (reportStatus === "pending" || reportStatus === "delivering")) {
+        return "正在带回";
+      }
+      if (status === "completed" && (reportStatus === "failed" || reportStatus === "skipped")) {
+        return "结果可查看";
+      }
+      return ({
+        queued: "正在邀请",
+        running: "正在处理",
+        completed: "结果已返回",
+        declined: "暂未参与",
+        failed: "未能完成",
+        cancelled: "已取消"
+      })[status] || "协作动态";
     }
 
     function collaborationObjectiveSummary(value) {
@@ -14112,10 +14483,12 @@ export function renderAppHtml(): string {
         entry.id === state.activeCharacterChannelEpisodeId
       );
       const latestEpisode = focusedEpisode || episodes[0];
-      const statusLabel = ({
-        queued: "等待中", running: "交流中", completed: "已完成",
-        declined: "未继续", failed: "未完成", cancelled: "已取消"
-      })[latestEpisode?.status] || "角色私聊";
+      const statusLabel = latestEpisode?.kind === "collaboration"
+        ? collaborationStatusLabel(latestEpisode.status, latestEpisode.reportStatus)
+        : ({
+            queued: "等待中", running: "交流中", completed: "已完成",
+            declined: "未继续", failed: "未完成", cancelled: "已取消"
+          })[latestEpisode?.status] || "角色私聊";
       nodes.characterChannelParticipants.innerHTML = characterChannelAvatar(channel) +
         '<strong>' + escapeHtml(names.join(" 与 ")) + '</strong><span>' + escapeHtml(statusLabel) + '</span>';
       const messages = Array.isArray(snapshot.messages) ? snapshot.messages : [];
@@ -14145,14 +14518,16 @@ export function renderAppHtml(): string {
               contact: "私下联系",
               social: "日常往来"
             })[episode.kind] || "角色往来";
-            const episodeStatus = ({
-              queued: "等待中",
-              running: "交流中",
-              completed: "已完成",
-              declined: "未继续",
-              failed: "未完成",
-              cancelled: "已取消"
-            })[episode.status] || episode.status || "";
+            const episodeStatus = episode.kind === "collaboration"
+              ? collaborationStatusLabel(episode.status, episode.reportStatus)
+              : ({
+                  queued: "等待中",
+                  running: "交流中",
+                  completed: "已完成",
+                  declined: "未继续",
+                  failed: "未完成",
+                  cancelled: "已取消"
+                })[episode.status] || episode.status || "";
             const episodeTime = new Date(episode.completedAt || episode.createdAt);
             const episodeTimeLabel = Number.isNaN(episodeTime.getTime()) ? "" :
               episodeTime.toLocaleString("zh-CN", {

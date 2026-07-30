@@ -85,6 +85,8 @@ test("server serves chat UI and debug model traces", async () => {
     assert.match(html, /function mergeCharacterCollaborations/);
     assert.match(html, /function renderCollaborationEvent/);
     assert.match(html, /character-collaboration-card/);
+    assert.match(html, /rejectedWithoutEpisode/);
+    assert.match(html, /outcome\.status === "blocked"/);
     assert.match(html, /查看他们的往来/);
     assert.match(html, /data-character-profile-id/);
     assert.match(html, /function openCharacterProfile/);

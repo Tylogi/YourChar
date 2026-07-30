@@ -178,6 +178,7 @@ export class MeetingPresetService {
     mode: Mode;
     payload: Record<string, unknown>;
     currentUserText: string;
+    lastCharacterText?: string;
     timezone: string;
     now: Date;
   }): Record<string, unknown> {
@@ -214,7 +215,7 @@ export class MeetingPresetService {
       }
     }
     const userName = inferredUserName(profile.markdown);
-    const lastCharMessage = latestAssistantText(messages);
+    const lastCharMessage = input.lastCharacterText ?? latestAssistantText(messages);
     const macroContext: MacroContext = {
       charName: character.name,
       userName,

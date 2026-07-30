@@ -4,6 +4,7 @@ import { createServer, type ServerResponse } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
+import type { CharacterCollaborationReporterInput } from "../src/domain/kernel.js";
 import { createHttpServer } from "../src/http/router.js";
 import { createTestRuntime, type TestRuntime } from "../src/testing/index.js";
 import type { CharacterInteractionActorInput } from "../src/world/index.js";
@@ -143,13 +144,18 @@ test("model-facing character tools separate conversation from delegated work", a
     assert.match(sendDescription, /\brequest_character_help\b/u);
 
     const helpDescription = (requestHelp.description ?? "").toLowerCase();
+    assert.match(helpDescription, /\bqueue\b/u);
     assert.match(helpDescription, /\bdelegate\b/u);
     assert.match(helpDescription, /\bbounded task\b/u);
     assert.match(
       helpDescription,
-      /\b(?:actual result|answer|deliverable)\b/u,
-      "request_character_help must promise a concrete returned result",
+      /\bdurable acceptance\b/u,
+      "request_character_help must return durable acceptance instead of blocking on the target actor",
     );
+    assert.match(helpDescription, /\bbackground\b/u);
+    assert.match(helpDescription, /\bdeliver\b.*\blater\b/u);
+    assert.match(helpDescription, /\bdo not wait\b/u);
+    assert.match(helpDescription, /\b(?:result|deliverable)\b/u);
     assert.match(helpDescription, /\btask intent\b/u);
     assert.match(
       helpDescription,
@@ -196,13 +202,22 @@ test("model-facing character tools separate conversation from delegated work", a
   }
 });
 
-test("World MCP delegates to another character and returns the result to the parent character", async () => {
+test("World MCP queues collaboration immediately and the source character reports the result later", async () => {
   const actorInputs: CharacterInteractionActorInput[] = [];
+  const actorStarted = createDeferred<void>();
+  const actorResult = createDeferred<string>();
+  const reporterInputs: CharacterCollaborationReporterInput[] = [];
+  let actorReleased = false;
   const runtime = createTestRuntime({
     seed: "character-collaboration-mcp",
     characterInteractionActor: async (input) => {
       actorInputs.push(input);
-      return "我核对过思路了：先按时间排序，再检查缺失项。";
+      actorStarted.resolve();
+      return actorResult.promise;
+    },
+    characterCollaborationReporter: async (input) => {
+      reporterInputs.push(input);
+      return "真由理核对完了：先按时间排序，再检查缺失项。";
     },
   });
   try {
@@ -219,32 +234,379 @@ test("World MCP delegates to another character and returns the result to the par
       },
       {
         kind: "assistant_text",
-        text: "真由理建议先按时间排序，再检查缺失项，我就按这个顺序处理。",
+        text: "我已经请真由理帮忙核对了，她完成后我再来告诉你。",
       },
     ]);
-    const response = await runtime.kernel.sendMessage("source-collaboration-session", {
-      mode: "sms",
-      characterId: setup.source.id,
-      text: "你问问真由理该怎么整理实验记录。",
-    });
+    const response = await withTimeout(
+      runtime.kernel.sendMessage("source-collaboration-session", {
+        mode: "sms",
+        characterId: setup.source.id,
+        text: "你问问真由理该怎么整理实验记录。",
+      }),
+      1_000,
+    );
     assert.equal(response.status, "completed");
-    assert.match(response.reply, /真由理建议/);
+    assert.match(response.reply, /已经请真由理/);
+    assert.equal(actorReleased, false, "the source turn must not wait for the target actor");
+    await withTimeout(actorStarted.promise, 1_000);
     assert.equal(actorInputs.length, 1);
     assert.equal(actorInputs[0].purpose, "collaboration_result");
     assert.equal(actorInputs[0].actorCharacterId, setup.target.id);
     assert.match(actorInputs[0].objective ?? "", /整理实验记录/);
     assert.equal(runtime.model.requests[0].toolNames.includes("send_character_message"), true);
     assert.equal(runtime.model.requests[0].toolNames.includes("request_character_help"), true);
-    assert.match(JSON.stringify(runtime.model.requests[1].messages), /协作结果/);
-    assert.match(JSON.stringify(runtime.model.requests[1].messages), /先按时间排序/);
+    assert.match(JSON.stringify(runtime.model.requests[1].messages), /后台处理/);
+    assert.doesNotMatch(JSON.stringify(runtime.model.requests[1].messages), /先按时间排序/);
 
     const channel = runtime.kernel.listCharacterChannels({ worldId: setup.world.id })[0];
-    const snapshot = runtime.kernel.getCharacterChannel(channel.id);
-    assert.equal(snapshot.episodes[0].kind, "collaboration");
-    assert.deepEqual(snapshot.messages.map((message) => message.kind), ["task", "result"]);
+    const inFlight = runtime.kernel.getCharacterChannel(channel.id);
+    assert.equal(inFlight.episodes[0].kind, "collaboration");
+    assert.equal(["queued", "running"].includes(inFlight.episodes[0].status), true);
+    assert.deepEqual(inFlight.messages.map((message) => message.kind), ["task"]);
     assert.equal(response.actions.some((action) => action.actionType === "request_character_help"), true);
+
+    actorReleased = true;
+    actorResult.resolve("我核对过思路了：先按时间排序，再检查缺失项。");
+    await runtime.kernel.characterInteractionCoordinator.drain();
+
+    const snapshot = runtime.kernel.getCharacterChannel(channel.id);
+    assert.equal(snapshot.episodes[0].status, "completed");
+    assert.equal(snapshot.episodes[0].reportStatus, "delivered");
+    assert.equal(snapshot.episodes[0].reportAttempts, 1);
+    assert.equal(snapshot.episodes[0].resultText, "我核对过思路了：先按时间排序，再检查缺失项。");
+    assert.deepEqual(snapshot.messages.map((message) => message.kind), ["task", "result"]);
+    assert.equal(reporterInputs.length, 1);
+    assert.equal(reporterInputs[0].status, "completed");
+    assert.equal(reporterInputs[0].resultText, "我核对过思路了：先按时间排序，再检查缺失项。");
+    assert.equal(reporterInputs[0].sourceCharacterId, setup.source.id);
+    assert.equal(reporterInputs[0].targetCharacterId, setup.target.id);
+    assert.match(reporterInputs[0].objective, /整理实验记录/);
+    assert.equal(runtime.model.requests.length, 2);
+    const projected = runtime.kernel.listSessionCharacterCollaborations(
+      "source-collaboration-session",
+    ).find((entry) => entry.episodeId === snapshot.episodes[0].id);
+    assert.equal(projected?.status, "completed");
+    assert.equal(projected?.reportStatus, "delivered");
+    assert.ok(projected?.reportedAt);
+
+    const session = await runtime.kernel.getSession("source-collaboration-session");
+    assert.deepEqual(visibleAssistantTexts(session.messages), [
+      "我已经请真由理帮忙核对了，她完成后我再来告诉你。",
+      "真由理核对完了：先按时间排序，再检查缺失项。",
+    ]);
+    const markers = collaborationReportMarkers(session.messages);
+    assert.equal(markers.length, 1);
+    assert.equal(markers[0].display, false);
+    assert.match(JSON.stringify(markers[0]), new RegExp(snapshot.episodes[0].id));
+
+    await runtime.kernel.characterInteractionCoordinator.drain();
+    const afterSecondDrain = await runtime.kernel.getSession("source-collaboration-session");
+    assert.equal(collaborationReportMarkers(afterSecondDrain.messages).length, 1);
+    assert.equal(visibleAssistantTexts(afterSecondDrain.messages).length, 2);
   } finally {
+    actorResult.resolve("清理未完成的 actor");
     runtime.dispose();
+  }
+});
+
+test("background collaboration reports declined and failed outcomes without fabricating a target result", async (t) => {
+  const scenarios = [
+    {
+      name: "declined",
+      expectedStatus: "declined" as const,
+      reason: "今天状态不好，暂时接不了。",
+      reportText: "她今天状态不好，所以这次没有接下任务。",
+    },
+    {
+      name: "failed",
+      expectedStatus: "failed" as const,
+      reason: "目标角色模型暂时不可用",
+      reportText: "刚才的协作没有完成，目标角色模型暂时不可用。",
+    },
+  ];
+
+  for (const scenario of scenarios) {
+    await t.test(scenario.name, async () => {
+      const reporterInputs: CharacterCollaborationReporterInput[] = [];
+      const runtime = createTestRuntime({
+        seed: `character-collaboration-${scenario.name}`,
+        characterInteractionActor: async () => {
+          if (scenario.expectedStatus === "failed") throw new Error(scenario.reason);
+          return `[DECLINE]: ${scenario.reason}`;
+        },
+        characterCollaborationReporter: async (input) => {
+          reporterInputs.push(input);
+          return scenario.reportText;
+        },
+      });
+      try {
+        const setup = setupSharedWorld(runtime);
+        const sessionId = `source-collaboration-${scenario.name}`;
+        runtime.model.enqueue([{
+          kind: "assistant_text",
+          text: "我在，怎么了？",
+        }]);
+        await runtime.kernel.sendMessage(sessionId, {
+          mode: "sms",
+          characterId: setup.source.id,
+          text: "先确认一下这条会话。",
+        });
+
+        const queued = await runtime.kernel.characterInteractionCoordinator.queueCharacterHelp({
+          sourceCharacterId: setup.source.id,
+          targetCharacterId: setup.target.id,
+          task: `验证协作${scenario.name}终态`,
+          parentSessionId: sessionId,
+          idempotencyKey: `terminal-collaboration-${scenario.name}`,
+        });
+        assert.equal(["queued", "running"].includes(queued.episode.status), true);
+        await runtime.kernel.characterInteractionCoordinator.drain();
+
+        const snapshot = runtime.kernel.getCharacterChannel(queued.channel.id);
+        const episode = snapshot.episodes.find((entry) => entry.id === queued.episode.id);
+        assert.ok(episode);
+        assert.equal(episode.status, scenario.expectedStatus);
+        assert.equal(episode.reportStatus, "delivered");
+        assert.equal(episode.reportAttempts, 1);
+        if (scenario.expectedStatus === "declined") {
+          assert.equal(episode.resultText, scenario.reason);
+        } else {
+          assert.equal(episode.failureReason, scenario.reason);
+        }
+        assert.equal(
+          snapshot.messages.some((message) =>
+            message.episodeId === episode.id && message.kind === "result"
+          ),
+          false,
+          "a declined or failed task must not gain a fabricated target result message",
+        );
+        assert.equal(reporterInputs.length, 1);
+        assert.equal(reporterInputs[0].status, scenario.expectedStatus);
+        assert.equal(reporterInputs[0].sourceCharacterId, setup.source.id);
+        assert.equal(reporterInputs[0].targetCharacterId, setup.target.id);
+        if (scenario.expectedStatus === "declined") {
+          assert.equal(reporterInputs[0].resultText, scenario.reason);
+        } else {
+          assert.equal(reporterInputs[0].failureReason, scenario.reason);
+        }
+
+        const session = await runtime.kernel.getSession(sessionId);
+        assert.equal(visibleAssistantTexts(session.messages).at(-1), scenario.reportText);
+        const markers = collaborationReportMarkers(session.messages);
+        assert.equal(markers.length, 1);
+        assert.equal(markers[0].display, false);
+        assert.match(JSON.stringify(markers[0]), new RegExp(episode.id));
+
+        await runtime.kernel.characterInteractionCoordinator.drain();
+        const afterSecondDrain = await runtime.kernel.getSession(sessionId);
+        assert.equal(collaborationReportMarkers(afterSecondDrain.messages).length, 1);
+        assert.equal(visibleAssistantTexts(afterSecondDrain.messages).length, 2);
+      } finally {
+        runtime.dispose();
+      }
+    });
+  }
+});
+
+test("archiving a parent conversation while its report is being composed skips late delivery", async () => {
+  const reporterStarted = createDeferred<void>();
+  const reporterResult = createDeferred<string>();
+  const runtime = createTestRuntime({
+    seed: "character-collaboration-archive-race",
+    characterInteractionActor: async () => "已经核对完成：没有遗漏。",
+    characterCollaborationReporter: async () => {
+      reporterStarted.resolve();
+      return reporterResult.promise;
+    },
+  });
+  const sessionId = "collaboration-archive-race-parent";
+  try {
+    const setup = setupSharedWorld(runtime);
+    runtime.model.enqueue([{
+      kind: "assistant_text",
+      text: "我先保留这条会话。",
+    }]);
+    await runtime.kernel.sendMessage(sessionId, {
+      mode: "sms",
+      characterId: setup.source.id,
+      text: "先建立会话。",
+    });
+    const queued = await runtime.kernel.characterInteractionCoordinator.queueCharacterHelp({
+      sourceCharacterId: setup.source.id,
+      targetCharacterId: setup.target.id,
+      task: "核对归档竞态",
+      parentSessionId: sessionId,
+      idempotencyKey: "character-collaboration-archive-race",
+    });
+    const draining = runtime.kernel.characterInteractionCoordinator.drain();
+    await withTimeout(reporterStarted.promise, 1_000);
+    runtime.kernel.archiveConversation(sessionId);
+    reporterResult.resolve("这条结果不应写进已经归档的会话。");
+    await withTimeout(draining, 1_000);
+
+    const episode = runtime.kernel.characterChannels.repository.getEpisode(queued.episode.id);
+    assert.equal(episode?.status, "completed");
+    assert.equal(episode?.reportStatus, "skipped");
+    assert.equal(episode?.reportAttempts, 1);
+    const session = await runtime.kernel.getSession(sessionId);
+    assert.deepEqual(visibleAssistantTexts(session.messages), ["我先保留这条会话。"]);
+    assert.equal(collaborationReportMarkers(session.messages).length, 0);
+    assert.ok(runtime.kernel.listConversationMetadata().find((entry) =>
+      entry.id === sessionId && entry.archivedAt
+    ));
+  } finally {
+    reporterResult.resolve("清理未完成的 reporter");
+    runtime.dispose();
+  }
+});
+
+test("running collaboration resumes after restart and neither execution nor reporting is duplicated", async () => {
+  const stateDir = mkdtempSync(join(tmpdir(), "rp-agent-character-collaboration-restart-"));
+  const actorStarted = createDeferred<void>();
+  let releaseFirstActor: ((value: string) => void) | undefined;
+  let firstActorAborted = false;
+  let firstActorCalls = 0;
+  let recoveredActorCalls = 0;
+  let duplicateActorCalls = 0;
+  let recoveredReporterCalls = 0;
+  let duplicateReporterCalls = 0;
+  let first: TestRuntime | undefined;
+  let second: TestRuntime | undefined;
+  let third: TestRuntime | undefined;
+  try {
+    first = createTestRuntime({
+      stateDir,
+      seed: "character-collaboration-restart-first",
+      characterInteractionActor: async (input) => {
+        firstActorCalls += 1;
+        actorStarted.resolve();
+        return new Promise<string>((resolve, reject) => {
+          releaseFirstActor = resolve;
+          const abort = () => {
+            firstActorAborted = true;
+            reject(new Error("first collaboration worker aborted"));
+          };
+          if (input.signal?.aborted) abort();
+          else input.signal?.addEventListener("abort", abort, { once: true });
+        });
+      },
+    });
+    const setup = setupSharedWorld(first);
+    const sessionId = "collaboration-restart-parent";
+    first.model.enqueue([{
+      kind: "assistant_text",
+      text: "这条会话会保留下来。",
+    }]);
+    await first.kernel.sendMessage(sessionId, {
+      mode: "sms",
+      characterId: setup.source.id,
+      text: "建立可恢复的会话。",
+    });
+    const queued = await first.kernel.characterInteractionCoordinator.queueCharacterHelp({
+      sourceCharacterId: setup.source.id,
+      targetCharacterId: setup.target.id,
+      task: "重启后继续核对共享实验记录",
+      parentSessionId: sessionId,
+      idempotencyKey: "restartable-character-collaboration",
+    });
+    const firstDrain = first.kernel.characterInteractionCoordinator.drain();
+    await withTimeout(actorStarted.promise, 1_000);
+    assert.equal(firstActorCalls, 1);
+    assert.equal(
+      first.kernel.characterChannels.repository.getEpisode(queued.episode.id)?.status,
+      "running",
+    );
+    assert.equal(
+      first.kernel.characterChannels.repository.getCollaborationJob(queued.episode.id)?.attempts,
+      1,
+    );
+
+    first.dispose();
+    first = undefined;
+    await withTimeout(firstDrain, 1_000);
+    assert.equal(firstActorAborted, true);
+
+    second = createTestRuntime({
+      stateDir,
+      seed: "character-collaboration-restart-second",
+      characterInteractionActor: async () => {
+        recoveredActorCalls += 1;
+        return "重启后实际完成：记录顺序正确，没有缺项。";
+      },
+      characterCollaborationReporter: async (input) => {
+        recoveredReporterCalls += 1;
+        assert.equal(input.episodeId, queued.episode.id);
+        assert.equal(input.status, "completed");
+        assert.equal(input.resultText, "重启后实际完成：记录顺序正确，没有缺项。");
+        return "我回来汇报：记录顺序正确，也没有缺项。";
+      },
+    });
+    await second.kernel.characterInteractionCoordinator.drain();
+
+    const recoveredEpisode = second.kernel.characterChannels.repository.getEpisode(
+      queued.episode.id,
+    );
+    const recoveredJob = second.kernel.characterChannels.repository.getCollaborationJob(
+      queued.episode.id,
+    );
+    assert.equal(recoveredActorCalls, 1);
+    assert.equal(recoveredReporterCalls, 1);
+    assert.equal(recoveredEpisode?.status, "completed");
+    assert.equal(recoveredEpisode?.reportStatus, "delivered");
+    assert.equal(recoveredEpisode?.reportAttempts, 1);
+    assert.equal(recoveredJob?.status, "completed");
+    assert.equal(recoveredJob?.attempts, 2);
+    assert.equal(recoveredEpisode?.resultText, "重启后实际完成：记录顺序正确，没有缺项。");
+
+    const afterRecovery = await second.kernel.getSession(sessionId);
+    assert.deepEqual(visibleAssistantTexts(afterRecovery.messages), [
+      "这条会话会保留下来。",
+      "我回来汇报：记录顺序正确，也没有缺项。",
+    ]);
+    assert.equal(collaborationReportMarkers(afterRecovery.messages).length, 1);
+    second.dispose();
+    second = undefined;
+
+    third = createTestRuntime({
+      stateDir,
+      seed: "character-collaboration-restart-third",
+      characterInteractionActor: async () => {
+        duplicateActorCalls += 1;
+        return "不应该再次执行";
+      },
+      characterCollaborationReporter: async () => {
+        duplicateReporterCalls += 1;
+        return "不应该再次汇报";
+      },
+    });
+    await third.kernel.characterInteractionCoordinator.drain();
+    const afterSecondRestart = await third.kernel.getSession(sessionId);
+    assert.equal(duplicateActorCalls, 0);
+    assert.equal(duplicateReporterCalls, 0);
+    assert.deepEqual(
+      visibleAssistantTexts(afterSecondRestart.messages),
+      visibleAssistantTexts(afterRecovery.messages),
+    );
+    assert.equal(collaborationReportMarkers(afterSecondRestart.messages).length, 1);
+    const persistedReport = afterSecondRestart.messages.find((message) =>
+      isRecord(message) &&
+      message.role === "assistant" &&
+      message.collaborationEpisodeId === queued.episode.id
+    );
+    assert.ok(
+      persistedReport,
+      "the visible report keeps a durable episode stamp for crash-window deduplication",
+    );
+    assert.equal(
+      third.kernel.characterChannels.repository.getCollaborationJob(queued.episode.id)?.attempts,
+      2,
+    );
+  } finally {
+    releaseFirstActor?.("清理旧 worker");
+    first?.dispose();
+    second?.dispose();
+    third?.dispose();
+    rmSync(stateDir, { recursive: true, force: true });
   }
 });
 
@@ -580,6 +942,8 @@ test("session collaboration HTTP projection is scoped to the bound character and
       "idempotencyKey",
       "parentSessionId",
       "modelCalls",
+      "reportAttempts",
+      "reportError",
       "responseText",
       "messages",
     ]) {
@@ -725,4 +1089,59 @@ function writeChatCompletionStream(response: ServerResponse, model: string, cont
     choices: [{ index: 0, delta: {}, finish_reason: "stop" }],
   })}\n\n`);
   response.end("data: [DONE]\n\n");
+}
+
+function createDeferred<T>() {
+  let resolve!: (value: T | PromiseLike<T>) => void;
+  let reject!: (reason?: unknown) => void;
+  const promise = new Promise<T>((resolvePromise, rejectPromise) => {
+    resolve = resolvePromise;
+    reject = rejectPromise;
+  });
+  return { promise, resolve, reject };
+}
+
+async function withTimeout<T>(promise: Promise<T>, timeoutMs: number): Promise<T> {
+  let timer: NodeJS.Timeout | undefined;
+  try {
+    return await Promise.race([
+      promise,
+      new Promise<T>((_resolve, reject) => {
+        timer = setTimeout(() => reject(new Error("operation timed out")), timeoutMs);
+      }),
+    ]);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+}
+
+function visibleAssistantTexts(messages: unknown[]): string[] {
+  return messages.flatMap((message) => {
+    if (!isRecord(message) || message.role !== "assistant") return [];
+    const text = messageText(message).trim();
+    return text ? [text] : [];
+  });
+}
+
+function collaborationReportMarkers(messages: unknown[]): Array<Record<string, unknown>> {
+  return messages.flatMap((message) =>
+    isRecord(message) &&
+      message.role === "custom" &&
+      message.customType === "rp-agent/character_collaboration_report"
+      ? [message]
+      : []);
+}
+
+function messageText(message: Record<string, unknown>): string {
+  const content = message.content;
+  if (typeof content === "string") return content;
+  if (!Array.isArray(content)) return "";
+  return content.flatMap((block) =>
+    isRecord(block) && block.type === "text" && typeof block.text === "string"
+      ? [block.text]
+      : []).join("");
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value && typeof value === "object" && !Array.isArray(value));
 }

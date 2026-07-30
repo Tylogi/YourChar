@@ -232,7 +232,7 @@ test("relationship reset suppresses only that consumer while an in-flight depart
   }
 });
 
-test("schema 21 upgrades coordinator state through schema 33 collaboration projection support", () => {
+test("schema 21 upgrades coordinator state through schema 34 collaboration projection support", () => {
   const directory = mkdtempSync(join(tmpdir(), "rp-agent-post-turn-migration-"));
   const path = join(directory, "state.sqlite");
   const legacy = new DatabaseSync(path);
@@ -338,7 +338,7 @@ test("schema 21 upgrades coordinator state through schema 33 collaboration proje
   try {
     assert.equal(
       Number((upgraded.connection.prepare("SELECT MAX(version) AS version FROM schema_migrations").get() as { version: number }).version),
-      33,
+      34,
     );
     const autonomyColumns = upgraded.connection.prepare(
       "PRAGMA table_info(character_autonomy_policies)",

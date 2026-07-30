@@ -364,11 +364,24 @@ export async function runFeatureTest(
       const target = runtime.listCharacters().find((entry) => entry.id !== character.id);
       if (target) await runtime.tickWorldAutonomy(target.id);
     }
+    let collaborationReply: string | undefined;
+    if (definition.id === "cross-character-collaboration") {
+      await runtime.characterInteractionCoordinator.drain();
+      const transcript = await runtime.getConversationTranscript(
+        `feature-test-${definition.id}`,
+      );
+      collaborationReply = [...transcript].reverse()
+        .filter((message) => message.role === "assistant")
+        .map(featureTranscriptMessageText)
+        .find((text) => Boolean(text.trim()));
+    }
     await runtime.memoryCoordinator.drain();
     await runtime.relationshipCoordinator.drain();
     const featureResponse = definition.surface === "world"
       ? { ...response, actions: runtime.store.actions.slice(beforeActions) }
-      : response;
+      : collaborationReply
+        ? { ...response, reply: collaborationReply }
+        : response;
     const rules = [...preflight, ...evaluateCase(runtime, definition, featureResponse, character.id, setup.worldId)];
     const qualitySample = qualitySampleForCase(runtime, definition, featureResponse.reply, character.id);
     return resultFrom(definition, {
@@ -385,6 +398,18 @@ export async function runFeatureTest(
     runtime.dispose();
     rmSync(stateDir, { recursive: true, force: true });
   }
+}
+
+function featureTranscriptMessageText(message: { content?: unknown }): string {
+  if (typeof message.content === "string") return message.content;
+  if (!Array.isArray(message.content)) return "";
+  return message.content.flatMap((block) => {
+    if (!block || typeof block !== "object" || Array.isArray(block)) return [];
+    const record = block as Record<string, unknown>;
+    return record.type === "text" && typeof record.text === "string"
+      ? [record.text]
+      : [];
+  }).join("");
 }
 
 function cloneModelBinding(

@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { createServer, type ServerResponse } from "node:http";
 import test from "node:test";
 import { createHttpServer } from "../src/http/router.js";
 import type { TestRuntime } from "../src/testing/runtime.js";
@@ -233,6 +234,156 @@ test("a character-bound Tavern preset only orchestrates co-present turns and sto
       /PRESET_(?:BEFORE|AFTER)/,
     );
   } finally {
+    runtime.dispose();
+  }
+});
+
+test("background collaboration reports use the meeting preset only while co-present", async () => {
+  const providerPayloads: Array<Record<string, unknown>> = [];
+  const modelServer = createServer(async (request, response) => {
+    const chunks: Buffer[] = [];
+    for await (const chunk of request) {
+      chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+    }
+    providerPayloads.push(JSON.parse(Buffer.concat(chunks).toString("utf8")) as Record<string, unknown>);
+    writeChatCompletionStream(
+      response,
+      "collaboration-report-model",
+      providerPayloads.length === 1
+        ? "真由理现场核对完了：顺序没有问题。"
+        : "真由理远程核对完了：记录也没有遗漏。",
+    );
+  });
+  await new Promise<void>((resolve) => modelServer.listen(0, "127.0.0.1", resolve));
+
+  const runtime = createTestRuntime({
+    seed: "meeting-preset-collaboration-report",
+    now: "2026-07-29T12:34:00.000Z",
+    timezone: "Asia/Shanghai",
+    characterInteractionActor: async () => "核对完成，记录顺序正确。",
+  });
+  try {
+    const address = modelServer.address();
+    assert.ok(address && typeof address === "object");
+    runtime.kernel.patchModelApiConfig({
+      enabled: true,
+      baseUrl: `http://127.0.0.1:${address.port}/v1`,
+      model: "collaboration-report-model",
+      temperature: 0.22,
+    });
+    runtime.kernel.updateUserProfile("# 用户画像\n\n称呼：阿澈\n");
+    const preset = runtime.kernel.importMeetingPreset({
+      name: "协作回报见面预设",
+      source: sillyTavernPresetSource(),
+    });
+    const source = runtime.kernel.createCharacter({
+      name: "夏瑾",
+      soulMarkdown: "# SOUL.md\n\n说话温柔，但转达结果很准确。",
+      meetingPresetId: preset.id,
+    });
+    const target = runtime.kernel.createCharacter({
+      name: "真由理",
+      soulMarkdown: "# SOUL.md\n\n善于核对实验记录。",
+    });
+    const world = runtime.kernel.createWorld({
+      name: "协作测试世界",
+      timezone: "Asia/Shanghai",
+    });
+    const place = runtime.kernel.createWorldPlace({
+      worldId: world.id,
+      name: "共同工作室",
+      capabilityIds: ["work", "socialize", "communicate", "rest"],
+    });
+    for (const character of [source, target]) {
+      runtime.kernel.assignCharacterWorld(character.id, {
+        worldId: world.id,
+        homePlaceId: place.id,
+        currentPlaceId: place.id,
+      });
+    }
+
+    const conversation = await runtime.kernel.openCanonicalPrivateConversation(source.id);
+    runtime.model.enqueue([{ kind: "assistant_text", text: "我在工作室等你。" }]);
+    await runtime.kernel.sendMessage(conversation.id, {
+      mode: "sms",
+      characterId: source.id,
+      text: "见面后请帮我核对记录。",
+      timezone: runtime.timezone,
+    });
+    await runtime.kernel.transitionConversationInteraction(conversation.id, {
+      action: "propose",
+      location: "共同工作室",
+    });
+    await runtime.kernel.transitionConversationInteraction(conversation.id, {
+      action: "begin",
+      userConfirmed: true,
+    });
+
+    const inPerson = await runtime.kernel.characterInteractionCoordinator.queueCharacterHelp({
+      sourceCharacterId: source.id,
+      targetCharacterId: target.id,
+      task: "现场核对记录顺序",
+      parentSessionId: conversation.id,
+      idempotencyKey: "meeting-preset-collaboration-in-person",
+    });
+    await runtime.kernel.characterInteractionCoordinator.drain();
+    assert.equal(
+      runtime.kernel.characterChannels.repository.getEpisode(inPerson.episode.id)?.reportStatus,
+      "delivered",
+    );
+    assert.equal(providerPayloads.length, 1);
+    const inPersonPayload = providerPayloads[0];
+    const inPersonSerialized = JSON.stringify(inPersonPayload);
+    assert.match(
+      inPersonSerialized,
+      /PRESET_BEFORE char=夏瑾 user=阿澈 last=见面后请帮我核对记录。 previous=我在工作室等你。/,
+    );
+    assert.match(inPersonSerialized, /PRESET_AFTER tone=琥珀/);
+    assert.match(inPersonSerialized, /presence=\\?"co_present\\?"/);
+    assert.doesNotMatch(inPersonSerialized, /\{\{(?:char|user|setvar|getvar)/);
+    assert.equal(inPersonPayload.temperature, 0.65);
+    assert.equal(inPersonPayload.top_p, 0.8);
+    assert.equal(inPersonPayload.frequency_penalty, 0.15);
+    assert.equal(inPersonPayload.presence_penalty, -0.2);
+    assert.equal(inPersonPayload.max_tokens, 321);
+    assert.equal(inPersonPayload.seed, 42);
+
+    await runtime.kernel.transitionConversationInteraction(conversation.id, {
+      action: "end",
+      userConfirmed: true,
+    });
+    const remote = await runtime.kernel.characterInteractionCoordinator.queueCharacterHelp({
+      sourceCharacterId: source.id,
+      targetCharacterId: target.id,
+      task: "远程核对记录遗漏",
+      parentSessionId: conversation.id,
+      idempotencyKey: "meeting-preset-collaboration-remote",
+    });
+    await runtime.kernel.characterInteractionCoordinator.drain();
+    assert.equal(
+      runtime.kernel.characterChannels.repository.getEpisode(remote.episode.id)?.reportStatus,
+      "delivered",
+    );
+    assert.equal(providerPayloads.length, 2);
+    const remotePayload = providerPayloads[1];
+    assert.doesNotMatch(JSON.stringify(remotePayload), /PRESET_(?:BEFORE|AFTER)/);
+    assert.equal(remotePayload.temperature, 0.22);
+    assert.equal(Object.hasOwn(remotePayload, "top_p"), false);
+    assert.equal(Object.hasOwn(remotePayload, "seed"), false);
+
+    const session = await runtime.kernel.getSession(conversation.id);
+    assert.match(
+      JSON.stringify(session.messages),
+      /真由理现场核对完了：顺序没有问题。/,
+    );
+    assert.match(
+      JSON.stringify(session.messages),
+      /真由理远程核对完了：记录也没有遗漏。/,
+    );
+  } finally {
+    await new Promise<void>((resolve, reject) =>
+      modelServer.close((error) => error ? reject(error) : resolve())
+    );
     runtime.dispose();
   }
 });
@@ -485,4 +636,27 @@ function assertSmsDefaultPayload(
   assert.equal(payload.frequency_penalty, undefined);
   assert.equal(payload.presence_penalty, undefined);
   assert.equal(payload.seed, undefined);
+}
+
+function writeChatCompletionStream(
+  response: ServerResponse,
+  model: string,
+  content: string,
+): void {
+  response.writeHead(200, { "content-type": "text/event-stream; charset=utf-8" });
+  response.write(`data: ${JSON.stringify({
+    id: "chatcmpl-meeting-preset",
+    object: "chat.completion.chunk",
+    created: 1,
+    model,
+    choices: [{ index: 0, delta: { role: "assistant", content }, finish_reason: null }],
+  })}\n\n`);
+  response.write(`data: ${JSON.stringify({
+    id: "chatcmpl-meeting-preset",
+    object: "chat.completion.chunk",
+    created: 1,
+    model,
+    choices: [{ index: 0, delta: {}, finish_reason: "stop" }],
+  })}\n\n`);
+  response.end("data: [DONE]\n\n");
 }

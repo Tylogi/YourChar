@@ -231,11 +231,16 @@ test("automatic routing is deterministic, capability-first, and load-aware", () 
 
 test("World MCP auto-routes collaboration, keeps the public directory private, and records evidence", async () => {
   const actorInputs: CharacterInteractionActorInput[] = [];
+  let reportedResult = "";
   const runtime = createTestRuntime({
     seed: "character-capability-mcp",
     characterInteractionActor: async (input) => {
       actorInputs.push(input);
       return "我查完了：先核对官方来源，再比较发布日期。";
+    },
+    characterCollaborationReporter: async (input) => {
+      reportedResult = input.resultText ?? "";
+      return "网页研究员查完了：先核对官方来源，再比较发布日期。";
     },
   });
   try {
@@ -263,7 +268,7 @@ test("World MCP auto-routes collaboration, keeps the public directory private, a
           task: "给出核对公开资料的步骤",
         },
       },
-      { kind: "assistant_text", text: "网页研究员建议先核对官方来源，再比较发布日期。" },
+      { kind: "assistant_text", text: "我已经请网页研究员去核对了，完成后再告诉你。" },
     ]);
     const response = await runtime.kernel.sendMessage("capability-auto-route", {
       mode: "sms",
@@ -271,7 +276,8 @@ test("World MCP auto-routes collaboration, keeps the public directory private, a
       text: "找一位适合的人帮我想想怎么核对资料。",
     });
     assert.equal(response.status, "completed");
-    assert.match(response.reply, /网页研究员建议/);
+    assert.match(response.reply, /已经请网页研究员/);
+    await runtime.kernel.characterInteractionCoordinator.drain();
     assert.equal(actorInputs.length, 1);
     assert.equal(actorInputs[0].actorCharacterId, target.id);
     assert.equal(actorInputs[0].taskIdentity?.publicRole, "网页研究员");
@@ -286,6 +292,9 @@ test("World MCP auto-routes collaboration, keeps the public directory private, a
     const channel = runtime.kernel.listCharacterChannels({ worldId: setup.world.id })[0];
     const episode = runtime.kernel.getCharacterChannel(channel.id).episodes[0];
     assert.equal(episode.targetCharacterId, target.id);
+    assert.equal(episode.status, "completed");
+    assert.equal(episode.reportStatus, "delivered");
+    assert.match(reportedResult, /先核对官方来源/);
     const evidence = runtime.kernel.getCharacterFunctionProfile(target.id).evidence;
     assert.equal(evidence.find((entry) => entry.capabilityId === "research.web")?.completed, 1);
     const action = response.actions.find((entry) => entry.actionType === "request_character_help");
@@ -427,7 +436,7 @@ test("invalid character Skill reflection cannot grant permissions or replace the
   }
 });
 
-test("functional profile and route preview HTTP APIs expose schema 33 behavior", async () => {
+test("functional profile and route preview HTTP APIs expose schema 34 behavior", async () => {
   const runtime = createTestRuntime({ seed: "character-capability-http" });
   const setup = setupWorld(runtime, ["HTTP 发起者", "HTTP 专家"]);
   const [source, target] = setup.characters;
@@ -513,7 +522,7 @@ test("functional profile and route preview HTTP APIs expose schema 33 behavior",
     const migration = runtime.kernel.database.connection.prepare(
       "SELECT MAX(version) AS version FROM schema_migrations",
     ).get() as { version: number };
-    assert.equal(Number(migration.version), 33);
+    assert.equal(Number(migration.version), 34);
   } finally {
     await new Promise<void>((resolve, reject) =>
       server.close((error) => error ? reject(error) : resolve()));
