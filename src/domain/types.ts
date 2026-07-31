@@ -25,6 +25,7 @@ export type MessageAttachment = {
   name?: string;
   contentType?: string;
   size?: number;
+  previewKind?: "text" | "html" | "image" | "pdf" | "unsupported";
 };
 
 export type ActionRecord = {
@@ -43,6 +44,7 @@ export type MessageResponse = {
   messageType: "assistant" | "system";
   eventType?: SystemEventType;
   canRetry: boolean;
+  attachments?: MessageAttachment[];
   nativeModelSuccess?: boolean;
   recoveryUsed?: boolean;
   recoveryReason?: "output_guard_exhausted";

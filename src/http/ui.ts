@@ -2953,7 +2953,7 @@ export function renderAppHtml(): string {
       background: rgba(255, 255, 255, 0.72);
       color: var(--text);
       display: grid;
-      grid-template-columns: 24px minmax(0, 1fr) 16px;
+      grid-template-columns: 24px minmax(0, 1fr) auto;
       gap: 7px;
       align-items: center;
       text-decoration: none;
@@ -2965,7 +2965,22 @@ export function renderAppHtml(): string {
     .message-file-copy small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     .message-file-copy strong { font-size: 11px; }
     .message-file-copy small { color: var(--muted); font-size: 9px; }
-    .message-file-download { width: 14px; height: 14px; color: #687078; }
+    .message-file-actions { display: flex; align-items: center; gap: 2px; }
+    .message-file-action {
+      width: 26px;
+      height: 26px;
+      padding: 0;
+      border: 0;
+      border-radius: 5px;
+      background: transparent;
+      color: #687078;
+      cursor: pointer;
+      display: grid;
+      place-items: center;
+      text-decoration: none;
+    }
+    .message-file-action:hover { background: rgba(0, 0, 0, 0.06); color: #087d45; }
+    .message-file-action svg { width: 14px; height: 14px; }
     .message-attachments + .bubble-text { margin-top: 8px; }
     .message-progress {
       margin: 0 0 7px;
@@ -7384,7 +7399,7 @@ export function renderAppHtml(): string {
     function workspaceFileIcon(entry) {
       if (entry.previewKind === "image") return "image";
       if (entry.previewKind === "pdf") return "file-text";
-      if (entry.previewKind === "text") return "file-code-2";
+      if (entry.previewKind === "text" || entry.previewKind === "html") return "file-code-2";
       return "file";
     }
 
@@ -7498,12 +7513,62 @@ export function renderAppHtml(): string {
           frame.src = workspaceFileContentUrl(path, "inline");
           frame.title = preview.entry?.name || "PDF 预览";
           nodes.workspaceFilePreviewContent.append(frame);
+        } else if (preview.kind === "html") {
+          if (typeof preview.content !== "string" || preview.truncated) {
+            nodes.workspaceFilePreviewContent.innerHTML = '<div class="workspace-file-empty">HTML 文件过大，无法安全预览，可下载后查看。</div>';
+            return;
+          }
+          const frame = document.createElement("iframe");
+          frame.srcdoc = safeWorkspaceHtmlPreview(preview.content);
+          frame.title = preview.entry?.name || "HTML 预览";
+          frame.setAttribute("sandbox", "");
+          nodes.workspaceFilePreviewContent.append(frame);
         } else {
           nodes.workspaceFilePreviewContent.innerHTML = '<div class="workspace-file-empty">此文件类型不支持预览，可下载后查看。</div>';
         }
       } catch (error) {
         nodes.workspaceFilePreviewContent.innerHTML = '<div class="workspace-file-empty error">' + escapeHtml(error.message || String(error)) + '</div>';
       }
+    }
+
+    function safeWorkspaceHtmlPreview(value) {
+      if (!window.DOMPurify) return "";
+      const sanitized = window.DOMPurify.sanitize(String(value || ""), {
+        USE_PROFILES: { html: true },
+        ADD_TAGS: ["style"],
+        FORBID_TAGS: [
+          "script", "meta", "base", "link", "iframe", "frame", "frameset",
+          "object", "embed", "form", "input", "button", "textarea", "select",
+          "option", "video", "audio", "source", "track"
+        ],
+        FORBID_ATTR: [
+          "href", "srcset", "action", "formaction", "target", "ping",
+          "download", "poster", "xlink:href", "srcdoc"
+        ]
+      });
+      const template = document.createElement("template");
+      template.innerHTML = sanitized;
+      template.content.querySelectorAll("[src]").forEach((element) => {
+        const source = String(element.getAttribute("src") || "").trim();
+        if (!/^data:image\\/(?:png|jpeg|gif|webp|avif|bmp);base64,[a-z0-9+/=\\s]+$/iu.test(source)) {
+          element.removeAttribute("src");
+        }
+      });
+      const policy = [
+        "default-src 'none'",
+        "base-uri 'none'",
+        "connect-src 'none'",
+        "form-action 'none'",
+        "frame-src 'none'",
+        "font-src data:",
+        "img-src data:",
+        "media-src 'none'",
+        "object-src 'none'",
+        "script-src 'none'",
+        "style-src 'unsafe-inline'"
+      ].join("; ");
+      return '<!doctype html><html><head><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="' +
+        escapeHtml(policy) + '"></head><body>' + template.innerHTML + '</body></html>';
     }
 
     function workspaceFileContentUrl(path, disposition) {
@@ -7525,7 +7590,14 @@ export function renderAppHtml(): string {
       return isSafeWorkspacePath(path) ? path : "";
     }
 
-    function handleMessageMediaClick(event) {
+    async function handleMessageMediaClick(event) {
+      const filePreviewTrigger = event.target.closest("[data-message-file-preview]");
+      if (filePreviewTrigger) {
+        event.preventDefault();
+        const path = filePreviewTrigger.dataset.filePath || "";
+        if (isSafeWorkspacePath(path)) await previewWorkspaceFile(path);
+        return;
+      }
       const trigger = event.target.closest("[data-message-image]");
       if (!trigger) return;
       event.preventDefault();
@@ -8495,7 +8567,7 @@ export function renderAppHtml(): string {
         worldTurnId: message.turnId || "",
         worldNarration: message.senderType === "director",
         worldMessageId: message.id,
-        attachments: Array.isArray(message.attachments) ? message.attachments : [],
+        attachments: normalizeStructuredAttachments(message.attachments),
         timestampMs: message.createdAt ? new Date(message.createdAt).getTime() : 0,
         at: message.createdAt
           ? new Date(message.createdAt).toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit" })
@@ -13074,6 +13146,7 @@ export function renderAppHtml(): string {
       const message = state.messages[index];
       if (!message) return;
       message.text = response.reply || message.text || "";
+      message.attachments = normalizeStructuredAttachments(response.attachments);
       message.status = response.status;
       message.eventType = response.eventType;
       message.canRetry = Boolean(response.canRetry);
@@ -13547,6 +13620,7 @@ export function renderAppHtml(): string {
         const body = await response.json();
         if (!response.ok) throw new Error(body.error || "重试失败");
         state.messages[assistantIndex].text = body.reply || "";
+        state.messages[assistantIndex].attachments = normalizeStructuredAttachments(body.attachments);
         state.messages[assistantIndex].status = body.status;
         state.messages[assistantIndex].eventType = body.eventType;
         state.messages[assistantIndex].canRetry = Boolean(body.canRetry);
@@ -13588,8 +13662,15 @@ export function renderAppHtml(): string {
           ? message.content.filter((block) => block && block.type === "text").map((block) => block.text || "").join("")
           : "";
       const failedModelText = message.errorMessage ? "模型调用失败：" + message.errorMessage : "";
-      const presentation = extractMessagePresentation(message.errorMessage ? failedModelText : content);
-      if (!presentation.text && !presentation.attachments.length) return null;
+      const displayText = message.errorMessage ? failedModelText : content;
+      const presentation = message.role === "user"
+        ? extractMessagePresentation(displayText)
+        : { text: String(displayText || "").trim(), attachments: [] };
+      const explicitAttachments = normalizeStructuredAttachments(message.attachments);
+      const attachments = message.role === "user"
+        ? mergeMessageAttachments(presentation.attachments, explicitAttachments)
+        : message.role === "assistant" ? explicitAttachments : [];
+      if (!presentation.text && !attachments.length) return null;
       const isSystemEvent = message.role === "custom" && message.customType === "rp-agent/system_event";
       const isLegacySystemReply = message.role === "assistant" &&
         (message.api === "rp-agent" || message.provider === "rp-agent" || message.model === "rp-agent");
@@ -13603,7 +13684,7 @@ export function renderAppHtml(): string {
         role,
         text: presentation.text,
         rawText: content,
-        attachments: presentation.attachments,
+        attachments,
         at,
         entryId: typeof message.entryId === "string" ? message.entryId : "",
         latestUser: Boolean(message.latestUser),
@@ -13619,13 +13700,8 @@ export function renderAppHtml(): string {
 
     function normalizeInboxMessage(message) {
       const presentation = extractMessagePresentation(message?.text || "");
-      const explicitAttachments = Array.isArray(message?.attachments) ? message.attachments : [];
-      const attachments = presentation.attachments.length
-        ? presentation.attachments.map((entry) => {
-            const source = explicitAttachments.find((candidate) => candidate.path === entry.path);
-            return source ? { ...entry, ...source } : entry;
-          })
-        : explicitAttachments;
+      const explicitAttachments = normalizeStructuredAttachments(message?.attachments);
+      const attachments = mergeMessageAttachments(presentation.attachments, explicitAttachments);
       const timestampMs = message?.createdAt ? new Date(message.createdAt).getTime() : Date.now();
       return {
         role: "user",
@@ -13641,6 +13717,38 @@ export function renderAppHtml(): string {
         queueError: message?.lastError || "",
         latestUser: message?.status === "queued"
       };
+    }
+
+    function normalizeStructuredAttachments(value) {
+      if (!Array.isArray(value)) return [];
+      return value.slice(0, 8).flatMap((entry) => {
+        if (!entry || typeof entry !== "object" || (entry.kind && entry.kind !== "file")) return [];
+        const path = String(entry.path || "").trim().replaceAll("\\\\", "/");
+        if (!isSafeWorkspacePath(path)) return [];
+        const previewKind = ["text", "html", "image", "pdf", "unsupported"].includes(entry.previewKind)
+          ? entry.previewKind
+          : undefined;
+        const size = Number(entry.size);
+        return [{
+          kind: "file",
+          path,
+          name: String(entry.name || "").trim() || path.split("/").pop() || "附件",
+          contentType: String(entry.contentType || "").trim() || "application/octet-stream",
+          ...(Number.isFinite(size) && size >= 0 ? { size } : {}),
+          ...(previewKind ? { previewKind } : {}),
+          ...(entry.sizeLabel ? { sizeLabel: String(entry.sizeLabel) } : {})
+        }];
+      });
+    }
+
+    function mergeMessageAttachments(primary, secondary) {
+      const merged = normalizeStructuredAttachments(primary);
+      for (const attachment of normalizeStructuredAttachments(secondary)) {
+        const index = merged.findIndex((entry) => entry.path === attachment.path);
+        if (index >= 0) merged[index] = { ...merged[index], ...attachment };
+        else if (merged.length < 8) merged.push(attachment);
+      }
+      return merged;
     }
 
     function mergePrivateInboxMessages(messages, inboxMessages) {
@@ -14237,15 +14345,28 @@ export function renderAppHtml(): string {
         : "";
       const fileList = files.map((entry) => {
         const name = entry.name || entry.path.split("/").pop() || "附件";
-        return '<a class="message-file-attachment" href="' + escapeHtml(workspaceFileContentUrl(entry.path, "attachment")) + '" download>' +
-          '<i data-lucide="file" aria-hidden="true"></i><span class="message-file-copy"><strong>' + escapeHtml(name) + '</strong><small>' + escapeHtml(entry.sizeLabel || formatFileSize(entry.size)) + '</small></span>' +
-          '<i class="message-file-download" data-lucide="download" aria-hidden="true"></i></a>';
+        const previewAction = isPreviewableAttachment(entry)
+          ? '<button class="message-file-action" type="button" data-message-file-preview="true" data-file-path="' + escapeHtml(entry.path) + '" title="预览" aria-label="预览 ' + escapeHtml(name) + '"><i data-lucide="eye" aria-hidden="true"></i></button>'
+          : "";
+        return '<div class="message-file-attachment">' +
+          '<i data-lucide="' + workspaceFileIcon(entry) + '" aria-hidden="true"></i><span class="message-file-copy"><strong>' + escapeHtml(name) + '</strong><small>' + escapeHtml(entry.sizeLabel || formatFileSize(entry.size)) + '</small></span>' +
+          '<span class="message-file-actions">' +
+            previewAction +
+            '<a class="message-file-action" href="' + escapeHtml(workspaceFileContentUrl(entry.path, "attachment")) + '" download title="下载" aria-label="下载 ' + escapeHtml(name) + '"><i data-lucide="download" aria-hidden="true"></i></a>' +
+          '</span></div>';
       }).join("");
       return '<div class="message-attachments">' + imageGrid + fileList + '</div>';
     }
 
     function isImageAttachment(entry) {
       return entry?.previewKind === "image" || String(entry?.contentType || "").toLowerCase().startsWith("image/");
+    }
+
+    function isPreviewableAttachment(entry) {
+      if (["text", "html", "pdf"].includes(entry?.previewKind)) return true;
+      if (entry?.previewKind) return false;
+      const contentType = String(entry?.contentType || "").toLowerCase();
+      return contentType.startsWith("text/") || contentType === "application/pdf";
     }
 
     function systemEventIcon(eventType) {
@@ -15001,6 +15122,7 @@ export function renderAppHtml(): string {
         analyze_image: "分析图片",
         vision_auto_analyze: "分析图片",
         vision_direct_input: "发送图片给主模型",
+        share_workspace_file: "分享文件",
         delegate_task: "委派子 Agent"
       })[name] || name || "未知工具";
     }

@@ -15,6 +15,8 @@ import { Type } from "typebox";
 import type { CompanionStore } from "../domain/store.js";
 import type { ActionRecord } from "../domain/types.js";
 import type { WorkspaceAccess } from "../modules/types.js";
+import type { WorkspaceFileService } from "../workspace/file-service.js";
+import { MAX_WORKSPACE_ATTACHMENTS_PER_TURN } from "./workspace-attachments.js";
 
 const maxFileBytes = 1024 * 1024;
 
@@ -34,21 +36,102 @@ const editParameters = Type.Object({
   replaceAll: Type.Optional(Type.Boolean({ description: "Replace every exact occurrence; defaults to false." })),
 });
 
+const shareParameters = Type.Object({
+  path: Type.String({
+    maxLength: 500,
+    description: "Workspace-relative path of an existing file to attach to the current reply.",
+  }),
+});
+
 export type WorkspaceToolContext = {
   workspaceDir: string;
+  workspaceFiles?: WorkspaceFileService;
   access: WorkspaceAccess;
   store: CompanionStore;
   sessionId: string;
   actions: () => ActionRecord[];
+  sharePaths?: () => string[];
 };
 
 export function createWorkspaceTools(context: WorkspaceToolContext): ToolDefinition[] {
   if (context.access === "off") return [];
   const tools: ToolDefinition[] = [createListTool(context)];
+  if (context.workspaceFiles && context.sharePaths) {
+    tools.push(createShareTool({
+      ...context,
+      workspaceFiles: context.workspaceFiles,
+      sharePaths: context.sharePaths,
+    }));
+  }
   if (context.access === "read_write") {
     tools.push(createWriteTool(context), createEditTool(context));
   }
   return tools;
+}
+
+type WorkspaceShareToolContext = WorkspaceToolContext & {
+  workspaceFiles: WorkspaceFileService;
+  sharePaths: () => string[];
+};
+
+function createShareTool(
+  context: WorkspaceShareToolContext,
+): ToolDefinition<typeof shareParameters, unknown> {
+  return defineTool({
+    name: "share_workspace_file",
+    label: "Share workspace file",
+    description: [
+      "Attach one existing Workspace file to the current user-facing reply.",
+      "Call this only after the file has actually been created or downloaded.",
+      "The application validates the path and renders a preview/download card; do not handwrite an internal URL or attachment marker.",
+    ].join(" "),
+    parameters: shareParameters,
+    executionMode: "sequential",
+    async execute(_toolCallId, input) {
+      try {
+        const entry = context.workspaceFiles.asset(input.path, "attachment").entry;
+        const paths = context.sharePaths();
+        if (!paths.includes(entry.path)) {
+          if (paths.length >= MAX_WORKSPACE_ATTACHMENTS_PER_TURN) {
+            throw new Error(
+              `at most ${MAX_WORKSPACE_ATTACHMENTS_PER_TURN} Workspace files can be shared per turn`,
+            );
+          }
+          paths.push(entry.path);
+        }
+        context.actions().push(context.store.addAction(
+          "share_workspace_file",
+          "completed",
+          {
+            transport: "pi-tool",
+            sessionId: context.sessionId,
+            path: entry.path,
+            bytes: entry.size,
+            previewKind: entry.previewKind ?? "unsupported",
+          },
+        ));
+        return {
+          content: [{
+            type: "text",
+            text: `Validated ${entry.path} and queued it as an attachment to the final reply.`,
+          }],
+          details: { entry },
+        };
+      } catch (error) {
+        context.actions().push(context.store.addAction(
+          "share_workspace_file",
+          "failed",
+          {
+            transport: "pi-tool",
+            sessionId: context.sessionId,
+            path: input.path.slice(0, 500),
+            error: (error instanceof Error ? error.message : String(error)).slice(0, 500),
+          },
+        ));
+        throw error;
+      }
+    },
+  });
 }
 
 function createListTool(context: WorkspaceToolContext): ToolDefinition<typeof listParameters, unknown> {

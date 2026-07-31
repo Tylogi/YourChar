@@ -49,12 +49,86 @@ test("workspace file control plane uploads, previews, downloads, moves, deletes,
     assert.match(preview.preview.content, /workspace-ok/);
     assert.equal(preview.preview.truncated, false);
 
+    const htmlBody = [
+      "<!doctype html>",
+      "<meta charset=\"utf-8\">",
+      "<h1>safe-workspace-preview</h1>",
+      "<script>globalThis.previewScriptExecuted = true; fetch('https://example.invalid/leak')</script>",
+      "<img src=\"https://example.invalid/tracker.png\">",
+    ].join("\n");
+    const htmlUpload = await fetch(
+      `${baseUrl}/api/v1/workspace/files/upload?name=${encodeURIComponent("report.html")}`,
+      {
+        method: "POST",
+        headers: { "content-type": "text/html" },
+        body: Buffer.from(htmlBody, "utf8"),
+      },
+    );
+    assert.equal(htmlUpload.status, 201);
+    const htmlEntry = (await htmlUpload.json()) as {
+      entry: { path: string; contentType: string; previewKind: string };
+    };
+    assert.equal(htmlEntry.entry.contentType, "text/html; charset=utf-8");
+    assert.equal(htmlEntry.entry.previewKind, "html");
+
+    const htmlPreview = (await (await fetch(
+      `${baseUrl}/api/v1/workspace/files/preview?path=${encodeURIComponent(htmlEntry.entry.path)}`,
+    )).json()) as {
+      preview: { kind: string; url?: string; content?: string; truncated?: boolean };
+    };
+    assert.equal(htmlPreview.preview.kind, "html");
+    assert.equal(htmlPreview.preview.content, htmlBody);
+    assert.equal(htmlPreview.preview.truncated, false);
+    assert.equal(htmlPreview.preview.url, undefined);
+
+    assert.equal((await fetch(
+      `${baseUrl}/api/v1/workspace/files/content?path=${encodeURIComponent(htmlEntry.entry.path)}&disposition=inline`,
+    )).status, 415);
+
+    const htmUpload = await fetch(
+      `${baseUrl}/api/v1/workspace/files/upload?name=${encodeURIComponent("report.htm")}`,
+      { method: "POST", body: Buffer.from("<p>htm-preview</p>", "utf8") },
+    );
+    assert.equal(htmUpload.status, 201);
+    const htmEntry = (await htmUpload.json()) as {
+      entry: { path: string; previewKind: string };
+    };
+    assert.equal(htmEntry.entry.previewKind, "html");
+    assert.equal((await fetch(
+      `${baseUrl}/api/v1/workspace/files/content?path=${encodeURIComponent(htmEntry.entry.path)}&disposition=inline`,
+    )).status, 415);
+
+    const htmlDownload = await fetch(
+      `${baseUrl}/api/v1/workspace/files/content?path=${encodeURIComponent(htmlEntry.entry.path)}`,
+    );
+    assert.equal(htmlDownload.status, 200);
+    assert.match(htmlDownload.headers.get("content-disposition") ?? "", /^attachment;/);
+    assert.equal(htmlDownload.headers.get("cache-control"), "private, no-store");
+    assert.equal(htmlDownload.headers.get("x-content-type-options"), "nosniff");
+    assert.equal(htmlDownload.headers.get("cross-origin-resource-policy"), "same-origin");
+    assert.equal(htmlDownload.headers.get("referrer-policy"), "no-referrer");
+    const csp = htmlDownload.headers.get("content-security-policy") ?? "";
+    assert.match(csp, /default-src 'none'/);
+    assert.match(csp, /connect-src 'none'/);
+    assert.match(csp, /img-src data:/);
+    assert.match(csp, /script-src 'none'/);
+    assert.match(csp, /style-src 'unsafe-inline'/);
+    assert.match(csp, /(?:^|;\s*)sandbox(?:;|$)/);
+    assert.doesNotMatch(csp, /allow-scripts/);
+    assert.equal(await htmlDownload.text(), htmlBody);
+
     const download = await fetch(
       `${baseUrl}/api/v1/workspace/files/content?path=${encodeURIComponent(uploaded.entry.path)}`,
     );
     assert.equal(download.status, 200);
     assert.match(download.headers.get("content-disposition") ?? "", /^attachment;/);
     assert.equal(await download.text(), "# 上传文件\n\nworkspace-ok\n");
+    assert.equal((await fetch(
+      `${baseUrl}/api/v1/workspace/files/content?path=${encodeURIComponent(uploaded.entry.path)}&disposition=inline`,
+    )).status, 415);
+    assert.equal((await fetch(
+      `${baseUrl}/api/v1/workspace/files/content?path=${encodeURIComponent("uploads/missing.html")}&disposition=inline`,
+    )).status, 404);
 
     const moved = await fetch(`${baseUrl}/api/v1/workspace/files`, {
       method: "PATCH",

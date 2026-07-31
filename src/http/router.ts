@@ -3142,7 +3142,21 @@ async function sendWorkspaceFile(response: ServerResponse, asset: WorkspaceFileA
     "content-length": asset.entry.size,
     "content-disposition": `${disposition}; filename="${asciiName}"; filename*=UTF-8''${encodeURIComponent(asset.entry.name)}`,
     "cache-control": "private, no-store",
-    "content-security-policy": "default-src 'none'; sandbox",
+    "content-security-policy": [
+      "default-src 'none'",
+      "base-uri 'none'",
+      "connect-src 'none'",
+      "form-action 'none'",
+      "frame-ancestors 'self'",
+      "font-src data:",
+      "img-src data:",
+      "object-src 'none'",
+      "script-src 'none'",
+      "style-src 'unsafe-inline'",
+      "sandbox",
+    ].join("; "),
+    "cross-origin-resource-policy": "same-origin",
+    "referrer-policy": "no-referrer",
     "x-content-type-options": "nosniff",
   });
   await pipeline(createReadStream(asset.absolutePath), response);

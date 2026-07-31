@@ -22,7 +22,7 @@ const MAX_TEXT_PREVIEW_BYTES = 256 * 1024;
 const MAX_DIRECTORY_ENTRIES = 1_000;
 
 export type WorkspaceEntryKind = "directory" | "file" | "other";
-export type WorkspacePreviewKind = "text" | "image" | "pdf" | "unsupported";
+export type WorkspacePreviewKind = "text" | "html" | "image" | "pdf" | "unsupported";
 
 export type WorkspaceFileEntry = {
   name: string;
@@ -117,7 +117,10 @@ export class WorkspaceFileService {
     const path = this.regularFile(inputPath);
     const entry = this.entryFor(path);
     const kind = entry.previewKind ?? "unsupported";
-    if (kind !== "text") return { entry, kind };
+    if (kind !== "text" && kind !== "html") return { entry, kind };
+    if (kind === "html" && entry.size > MAX_TEXT_PREVIEW_BYTES) {
+      return { entry, kind, truncated: true };
+    }
     const length = Math.min(entry.size, MAX_TEXT_PREVIEW_BYTES + 1);
     const bytes = Buffer.alloc(length);
     const descriptor = openSync(path, "r");
@@ -140,7 +143,8 @@ export class WorkspaceFileService {
   asset(inputPath: string, disposition: "inline" | "attachment"): WorkspaceFileAsset {
     const path = this.regularFile(inputPath);
     const entry = this.entryFor(path);
-    const inline = disposition === "inline" && (entry.previewKind === "image" || entry.previewKind === "pdf");
+    const inline = disposition === "inline" &&
+      (entry.previewKind === "image" || entry.previewKind === "pdf");
     if (disposition === "inline" && !inline) {
       throw new WorkspaceFileError("WORKSPACE_PREVIEW_UNSUPPORTED", "this file type does not support inline preview");
     }
@@ -337,6 +341,8 @@ const MIME_TYPES: Record<string, string> = {
   ".bmp": "image/bmp",
   ".csv": "text/csv; charset=utf-8",
   ".gif": "image/gif",
+  ".htm": "text/html; charset=utf-8",
+  ".html": "text/html; charset=utf-8",
   ".jpeg": "image/jpeg",
   ".jpg": "image/jpeg",
   ".json": "application/json; charset=utf-8",
@@ -362,6 +368,9 @@ function contentTypeFor(name: string): string {
 
 function previewKindFor(name: string, contentType: string, path: string): WorkspacePreviewKind {
   const extension = extname(name).toLowerCase();
+  if ((extension === ".html" || extension === ".htm") && contentType.startsWith("text/html")) {
+    return "html";
+  }
   if (contentType.startsWith("text/") || contentType.includes("json") || TEXT_EXTENSIONS.has(extension)) return "text";
   if (contentType === "application/pdf") {
     const signature = readSignature(path, 5);

@@ -20,7 +20,13 @@ import {
 } from "../model/background-thinking-policy.js";
 import type { CompanionStore } from "../domain/store.js";
 import { createRpTools, type CompanionToolRuntimeState } from "../domain/tools.js";
-import type { ActionRecord, Mode, SessionRecord, TurnStatus } from "../domain/types.js";
+import type {
+  ActionRecord,
+  MessageAttachment,
+  Mode,
+  SessionRecord,
+  TurnStatus,
+} from "../domain/types.js";
 import {
   scheduleMcpModuleId,
   memoryCoordinatorMcpModuleId,
@@ -64,6 +70,7 @@ import type { WorldAutonomyCoordinator } from "../world/coordinator.js";
 import type { CharacterInteractionCoordinator } from "../world/character-interaction-coordinator.js";
 import type { InteractionService } from "../interaction/service.js";
 import type { ContextEconomicsRepository } from "../context/economics-repository.js";
+import type { WorkspaceFileService } from "../workspace/file-service.js";
 import { assumedContextWindowTokens, buildContextBudget } from "../context/budget.js";
 import {
   measuredContextInputTokens,
@@ -75,6 +82,12 @@ import type { ContextBudgetSnapshot, ContextEconomicsPlan, ContextPlan } from ".
 import { createSandboxedShellTool } from "./sandboxed-shell-tool.js";
 import { createSkillReadTool } from "./skill-read-tool.js";
 import { createWorkspaceTools } from "./workspace-tools.js";
+import {
+  createWorkspaceAttachmentMarker,
+  isWorkspaceAttachmentMarker,
+  MAX_WORKSPACE_ATTACHMENTS_PER_TURN,
+  workspaceAttachmentMarkerDetails,
+} from "./workspace-attachments.js";
 import { classifyAssistantOutput, classifyToolProtocolOutput } from "./output-guard.js";
 import { createTurnContextMessage, TURN_CONTEXT_CUSTOM_TYPE } from "./turn-context.js";
 
@@ -200,6 +213,7 @@ export type PiSessionRuntimeOptions = {
   memoryLifecycle: MemoryLifecycleService;
   contextEconomics: ContextEconomicsRepository;
   workspaceDir: string;
+  workspaceFiles: WorkspaceFileService;
   conversationLifecycleThresholds?: Partial<ConversationLifecycleThresholds>;
 };
 
@@ -296,6 +310,7 @@ export class PiSessionRuntime {
   private readonly permissionCatalog: AgentPermissionCatalog;
   private readonly memoryLifecycle: MemoryLifecycleService;
   private readonly contextEconomics: ContextEconomicsRepository;
+  private readonly workspaceFiles: WorkspaceFileService;
   private readonly conversationIndexPath?: string;
   private readonly piSessionDir?: string;
   private readonly piAgentDir: string;
@@ -336,6 +351,7 @@ export class PiSessionRuntime {
     this.permissionCatalog = options.permissionCatalog;
     this.memoryLifecycle = options.memoryLifecycle;
     this.contextEconomics = options.contextEconomics;
+    this.workspaceFiles = options.workspaceFiles;
     this.conversationLifecycleThresholds = normalizeConversationLifecycleThresholds(
       options.conversationLifecycleThresholds,
     );
@@ -648,7 +664,10 @@ export class PiSessionRuntime {
     handle.session.agent.state.messages = handle.sessionManager.buildSessionContext().messages;
   }
 
-  async getSessionRecord(sessionId: string): Promise<SessionRecord> {
+  async getSessionRecord(
+    sessionId: string,
+    options: { projectAttachments?: boolean } = {},
+  ): Promise<SessionRecord> {
     const id = normalizeSessionId(sessionId);
     const metadata = this.metadata.get(id);
     if (!metadata) {
@@ -656,9 +675,32 @@ export class PiSessionRuntime {
       return { id, messages: [], createdAt: now, updatedAt: now };
     }
     const handle = await this.getOrCreate(id, metadata.mode, metadata.characterId);
+    const shouldProjectAttachments = options.projectAttachments !== false;
+    const entries = shouldProjectAttachments
+      ? handle.sessionManager.getBranch().filter((entry) => entry.type === "message")
+      : [];
+    const attachmentsByTarget = shouldProjectAttachments
+      ? workspaceAttachmentsByTarget(
+          entries.map((entry) => ({ entryId: entry.id, message: entry.message })),
+          (paths) => this.resolveWorkspaceAttachments(paths),
+        )
+      : new Map<string, MessageAttachment[]>();
+    const attachmentsByMessage = new Map<AgentMessage, MessageAttachment[]>();
+    for (const entry of entries) {
+      const attachments = attachmentsByTarget.get(entry.id);
+      if (attachments?.length) attachmentsByMessage.set(entry.message, attachments);
+    }
     return {
       id,
-      messages: [...handle.session.messages],
+      messages: handle.session.messages.map((message) => {
+        const attachments = attachmentsByMessage.get(message);
+        return attachments?.length
+          ? {
+              ...message,
+              attachments: attachments.map((attachment) => ({ ...attachment })),
+            } as unknown as AgentMessage
+          : message;
+      }),
       createdAt: metadata.createdAt,
       updatedAt: metadata.updatedAt,
     };
@@ -673,13 +715,21 @@ export class PiSessionRuntime {
     const latestUserId = [...entries].reverse().find((entry) =>
       entry.type === "message" && entry.message.role === "user"
     )?.id;
+    const attachmentsByTarget = workspaceAttachmentsByTarget(
+      entries.map((entry) => ({ entryId: entry.id, message: entry.message })),
+      (paths) => this.resolveWorkspaceAttachments(paths),
+    );
     return entries.map((entry) => {
       if (entry.type !== "message") throw new Error("unreachable non-message transcript entry");
+      const attachments = attachmentsByTarget.get(entry.id);
       return {
         ...entry.message,
+        ...(attachments?.length
+          ? { attachments: attachments.map((attachment) => ({ ...attachment })) }
+          : {}),
         entryId: entry.id,
         latestUser: entry.id === latestUserId,
-      } as ConversationTranscriptMessage;
+      } as unknown as ConversationTranscriptMessage;
     });
   }
 
@@ -704,7 +754,8 @@ export class PiSessionRuntime {
 
   async listSessionRecords(): Promise<SessionRecord[]> {
     const records = await Promise.all(
-      [...this.metadata.values()].map((entry) => this.getSessionRecord(entry.id)),
+      [...this.metadata.values()].map((entry) =>
+        this.getSessionRecord(entry.id, { projectAttachments: false })),
     );
     return records.sort((left, right) => left.id.localeCompare(right.id));
   }
@@ -843,6 +894,48 @@ export class PiSessionRuntime {
     this.recordTurnOutcome(handle.metadata.id, status, canRetry);
   }
 
+  publishWorkspaceAttachments(
+    handle: PiSessionHandle,
+    paths: readonly string[],
+  ): MessageAttachment[] {
+    const attachments = this.resolveWorkspaceAttachments(paths);
+    if (!attachments.length) return [];
+    const target = [...handle.sessionManager.getBranch()].reverse().find((entry) =>
+      entry.type === "message" && entry.message.role === "assistant");
+    if (!target) return [];
+    this.appendMessages(handle, [
+      createWorkspaceAttachmentMarker(
+        target.id,
+        attachments,
+        this.clock.now().getTime(),
+      ),
+    ]);
+    return attachments;
+  }
+
+  private resolveWorkspaceAttachments(paths: readonly string[]): MessageAttachment[] {
+    const attachments: MessageAttachment[] = [];
+    const seen = new Set<string>();
+    for (const path of paths) {
+      if (attachments.length >= MAX_WORKSPACE_ATTACHMENTS_PER_TURN) break;
+      try {
+        const entry = this.workspaceFiles.asset(path, "attachment").entry;
+        if (seen.has(entry.path)) continue;
+        seen.add(entry.path);
+        attachments.push({
+          path: entry.path,
+          name: entry.name,
+          ...(entry.contentType ? { contentType: entry.contentType } : {}),
+          size: entry.size,
+          ...(entry.previewKind ? { previewKind: entry.previewKind } : {}),
+        });
+      } catch {
+        // The file may have been removed or moved after the share tool validated it.
+      }
+    }
+    return attachments;
+  }
+
   async deleteConversation(sessionId: string, confirmation: string): Promise<ConversationMetadata> {
     this.assertConversationDeletable(sessionId, confirmation);
     const metadata = this.requireMetadata(sessionId);
@@ -963,6 +1056,7 @@ export class PiSessionRuntime {
       interactiveThinkingRetryCount: 0,
       interactiveThinkingRetryPrompt: undefined,
       toolCallObserved: false,
+      workspaceSharePaths: [],
     };
     const mcpBridges: McpPiBridge[] = [];
     if (this.moduleCatalog.isEnabled(scheduleMcpModuleId)) {
@@ -1114,10 +1208,12 @@ export class PiSessionRuntime {
     );
     const workspaceTools = createWorkspaceTools({
       workspaceDir: this.workspaceDir,
+      workspaceFiles: this.workspaceFiles,
       access: permissions.workspaceAccess,
       store: this.store,
       sessionId: metadata.id,
       actions: () => toolState.actions,
+      sharePaths: () => toolState.workspaceSharePaths,
     });
     const shellTool = permissions.shellEnabled
       ? createSandboxedShellTool({
@@ -1679,6 +1775,11 @@ export class PiSessionRuntime {
       if (isCharacterCollaborationReportMarker(message)) {
         changed = true;
         reasons.add("character_collaboration_report_marker_filtered");
+        continue;
+      }
+      if (isWorkspaceAttachmentMarker(message)) {
+        changed = true;
+        reasons.add("workspace_attachment_marker_filtered");
         continue;
       }
       if (message.role !== "assistant" || typeof message.content === "string") {
@@ -2443,6 +2544,31 @@ function isResolvedInteractionErrorText(text: string): boolean {
   return text.includes("a meeting must be planned before physical co-presence can begin") ||
     text.includes("the current user message does not explicitly confirm arrival") ||
     text.includes("the current user message explicitly contradicts immediate co-presence");
+}
+
+function workspaceAttachmentsByTarget(
+  entries: readonly { entryId: string; message: AgentMessage }[],
+  resolveAttachments: (paths: readonly string[]) => MessageAttachment[],
+): Map<string, MessageAttachment[]> {
+  const entryIndexes = new Map(entries.map((entry, index) => [entry.entryId, index]));
+  const attachmentsByTarget = new Map<string, MessageAttachment[]>();
+  for (const [markerIndex, entry] of entries.entries()) {
+    const details = workspaceAttachmentMarkerDetails(entry.message);
+    if (!details) continue;
+    const targetIndex = entryIndexes.get(details.targetAssistantEntryId);
+    if (targetIndex === undefined || targetIndex >= markerIndex) continue;
+    if (entries[targetIndex]?.message.role !== "assistant") continue;
+    const resolved = resolveAttachments(details.attachments.map((attachment) => attachment.path));
+    if (!resolved.length) continue;
+    const merged = attachmentsByTarget.get(details.targetAssistantEntryId) ?? [];
+    for (const attachment of resolved) {
+      const existing = merged.findIndex((candidate) => candidate.path === attachment.path);
+      if (existing >= 0) merged[existing] = attachment;
+      else if (merged.length < MAX_WORKSPACE_ATTACHMENTS_PER_TURN) merged.push(attachment);
+    }
+    attachmentsByTarget.set(details.targetAssistantEntryId, merged);
+  }
+  return attachmentsByTarget;
 }
 
 function isSystemEvent(message: AgentMessage): boolean {

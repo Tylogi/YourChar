@@ -45,6 +45,7 @@ The following tools are assembled from the current workspace access level:
 |---|---:|---:|---:|
 | `read` | No | Yes | Yes |
 | `list_workspace` | No | Yes | Yes |
+| `share_workspace_file` | No | Yes | Yes |
 | `write` | No | No | Yes |
 | `edit` | No | No | Yes |
 
@@ -52,11 +53,22 @@ The following tools are assembled from the current workspace access level:
 access is off. Skill roots are always read-only.
 
 All paths supplied to workspace tools must be relative. The implementation
-resolves real paths, rejects symlink and parent-directory escapes, accepts text
-files only, and limits each file to 1 MiB. `write` uses an atomic replacement.
-`edit` performs exact replacement and rejects ambiguous matches unless
-`replaceAll` is explicit. File mutations emit audit actions without storing file
-contents.
+resolves real paths and rejects symlink, directory, and parent-directory
+escapes. The text-oriented `read`, `write`, and `edit` tools limit each file to
+1 MiB. `write` uses an atomic replacement. `edit` performs exact replacement
+and rejects ambiguous matches unless `replaceAll` is explicit. File mutations
+emit audit actions without storing file contents.
+
+`share_workspace_file` is an explicit publication step for an existing regular
+file. A successful call queues at most eight canonical Workspace paths for the
+current turn. After the final assistant output, the server validates every file
+again, binds structured attachment metadata to that exact assistant transcript
+entry, and persists a hidden marker that is excluded from provider history and
+public message APIs. Reload and restart reconstruct the attachment only while
+the file still exists. The chat renders image cards, text/PDF previews, and
+download actions. HTML preview is size-bounded, sanitized, stripped of scripts,
+navigation, forms, and external resources, then rendered in an empty-permission
+sandbox iframe; the original HTML remains available only as a download.
 
 ## 4. Shell sandbox
 
@@ -100,6 +112,8 @@ are registered in SMS or an unbound RP session.
 |---|---|---|
 | GET | `/api/v1/agent-permissions` | Read effective permissions and runtime availability |
 | PATCH | `/api/v1/agent-permissions` | Replace one or more permission fields |
+| GET | `/api/v1/workspace/files/preview` | Return a bounded preview descriptor |
+| GET | `/api/v1/workspace/files/content` | Stream an inline-safe asset or attachment download |
 
 Example:
 

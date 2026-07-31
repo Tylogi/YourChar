@@ -44,6 +44,21 @@ browserRuntime = createTestRuntime({
   },
 });
 const kernel = browserRuntime.kernel;
+const browserSharedHtml = [
+  "<!doctype html>",
+  "<meta charset=\"utf-8\">",
+  "<meta http-equiv=\"refresh\" content=\"0;url=https://example.invalid/escape\">",
+  "<style>body{font-family:sans-serif;color:#075b35}</style>",
+  "<h1>角色附件预览成功</h1>",
+  "<a id=\"external-link\" href=\"https://example.invalid/link\">外部链接</a>",
+  "<img id=\"external-image\" src=\"https://example.invalid/tracker.png\">",
+  "<script>globalThis.browserAttachmentScriptRan = true</script>",
+].join("\n");
+const browserSharedHtmlEntry = kernel.uploadWorkspaceFile({
+  directory: "browser-shared",
+  name: "角色页面.html",
+  bytes: Buffer.from(browserSharedHtml, "utf8"),
+});
 kernel.patchModelApiConfig({ enabled: false });
 const browserWorldModelResponses = [];
 const browserWorldModelRequests = [];
@@ -789,12 +804,47 @@ async function runDesktopWorkflow(browser, baseUrl, outputDir) {
     contentType: "application/json; charset=utf-8",
     body: JSON.stringify([
       { role: "user", content: [{ type: "text", text: "分两条告诉我" }] },
-      { role: "assistant", content: [{ type: "text", text: "第一条自然消息。\n\n第二条自然消息。" }], turnStatus: "completed" },
+      {
+        role: "assistant",
+        content: [{ type: "text", text: "第一条自然消息。\n\n第二条自然消息。" }],
+        turnStatus: "completed",
+        attachments: [{
+          path: browserSharedHtmlEntry.path,
+          name: browserSharedHtmlEntry.name,
+          contentType: browserSharedHtmlEntry.contentType,
+          size: browserSharedHtmlEntry.size,
+          previewKind: browserSharedHtmlEntry.previewKind,
+        }],
+      },
     ]),
   }));
   await page.evaluate(() => window.refreshSessionMessages(true));
   const splitAssistant = page.locator("#messages .message-row.assistant").last();
   assert.equal(await splitAssistant.locator(".message-bubble-content > .bubble").count(), 2);
+  const sharedHtmlCard = splitAssistant.locator(".message-file-attachment").filter({ hasText: "角色页面.html" });
+  await sharedHtmlCard.waitFor({ state: "visible" });
+  assert.match(
+    await sharedHtmlCard.getByRole("link", { name: "下载 角色页面.html" }).getAttribute("href"),
+    /disposition=attachment/u,
+  );
+  await sharedHtmlCard.getByRole("button", { name: "预览 角色页面.html" }).click();
+  await page.locator("#workspaceFilePreviewDialog").waitFor({ state: "visible" });
+  assert.equal(
+    await page.locator("#workspaceFilePreviewContent iframe").getAttribute("sandbox"),
+    "",
+  );
+  const sharedHtmlFrame = page.frameLocator("#workspaceFilePreviewContent iframe");
+  await sharedHtmlFrame.getByRole("heading", { name: "角色附件预览成功" }).waitFor();
+  assert.equal(await sharedHtmlFrame.locator('meta[http-equiv="refresh"]').count(), 0);
+  assert.equal(await sharedHtmlFrame.locator("#external-link").getAttribute("href"), null);
+  assert.equal(await sharedHtmlFrame.locator("#external-image").getAttribute("src"), null);
+  assert.equal(await sharedHtmlFrame.locator("script").count(), 0);
+  assert.equal(
+    await sharedHtmlFrame.locator("body").evaluate(() =>
+      Boolean(globalThis.browserAttachmentScriptRan)),
+    false,
+  );
+  await page.getByRole("button", { name: "关闭文件预览" }).click();
   await captureValidatedScreenshot(page, resolve(outputDir, "chat-multi-bubble.png"));
   await page.unroute(smsMessagesRoute);
   await page.evaluate(() => window.refreshSessionMessages(true));

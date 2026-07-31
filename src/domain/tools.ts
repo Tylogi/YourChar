@@ -36,6 +36,7 @@ type RuntimeState = {
   interactiveThinkingRetryCount: number;
   interactiveThinkingRetryPrompt?: string;
   toolCallObserved: boolean;
+  workspaceSharePaths: string[];
 };
 
 export type CompanionToolRuntimeState = RuntimeState;
