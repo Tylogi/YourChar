@@ -66,9 +66,12 @@ again, binds structured attachment metadata to that exact assistant transcript
 entry, and persists a hidden marker that is excluded from provider history and
 public message APIs. Reload and restart reconstruct the attachment only while
 the file still exists. The chat renders image cards, text/PDF previews, and
-download actions. HTML preview is size-bounded, sanitized, stripped of scripts,
-navigation, forms, and external resources, then rendered in an empty-permission
-sandbox iframe; the original HTML remains available only as a download.
+download actions. HTML preview is size-bounded and opens in a safe static mode
+that strips scripts, navigation, forms, and external resources. Pages containing
+scripts expose an explicit interactive-preview control: it reloads the document
+with scripts and HTTPS resources inside an opaque-origin sandbox, without
+same-origin access, forms, popups, downloads, or top-level navigation. The
+original HTML remains available as a download.
 
 ## 4. Shell sandbox
 

@@ -297,6 +297,10 @@ test("chat UI trusts structured assistant attachments and previews only supporte
   assert.match(html, /preview\.kind === "html"/u);
   assert.match(html, /frame\.srcdoc = safeWorkspaceHtmlPreview\(preview\.content\)/u);
   assert.match(html, /frame\.setAttribute\("sandbox", ""\)/u);
+  assert.match(html, /requiresInteractiveHtmlPreview\(preview\.content\)/u);
+  assert.match(html, /frame\.setAttribute\("sandbox", "allow-scripts"\)/u);
+  assert.match(html, /interactiveWorkspaceHtmlPreview\(preview\.content\)/u);
+  assert.match(html, /运行交互预览/u);
   assert.match(html, /"script", "meta", "base", "link", "iframe"/u);
   assert.match(html, /"href", "srcset", "action", "formaction"/u);
   assert.match(html, /share_workspace_file: "分享文件"/u);

@@ -4164,6 +4164,22 @@ export function renderAppHtml(): string {
     }
     .workspace-file-preview-content img { display: block; max-width: 100%; max-height: 70vh; margin: auto; object-fit: contain; }
     .workspace-file-preview-content iframe { width: 100%; height: min(66vh, 640px); border: 0; background: #ffffff; }
+    .workspace-html-preview { display: grid; gap: 10px; }
+    .workspace-html-preview-notice {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      padding: 10px 12px;
+      border: 1px solid #d9e4dc;
+      border-radius: 7px;
+      background: #f2f8f4;
+      color: #3f5147;
+      font-size: 11px;
+      line-height: 1.55;
+    }
+    .workspace-html-preview-notice strong { display: block; color: #203c2c; font-size: 12px; }
+    .workspace-html-preview-notice button { flex: 0 0 auto; min-height: 34px; }
     .chat-image-dialog {
       width: min(1080px, calc(100vw - 28px));
       max-height: calc(100vh - 28px);
@@ -7518,11 +7534,41 @@ export function renderAppHtml(): string {
             nodes.workspaceFilePreviewContent.innerHTML = '<div class="workspace-file-empty">HTML 文件过大，无法安全预览，可下载后查看。</div>';
             return;
           }
+          const previewShell = document.createElement("div");
+          previewShell.className = "workspace-html-preview";
           const frame = document.createElement("iframe");
           frame.srcdoc = safeWorkspaceHtmlPreview(preview.content);
           frame.title = preview.entry?.name || "HTML 预览";
           frame.setAttribute("sandbox", "");
-          nodes.workspaceFilePreviewContent.append(frame);
+          if (requiresInteractiveHtmlPreview(preview.content)) {
+            const notice = document.createElement("div");
+            notice.className = "workspace-html-preview-notice";
+            const copy = document.createElement("span");
+            copy.innerHTML = "<strong>此页面包含交互脚本</strong>当前显示的是安全静态预览。可在隔离沙箱中运行脚本及其引用的 HTTPS 资源；页面仍无法读取 RP Agent 数据、提交表单、打开弹窗或跳转主页面。";
+            const runButton = document.createElement("button");
+            runButton.type = "button";
+            runButton.className = "secondary";
+            runButton.textContent = "运行交互预览";
+            let running = false;
+            runButton.addEventListener("click", () => {
+              running = !running;
+              if (running) {
+                frame.setAttribute("sandbox", "allow-scripts");
+                frame.srcdoc = interactiveWorkspaceHtmlPreview(preview.content);
+                runButton.textContent = "切回安全预览";
+                copy.innerHTML = "<strong>交互页面正在隔离运行</strong>已允许页面脚本和 HTTPS 资源，但未授予同源、表单、弹窗、下载或顶层导航权限。";
+              } else {
+                frame.setAttribute("sandbox", "");
+                frame.srcdoc = safeWorkspaceHtmlPreview(preview.content);
+                runButton.textContent = "运行交互预览";
+                copy.innerHTML = "<strong>此页面包含交互脚本</strong>当前显示的是安全静态预览。可在隔离沙箱中运行脚本及其引用的 HTTPS 资源；页面仍无法读取 RP Agent 数据、提交表单、打开弹窗或跳转主页面。";
+              }
+            });
+            notice.append(copy, runButton);
+            previewShell.append(notice);
+          }
+          previewShell.append(frame);
+          nodes.workspaceFilePreviewContent.append(previewShell);
         } else {
           nodes.workspaceFilePreviewContent.innerHTML = '<div class="workspace-file-empty">此文件类型不支持预览，可下载后查看。</div>';
         }
@@ -7569,6 +7615,52 @@ export function renderAppHtml(): string {
       ].join("; ");
       return '<!doctype html><html><head><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="' +
         escapeHtml(policy) + '"></head><body>' + template.innerHTML + '</body></html>';
+    }
+
+    function requiresInteractiveHtmlPreview(value) {
+      return /<script(?:\\s|>)/iu.test(String(value || ""));
+    }
+
+    function interactiveWorkspaceHtmlPreview(value) {
+      const documentValue = new DOMParser().parseFromString(String(value || ""), "text/html");
+      documentValue.querySelectorAll("meta[http-equiv], base, iframe, frame, frameset, object, embed, form")
+        .forEach((element) => element.remove());
+      documentValue.querySelectorAll("a[href], area[href]").forEach((element) => {
+        element.removeAttribute("href");
+        element.removeAttribute("target");
+        element.removeAttribute("ping");
+      });
+      documentValue.querySelectorAll("script[src], link[href], img[src], source[src], video[src], audio[src]")
+        .forEach((element) => {
+          const attribute = element.hasAttribute("src") ? "src" : "href";
+          const resource = String(element.getAttribute(attribute) || "").trim();
+          if (!/^(?:https:|data:image\\/(?:png|jpeg|gif|webp|avif|bmp);base64,)/iu.test(resource)) {
+            element.removeAttribute(attribute);
+          }
+        });
+      const policy = [
+        "default-src 'none'",
+        "base-uri 'none'",
+        "connect-src https:",
+        "form-action 'none'",
+        "frame-src 'none'",
+        "font-src data: https:",
+        "img-src data: blob: https:",
+        "media-src data: blob: https:",
+        "object-src 'none'",
+        "script-src 'unsafe-inline' https:",
+        "style-src 'unsafe-inline' https:",
+        "worker-src blob:"
+      ].join("; ");
+      const policyMeta = documentValue.createElement("meta");
+      policyMeta.httpEquiv = "Content-Security-Policy";
+      policyMeta.content = policy;
+      const referrerMeta = documentValue.createElement("meta");
+      referrerMeta.name = "referrer";
+      referrerMeta.content = "no-referrer";
+      documentValue.head.prepend(referrerMeta);
+      documentValue.head.prepend(policyMeta);
+      return "<!doctype html>" + documentValue.documentElement.outerHTML;
     }
 
     function workspaceFileContentUrl(path, disposition) {

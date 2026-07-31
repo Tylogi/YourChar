@@ -844,7 +844,31 @@ async function runDesktopWorkflow(browser, baseUrl, outputDir) {
       Boolean(globalThis.browserAttachmentScriptRan)),
     false,
   );
+  await page.route("https://example.invalid/**", (route) => route.fulfill({
+    status: 200,
+    contentType: "image/png",
+    body: avatarPng,
+  }));
+  await page.getByRole("button", { name: "运行交互预览", exact: true }).click();
+  assert.equal(
+    await page.locator("#workspaceFilePreviewContent iframe").getAttribute("sandbox"),
+    "allow-scripts",
+  );
+  await sharedHtmlFrame.getByRole("heading", { name: "角色附件预览成功" }).waitFor();
+  assert.equal(await sharedHtmlFrame.locator('meta[http-equiv="refresh"]').count(), 0);
+  assert.equal(await sharedHtmlFrame.locator("#external-link").getAttribute("href"), null);
+  assert.equal(
+    await sharedHtmlFrame.locator("#external-image").getAttribute("src"),
+    "https://example.invalid/tracker.png",
+  );
+  assert.equal(
+    await sharedHtmlFrame.locator("body").evaluate(() =>
+      Boolean(globalThis.browserAttachmentScriptRan)),
+    true,
+  );
+  await page.getByRole("button", { name: "切回安全预览", exact: true }).waitFor();
   await page.getByRole("button", { name: "关闭文件预览" }).click();
+  await page.unroute("https://example.invalid/**");
   await captureValidatedScreenshot(page, resolve(outputDir, "chat-multi-bubble.png"));
   await page.unroute(smsMessagesRoute);
   await page.evaluate(() => window.refreshSessionMessages(true));
