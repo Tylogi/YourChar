@@ -1,9 +1,9 @@
 {
-  "name": "rp-agent",
+  "name": "yourchar",
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "description": "RP companion app layered on the original Pi agent runtime.",
+  "description": "Local-first runtime for persistent AI characters and digital lives.",
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "dev": "npm run build && node --disable-warning=ExperimentalWarning dist/src/server.js",

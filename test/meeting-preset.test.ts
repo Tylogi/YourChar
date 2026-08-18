@@ -238,6 +238,67 @@ test("a character-bound Tavern preset only orchestrates co-present turns and sto
   }
 });
 
+test("secret conversations ignore meeting presets and shared profile even with stale co-presence state", async () => {
+  const runtime = createTestRuntime({
+    seed: "meeting-preset-secret-isolation",
+    now: "2026-07-29T12:34:00.000Z",
+    timezone: "Asia/Shanghai",
+  });
+  try {
+    runtime.kernel.updateUserProfile("# 用户画像\n\n普通空间画像哨兵：NORMAL_PROFILE_SENTINEL\n");
+    const preset = runtime.kernel.importMeetingPreset({
+      name: "不应进入私密空间的见面预设",
+      source: sillyTavernPresetSource(),
+    });
+    const character = runtime.kernel.createCharacter({
+      name: "私密预设隔离角色",
+      meetingPresetId: preset.id,
+    });
+    const secret = await runtime.kernel.openCanonicalPrivateConversation(character.id, "secret");
+
+    // Simulate stale data from before the route-level secret-space guard.
+    runtime.kernel.interactionService.ensure(secret.id, character.id, "sms");
+    runtime.kernel.interactionService.proposeMeeting({
+      sessionId: secret.id,
+      characterId: character.id,
+      mode: "sms",
+      location: "NORMAL_WORLD_LOCATION_SENTINEL",
+      source: "user_control",
+    });
+    runtime.kernel.interactionService.beginMeeting({
+      sessionId: secret.id,
+      characterId: character.id,
+      mode: "sms",
+      source: "user_control",
+      userConfirmed: true,
+    });
+
+    runtime.model.enqueue([{ kind: "assistant_text", text: "私密回复" }]);
+    await runtime.kernel.sendMessage(secret.id, {
+      mode: "sms",
+      conversationSpace: "secret",
+      characterId: character.id,
+      text: "私密空间的问题",
+      timezone: runtime.timezone,
+    });
+
+    const request = runtime.model.requests.at(-1);
+    assert.ok(request);
+    const providerPayload = request.providerPayload as Record<string, unknown>;
+    const serializedPayload = JSON.stringify(providerPayload);
+    assert.doesNotMatch(serializedPayload, /PRESET_(?:BEFORE|AFTER)/);
+    assert.doesNotMatch(serializedPayload, /NORMAL_PROFILE_SENTINEL/);
+    assert.doesNotMatch(serializedPayload, /NORMAL_WORLD_LOCATION_SENTINEL/);
+    assert.doesNotMatch(request.systemPrompt, /NORMAL_PROFILE_SENTINEL/);
+    assert.equal(providerPayload.top_p, undefined);
+    assert.equal(providerPayload.frequency_penalty, undefined);
+    assert.equal(providerPayload.presence_penalty, undefined);
+    assert.equal(providerPayload.seed, undefined);
+  } finally {
+    runtime.dispose();
+  }
+});
+
 test("background collaboration reports use the meeting preset only while co-present", async () => {
   const providerPayloads: Array<Record<string, unknown>> = [];
   const modelServer = createServer(async (request, response) => {
@@ -607,7 +668,7 @@ function assertPresetPayload(
     message.role === "assistant" &&
     JSON.stringify(message.content).includes("PRESET_AFTER tone=琥珀")
   );
-  assert.ok(beforeIndex > 0, "the immutable RP Agent system message stays ahead of the preset");
+  assert.ok(beforeIndex > 0, "the immutable YourChar system message stays ahead of the preset");
   assert.ok(userIndex > beforeIndex, "chat history is inserted after pre-history prompts");
   assert.ok(afterIndex > userIndex, "post-history prompts stay after the real current user turn");
   const serialized = JSON.stringify(messages);

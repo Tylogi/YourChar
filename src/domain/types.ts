@@ -2,6 +2,7 @@ import type { AgentMessage } from "@earendil-works/pi-agent-core";
 import type { AgentSessionEvent } from "@earendil-works/pi-coding-agent";
 
 export type Mode = "sms" | "rp";
+export type ConversationSpace = "normal" | "secret";
 export type TurnStatus = "completed" | "failed" | "cancelled" | "blocked";
 export type SystemEventType =
   | "model_unavailable"
@@ -14,6 +15,7 @@ export type SystemEventType =
 
 export type MessageRequest = {
   mode?: Mode;
+  conversationSpace?: ConversationSpace;
   text: string;
   timezone?: string;
   characterId?: string;
@@ -32,6 +34,8 @@ export type ActionRecord = {
   id: string;
   actionType: string;
   status: "completed" | "failed" | "blocked";
+  conversationSpace: ConversationSpace;
+  secretOwnerCharacterId?: string;
   payload: Record<string, unknown>;
   createdAt: string;
 };
@@ -95,6 +99,8 @@ export type ContextLogEntry = {
   id: string;
   sessionId: string;
   mode: Mode;
+  conversationSpace: ConversationSpace;
+  secretOwnerCharacterId?: string;
   requestText: string;
   systemPrompt: string;
   messageCountBefore: number;
@@ -146,6 +152,8 @@ export type ModelContextTrace = {
   id: string;
   sessionId: string;
   mode: Mode;
+  conversationSpace: ConversationSpace;
+  secretOwnerCharacterId?: string;
   turnKind: ModelContextTraceTurnKind;
   scope: ModelContextTraceScope;
   requestText: string;

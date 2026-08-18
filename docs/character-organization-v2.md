@@ -6,7 +6,7 @@ Last updated: 2026-07-24
 
 ## 1. Goal
 
-RP Agent should support a group of characters that remain believable people
+YourChar should support a group of characters that remain believable people
 while also becoming useful specialists. A character may be good at research,
 planning, software work, writing, coordination, or another bounded capability.
 Tasks should naturally flow to the right character without loading every Skill,

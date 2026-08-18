@@ -1,5 +1,6 @@
 import type { Clock } from "../app/clock.js";
 import type { IdGenerator } from "../app/id-generator.js";
+import type { ConversationSpace } from "../domain/types.js";
 import type { MemoryVaultService } from "../memory-vault/service.js";
 import { normalizeMemoryContent, type RpRepository } from "./repository.js";
 import {
@@ -230,8 +231,14 @@ export class RpService {
   writeMemory(input: CreateMemoryInput): MemoryWriteResult {
     this.assertCharacterMemoryInput(input);
     this.memoryVault?.syncIfChanged();
+    const conversationSpace = input.conversationSpace ?? "normal";
+    const secretOwnerCharacterId = input.secretOwnerCharacterId;
     if (input.idempotencyKey) {
-      const existing = this.repository.findMemoryByIdempotencyKey(input.idempotencyKey);
+      const existing = this.repository.findMemoryByIdempotencyKey(
+        input.idempotencyKey,
+        conversationSpace,
+        secretOwnerCharacterId,
+      );
       if (existing) {
         if (existing.realm !== RP_MEMORY_REALM || existing.characterId !== input.characterId) {
           throw new RpMemoryValidationError(
@@ -244,16 +251,30 @@ export class RpService {
     this.getCharacter(input.characterId);
     const content = requiredText(input.content, "content");
     const normalizedContent = normalizeMemoryContent(content);
-    const duplicate = this.repository.findActiveMemoryByNormalizedContent(normalizedContent, input.characterId);
+    const duplicate = this.repository.findActiveMemoryByNormalizedContent(
+      normalizedContent,
+      input.characterId,
+      conversationSpace,
+      secretOwnerCharacterId,
+    );
     if (duplicate) return { duplicate, needsConfirmation: false };
     const key = cleanOptional(input.key);
-    const conflict = key ? this.repository.findActiveMemoryByKey(key, input.characterId) : undefined;
+    const conflict = key
+      ? this.repository.findActiveMemoryByKey(
+          key,
+          input.characterId,
+          conversationSpace,
+          secretOwnerCharacterId,
+        )
+      : undefined;
     if (conflict && conflict.normalizedContent !== normalizedContent && !input.confirmed) {
       return { conflict, needsConfirmation: true };
     }
     const now = this.clock.now().toISOString();
     const memory: RpMemory = {
       id: this.idGenerator.next("memory"),
+      conversationSpace,
+      ...(secretOwnerCharacterId ? { secretOwnerCharacterId } : {}),
       realm: RP_MEMORY_REALM,
       scope: RP_MEMORY_SCOPE,
       type: input.type,
@@ -316,15 +337,31 @@ export class RpService {
     return this.repository.listAllMemories();
   }
 
-  getMemory(id: string): RpMemory {
+  listAllMemoriesAcrossSpaces(): RpMemory[] {
     this.memoryVault?.syncIfChanged();
-    const memory = this.repository.getMemory(id);
+    return this.repository.listAllMemoriesAcrossSpaces();
+  }
+
+  getMemory(
+    id: string,
+    conversationSpace: ConversationSpace = "normal",
+    secretOwnerCharacterId?: string,
+  ): RpMemory {
+    this.memoryVault?.syncIfChanged();
+    const memory = this.repository.getMemory(id, conversationSpace, secretOwnerCharacterId);
     if (!memory) throw new RpNotFoundError("memory", id);
     return memory;
   }
 
-  updateMemory(id: string, patch: UpdateMemoryInput): RpMemory {
-    const current = this.memoryVault ? this.repository.getMemory(id) : this.getMemory(id);
+  updateMemory(
+    id: string,
+    patch: UpdateMemoryInput,
+    conversationSpace: ConversationSpace = "normal",
+    secretOwnerCharacterId?: string,
+  ): RpMemory {
+    const current = this.memoryVault
+      ? this.repository.getMemory(id, conversationSpace, secretOwnerCharacterId)
+      : this.getMemory(id, conversationSpace, secretOwnerCharacterId);
     if (!current) throw new RpNotFoundError("memory", id);
     if (current.validity === "deleted") throw new Error("deleted memory cannot be updated");
     if (patch.type !== undefined) {
@@ -362,8 +399,14 @@ export class RpService {
     return this.memoryVault ? this.memoryVault.writeMemory(next) : this.repository.updateMemory(next);
   }
 
-  deleteMemory(id: string): RpMemory {
-    const current = this.memoryVault ? this.repository.getMemory(id) : this.getMemory(id);
+  deleteMemory(
+    id: string,
+    conversationSpace: ConversationSpace = "normal",
+    secretOwnerCharacterId?: string,
+  ): RpMemory {
+    const current = this.memoryVault
+      ? this.repository.getMemory(id, conversationSpace, secretOwnerCharacterId)
+      : this.getMemory(id, conversationSpace, secretOwnerCharacterId);
     if (!current) throw new RpNotFoundError("memory", id);
     const next: RpMemory = {
       ...current,
@@ -373,13 +416,36 @@ export class RpService {
     return this.memoryVault ? this.memoryVault.writeMemory(next) : this.repository.updateMemory(next);
   }
 
-  touchMemories(ids: string[]): void {
+  touchMemories(
+    ids: string[],
+    conversationSpace: ConversationSpace = "normal",
+    secretOwnerCharacterId?: string,
+  ): void {
     if (!ids.length) return;
-    if (this.memoryVault) this.memoryVault.touchMemories(ids);
-    else this.repository.touchMemories(ids, this.clock.now().toISOString());
+    if (this.memoryVault) {
+      this.memoryVault.touchMemories(ids, conversationSpace, secretOwnerCharacterId);
+    } else {
+      this.repository.touchMemories(
+        ids,
+        this.clock.now().toISOString(),
+        conversationSpace,
+        secretOwnerCharacterId,
+      );
+    }
   }
 
   private assertCharacterMemoryInput(input: CreateMemoryInput | ProposeMemoryInput): void {
+    const conversationSpace = input.conversationSpace ?? "normal";
+    if (conversationSpace === "secret") {
+      if (!input.secretOwnerCharacterId?.trim()) {
+        throw new RpMemoryValidationError("secret character memory requires an owner character");
+      }
+      if (input.secretOwnerCharacterId.trim() !== input.characterId.trim()) {
+        throw new RpMemoryValidationError("secret character memory owner must match characterId");
+      }
+    } else if (input.secretOwnerCharacterId) {
+      throw new RpMemoryValidationError("normal character memory cannot have a secret owner");
+    }
     if (input.realm !== RP_MEMORY_REALM || input.scope !== RP_MEMORY_SCOPE) {
       throw new RpMemoryValidationError(
         "the character-memory API accepts only roleplay/character memory; use the reality-memory control plane for global reality data",

@@ -12,7 +12,8 @@ import {
 import type { Clock } from "../app/clock.js";
 import { SystemClock } from "../app/clock.js";
 import { SessionExecutionQueue } from "../app/session-queue.js";
-import { join, resolve } from "node:path";
+import { existsSync, readdirSync, realpathSync } from "node:fs";
+import { basename, dirname, join, relative, resolve, sep } from "node:path";
 import {
   createDefaultNotificationSink,
   type NotificationSink,
@@ -73,6 +74,7 @@ import { DataManagementRepository } from "../storage/data-management.js";
 import { ObservabilityRepository } from "../storage/observability.js";
 import {
   AgentModuleCatalog,
+  agentSkillDiscoveryRoots,
   scheduleMcpModuleId,
   tavilySearchMcpModuleId,
   webReaderMcpModuleId,
@@ -82,8 +84,17 @@ import {
   worldStateMcpModuleId,
   visionMcpModuleId,
 } from "../modules/catalog.js";
-import { AgentPermissionCatalog } from "../modules/permissions.js";
+import {
+  AgentPermissionCatalog,
+  AgentPermissionValidationError,
+} from "../modules/permissions.js";
 import type { AgentPermissionsPatch } from "../modules/types.js";
+import {
+  AgentSkillInstallerError,
+  AgentSkillInstallerService,
+  type AgentSkillConfirmInput,
+  type AgentSkillStageInput,
+} from "../modules/skill-installer.js";
 import {
   CharacterCapabilityRepository,
   CharacterCapabilityService,
@@ -128,6 +139,7 @@ import { formatVisionAnalysis, VisionService } from "../vision/index.js";
 import type { VisionApiConfigPatch } from "../vision/types.js";
 import { visionToolResult } from "../mcp/vision-server.js";
 import { WorkspaceFileService } from "../workspace/file-service.js";
+import { WorkspaceScopeRegistry, type ScopedWorkspace } from "../workspace/scope.js";
 import {
   applyBackgroundThinkingPolicy,
   backgroundThinkingPolicy,
@@ -231,6 +243,7 @@ import {
 } from "../inbox/index.js";
 import type {
   ActionRecord,
+  ConversationSpace,
   MessageAttachment,
   MessageRequest,
   MessageResponse,
@@ -246,6 +259,7 @@ import type {
 
 type NormalizedMessageRequest = MessageRequest & {
   mode: Mode;
+  conversationSpace: ConversationSpace;
   text: string;
   timezone: string;
   attachments: MessageAttachment[];
@@ -357,6 +371,7 @@ export type CompanionKernelOptions = CompanionStoreOptions & {
   tavilyService?: TavilyService;
   webReaderService?: WebReaderService;
   visionService?: VisionService;
+  skillInstaller?: AgentSkillInstallerService | false;
   tavilyBaseUrl?: string;
   memoryExtractor?: MemoryExtractor;
   relationshipExtractor?: RelationshipExtractor;
@@ -382,11 +397,13 @@ export class CompanionKernel {
   readonly rpService: RpService;
   readonly groupChatService: GroupChatService;
   readonly moduleCatalog: AgentModuleCatalog;
+  readonly skillInstaller?: AgentSkillInstallerService;
   readonly permissionCatalog: AgentPermissionCatalog;
   readonly profileService: UserProfileService;
   readonly avatarService: AvatarService;
   readonly systemPromptService: SystemPromptService;
   readonly workspaceFiles: WorkspaceFileService;
+  readonly workspaceRegistry: WorkspaceScopeRegistry;
   readonly memoryVault: MemoryVaultService;
   readonly memoryLifecycle: MemoryLifecycleService;
   readonly memoryCoordinator: MemoryCoordinator;
@@ -421,6 +438,23 @@ export class CompanionKernel {
 
   constructor(options: CompanionKernelOptions | CompanionStore = {}) {
     const normalizedOptions = options instanceof CompanionStore ? { store: options } : options;
+    const configuredStateDir = normalizedOptions.store
+      ? normalizedOptions.store.stateDir
+      : resolveConfiguredStateDir(normalizedOptions.stateDir);
+    const workspaceDir = resolve(
+      normalizedOptions.workspaceDir ??
+      (configuredStateDir
+        ? join(configuredStateDir, "workspace")
+        : join(process.cwd(), ".rp-agent-ephemeral", "workspace")),
+    );
+    const agentDir = configuredStateDir
+      ? join(configuredStateDir, "pi-agent")
+      : join(process.cwd(), ".rp-agent-ephemeral");
+    assertWorkspaceIsolation(
+      workspaceDir,
+      configuredStateDir,
+      agentSkillDiscoveryRoots(process.cwd(), agentDir),
+    );
     this.characterCollaborationReporter = normalizedOptions.characterCollaborationReporter;
     this.store = normalizedOptions.store ?? new CompanionStore(normalizedOptions);
     this.clock = normalizedOptions.clock ?? this.store.clock ?? new SystemClock();
@@ -444,14 +478,18 @@ export class CompanionKernel {
       this.store.idGenerator,
     );
     this.moduleCatalog = new AgentModuleCatalog(this.database, this.clock, { stateDir: this.store.stateDir });
-    const workspaceDir = resolve(
-      normalizedOptions.workspaceDir ??
-      (this.store.stateDir
-        ? join(this.store.stateDir, "workspace")
-        : join(process.cwd(), ".rp-agent-ephemeral", "workspace")),
-    );
+    this.skillInstaller = normalizedOptions.skillInstaller === false
+      ? undefined
+      : normalizedOptions.skillInstaller ?? (this.store.stateDir
+        ? new AgentSkillInstallerService({
+            stateDir: this.store.stateDir,
+            isSkillNameAvailable: (name) => !this.moduleCatalog.listModules().some((module) =>
+              module.type === "skill" && module.name === name),
+          })
+        : undefined);
     this.permissionCatalog = new AgentPermissionCatalog(this.database, this.clock, workspaceDir);
     this.workspaceFiles = new WorkspaceFileService(workspaceDir);
+    this.workspaceRegistry = new WorkspaceScopeRegistry(workspaceDir, this.workspaceFiles);
     this.profileService = new UserProfileService({
       clock: this.clock,
       stateDir: this.store.stateDir,
@@ -464,7 +502,15 @@ export class CompanionKernel {
       clock: this.clock,
       stateDir: this.store.stateDir,
       onAutomaticSync: (event) => {
-        this.store.addAction("memory_vault_auto_sync", "completed", event);
+        const normalPaths = event.externalModifiedPaths
+          .filter((path) => !path.startsWith("secret/"));
+        if (normalPaths.length) {
+          this.store.addAction("memory_vault_auto_sync", "completed", {
+            externalModifiedPaths: normalPaths,
+          }, {
+            conversationSpace: "normal",
+          });
+        }
       },
       failpoint: normalizedOptions.memoryVaultFailpoint,
     });
@@ -486,7 +532,7 @@ export class CompanionKernel {
       this.clock,
       this.store.idGenerator,
     );
-    this.contextEconomics.reconcileAfterVaultRecovery(this.rpService.listAllMemories());
+    this.contextEconomics.reconcileAfterVaultRecovery(this.rpService.listAllMemoriesAcrossSpaces());
     this.memoryRetriever = new MemoryRetriever(this.rpService.repository, this.clock, this.memoryVault);
     this.contextPlanner = new ContextPlanner(
       this.rpService,
@@ -716,14 +762,16 @@ export class CompanionKernel {
         contextEconomics: this.contextEconomics,
         workspaceDir,
         workspaceFiles: this.workspaceFiles,
+        workspaceRegistry: this.workspaceRegistry,
         conversationLifecycleThresholds: normalizedOptions.conversationLifecycleThresholds,
         providerPayloadOptions: (appSessionId) => {
           const binding = this.modelBindingForSession(appSessionId);
           const config = binding.config;
-          const preset = this.meetingPresetService.providerOverridesForSession(
-            appSessionId,
-            "sms",
-          );
+          const secret = this.sessionRuntime.getConversationMetadata()
+            .some((entry) => entry.id === appSessionId && entry.conversationSpace === "secret");
+          const preset = secret
+            ? undefined
+            : this.meetingPresetService.providerOverridesForSession(appSessionId, "sms");
           return {
             temperature: preset?.temperature ?? config.temperature,
             topP: preset?.topP,
@@ -738,16 +786,23 @@ export class CompanionKernel {
             requireThinking: requiresInteractiveThinking(config),
           };
         },
-        providerPayloadTransform: (input) =>
-          this.meetingPresetService.orchestrateProviderPayload({
+        providerPayloadTransform: (input) => {
+          const secret = this.sessionRuntime.getConversationMetadata()
+            .some((entry) =>
+              entry.id === input.appSessionId && entry.conversationSpace === "secret"
+            );
+          if (secret) return input.payload;
+          return this.meetingPresetService.orchestrateProviderPayload({
             sessionId: input.appSessionId,
             mode: input.mode,
             payload: input.payload,
             currentUserText: input.currentUserText,
             timezone: input.timezone,
             now: input.now,
-          }),
+          });
+        },
       });
+    this.enforcePrivateShellNetworkIsolation("startup");
     const privateInboxRepository = new PrivateInboxRepository(this.database);
     this.privateInbox = new PrivateInboxCoordinator(
       privateInboxRepository,
@@ -791,7 +846,7 @@ export class CompanionKernel {
   }
 
   async sendMessage(sessionId: string, request: MessageRequest): Promise<MessageResponse> {
-    const normalized = normalizeRequest(request);
+    const normalized = this.normalizeRequestForSession(sessionId, request);
     return this.executionQueue.run(sessionId, () => this.sendMessageLocked(sessionId, normalized));
   }
 
@@ -801,7 +856,7 @@ export class CompanionKernel {
     onEvent: (event: AgentSessionEvent) => void,
     signal?: AbortSignal,
   ): Promise<MessageResponse> {
-    const normalized = normalizeRequest(request);
+    const normalized = this.normalizeRequestForSession(sessionId, request);
     return this.executionQueue.run(sessionId, () =>
       this.sendMessageLocked(sessionId, normalized, onEvent, signal),
     );
@@ -812,7 +867,7 @@ export class CompanionKernel {
     request: MessageRequest,
     clientMessageId: string,
   ): Promise<PrivateInboxMessage> {
-    const normalized = normalizeRequest(request);
+    const normalized = this.normalizeRequestForSession(sessionId, request);
     const normalizedClientId = clientMessageId.trim();
     if (!normalizedClientId || normalizedClientId.length > 200) {
       throw new PrivateInboxMutationError("clientMessageId must contain 1 to 200 characters");
@@ -821,7 +876,11 @@ export class CompanionKernel {
       throw new PrivateInboxMutationError("private inbox messages require a selected character");
     }
     const handle = normalized.mode === "sms"
-      ? await this.ensureCanonicalPrivateConversation(normalized.characterId, sessionId)
+      ? await this.ensureCanonicalPrivateConversation(
+          normalized.characterId,
+          sessionId,
+          normalized.conversationSpace,
+        )
       : await this.sessionRuntime.getOrCreate(sessionId, normalized.mode, normalized.characterId);
     if (normalized.mode !== "sms") {
       this.sessionRuntime.assertConversationActive(handle.metadata.id);
@@ -922,6 +981,7 @@ export class CompanionKernel {
         mode: log.mode,
         text: log.requestText,
         characterId: metadata?.characterId,
+        conversationSpace: metadata?.conversationSpace,
       }));
     });
   }
@@ -939,7 +999,7 @@ export class CompanionKernel {
   async editLatestUserMessage(sessionId: string, entryId: string, text: string): Promise<MessageResponse> {
     const edited = text.trim();
     if (!edited) throw new MessageRevisionError("edited message must not be empty");
-    return this.executionQueue.run(sessionId, async () => {
+    return this.executionQueue.run(sessionId, () => this.withSessionActionScope(sessionId, async () => {
       const metadata = this.requireRevisionMetadata(sessionId);
       this.assertLatestTurnRevisionSafe(sessionId);
       await this.sessionRuntime.branchBeforeLatestUser(sessionId, entryId);
@@ -947,13 +1007,14 @@ export class CompanionKernel {
       return this.sendMessageLocked(sessionId, normalizeRequest({
         mode: metadata.mode,
         characterId: metadata.characterId,
+        conversationSpace: metadata.conversationSpace,
         text: edited,
       }));
-    });
+    }));
   }
 
   async retractLatestUserMessage(sessionId: string, entryId: string) {
-    return this.executionQueue.run(sessionId, async () => {
+    return this.executionQueue.run(sessionId, () => this.withSessionActionScope(sessionId, async () => {
       const metadata = this.requireRevisionMetadata(sessionId);
       this.assertLatestTurnRevisionSafe(sessionId);
       const handle = await this.sessionRuntime.branchBeforeLatestUser(sessionId, entryId);
@@ -968,6 +1029,10 @@ export class CompanionKernel {
       this.store.addContextLog({
         sessionId: metadata.id,
         mode: metadata.mode,
+        conversationSpace: metadata.conversationSpace,
+        ...(metadata.conversationSpace === "secret" && metadata.characterId
+          ? { secretOwnerCharacterId: metadata.characterId }
+          : {}),
         requestText: "[message retracted]",
         systemPrompt: handle.session.systemPrompt,
         messageCountBefore: handle.session.messages.length - 1,
@@ -979,11 +1044,11 @@ export class CompanionKernel {
         events: [],
       });
       return { messages: await this.sessionRuntime.getConversationTranscript(sessionId) };
-    });
+    }));
   }
 
-  async listSessions(): Promise<SessionRecord[]> {
-    return this.sessionRuntime.listSessionRecords();
+  async listSessions(conversationSpace?: ConversationSpace, characterId?: string): Promise<SessionRecord[]> {
+    return this.sessionRuntime.listSessionRecords(conversationSpace, characterId);
   }
 
   listConversationMetadata() {
@@ -999,7 +1064,7 @@ export class CompanionKernel {
     if (inbox.running || inbox.messages.length) {
       throw new PrivateInboxMutationError("仍有消息正在合并或生成，暂时不能整理上下文");
     }
-    return this.executionQueue.run(sessionId, async () => {
+    return this.executionQueue.run(sessionId, () => this.withSessionActionScope(sessionId, async () => {
       await this.flushDurableTurnCoordinators();
       const result = await this.sessionRuntime.compactConversation(sessionId, "manual");
       this.store.addAction("context_compaction", "completed", {
@@ -1009,24 +1074,36 @@ export class CompanionKernel {
         estimatedTokensAfter: result.budgetAfter.estimatedInputTokens,
       });
       return result;
-    });
+    }));
   }
 
-  async openCanonicalPrivateConversation(characterId: string) {
-    const handle = await this.ensureCanonicalPrivateConversation(characterId);
+  async openCanonicalPrivateConversation(
+    characterId: string,
+    conversationSpace: ConversationSpace = "normal",
+  ) {
+    const handle = await this.ensureCanonicalPrivateConversation(
+      characterId,
+      undefined,
+      conversationSpace,
+    );
     return { ...handle.metadata };
   }
 
   async resolveConversationTarget(sessionId: string, request: MessageRequest): Promise<string> {
     const normalized = normalizeRequest(request);
     if (normalized.mode !== "sms" || !normalized.characterId) return sessionId;
-    const handle = await this.ensureCanonicalPrivateConversation(normalized.characterId, sessionId);
+    const handle = await this.ensureCanonicalPrivateConversation(
+      normalized.characterId,
+      sessionId,
+      normalized.conversationSpace,
+    );
     return handle.metadata.id;
   }
 
   getConversationInteraction(sessionId: string) {
     const metadata = this.sessionRuntime.getConversationMetadata().find((entry) => entry.id === sessionId);
     if (!metadata) throw new Error(`Session ${sessionId} was not found`);
+    if (metadata.conversationSpace === "secret") throw new ConversationNotFoundError(sessionId);
     if (!metadata.characterId) throw new Error(`Session ${sessionId} has no selected character`);
     this.rpService.ensureRoleSession(
       sessionId,
@@ -1066,6 +1143,7 @@ export class CompanionKernel {
       this.sessionRuntime.assertConversationActive(sessionId);
       const metadata = this.sessionRuntime.getConversationMetadata().find((entry) => entry.id === sessionId);
       if (!metadata) throw new Error(`Session ${sessionId} was not found`);
+      if (metadata.conversationSpace === "secret") throw new ConversationNotFoundError(sessionId);
       if (!metadata.characterId) throw new Error(`Session ${sessionId} has no selected character`);
       this.rpService.ensureRoleSession(
         sessionId,
@@ -1262,34 +1340,81 @@ export class CompanionKernel {
     return deleted;
   }
 
-  getCharacterFunctionProfile(characterId: string) {
-    return this.characterCapabilities.getSnapshot(characterId);
+  getCharacterFunctionProfile(
+    characterId: string,
+    conversationSpace: ConversationSpace = "normal",
+  ) {
+    if (conversationSpace === "secret") {
+      this.enforcePrivateShellNetworkIsolation("secret_workbench_open", true);
+    }
+    return this.characterCapabilities.getSnapshot(characterId, conversationSpace);
   }
 
   updateCharacterFunctionProfile(
     characterId: string,
     update: CharacterFunctionProfileUpdate,
+    conversationSpace: ConversationSpace = "normal",
   ) {
-    return this.characterCapabilities.updateProfile(characterId, update);
+    return this.store.withActionScope(
+      characterConversationActionScope(characterId, conversationSpace),
+      () => this.characterCapabilities.updateProfile(
+        characterId,
+        update,
+        conversationSpace,
+      ),
+    );
   }
 
-  inferCharacterFunctionProfile(characterId: string) {
-    return this.characterCapabilities.requestInference(characterId, {
-      reason: "user_requested",
-      force: true,
-    });
+  inferCharacterFunctionProfile(
+    characterId: string,
+    conversationSpace: ConversationSpace = "normal",
+  ) {
+    return this.store.withActionScope(
+      characterConversationActionScope(characterId, conversationSpace),
+      () => this.characterCapabilities.requestInference(characterId, {
+        reason: "user_requested",
+        force: true,
+        conversationSpace,
+      }),
+    );
   }
 
-  setCharacterFunctionAutomatic(characterId: string, automatic: boolean) {
-    return this.characterCapabilities.setAutomaticManagement(characterId, automatic);
+  setCharacterFunctionAutomatic(
+    characterId: string,
+    automatic: boolean,
+    conversationSpace: ConversationSpace = "normal",
+  ) {
+    return this.store.withActionScope(
+      characterConversationActionScope(characterId, conversationSpace),
+      () => this.characterCapabilities.setAutomaticManagement(
+        characterId,
+        automatic,
+        conversationSpace,
+      ),
+    );
   }
 
-  listCharacterSkillVersions(characterId: string, limit?: number) {
-    return this.characterCapabilities.listSkillVersions(characterId, limit);
+  listCharacterSkillVersions(
+    characterId: string,
+    limit?: number,
+    conversationSpace: ConversationSpace = "normal",
+  ) {
+    return this.characterCapabilities.listSkillVersions(
+      characterId,
+      limit,
+      conversationSpace,
+    );
   }
 
-  rollbackCharacterSkill(characterId: string, version: number) {
-    return this.characterCapabilities.rollbackSkill(characterId, version);
+  rollbackCharacterSkill(
+    characterId: string,
+    version: number,
+    conversationSpace: ConversationSpace = "normal",
+  ) {
+    return this.store.withActionScope(
+      characterConversationActionScope(characterId, conversationSpace),
+      () => this.characterCapabilities.rollbackSkill(characterId, version, conversationSpace),
+    );
   }
 
   previewCharacterTaskRoute(input: {
@@ -1398,9 +1523,14 @@ export class CompanionKernel {
     return this.worldService.markProactiveMessagesRead(sessionId);
   }
 
-  listUnreadConversations() {
+  listUnreadConversations(conversationSpace: ConversationSpace = "normal", characterId?: string) {
     return this.sessionRuntime.getConversationMetadata()
-      .filter((entry) => !entry.archivedAt && (entry.unreadCount ?? 0) > 0)
+      .filter((entry) =>
+        entry.conversationSpace === conversationSpace &&
+        (characterId === undefined || entry.characterId === characterId) &&
+        !entry.archivedAt &&
+        (entry.unreadCount ?? 0) > 0
+      )
       .map((entry) => ({
         sessionId: entry.id,
         characterId: entry.characterId,
@@ -1684,14 +1814,25 @@ export class CompanionKernel {
   }
 
   getScene(sessionId: string, characterId?: string) {
+    if (this.sessionRuntime.getConversationMetadata()
+      .some((entry) => entry.id === sessionId && entry.conversationSpace === "secret")) {
+      throw new ConversationNotFoundError(sessionId);
+    }
     return this.rpService.getScene(sessionId, characterId);
   }
 
   updateScene(sessionId: string, patch: UpdateSceneInput, characterId?: string) {
+    if (this.sessionRuntime.getConversationMetadata()
+      .some((entry) => entry.id === sessionId && entry.conversationSpace === "secret")) {
+      throw new ConversationNotFoundError(sessionId);
+    }
     return this.rpService.updateScene(sessionId, patch, characterId);
   }
 
   writeRpMemory(input: CreateMemoryInput) {
+    if (input.conversationSpace === "secret") {
+      this.enforcePrivateShellNetworkIsolation("secret_memory_write", true);
+    }
     return this.rpService.writeMemory(input);
   }
 
@@ -1699,12 +1840,30 @@ export class CompanionKernel {
     return this.rpService.searchMemories(filter);
   }
 
-  updateRpMemory(id: string, patch: UpdateMemoryInput) {
-    return this.rpService.updateMemory(id, patch);
+  updateRpMemory(
+    id: string,
+    patch: UpdateMemoryInput,
+    conversationSpace: ConversationSpace = "normal",
+    secretOwnerCharacterId?: string,
+  ) {
+    return this.rpService.updateMemory(
+      id,
+      patch,
+      conversationSpace,
+      secretOwnerCharacterId,
+    );
   }
 
-  deleteRpMemory(id: string) {
-    return this.rpService.deleteMemory(id);
+  deleteRpMemory(
+    id: string,
+    conversationSpace: ConversationSpace = "normal",
+    secretOwnerCharacterId?: string,
+  ) {
+    return this.rpService.deleteMemory(
+      id,
+      conversationSpace,
+      secretOwnerCharacterId,
+    );
   }
 
   listMemories(filter?: MemorySearchFilter) {
@@ -1719,32 +1878,66 @@ export class CompanionKernel {
     return this.memoryVault.updatePersonProfile(id, patch);
   }
 
-  confirmMemory(id: string, edit: MemoryControlPlaneEdit = {}) {
-    return this.memoryLifecycle.confirm(id, edit);
+  confirmMemory(
+    id: string,
+    edit: MemoryControlPlaneEdit = {},
+    conversationSpace: ConversationSpace = "normal",
+    secretOwnerCharacterId?: string,
+  ) {
+    return this.memoryLifecycle.confirm(id, edit, conversationSpace, secretOwnerCharacterId);
   }
 
   createControlPlaneMemory(input: MemoryCandidateInput) {
+    if (input.conversationSpace === "secret") {
+      this.enforcePrivateShellNetworkIsolation("secret_memory_write", true);
+    }
     return this.memoryLifecycle.createControlPlane(input);
   }
 
-  correctMemory(id: string, edit: MemoryControlPlaneEdit) {
-    return this.memoryLifecycle.correct(id, edit);
+  correctMemory(
+    id: string,
+    edit: MemoryControlPlaneEdit,
+    conversationSpace: ConversationSpace = "normal",
+    secretOwnerCharacterId?: string,
+  ) {
+    return this.memoryLifecycle.correct(id, edit, conversationSpace, secretOwnerCharacterId);
   }
 
-  rejectMemory(id: string, reason?: string) {
-    return this.memoryLifecycle.reject(id, reason);
+  rejectMemory(
+    id: string,
+    reason?: string,
+    conversationSpace: ConversationSpace = "normal",
+    secretOwnerCharacterId?: string,
+  ) {
+    return this.memoryLifecycle.reject(id, reason, conversationSpace, secretOwnerCharacterId);
   }
 
-  archiveMemory(id: string, reason?: string) {
-    return this.memoryLifecycle.archive(id, reason);
+  archiveMemory(
+    id: string,
+    reason?: string,
+    conversationSpace: ConversationSpace = "normal",
+    secretOwnerCharacterId?: string,
+  ) {
+    return this.memoryLifecycle.archive(id, reason, conversationSpace, secretOwnerCharacterId);
   }
 
-  forgetMemory(id: string, reason?: string) {
-    return this.memoryLifecycle.forget(id, reason);
+  forgetMemory(
+    id: string,
+    reason?: string,
+    conversationSpace: ConversationSpace = "normal",
+    secretOwnerCharacterId?: string,
+  ) {
+    return this.memoryLifecycle.forget(id, reason, conversationSpace, secretOwnerCharacterId);
   }
 
-  getMemoryCoordinatorStatus() {
-    return this.memoryCoordinator.status();
+  getMemoryCoordinatorStatus(
+    conversationSpace: ConversationSpace = "normal",
+    secretOwnerCharacterId?: string,
+  ) {
+    return this.memoryCoordinator.status(
+      conversationSpace,
+      secretOwnerCharacterId,
+    );
   }
 
   getUserInsightStatus(limit?: number) {
@@ -1792,6 +1985,7 @@ export class CompanionKernel {
   previewContextPlan(input: {
     mode: Mode;
     sessionId: string;
+    conversationSpace?: ConversationSpace;
     characterId?: string;
     query: string;
     timezone?: string;
@@ -1801,6 +1995,7 @@ export class CompanionKernel {
     return this.buildContextPlan({
       mode: input.mode,
       sessionId: input.sessionId,
+      conversationSpace: input.conversationSpace ?? "normal",
       ...(input.characterId ? { characterId: input.characterId } : {}),
       query: input.query,
       timezone: input.timezone ?? "Asia/Shanghai",
@@ -1809,16 +2004,38 @@ export class CompanionKernel {
     });
   }
 
-  recentContextEconomics(limit?: number) {
-    return this.contextEconomics.recent(limit);
+  recentContextEconomics(
+    limit?: number,
+    conversationSpace: ConversationSpace = "normal",
+    secretOwnerCharacterId?: string,
+  ) {
+    return this.contextEconomics.recent(
+      limit,
+      conversationSpace,
+      secretOwnerCharacterId,
+    );
   }
 
-  memoryRetrievalStats() {
-    return this.contextEconomics.memoryStats();
+  memoryRetrievalStats(
+    conversationSpace: ConversationSpace = "normal",
+    secretOwnerCharacterId?: string,
+  ) {
+    return this.contextEconomics.memoryStats(
+      conversationSpace,
+      secretOwnerCharacterId,
+    );
   }
 
-  retryMemoryExtractionJob(id: string) {
-    return this.memoryCoordinator.retry(id);
+  retryMemoryExtractionJob(
+    id: string,
+    conversationSpace: ConversationSpace = "normal",
+    secretOwnerCharacterId?: string,
+  ) {
+    return this.memoryCoordinator.retry(
+      id,
+      conversationSpace,
+      secretOwnerCharacterId,
+    );
   }
 
   readiness() {
@@ -1876,78 +2093,189 @@ export class CompanionKernel {
     return (body.data ?? []).map((entry) => entry.id).filter((id): id is string => typeof id === "string").sort();
   }
 
-  async exportUserData() {
-    const roleSessions = this.rpService.listRoleSessions();
-    const interactionStates = roleSessions.flatMap((session) => {
-      const state = this.interactionService.get(session.appSessionId);
-      return state ? [state] : [];
-    });
+  async exportUserData(
+    conversationSpace: ConversationSpace = "normal",
+    secretOwnerCharacterId?: string,
+  ) {
+    if (conversationSpace === "secret" && !secretOwnerCharacterId?.trim()) {
+      throw new Error("secret data export requires a characterId");
+    }
+    if (conversationSpace === "normal" && secretOwnerCharacterId) {
+      throw new Error("normal data export cannot include a secret characterId");
+    }
+    const conversations = this.sessionRuntime.getConversationMetadata().filter((entry) =>
+      entry.conversationSpace === conversationSpace &&
+      (secretOwnerCharacterId === undefined || entry.characterId === secretOwnerCharacterId)
+    );
+    const sessionIds = new Set(conversations.map((entry) => entry.id));
+    const sessions = await this.listSessions(conversationSpace, secretOwnerCharacterId);
+    const roleSessions = this.rpService.listRoleSessions()
+      .filter((session) => sessionIds.has(session.appSessionId));
+    const interactionStates = conversationSpace === "normal"
+      ? roleSessions.flatMap((session) => {
+          const state = this.interactionService.get(session.appSessionId);
+          return state ? [state] : [];
+        })
+      : [];
+    const characters = conversationSpace === "normal"
+      ? this.listCharacters()
+      : [this.getCharacter(secretOwnerCharacterId!)];
+    this.memoryVault.syncIfChanged();
+    const memories = this.rpService.repository.listAllMemories(
+      conversationSpace,
+      secretOwnerCharacterId,
+    );
+    const actions = this.store.allActions().filter((action) =>
+      action.conversationSpace === conversationSpace &&
+      action.secretOwnerCharacterId === secretOwnerCharacterId
+    );
+    const memoryCoordinator = this.memoryCoordinator.status(
+      conversationSpace,
+      secretOwnerCharacterId,
+    );
+    const scopedMemoryJobs = memoryCoordinator.recentJobs.filter((job) =>
+      job.conversationSpace === conversationSpace &&
+      job.secretOwnerCharacterId === secretOwnerCharacterId
+    );
     return {
       version: 1,
       exportedAt: this.clock.now().toISOString(),
-      conversations: this.sessionRuntime.getConversationMetadata(),
-      sessions: await this.listSessions(),
-      groupChats: this.groupChatService.list(),
-      groupChatMessages: this.groupChatService.list().flatMap((chat) =>
-        this.groupChatService.listMessages(chat.id, 500)),
-      worldConversations: this.worldConversationService.list().map((conversation) => ({
-        ...this.worldConversationService.get(conversation.worldId),
-        messages: this.worldConversationService.listMessages(conversation.worldId, 500),
-      })),
-      characterChannels: this.characterChannels.listChannels({ limit: 500 }).map((channel) =>
-        this.characterChannels.snapshot(channel.id, { messageLimit: 500, episodeLimit: 200 })),
-      scheduleItems: this.listScheduleItems(),
-      reminderOccurrences: this.listReminderOccurrences(),
-      notificationHistory: this.listNotificationHistory(),
-      characters: this.listCharacters(),
-      meetingPresets: this.meetingPresetService.repository.list(),
-      characterFunctions: this.listCharacters().map((character) => {
-        const snapshot = this.characterCapabilities.getSnapshot(character.id);
+      conversationSpace,
+      ...(secretOwnerCharacterId ? { secretOwnerCharacterId } : {}),
+      conversations,
+      sessions,
+      ...(conversationSpace === "normal" ? {
+        groupChats: this.groupChatService.list(),
+        groupChatMessages: this.groupChatService.list().flatMap((chat) =>
+          this.groupChatService.listMessages(chat.id, 500)),
+        worldConversations: this.worldConversationService.list().map((conversation) => ({
+          ...this.worldConversationService.get(conversation.worldId),
+          messages: this.worldConversationService.listMessages(conversation.worldId, 500),
+        })),
+        characterChannels: this.characterChannels.listChannels({ limit: 500 }).map((channel) =>
+          this.characterChannels.snapshot(channel.id, { messageLimit: 500, episodeLimit: 200 })),
+        scheduleItems: this.listScheduleItems(),
+        reminderOccurrences: this.listReminderOccurrences(),
+        notificationHistory: this.listNotificationHistory(),
+      } : {}),
+      characters,
+      ...(conversationSpace === "normal"
+        ? { meetingPresets: this.meetingPresetService.repository.list() }
+        : {}),
+      characterFunctions: characters.map((character) => {
+        const snapshot = this.characterCapabilities.getSnapshot(character.id, conversationSpace);
         return {
           profile: snapshot.profile,
           capabilities: snapshot.capabilities,
-          evidence: this.characterCapabilities.repository.listEvidence(character.id, 500),
-          skillVersions: this.characterCapabilities.listSkillVersions(character.id, 200),
+          evidence: conversationSpace === "normal"
+            ? this.characterCapabilities.repository.listEvidence(character.id, 500)
+            : [],
+          skillVersions: this.characterCapabilities.listSkillVersions(
+            character.id,
+            200,
+            conversationSpace,
+          ),
         };
       }),
-      relationships: this.listCharacters().map((character) =>
-        this.relationshipService.snapshot(character.id, 100)),
-      worlds: this.worldService.listWorlds(true).map((world) => ({
-        ...world,
-        places: this.worldService.listPlaces(world.id),
-        memberships: this.worldService.repository.listMemberships(world.id),
-      })),
-      characterLives: this.listCharacters().map((character) =>
-        this.worldService.getCharacterLife(character.id)),
-      proactiveMessages: this.worldService.listProactiveMessages({ limit: 500 }),
+      relationships: conversationSpace === "normal"
+        ? characters.map((character) =>
+            this.relationshipService.snapshot(character.id, 100))
+        : [],
+      ...(conversationSpace === "normal" ? {
+        worlds: this.worldService.listWorlds(true).map((world) => ({
+          ...world,
+          places: this.worldService.listPlaces(world.id),
+          memberships: this.worldService.repository.listMemberships(world.id),
+        })),
+        characterLives: characters.map((character) =>
+          this.worldService.getCharacterLife(character.id)),
+        proactiveMessages: this.worldService.listProactiveMessages({ limit: 500 }),
+      } : {}),
       roleSessions,
-      scenes: this.rpService.listScenes(),
+      scenes: conversationSpace === "normal"
+        ? this.rpService.listScenes().filter((scene) => sessionIds.has(scene.roleSessionId))
+        : [],
       interactionStates,
       interactionEvents: interactionStates.flatMap((state) =>
         this.interactionService.listAllEvents(state.sessionId)),
-      privateMessageInbox: this.privateInbox.repository.listAll(),
-      memories: this.rpService.listAllMemories(),
-      personProfiles: this.memoryVault.listPersonProfiles(),
-      pendingRealMutations: this.rpService.repository.listPendingMutations(),
-      actions: this.store.allActions(),
-      modelContextTraces: this.store.recentModelContextTraces(20),
-      contextEconomics: this.contextEconomics.recent(100),
-      memoryContextState: this.contextEconomics.contextState(),
+      privateMessageInbox: this.privateInbox.repository.listAll()
+        .filter((message) => sessionIds.has(message.sessionId)),
+      memories,
+      personProfiles: conversationSpace === "normal" ? this.memoryVault.listPersonProfiles() : [],
+      pendingRealMutations: conversationSpace === "normal"
+        ? this.rpService.repository.listPendingMutations()
+          .filter((mutation) => sessionIds.has(mutation.sessionId))
+        : [],
+      actions,
+      modelContextTraces: this.store.recentModelContextTraces(
+        20,
+        undefined,
+        conversationSpace,
+        secretOwnerCharacterId,
+      ),
+      contextEconomics: this.contextEconomics.recent(
+        100,
+        conversationSpace,
+        secretOwnerCharacterId,
+      ),
+      memoryContextState: this.contextEconomics.contextState(
+        conversationSpace,
+        secretOwnerCharacterId,
+      ),
       agentModules: this.moduleCatalog.listModules(),
       agentPermissions: this.permissionCatalog.get(),
       tavily: this.tavilyService.getConfig(),
-      userProfile: this.profileService.get(),
+      ...(conversationSpace === "normal" ? { userProfile: this.profileService.get() } : {}),
       systemPrompts: this.getSystemPrompts(),
       avatars: {
-        user: Boolean(this.avatarService.getUser()),
-        characterIds: this.listCharacters()
+        user: conversationSpace === "normal" && Boolean(this.avatarService.getUser()),
+        characterIds: characters
           .filter((character) => Boolean(this.avatarService.getCharacter(character.id)))
           .map((character) => character.id),
       },
-      memoryCoordinator: this.memoryCoordinator.status(),
-      userInsights: this.userInsightCoordinator.status(200),
-      postTurnCoordinator: this.postTurnCoordinator.status(),
-      relationshipCoordinator: this.postTurnCoordinator.status(),
+      memoryCoordinator: {
+        ...memoryCoordinator,
+        pendingCount: scopedMemoryJobs.filter((job) =>
+          job.status === "pending" || job.status === "running"
+        ).length,
+        estimatedTokensLast24Hours: scopedMemoryJobs.reduce(
+          (sum, job) => sum + job.inputTokenEstimate,
+          0,
+        ),
+        recentJobs: scopedMemoryJobs,
+      },
+      userInsights: conversationSpace === "normal"
+        ? this.userInsightCoordinator.status(200)
+        : {
+            enabled: false,
+            observationCount: 0,
+            promotedCount: 0,
+            pendingCount: 0,
+            blockedCount: 0,
+            conflictCount: 0,
+            userBlockedCount: 0,
+            recentObservations: [],
+          },
+      postTurnCoordinator: conversationSpace === "normal"
+        ? this.postTurnCoordinator.status()
+        : {
+            enabled: false,
+            relationshipEnabled: false,
+            interactionFallbackEnabled: false,
+            pendingCount: 0,
+            estimatedTokensLast24Hours: 0,
+            recentJobs: [],
+          },
+      relationshipCoordinator: conversationSpace === "normal"
+        ? this.postTurnCoordinator.status()
+        : {
+            enabled: false,
+            relationshipEnabled: false,
+            interactionFallbackEnabled: false,
+            pendingCount: 0,
+            estimatedTokensLast24Hours: 0,
+            recentJobs: [],
+          },
     };
   }
 
@@ -1971,12 +2299,30 @@ export class CompanionKernel {
     }
   }
 
-  recentContextLogs(limit?: number) {
-    return this.store.recentContextLogs(limit);
+  recentContextLogs(
+    limit?: number,
+    conversationSpace: ConversationSpace = "normal",
+    secretOwnerCharacterId?: string,
+  ) {
+    return this.store.recentContextLogs(
+      limit,
+      conversationSpace,
+      secretOwnerCharacterId,
+    );
   }
 
-  recentModelContextTraces(limit?: number, scope?: ModelContextTraceScope) {
-    return this.store.recentModelContextTraces(limit, scope);
+  recentModelContextTraces(
+    limit?: number,
+    scope?: ModelContextTraceScope,
+    conversationSpace: ConversationSpace = "normal",
+    secretOwnerCharacterId?: string,
+  ) {
+    return this.store.recentModelContextTraces(
+      limit,
+      scope,
+      conversationSpace,
+      secretOwnerCharacterId,
+    );
   }
 
   getTraceArchiveStatus() {
@@ -2000,6 +2346,18 @@ export class CompanionKernel {
     const metadata = this.sessionRuntime.getConversationMetadata().find((entry) => entry.id === sessionId);
     if (!metadata) throw new MessageRevisionError("conversation does not exist");
     return metadata;
+  }
+
+  private withSessionActionScope<T>(sessionId: string, operation: () => T): T {
+    const metadata = this.sessionRuntime.getConversationMetadata()
+      .find((entry) => entry.id === sessionId);
+    if (!metadata) throw new ConversationNotFoundError(sessionId);
+    return this.store.withActionScope({
+      conversationSpace: metadata.conversationSpace,
+      ...(metadata.conversationSpace === "secret" && metadata.characterId
+        ? { secretOwnerCharacterId: metadata.characterId }
+        : {}),
+    }, operation);
   }
 
   private assertLatestTurnRevisionSafe(sessionId: string): void {
@@ -2029,8 +2387,11 @@ export class CompanionKernel {
     }
   }
 
-  getAgentModuleDetail(moduleId: string) {
-    return this.moduleCatalog.getDetail(moduleId);
+  getAgentModuleDetail(
+    moduleId: string,
+    conversationSpace: ConversationSpace = "normal",
+  ) {
+    return this.moduleCatalog.getDetail(moduleId, conversationSpace);
   }
 
   setAgentModuleEnabled(moduleId: string, enabled: boolean) {
@@ -2042,8 +2403,212 @@ export class CompanionKernel {
     return module;
   }
 
+  setAgentSkillEnabledSpaces(moduleId: string, spaces: ConversationSpace[]) {
+    this.sessionRuntime.assertCapabilitiesIdle();
+    if (spaces.includes("secret") && !spaces.includes("normal")) {
+      this.enforcePrivateShellNetworkIsolation("secret_only_skill_enabled", true);
+    }
+    const module = this.moduleCatalog.setSkillEnabledSpaces(moduleId, spaces);
+    this.store.addAction("set_agent_skill_spaces", "completed", {
+      moduleId,
+      enabledSpaces: module.enabledSpaces ?? [],
+    });
+    this.sessionRuntime.invalidateCapabilities(`skill_spaces:${moduleId}`);
+    return module;
+  }
+
+  async stageAgentSkillInstall(input: AgentSkillStageInput, signal?: AbortSignal) {
+    if (!this.skillInstaller || !this.store.stateDir) {
+      throw new AgentSkillInstallerError(
+        "Skill installation requires a persistent YourChar state directory",
+        "INSTALLER_UNAVAILABLE",
+      );
+    }
+    try {
+      const stage = await this.skillInstaller.stage(input, signal);
+      try {
+        this.assertAgentSkillNameAvailable(stage.metadata.name);
+      } catch (error) {
+        this.skillInstaller.cancel(stage.stageId);
+        throw error;
+      }
+      this.store.addAction("stage_agent_skill_install", "completed", {
+        sourceHost: safeUrlHostname(stage.source.requestedUrl),
+        requestedRef: stage.source.requestedRef,
+        resolvedCommit: stage.source.resolvedCommit,
+        packageName: stage.metadata.name,
+        digest: stage.digest,
+        fileCount: stage.metadata.files,
+        unpackedBytes: stage.metadata.unpackedBytes,
+      });
+      return stage;
+    } catch (error) {
+      this.store.addAction("stage_agent_skill_install", "failed", {
+        sourceHost: safeUrlHostname(input.sourceUrl),
+        code: error instanceof AgentSkillInstallerError ? error.code : "UNKNOWN",
+      });
+      throw error;
+    }
+  }
+
+  confirmAgentSkillInstall(
+    input: AgentSkillConfirmInput & { enabledSpaces: ConversationSpace[] },
+  ) {
+    if (!this.skillInstaller || !this.store.stateDir) {
+      throw new AgentSkillInstallerError(
+        "Skill installation requires a persistent YourChar state directory",
+        "INSTALLER_UNAVAILABLE",
+      );
+    }
+    const enabledSpaces = [...new Set(input.enabledSpaces)];
+    if (
+      !enabledSpaces.length ||
+      enabledSpaces.some((space) => space !== "normal" && space !== "secret")
+    ) {
+      throw new AgentSkillInstallerError(
+        "enabledSpaces must contain normal and/or secret",
+        "SPACES_INVALID",
+      );
+    }
+    this.sessionRuntime.assertCapabilitiesIdle();
+    if (enabledSpaces.includes("secret") && !enabledSpaces.includes("normal")) {
+      this.enforcePrivateShellNetworkIsolation("secret_only_skill_install", true);
+    }
+
+    const stage = this.skillInstaller.getStage(input.stageId);
+    if (!stage) {
+      throw new AgentSkillInstallerError(
+        "Skill stage was not found or expired",
+        "STAGE_NOT_FOUND",
+      );
+    }
+    if (stage.digest !== input.digest) {
+      throw new AgentSkillInstallerError(
+        "stage digest does not match the reviewed package",
+        "STAGE_DIGEST_MISMATCH",
+      );
+    }
+    this.assertAgentSkillNameAvailable(stage.metadata.name);
+    const moduleId = `skill:${stage.metadata.name}`;
+    // A manually removed package may leave an old normal-enabled row behind.
+    // Remove it before publication so a crash can only leave the new package disabled.
+    this.moduleCatalog.clearSkillEnabledSpaces(moduleId);
+    const receipt = this.skillInstaller.confirm(input);
+    try {
+      const expectedBaseDir = resolve(join(this.store.stateDir, "skills", receipt.name));
+      const location = this.moduleCatalog.getSkillPackageLocation(moduleId);
+      if (
+        !location ||
+        location.baseDir !== expectedBaseDir ||
+        location.filePath !== join(expectedBaseDir, "SKILL.md")
+      ) {
+        throw new AgentSkillInstallerError(
+          "published Skill did not resolve to the reviewed package",
+          "SKILL_SOURCE_MISMATCH",
+        );
+      }
+      const module = this.moduleCatalog.setSkillEnabledSpaces(moduleId, enabledSpaces);
+      this.skillInstaller.finalizeInstall(receipt);
+      this.store.addAction("install_agent_skill", "completed", {
+        moduleId,
+        digest: receipt.digest,
+        fileCount: receipt.manifest.length,
+        enabledSpaces,
+      });
+      this.sessionRuntime.invalidateCapabilities(`skill_install:${moduleId}`);
+      return { receipt, module };
+    } catch (error) {
+      this.moduleCatalog.clearSkillEnabledSpaces(moduleId);
+      try {
+        this.skillInstaller.rollbackInstall(receipt);
+      } catch (rollbackError) {
+        this.store.addAction("install_agent_skill_rollback", "failed", {
+          moduleId,
+          digest: receipt.digest,
+          error: rollbackError instanceof AgentSkillInstallerError
+            ? rollbackError.code
+            : "UNKNOWN",
+        });
+      }
+      throw error;
+    }
+  }
+
+  cancelAgentSkillInstall(stageId: string): boolean {
+    if (!this.skillInstaller) return false;
+    return this.skillInstaller.cancel(stageId);
+  }
+
+  private assertAgentSkillNameAvailable(name: string): void {
+    if (this.moduleCatalog.listModules().some((module) =>
+      module.type === "skill" && module.name === name)) {
+      throw new AgentSkillInstallerError(
+        `Skill name ${name} collides with an existing Agent Skill`,
+        "SKILL_NAME_CONFLICT",
+      );
+    }
+  }
+
   getAgentPermissions() {
     return this.permissionCatalog.get();
+  }
+
+  enterPrivateControlPlane(): void {
+    this.enforcePrivateShellNetworkIsolation("private_control_plane", true);
+  }
+
+  listSessionWorkspaceFiles(sessionId: string, path?: string) {
+    return this.workspaceForSession(sessionId).files.list(path);
+  }
+
+  uploadSessionWorkspaceFile(
+    sessionId: string,
+    input: { directory?: string; name: string; bytes: Buffer },
+  ) {
+    const workspace = this.workspaceForSession(sessionId);
+    const entry = workspace.files.upload(input);
+    this.store.addAction("workspace_ui_upload", "completed", {
+      sessionId,
+      conversationSpace: workspace.conversationSpace,
+      path: entry.path,
+      bytes: entry.size,
+    }, workspaceActionScope(workspace));
+    return entry;
+  }
+
+  previewSessionWorkspaceFile(sessionId: string, path: string) {
+    return this.workspaceForSession(sessionId).files.preview(path);
+  }
+
+  getSessionWorkspaceFileAsset(
+    sessionId: string,
+    path: string,
+    disposition: "inline" | "attachment",
+  ) {
+    return this.workspaceForSession(sessionId).files.asset(path, disposition);
+  }
+
+  moveSessionWorkspaceFile(sessionId: string, from: string, to: string) {
+    const workspace = this.workspaceForSession(sessionId);
+    const entry = workspace.files.move(from, to);
+    this.store.addAction("workspace_ui_move", "completed", {
+      sessionId,
+      conversationSpace: workspace.conversationSpace,
+      from,
+      to: entry.path,
+    }, workspaceActionScope(workspace));
+    return entry;
+  }
+
+  deleteSessionWorkspaceFile(sessionId: string, path: string) {
+    const workspace = this.workspaceForSession(sessionId);
+    const deleted = workspace.files.delete(path);
+    this.store.addAction("workspace_ui_delete", "completed", {
+      sessionId,
+      conversationSpace: workspace.conversationSpace,
+      ...deleted,
+    }, workspaceActionScope(workspace));
+    return deleted;
   }
 
   listWorkspaceFiles(path?: string) {
@@ -2079,8 +2644,79 @@ export class CompanionKernel {
     return deleted;
   }
 
+  private workspaceForSession(sessionId: string): ScopedWorkspace {
+    const metadata = this.sessionRuntime.getConversationMetadata()
+      .find((entry) => entry.id === sessionId);
+    if (!metadata) throw new ConversationNotFoundError(sessionId);
+    return this.workspaceRegistry.resolve(metadata);
+  }
+
+  private hasPrivateState(): boolean {
+    if (this.sessionRuntime.getConversationMetadata().some((entry) =>
+      entry.conversationSpace === "secret"
+    )) return true;
+    if (this.store.allActions().some((action) => action.conversationSpace === "secret")) {
+      return true;
+    }
+    if (this.moduleCatalog.listModules().some((module) =>
+      module.type === "skill" &&
+      module.enabledSpaces?.includes("secret") &&
+      !module.enabledSpaces.includes("normal")
+    )) return true;
+    for (const table of [
+      "rp_memories",
+      "memory_extraction_jobs",
+      "context_economics",
+      "memory_context_sessions",
+      "memory_context_items",
+      "context_log_summaries",
+      "model_context_traces",
+      "character_skill_versions",
+    ]) {
+      const row = this.database.connection.prepare(
+        `SELECT 1 AS present FROM ${table} WHERE conversation_space = 'secret' LIMIT 1`,
+      ).get() as { present?: number } | undefined;
+      if (row?.present === 1) return true;
+    }
+    const scopedAction = this.database.connection.prepare(`
+      SELECT 1 AS present
+      FROM audit_actions
+      WHERE payload_json LIKE '%__rp_agent_action_scope_v1%'
+        AND payload_json LIKE '%"conversationSpace":"secret"%'
+      LIMIT 1
+    `).get() as { present?: number } | undefined;
+    if (scopedAction?.present === 1) return true;
+    const vaultSecretRoot = this.memoryVault.store.rootPath
+      ? join(this.memoryVault.store.rootPath, "secret", "characters")
+      : undefined;
+    if (vaultSecretRoot && existsSync(vaultSecretRoot) && readdirSync(vaultSecretRoot).length > 0) {
+      return true;
+    }
+    return existsSync(this.workspaceRegistry.secretRootDir) &&
+      readdirSync(this.workspaceRegistry.secretRootDir).length > 0;
+  }
+
+  private enforcePrivateShellNetworkIsolation(reason: string, force = false): void {
+    if (!force && !this.hasPrivateState()) return;
+    if (!this.permissionCatalog.get().networkEnabled) return;
+    try {
+      this.sessionRuntime.assertCapabilitiesIdle();
+    } catch {
+      throw new AgentPermissionValidationError(
+        "finish active Agent turns before opening or writing private-mode data",
+      );
+    }
+    this.permissionCatalog.update({ networkEnabled: false });
+    this.sessionRuntime.invalidateCapabilities(`private_network_isolation:${reason}`);
+  }
+
   patchAgentPermissions(patch: AgentPermissionsPatch) {
     this.sessionRuntime.assertCapabilitiesIdle();
+    if (patch.networkEnabled === true && this.hasPrivateState()) {
+      throw new AgentPermissionValidationError(
+        "shell network access cannot be enabled while private-mode data or private-only Skills exist",
+      );
+    }
     const permissions = this.permissionCatalog.update(patch);
     this.store.addAction("set_agent_permissions", "completed", {
       workspaceAccess: permissions.workspaceAccess,
@@ -2126,8 +2762,11 @@ export class CompanionKernel {
     return this.memoryVault.health();
   }
 
-  listMemoryVaultDocuments() {
-    return this.memoryVault.list();
+  listMemoryVaultDocuments(
+    conversationSpace: ConversationSpace = "normal",
+    secretOwnerCharacterId?: string,
+  ) {
+    return this.memoryVault.list(conversationSpace, secretOwnerCharacterId);
   }
 
   syncMemoryVault() {
@@ -2294,6 +2933,7 @@ export class CompanionKernel {
     this.characterCapabilities.dispose();
     this.sessionRuntime.dispose();
     this.tavilyService.dispose();
+    this.skillInstaller?.dispose();
     this.memoryVault.dispose();
     if (this.ownsDatabase) {
       this.database.close();
@@ -2363,9 +3003,12 @@ export class CompanionKernel {
   ): Promise<MessageResponse> {
     const latest = burst.messages.at(-1);
     if (!latest) throw new PrivateInboxMutationError("private message burst is empty");
+    const metadata = this.sessionRuntime.getConversationMetadata()
+      .find((entry) => entry.id === burst.sessionId);
     const request: NormalizedMessageRequest = {
       ...normalizeRequest({
         mode: latest.mode,
+        conversationSpace: metadata?.conversationSpace,
         text: combinedPrivateMessageText(burst.messages),
         timezone: latest.timezone,
         characterId: latest.characterId,
@@ -2386,22 +3029,44 @@ export class CompanionKernel {
     onEvent?: (event: AgentSessionEvent) => void,
     signal?: AbortSignal,
   ): Promise<MessageResponse> {
+    if (request.conversationSpace === "secret") {
+      this.enforcePrivateShellNetworkIsolation("secret_turn", true);
+    }
+    return this.store.withActionScope({
+      conversationSpace: request.conversationSpace,
+      ...(request.conversationSpace === "secret" && request.characterId
+        ? { secretOwnerCharacterId: request.characterId }
+        : {}),
+    }, () => this.sendMessageLockedInScope(sessionId, request, onEvent, signal));
+  }
+
+  private async sendMessageLockedInScope(
+    sessionId: string,
+    request: NormalizedMessageRequest,
+    onEvent?: (event: AgentSessionEvent) => void,
+    signal?: AbortSignal,
+  ): Promise<MessageResponse> {
     this.sessionRuntime.assertConversationActive(sessionId);
     let interactionStateAtTurnStart: InteractionState | undefined;
     if (request.characterId) {
       this.rpService.ensureRoleSession(
         sessionId,
         request.characterId,
-        this.worldService.repository.getMembership(request.characterId)?.worldId,
+        request.conversationSpace === "normal"
+          ? this.worldService.repository.getMembership(request.characterId)?.worldId
+          : undefined,
       );
-      this.interactionService.ensure(sessionId, request.characterId, request.mode);
-      this.interactionService.recoverPendingAfterInterruptedTurn(sessionId);
-      interactionStateAtTurnStart = this.interactionService.get(sessionId);
+      if (request.conversationSpace === "normal") {
+        this.interactionService.ensure(sessionId, request.characterId, request.mode);
+        this.interactionService.recoverPendingAfterInterruptedTurn(sessionId);
+        interactionStateAtTurnStart = this.interactionService.get(sessionId);
+      }
     }
     const handle = await this.sessionRuntime.getOrCreate(
       sessionId,
       request.mode,
       request.characterId,
+      request.conversationSpace,
     );
     this.sessionRuntime.ensureConversationTitle(
       handle.metadata.id,
@@ -2594,6 +3259,7 @@ export class CompanionKernel {
       mode: request.mode,
       sessionId: handle.metadata.id,
       characterId: handle.metadata.characterId,
+      conversationSpace: handle.metadata.conversationSpace,
       query: request.text,
       timezone: request.timezone,
     });
@@ -2694,10 +3360,12 @@ export class CompanionKernel {
           : internalAnalysisBlocked
             ? "模型输出包含内部分析，已阻止展示。"
           : modelResult.text || "模型未生成有效回复。";
-    const finishedInteraction = this.interactionService.finishPendingAfterTurn(
-      handle.metadata.id,
-      status === "completed",
-    );
+    const finishedInteraction = handle.metadata.conversationSpace === "normal"
+      ? this.interactionService.finishPendingAfterTurn(
+          handle.metadata.id,
+          status === "completed",
+        )
+      : undefined;
     if (finishedInteraction) {
       actions.push(this.store.addAction("end_meeting", "completed", {
         sessionId: handle.metadata.id,
@@ -2726,6 +3394,10 @@ export class CompanionKernel {
     const contextLog = this.store.addContextLog({
       sessionId: handle.metadata.id,
       mode: request.mode,
+      conversationSpace: handle.metadata.conversationSpace,
+      ...(handle.metadata.conversationSpace === "secret" && handle.metadata.characterId
+        ? { secretOwnerCharacterId: handle.metadata.characterId }
+        : {}),
       requestText: request.text,
       systemPrompt: handle.session.systemPrompt,
       messageCountBefore,
@@ -2788,11 +3460,16 @@ export class CompanionKernel {
       ]);
     }
     if (status === "completed") {
-      this.memoryCoordinator.enqueueTurn(contextLog, { characterId: handle.metadata.characterId });
-      this.postTurnCoordinator.enqueueTurn(contextLog, {
+      this.memoryCoordinator.enqueueTurn(contextLog, {
         characterId: handle.metadata.characterId,
-        interactionStateAtTurnStart,
+        conversationSpace: handle.metadata.conversationSpace,
       });
+      if (handle.metadata.conversationSpace === "normal") {
+        this.postTurnCoordinator.enqueueTurn(contextLog, {
+          characterId: handle.metadata.characterId,
+          interactionStateAtTurnStart,
+        });
+      }
       const completedSideEffect = hasCompletedSideEffect(actions) || attachments.length > 0;
       const allowProactiveCompaction = this.privateInbox.repository.listQueued(handle.metadata.id).length === 0;
       try {
@@ -2897,7 +3574,7 @@ export class CompanionKernel {
         };
       }
       const images = selectedPaths.map((path) => {
-        const image = this.workspaceFiles.visionImage(path);
+        const image = handle.workspace.files.visionImage(path);
         return { type: "image" as const, data: image.bytes.toString("base64"), mimeType: image.mimeType };
       });
       actions.push(this.store.addAction("vision_direct_input", "completed", {
@@ -2933,7 +3610,10 @@ export class CompanionKernel {
           question: request.text,
           detail: visionConfig.detail,
           features: ["caption", "ocr", "layout"],
-        }, signal);
+        }, signal, {
+          workspaceFiles: handle.workspace.files,
+          cacheNamespace: handle.workspace.cacheNamespace,
+        });
         analyses.push(formatVisionAnalysis(analysis));
         actions.push(this.store.addAction("vision_auto_analyze", "completed", {
           transport: "automatic_preanalysis",
@@ -3116,6 +3796,7 @@ export class CompanionKernel {
     if (!this.moduleCatalog.isEnabled(memoryCoordinatorMcpModuleId)) return undefined;
     const job = this.memoryCoordinator.enqueueOutputGuardRecovery(nativeContextLog, {
       characterId: handle.metadata.characterId,
+      conversationSpace: handle.metadata.conversationSpace,
     });
     if (!job) return undefined;
     await this.memoryCoordinator.drain();
@@ -3198,11 +3879,13 @@ export class CompanionKernel {
     const metadata = this.sessionRuntime
       .getConversationMetadata()
       .find((entry) => entry.id === reminder.sourceSessionId);
+    if (metadata?.conversationSpace === "secret") {
+      return { body: "你有一条私密提醒，请打开对应角色的私密模式查看。", agentGenerated: false };
+    }
     const config = this.store.getRawModelApiConfig();
     if (!metadata || metadata.archivedAt || !config.enabled || !config.baseUrl || !config.model) {
       return fallback;
     }
-
     return this.executionQueue.run(metadata.id, async () => {
       const handle = await this.sessionRuntime.getOrCreate(
         metadata.id,
@@ -3231,6 +3914,7 @@ export class CompanionKernel {
         mode: metadata.mode,
         sessionId: metadata.id,
         characterId: metadata.characterId,
+        conversationSpace: metadata.conversationSpace,
         query: reminder.title,
         timezone: reminder.timezone,
       });
@@ -3316,6 +4000,10 @@ export class CompanionKernel {
       this.store.addContextLog({
         sessionId: metadata.id,
         mode: metadata.mode,
+        conversationSpace: metadata.conversationSpace,
+        ...(metadata.conversationSpace === "secret" && metadata.characterId
+          ? { secretOwnerCharacterId: metadata.characterId }
+          : {}),
         requestText: `[reminder_due] ${reminder.title}`,
         systemPrompt: proactiveSystemPrompt,
         messageCountBefore,
@@ -3338,6 +4026,7 @@ export class CompanionKernel {
     const handle = await this.ensureCanonicalPrivateConversation(
       source.characterId,
       source.mode === "sms" ? source.id : undefined,
+      source.conversationSpace,
     );
     return handle.metadata.id;
   }
@@ -3349,6 +4038,16 @@ export class CompanionKernel {
     actions: ActionRecord[],
     intentText = request.text,
   ): Promise<MessageResponse> {
+    if (handle.metadata.conversationSpace === "secret") {
+      return this.persistSystemExchange(
+        handle,
+        request,
+        messageCountBefore,
+        actions,
+        "私密模式不会创建可能在模式外显示内容的提醒。",
+        { status: "blocked", eventType: "operation_blocked" },
+      );
+    }
     const now = this.clock.now();
     let remindAt: string;
     try {
@@ -3435,6 +4134,10 @@ export class CompanionKernel {
     const contextLog = this.store.addContextLog({
       sessionId: handle.metadata.id,
       mode: request.mode,
+      conversationSpace: handle.metadata.conversationSpace,
+      ...(handle.metadata.conversationSpace === "secret" && handle.metadata.characterId
+        ? { secretOwnerCharacterId: handle.metadata.characterId }
+        : {}),
       requestText: request.text,
       systemPrompt: handle.session.systemPrompt,
       messageCountBefore,
@@ -3446,7 +4149,10 @@ export class CompanionKernel {
       events: [],
     });
     if (options.status === "completed") {
-      this.memoryCoordinator.enqueueTurn(contextLog, { characterId: handle.metadata.characterId });
+      this.memoryCoordinator.enqueueTurn(contextLog, {
+        characterId: handle.metadata.characterId,
+        conversationSpace: handle.metadata.conversationSpace,
+      });
     }
     return {
       reply,
@@ -3706,6 +4412,7 @@ export class CompanionKernel {
       const economics = this.contextEconomics.record({
         sessionId: narrativeContext.modelSessionId,
         mode: "rp",
+        conversationSpace: "normal",
         turnKind: "world_director",
         systemHash: narrativeContext.stablePrefixHash,
         toolSchemaHash: stableRpContextHash([]),
@@ -4474,7 +5181,10 @@ export class CompanionKernel {
             actions: [],
             events: [],
           });
-          this.memoryCoordinator.enqueueTurn(contextLog, { characterId });
+          this.memoryCoordinator.enqueueTurn(contextLog, {
+            characterId,
+            conversationSpace: "normal",
+          });
           onEvent?.({ type: "message", message });
         } catch (error) {
           if (signal?.aborted || (error instanceof Error && error.name === "AbortError")) {
@@ -4544,6 +5254,7 @@ export class CompanionKernel {
   }): ContextPlan {
     return this.contextPlanner.plan({
       ...input,
+      conversationSpace: "normal",
       includeUserProfile: this.moduleCatalog.isEnabled(userProfileMcpModuleId),
       includeMemory: this.moduleCatalog.isEnabled(memoryCoordinatorMcpModuleId),
       includeScene: false,
@@ -4650,6 +5361,10 @@ export class CompanionKernel {
     this.store.addModelContextTrace({
       sessionId: traceSessionId,
       mode: "sms",
+      conversationSpace: input.conversationSpace,
+      ...(input.conversationSpace === "secret"
+        ? { secretOwnerCharacterId: input.characterId }
+        : {}),
       turnKind: "character_function_inference",
       requestText: input.characterName,
       payload: backgroundTracePayload(
@@ -4754,6 +5469,10 @@ export class CompanionKernel {
     this.store.addModelContextTrace({
       sessionId: input.sourceSessionId,
       mode: input.mode,
+      conversationSpace: input.conversationSpace,
+      ...(input.secretOwnerCharacterId
+        ? { secretOwnerCharacterId: input.secretOwnerCharacterId }
+        : {}),
       turnKind: "memory_extraction",
       requestText: input.userText,
       payload: backgroundTracePayload(
@@ -5395,6 +6114,7 @@ export class CompanionKernel {
     const context = this.buildContextPlan({
       mode: "sms",
       sessionId: input.sessionId,
+      conversationSpace: "normal",
       characterId: input.sourceCharacterId,
       query: input.objective || input.resultText || input.failureReason || "角色协作结果",
       timezone: world.timezone,
@@ -5546,6 +6266,7 @@ export class CompanionKernel {
       const context = this.buildContextPlan({
         mode: "sms",
         sessionId,
+        conversationSpace: "normal",
         characterId: input.characterId,
         query: contact?.requestText ?? input.event.summary,
         timezone: input.world.timezone,
@@ -5721,31 +6442,46 @@ export class CompanionKernel {
     mode: Mode;
     sessionId: string;
     characterId?: string;
+    conversationSpace: ConversationSpace;
     query: string;
     timezone: string;
     budgets?: Partial<ContextPlannerBudgets>;
     allowBootstrap?: boolean;
   }): ContextPlan {
-    const includeWorld = input.mode === "sms" && Boolean(input.characterId) &&
+    const isSecret = input.conversationSpace === "secret";
+    const genericSkillContext = this.moduleCatalog.skillContext(input.conversationSpace);
+    const workbenchSkill = input.characterId
+      ? this.characterCapabilities.getTaskSkill(input.characterId, input.conversationSpace)
+      : undefined;
+    const workbenchSkillContext = workbenchSkill
+      ? [
+          `Selected character workbench Skill (conversationSpace=${input.conversationSpace}, version=${workbenchSkill.version}):`,
+          "Use this only as the selected character's task method. Never infer or request a Skill from another conversation space.",
+          workbenchSkill.markdown,
+        ].join("\n")
+      : "";
+    const includeWorld = !isSecret && input.mode === "sms" && Boolean(input.characterId) &&
       this.moduleCatalog.isEnabled(worldStateMcpModuleId) &&
       Boolean(input.characterId && this.worldService.repository.getMembership(input.characterId));
     if (includeWorld && input.characterId) this.worldCoordinator.refreshCharacterRuntime(input.characterId);
-    const interaction = input.characterId
+    const interaction = !isSecret && input.characterId
       ? this.interactionService.peekOrDefault(input.sessionId, input.characterId, input.mode)
       : undefined;
     return this.contextPlanner.plan({
       mode: input.mode,
       sessionId: input.sessionId,
+      conversationSpace: input.conversationSpace,
       ...(input.characterId ? { characterId: input.characterId } : {}),
       query: input.query,
       timezone: input.timezone,
-      includeUserProfile: this.moduleCatalog.isEnabled(userProfileMcpModuleId),
+      includeUserProfile: !isSecret && this.moduleCatalog.isEnabled(userProfileMcpModuleId),
       includeMemory: this.moduleCatalog.isEnabled(memoryCoordinatorMcpModuleId),
-      moduleContext: this.moduleCatalog.contextStatus(),
-      skillContext: this.moduleCatalog.skillContext(),
+      moduleContext: this.moduleCatalog.contextStatus(input.conversationSpace),
+      skillContext: [genericSkillContext, workbenchSkillContext].filter(Boolean).join("\n\n"),
       permissionContext: this.permissionCatalog.contextStatus({
         mode: input.mode,
         characterId: input.characterId,
+        conversationSpace: input.conversationSpace,
       }),
       serviceContext: [
         this.tavilyService.contextStatus(this.moduleCatalog.isEnabled(tavilySearchMcpModuleId)),
@@ -5755,7 +6491,7 @@ export class CompanionKernel {
           this.store.getRawModelApiConfig().visionInputEnabled,
         ),
       ].join("\n"),
-      relationshipContext: input.characterId && this.moduleCatalog.isEnabled(relationshipStateMcpModuleId)
+      relationshipContext: !isSecret && input.characterId && this.moduleCatalog.isEnabled(relationshipStateMcpModuleId)
         ? this.relationshipService.contextFor(input.characterId)
         : "",
       worldStableContext: includeWorld && input.characterId
@@ -5764,10 +6500,10 @@ export class CompanionKernel {
       worldRuntimeContext: includeWorld && input.characterId
         ? this.worldService.runtimeContextFor(input.characterId)
         : "",
-      interactionContext: input.characterId
+      interactionContext: !isSecret && input.characterId
         ? this.interactionService.runtimeContextFor(input.sessionId, input.characterId, input.mode)
         : "",
-      includeScene: input.mode === "rp" || interaction?.presence === "co_present",
+      includeScene: !isSecret && (input.mode === "rp" || interaction?.presence === "co_present"),
       ...(input.budgets ? { budgets: input.budgets } : {}),
       ...(input.allowBootstrap === undefined ? {} : { allowBootstrap: input.allowBootstrap }),
     });
@@ -5776,31 +6512,50 @@ export class CompanionKernel {
   private async ensureCanonicalPrivateConversation(
     characterId: string,
     preferredSessionId?: string,
+    conversationSpace: ConversationSpace = "normal",
   ): Promise<PiSessionHandle> {
+    if (conversationSpace === "secret") {
+      this.enforcePrivateShellNetworkIsolation("secret_conversation_open", true);
+    }
     const character = this.rpService.getCharacter(characterId);
-    const existing = this.sessionRuntime.getCanonicalDirectConversation(character.id);
+    const existing = this.sessionRuntime.getCanonicalDirectConversation(
+      character.id,
+      conversationSpace,
+    );
     const conversations = this.sessionRuntime.getConversationMetadata();
     const preferred = preferredSessionId
       ? conversations.find((entry) => entry.id === preferredSessionId)
       : conversations
           .filter((entry) =>
-            entry.mode === "sms" && entry.characterId === character.id && !entry.archivedAt
+            entry.mode === "sms" && entry.characterId === character.id &&
+            entry.conversationSpace === conversationSpace && !entry.archivedAt
           )
           .sort((left, right) => right.updatedAt.localeCompare(left.updatedAt) || right.id.localeCompare(left.id))[0];
     const sessionId = existing?.id ?? (
-      preferred?.mode === "sms" && preferred.characterId === character.id
+      preferred?.mode === "sms" && preferred.characterId === character.id &&
+        preferred.conversationSpace === conversationSpace
         ? preferred.id
         : preferredSessionId && !preferred
           ? preferredSessionId
           : this.store.idGenerator.next("conversation")
     );
-    const handle = await this.sessionRuntime.getOrCreateCanonicalDirect(sessionId, character.id);
+    const handle = await this.sessionRuntime.getOrCreateCanonicalDirect(
+      sessionId,
+      character.id,
+      conversationSpace,
+    );
     this.rpService.ensureRoleSession(
       handle.metadata.id,
       character.id,
-      this.worldService.repository.getMembership(character.id)?.worldId,
+      conversationSpace === "normal"
+        ? this.worldService.repository.getMembership(character.id)?.worldId
+        : undefined,
     );
-    this.interactionService.ensure(handle.metadata.id, character.id, "sms");
+    if (conversationSpace === "normal") {
+      this.interactionService.ensure(handle.metadata.id, character.id, "sms");
+    } else {
+      this.characterCapabilities.getSnapshot(character.id, "secret");
+    }
     return handle;
   }
 
@@ -5828,12 +6583,25 @@ export class CompanionKernel {
   private effectiveSystemPrompt(mode: Mode): string {
     return this.systemPromptService.effective(mode, builtInSystemPromptFor(mode));
   }
+
+  private normalizeRequestForSession(
+    sessionId: string,
+    request: MessageRequest,
+  ): NormalizedMessageRequest {
+    const metadata = this.sessionRuntime.getConversationMetadata()
+      .find((entry) => entry.id === sessionId);
+    return normalizeRequest({
+      ...request,
+      conversationSpace: request.conversationSpace ?? metadata?.conversationSpace,
+    });
+  }
 }
 
 function normalizeRequest(request: MessageRequest): NormalizedMessageRequest {
   return {
     ...request,
     mode: request.mode ?? "sms",
+    conversationSpace: request.conversationSpace ?? "normal",
     text: request.text,
     timezone: request.timezone ?? "Asia/Shanghai",
     attachments: normalizeMessageAttachments(request.attachments),
@@ -6151,6 +6919,7 @@ function worldNarrativeEconomicsPlan(input: {
     schemaVersion: 1,
     sessionId: input.sessionId,
     mode: "rp",
+    conversationSpace: "normal",
     generatedAt: input.generatedAt,
     timezone: input.timezone,
     query: null,
@@ -7003,9 +7772,102 @@ function sliceCharacters(value: string, maximum: number): string {
   return characters.length <= maximum ? value : characters.slice(0, maximum).join("");
 }
 
+function safeUrlHostname(value: string): string {
+  try {
+    return new URL(value).hostname.toLowerCase();
+  } catch {
+    return "";
+  }
+}
+
 function elapsedPerformanceMs(startedAt: number): number {
   const elapsed = performance.now() - startedAt;
   return Number.isFinite(elapsed) ? Math.max(0, Math.round(elapsed)) : 0;
+}
+
+function workspaceActionScope(workspace: ScopedWorkspace): {
+  conversationSpace: ConversationSpace;
+  secretOwnerCharacterId?: string;
+} {
+  if (workspace.conversationSpace === "secret") {
+    if (!workspace.characterId) throw new Error("secret Workspace action requires a character owner");
+    return {
+      conversationSpace: "secret",
+      secretOwnerCharacterId: workspace.characterId,
+    };
+  }
+  return { conversationSpace: "normal" };
+}
+
+function resolveConfiguredStateDir(value: string | false | undefined): string | undefined {
+  const configured = value === undefined ? process.env.RP_AGENT_STATE_DIR ?? ".rp-agent" : value;
+  return configured === false ? undefined : resolve(configured);
+}
+
+function assertWorkspaceIsolation(
+  normalWorkspaceDir: string,
+  stateDir: string | undefined,
+  skillDiscoveryRoots: readonly string[],
+): void {
+  const normal = canonicalCandidate(normalWorkspaceDir);
+  const secret = canonicalCandidate(resolve(
+    dirname(normalWorkspaceDir),
+    `${basename(normalWorkspaceDir) || "workspace"}-secret`,
+  ));
+  if (stateDir) {
+    const state = canonicalCandidate(stateDir);
+    const defaultNormal = canonicalCandidate(join(stateDir, "workspace"));
+    const defaultSecret = canonicalCandidate(join(stateDir, "workspace-secret"));
+    const usesDedicatedStateWorkspaces = normal === defaultNormal && secret === defaultSecret;
+    if (!usesDedicatedStateWorkspaces && (pathsOverlap(normal, state) || pathsOverlap(secret, state))) {
+      throw new Error(
+        "Workspace directories must not overlap the protected YourChar state directory",
+      );
+    }
+    for (const root of skillDiscoveryRoots.map(canonicalCandidate)) {
+      if (isWithinPath(root, state)) {
+        throw new Error("YourChar state directory must not be inside an Agent Skill discovery root");
+      }
+    }
+  }
+  for (const root of skillDiscoveryRoots.map(canonicalCandidate)) {
+    if (pathsOverlap(normal, root) || pathsOverlap(secret, root)) {
+      throw new Error("Workspace directories must not overlap Agent Skill discovery roots");
+    }
+  }
+}
+
+function canonicalCandidate(path: string): string {
+  let current = resolve(path);
+  const suffix: string[] = [];
+  while (!existsSync(current)) {
+    const parent = dirname(current);
+    if (parent === current) break;
+    suffix.unshift(basename(current));
+    current = parent;
+  }
+  return resolve(realpathSync(current), ...suffix);
+}
+
+function pathsOverlap(left: string, right: string): boolean {
+  return isWithinPath(left, right) || isWithinPath(right, left);
+}
+
+function isWithinPath(root: string, path: string): boolean {
+  const nested = relative(root, path);
+  return nested === "" || (nested !== ".." && !nested.startsWith(`..${sep}`));
+}
+
+function characterConversationActionScope(
+  characterId: string,
+  conversationSpace: ConversationSpace,
+): {
+  conversationSpace: ConversationSpace;
+  secretOwnerCharacterId?: string;
+} {
+  return conversationSpace === "secret"
+    ? { conversationSpace, secretOwnerCharacterId: characterId }
+    : { conversationSpace };
 }
 
 function escapePromptAttribute(value: string): string {

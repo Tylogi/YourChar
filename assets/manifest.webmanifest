@@ -1,6 +1,6 @@
 {
-  "name": "RP Agent",
-  "short_name": "RP Agent",
+  "name": "YourChar",
+  "short_name": "YourChar",
   "description": "Personal schedule companion and character world agent",
   "start_url": "/",
   "scope": "/",

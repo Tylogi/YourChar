@@ -20,9 +20,9 @@ import {
 import { durableAtomicWrite, fsyncDirectory, runFailpoint, type MemoryVaultFailpoint } from "./durability.js";
 import type { VaultRawEntry } from "./journal.js";
 
-const ROOT_README = `# RP Agent Memory Vault
+const ROOT_README = `# YourChar Memory Vault
 
-This directory is the human-readable source of truth for RP Agent memory and can be opened directly as an Obsidian vault.
+This directory is the human-readable source of truth for YourChar memory and can be opened directly as an Obsidian vault.
 
 - \`reality/user-profile.md\`: the bounded high-signal user summary.
 - \`reality/people/\`: structured, user-readable profiles for real people mentioned by the user.
@@ -186,6 +186,8 @@ export class MemoryVaultStore {
       kind: document.metadata.kind,
       realm: document.metadata.realm,
       scope: document.metadata.scope,
+      conversationSpace: document.metadata.conversationSpace,
+      secretOwnerCharacterId: document.metadata.secretOwnerCharacterId,
       type: document.metadata.type,
       characterId: document.metadata.characterId,
       sessionId: document.metadata.sessionId,

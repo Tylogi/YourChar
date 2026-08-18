@@ -286,3 +286,139 @@ test("session restore and permanent deletion clean only session-owned data", asy
     rmSync(stateDir, { recursive: true, force: true });
   }
 });
+
+test("HTTP conversation spaces are filtered by default and reject cross-space session access", async () => {
+  const kernel = new CompanionKernel({
+    stateDir: false,
+    startScheduler: false,
+    startWorldCoordinator: false,
+    startPrivateInboxCoordinator: false,
+  });
+  const character = kernel.createCharacter({ name: "空间隔离角色" });
+  const otherCharacter = kernel.createCharacter({ name: "另一个空间角色" });
+  const normal = await kernel.openCanonicalPrivateConversation(character.id, "normal");
+  const secret = await kernel.openCanonicalPrivateConversation(character.id, "secret");
+  const otherSecret = await kernel.openCanonicalPrivateConversation(otherCharacter.id, "secret");
+  const group = kernel.createGroupChat({
+    title: "普通空间群聊",
+    characterIds: [character.id, otherCharacter.id],
+  });
+  kernel.sessionRuntime.recordIncomingMessage(normal.id);
+  kernel.sessionRuntime.recordIncomingMessage(secret.id);
+  kernel.sessionRuntime.recordIncomingMessage(otherSecret.id);
+  const server = createHttpServer({ kernel });
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  try {
+    const address = server.address();
+    assert.ok(address && typeof address === "object");
+    const baseUrl = `http://127.0.0.1:${address.port}`;
+
+    const reopenedSecret = await fetch(`${baseUrl}/api/v1/direct-conversations`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ characterId: character.id, conversationSpace: "secret" }),
+    });
+    assert.equal(reopenedSecret.status, 200);
+    assert.equal(
+      ((await reopenedSecret.json()) as { session: { id: string; conversationSpace: string } }).session.id,
+      secret.id,
+    );
+
+    const normalList = await fetch(`${baseUrl}/api/v1/sessions`);
+    assert.equal(normalList.status, 200);
+    assert.deepEqual(
+      ((await normalList.json()) as { sessions: Array<{ id: string }> }).sessions.map((entry) => entry.id),
+      [normal.id],
+    );
+
+    const unscopedSecretList = await fetch(`${baseUrl}/api/v1/sessions?conversationSpace=secret`);
+    assert.equal(unscopedSecretList.status, 400);
+
+    const secretList = await fetch(
+      `${baseUrl}/api/v1/sessions?conversationSpace=secret&characterId=${encodeURIComponent(character.id)}`,
+    );
+    assert.equal(secretList.status, 200);
+    assert.deepEqual(
+      ((await secretList.json()) as { sessions: Array<{ id: string; conversationSpace: string }> }).sessions
+        .map((entry) => [entry.id, entry.conversationSpace]),
+      [[secret.id, "secret"]],
+    );
+    const otherSecretList = await fetch(
+      `${baseUrl}/api/v1/sessions?conversationSpace=secret&characterId=${encodeURIComponent(otherCharacter.id)}`,
+    );
+    assert.deepEqual(
+      ((await otherSecretList.json()) as { sessions: Array<{ id: string }> }).sessions.map((entry) => entry.id),
+      [otherSecret.id],
+    );
+
+    const normalUnread = await fetch(`${baseUrl}/api/v1/conversation-unread`);
+    assert.deepEqual(
+      ((await normalUnread.json()) as { conversations: Array<{ sessionId: string }> }).conversations
+        .map((entry) => entry.sessionId),
+      [normal.id],
+    );
+    const secretUnread = await fetch(
+      `${baseUrl}/api/v1/conversation-unread?conversationSpace=secret&characterId=${encodeURIComponent(character.id)}`,
+    );
+    assert.deepEqual(
+      ((await secretUnread.json()) as { conversations: Array<{ sessionId: string }> }).conversations
+        .map((entry) => entry.sessionId),
+      [secret.id],
+    );
+
+    const hiddenTranscript = await fetch(`${baseUrl}/api/v1/sessions/${encodeURIComponent(secret.id)}/messages`);
+    assert.equal(hiddenTranscript.status, 404);
+    const hiddenBody = await hiddenTranscript.json() as { code: string; error: string };
+    assert.equal(hiddenBody.code, "SESSION_NOT_FOUND");
+    assert.doesNotMatch(hiddenBody.error, /secret|private|私密/iu);
+
+    const visibleTranscript = await fetch(
+      `${baseUrl}/api/v1/sessions/${encodeURIComponent(secret.id)}/messages?conversationSpace=secret&characterId=${encodeURIComponent(character.id)}`,
+    );
+    assert.equal(visibleTranscript.status, 200);
+    const otherCharacterTranscript = await fetch(
+      `${baseUrl}/api/v1/sessions/${encodeURIComponent(secret.id)}/messages?conversationSpace=secret&characterId=${encodeURIComponent(otherCharacter.id)}`,
+    );
+    assert.equal(otherCharacterTranscript.status, 404);
+
+    const secretInteractionUrl =
+      `${baseUrl}/api/v1/sessions/${encodeURIComponent(secret.id)}/interaction` +
+      `?conversationSpace=secret&characterId=${encodeURIComponent(character.id)}`;
+    assert.equal((await fetch(secretInteractionUrl)).status, 404);
+    assert.equal((await fetch(secretInteractionUrl, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ action: "propose", location: "不应读取的普通世界地点" }),
+    })).status, 404);
+
+    const secretGroupBatch = await fetch(`${baseUrl}/api/v1/conversations/batch`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        action: "archive",
+        sessionIds: [],
+        groupIds: [group.id],
+        conversationSpace: "secret",
+        characterId: character.id,
+      }),
+    });
+    assert.equal(secretGroupBatch.status, 400);
+    assert.equal(kernel.getGroupChat(group.id).status, "active");
+
+    const hiddenWrite = await fetch(`${baseUrl}/api/v1/sessions/${encodeURIComponent(secret.id)}/inbox`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        clientMessageId: "wrong-space-client",
+        mode: "sms",
+        characterId: character.id,
+        text: "不应跨空间写入",
+      }),
+    });
+    assert.equal(hiddenWrite.status, 404);
+    assert.equal(((await hiddenWrite.json()) as { code: string }).code, "SESSION_NOT_FOUND");
+  } finally {
+    await new Promise<void>((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
+    kernel.dispose();
+  }
+});

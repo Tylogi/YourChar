@@ -4,7 +4,7 @@ Status: implemented baseline
 Last updated: 2026-07-14
 
 This document defines the reusable boundary for adding domain capabilities to
-RP Agent. Schedule is the first implementation. Memory, external services, and
+YourChar. Schedule is the first implementation. Memory, external services, and
 other future modules should follow the same shape unless they have a documented
 reason not to.
 
@@ -38,7 +38,7 @@ Domain MCP server
 Application service -> repository -> SQLite
 ```
 
-Pi 0.80.3 deliberately has no built-in MCP host. RP Agent therefore owns a
+Pi 0.80.3 deliberately has no built-in MCP host. YourChar therefore owns a
 generic adapter in `src/mcp/pi-adapter.ts`. It performs MCP initialization,
 `tools/list`, JSON Schema to TypeBox exposure, `tools/call`, cancellation, and
 error/result mapping. The current transport is an official linked in-memory MCP

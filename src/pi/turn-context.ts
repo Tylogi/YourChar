@@ -24,8 +24,10 @@ export function createTurnContextMessage(input: TurnContextInput) {
     ].filter(Boolean).join("\n\n"),
     display: false,
     details: {
-      schemaVersion: input.plan ? 3 : 2,
+      schemaVersion: input.plan ? 4 : 2,
       mode: input.mode,
+      conversationSpace: input.plan?.conversationSpace ?? "normal",
+      secretOwnerCharacterId: input.plan?.secretOwnerCharacterId,
       timezone: runtime.timezone,
       precision: "minute",
       snapshotId: input.plan ? `${input.plan.sessionId}:${input.plan.generatedAt}` : undefined,

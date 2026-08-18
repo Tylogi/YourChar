@@ -1,5 +1,6 @@
 import type { SQLInputValue } from "node:sqlite";
 import type { AppDatabase } from "../storage/database.js";
+import type { ConversationSpace } from "../domain/types.js";
 import {
   LEGACY_MEMORY_REALM,
   LEGACY_MEMORY_SCOPE,
@@ -161,35 +162,73 @@ export class RpRepository {
     return scene;
   }
 
-  findMemoryByIdempotencyKey(key: string): RpMemory | undefined {
-    const row = this.database.connection.prepare("SELECT * FROM rp_memories WHERE idempotency_key = ?").get(key) as Row | undefined;
+  findMemoryByIdempotencyKey(
+    key: string,
+    conversationSpace: ConversationSpace = "normal",
+    secretOwnerCharacterId?: string,
+  ): RpMemory | undefined {
+    assertMemorySpace(conversationSpace, secretOwnerCharacterId);
+    const row = this.database.connection.prepare(`
+      SELECT * FROM rp_memories
+      WHERE idempotency_key = ? AND conversation_space = ?
+        AND COALESCE(secret_owner_character_id, '') = COALESCE(?, '')
+    `).get(
+      storedIdempotencyKey(key, conversationSpace, secretOwnerCharacterId),
+      conversationSpace,
+      secretOwnerCharacterId ?? null,
+    ) as Row | undefined;
     return row ? mapMemory(row) : undefined;
   }
 
-  getMemory(id: string): RpMemory | undefined {
-    const row = this.database.connection.prepare("SELECT * FROM rp_memories WHERE id = ?").get(id) as Row | undefined;
+  getMemory(
+    id: string,
+    conversationSpace: ConversationSpace = "normal",
+    secretOwnerCharacterId?: string,
+  ): RpMemory | undefined {
+    assertMemorySpace(conversationSpace, secretOwnerCharacterId);
+    const row = this.database.connection.prepare(`
+      SELECT * FROM rp_memories
+      WHERE id = ? AND conversation_space = ?
+        AND COALESCE(secret_owner_character_id, '') = COALESCE(?, '')
+    `).get(id, conversationSpace, secretOwnerCharacterId ?? null) as Row | undefined;
     return row ? mapMemory(row) : undefined;
   }
 
-  findActiveMemoryByNormalizedContent(normalizedContent: string, characterId: string): RpMemory | undefined {
+  findActiveMemoryByNormalizedContent(
+    normalizedContent: string,
+    characterId: string,
+    conversationSpace: ConversationSpace = "normal",
+    secretOwnerCharacterId?: string,
+  ): RpMemory | undefined {
+    assertMemorySpace(conversationSpace, secretOwnerCharacterId);
     const row = this.database.connection.prepare(`
       SELECT * FROM rp_memories
       WHERE normalized_content = ? AND validity = 'active'
         AND character_id = ?
+        AND conversation_space = ?
+        AND COALESCE(secret_owner_character_id, '') = COALESCE(?, '')
         AND type IN ('relationship_event', 'world_fact', 'plot_event', 'boundary')
       LIMIT 1
-    `).get(normalizedContent, characterId) as Row | undefined;
+    `).get(normalizedContent, characterId, conversationSpace, secretOwnerCharacterId ?? null) as Row | undefined;
     return row ? mapMemory(row) : undefined;
   }
 
-  findActiveMemoryByKey(key: string, characterId: string): RpMemory | undefined {
+  findActiveMemoryByKey(
+    key: string,
+    characterId: string,
+    conversationSpace: ConversationSpace = "normal",
+    secretOwnerCharacterId?: string,
+  ): RpMemory | undefined {
+    assertMemorySpace(conversationSpace, secretOwnerCharacterId);
     const row = this.database.connection.prepare(`
       SELECT * FROM rp_memories
       WHERE memory_key = ? AND validity = 'active'
         AND character_id = ?
+        AND conversation_space = ?
+        AND COALESCE(secret_owner_character_id, '') = COALESCE(?, '')
         AND type IN ('relationship_event', 'world_fact', 'plot_event', 'boundary')
       ORDER BY updated_at DESC LIMIT 1
-    `).get(key, characterId) as Row | undefined;
+    `).get(key, characterId, conversationSpace, secretOwnerCharacterId ?? null) as Row | undefined;
     return row ? mapMemory(row) : undefined;
   }
 
@@ -197,13 +236,24 @@ export class RpRepository {
     normalizedContent: string,
     realm: MemoryRealm,
     characterId?: string,
+    conversationSpace: ConversationSpace = "normal",
+    secretOwnerCharacterId?: string,
   ): RpMemory | undefined {
+    assertMemorySpace(conversationSpace, secretOwnerCharacterId);
     const row = this.database.connection.prepare(`
       SELECT * FROM rp_memories
       WHERE normalized_content = ? AND validity = 'active' AND confirmed = 1
         AND realm = ? AND COALESCE(character_id, '') = COALESCE(?, '')
+        AND conversation_space = ?
+        AND COALESCE(secret_owner_character_id, '') = COALESCE(?, '')
       LIMIT 1
-    `).get(normalizedContent, realm, characterId ?? null) as Row | undefined;
+    `).get(
+      normalizedContent,
+      realm,
+      characterId ?? null,
+      conversationSpace,
+      secretOwnerCharacterId ?? null,
+    ) as Row | undefined;
     return row ? mapMemory(row) : undefined;
   }
 
@@ -211,28 +261,42 @@ export class RpRepository {
     key: string,
     realm: MemoryRealm,
     characterId?: string,
+    conversationSpace: ConversationSpace = "normal",
+    secretOwnerCharacterId?: string,
   ): RpMemory | undefined {
+    assertMemorySpace(conversationSpace, secretOwnerCharacterId);
     const row = this.database.connection.prepare(`
       SELECT * FROM rp_memories
       WHERE memory_key = ? AND validity = 'active' AND confirmed = 1
         AND realm = ? AND COALESCE(character_id, '') = COALESCE(?, '')
+        AND conversation_space = ?
+        AND COALESCE(secret_owner_character_id, '') = COALESCE(?, '')
       ORDER BY updated_at DESC LIMIT 1
-    `).get(key, realm, characterId ?? null) as Row | undefined;
+    `).get(
+      key,
+      realm,
+      characterId ?? null,
+      conversationSpace,
+      secretOwnerCharacterId ?? null,
+    ) as Row | undefined;
     return row ? mapMemory(row) : undefined;
   }
 
   createMemory(memory: RpMemory, idempotencyKey?: string): RpMemory {
     this.database.connection.prepare(`
       INSERT INTO rp_memories(
-        id, realm, scope, type, memory_key, content, normalized_content, source_session_id,
+        id, conversation_space, secret_owner_character_id,
+        realm, scope, type, memory_key, content, normalized_content, source_session_id,
         source_message_id, character_id, salience, confidence, validity,
         confirmed, confirmation_kind, confirmed_at, confirmation_evidence_message_id,
         rejected_at, archived_at, deleted_at, status_reason,
         tags_json, superseded_by_id, idempotency_key,
         created_at, updated_at, last_used_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       memory.id,
+      memory.conversationSpace,
+      memory.secretOwnerCharacterId ?? null,
       memory.realm,
       memory.scope,
       memory.type,
@@ -255,7 +319,13 @@ export class RpRepository {
       memory.statusReason ?? null,
       JSON.stringify(memory.tags),
       memory.supersededById ?? null,
-      idempotencyKey ?? null,
+      idempotencyKey
+        ? storedIdempotencyKey(
+            idempotencyKey,
+            memory.conversationSpace,
+            memory.secretOwnerCharacterId,
+          )
+        : null,
       memory.createdAt,
       memory.updatedAt,
       memory.lastUsedAt ?? null,
@@ -270,7 +340,9 @@ export class RpRepository {
         salience = ?, confidence = ?, validity = ?, confirmed = ?, tags_json = ?,
         confirmation_kind = ?, confirmed_at = ?, confirmation_evidence_message_id = ?,
         rejected_at = ?, archived_at = ?, deleted_at = ?, status_reason = ?,
-        superseded_by_id = ?, updated_at = ?, last_used_at = ? WHERE id = ?
+        superseded_by_id = ?, updated_at = ?, last_used_at = ?
+        WHERE id = ? AND conversation_space = ?
+          AND COALESCE(secret_owner_character_id, '') = COALESCE(?, '')
     `).run(
       memory.type,
       memory.key ?? null,
@@ -292,8 +364,14 @@ export class RpRepository {
       memory.updatedAt,
       memory.lastUsedAt ?? null,
       memory.id,
+      memory.conversationSpace,
+      memory.secretOwnerCharacterId ?? null,
     );
-    this.database.connection.prepare("DELETE FROM rp_memories_fts WHERE memory_id = ?").run(memory.id);
+    this.database.connection.prepare(`
+      DELETE FROM rp_memories_fts
+      WHERE memory_id = ? AND conversation_space = ?
+        AND COALESCE(secret_owner_character_id, '') = COALESCE(?, '')
+    `).run(memory.id, memory.conversationSpace, memory.secretOwnerCharacterId ?? null);
     if (!["rejected", "archived", "deleted"].includes(memory.validity)) this.indexMemory(memory);
     return memory;
   }
@@ -301,6 +379,12 @@ export class RpRepository {
   searchMemories(filter: MemorySearchFilter): RpMemory[] {
     const values: SQLInputValue[] = [];
     const clauses: string[] = [];
+    const conversationSpace = filter.conversationSpace ?? "normal";
+    assertMemorySpace(conversationSpace, filter.secretOwnerCharacterId);
+    clauses.push("m.conversation_space = ?");
+    values.push(conversationSpace);
+    clauses.push("COALESCE(m.secret_owner_character_id, '') = COALESCE(?, '')");
+    values.push(filter.secretOwnerCharacterId ?? null);
     if (filter.validities?.length) {
       clauses.push(`m.validity IN (${filter.validities.map(() => "?").join(", ")})`);
       values.push(...filter.validities);
@@ -349,16 +433,27 @@ export class RpRepository {
   rankMemoryFts(input: {
     query: string;
     realm: "reality" | "roleplay";
+    conversationSpace?: ConversationSpace;
+    secretOwnerCharacterId?: string;
     characterId?: string;
     limit?: number;
   }): Map<string, number> {
     if (!input.query.trim()) return new Map();
+    const conversationSpace = input.conversationSpace ?? "normal";
+    assertMemorySpace(conversationSpace, input.secretOwnerCharacterId);
     const clauses = [
+      "m.conversation_space = ?",
+      "COALESCE(m.secret_owner_character_id, '') = COALESCE(?, '')",
       "m.realm = ?",
       "m.validity = 'active'",
       "m.confirmed = 1",
     ];
-    const values: SQLInputValue[] = [ftsQuery(input.query), input.realm];
+    const values: SQLInputValue[] = [
+      ftsQuery(input.query),
+      conversationSpace,
+      input.secretOwnerCharacterId ?? null,
+      input.realm,
+    ];
     if (input.realm === "roleplay") {
       if (!input.characterId) return new Map();
       clauses.push("m.character_id = ?");
@@ -378,21 +473,50 @@ export class RpRepository {
     return new Map(rows.map((row) => [String(row.id), Number(row.rank)]));
   }
 
-  listAllMemories(): RpMemory[] {
-    return (this.database.connection.prepare("SELECT * FROM rp_memories ORDER BY created_at, id").all() as Row[]).map(mapMemory);
+  listAllMemories(
+    conversationSpace: ConversationSpace = "normal",
+    secretOwnerCharacterId?: string,
+  ): RpMemory[] {
+    assertMemorySpace(conversationSpace, secretOwnerCharacterId);
+    return (this.database.connection.prepare(`
+      SELECT * FROM rp_memories
+      WHERE conversation_space = ?
+        AND COALESCE(secret_owner_character_id, '') = COALESCE(?, '')
+      ORDER BY created_at, id
+    `).all(conversationSpace, secretOwnerCharacterId ?? null) as Row[]).map(mapMemory);
+  }
+
+  listAllMemoriesAcrossSpaces(): RpMemory[] {
+    return (this.database.connection.prepare(
+      "SELECT * FROM rp_memories ORDER BY created_at, id",
+    ).all() as Row[]).map(mapMemory);
   }
 
   listAllMemoriesForMigration(): Array<{ memory: RpMemory; idempotencyKey?: string }> {
     return (this.database.connection.prepare("SELECT * FROM rp_memories ORDER BY created_at, id").all() as Row[])
       .map((row) => ({
         memory: mapMemory(row),
-        ...(optionalString(row.idempotency_key) ? { idempotencyKey: optionalString(row.idempotency_key) } : {}),
+        ...(optionalString(row.idempotency_key)
+          ? { idempotencyKey: exposedIdempotencyKey(optionalString(row.idempotency_key)!) }
+          : {}),
       }));
   }
 
-  touchMemories(ids: string[], usedAt: string): void {
-    const statement = this.database.connection.prepare("UPDATE rp_memories SET last_used_at = ? WHERE id = ?");
-    for (const id of ids) statement.run(usedAt, id);
+  touchMemories(
+    ids: string[],
+    usedAt: string,
+    conversationSpace: ConversationSpace = "normal",
+    secretOwnerCharacterId?: string,
+  ): void {
+    assertMemorySpace(conversationSpace, secretOwnerCharacterId);
+    const statement = this.database.connection.prepare(`
+      UPDATE rp_memories SET last_used_at = ?
+      WHERE id = ? AND conversation_space = ?
+        AND COALESCE(secret_owner_character_id, '') = COALESCE(?, '')
+    `);
+    for (const id of ids) {
+      statement.run(usedAt, id, conversationSpace, secretOwnerCharacterId ?? null);
+    }
   }
 
   createPendingMutation(mutation: PendingRealMutation): PendingRealMutation {
@@ -460,8 +584,16 @@ export class RpRepository {
 
   private indexMemory(memory: RpMemory): void {
     this.database.connection.prepare(
-      "INSERT INTO rp_memories_fts(memory_id, content, tags) VALUES (?, ?, ?)",
-    ).run(memory.id, memory.content, memory.tags.join(" "));
+      `INSERT INTO rp_memories_fts(
+        memory_id, conversation_space, secret_owner_character_id, content, tags
+      ) VALUES (?, ?, ?, ?, ?)`,
+    ).run(
+      memory.id,
+      memory.conversationSpace,
+      memory.secretOwnerCharacterId ?? null,
+      memory.content,
+      memory.tags.join(" "),
+    );
   }
 }
 
@@ -542,6 +674,10 @@ function mapMemory(row: Row): RpMemory {
       : undefined;
   return {
     id: String(row.id),
+    conversationSpace: row.conversation_space === "secret" ? "secret" : "normal",
+    ...(optionalString(row.secret_owner_character_id)
+      ? { secretOwnerCharacterId: optionalString(row.secret_owner_character_id) }
+      : {}),
     realm,
     scope: realm === REALITY_MEMORY_REALM
       ? REALITY_MEMORY_SCOPE
@@ -576,6 +712,35 @@ function mapMemory(row: Row): RpMemory {
     updatedAt: String(row.updated_at),
     lastUsedAt: optionalString(row.last_used_at),
   };
+}
+
+function assertMemorySpace(
+  conversationSpace: ConversationSpace,
+  secretOwnerCharacterId?: string,
+): void {
+  if (conversationSpace === "secret" && !secretOwnerCharacterId?.trim()) {
+    throw new Error("secret memory scope requires secretOwnerCharacterId");
+  }
+  if (conversationSpace === "normal" && secretOwnerCharacterId) {
+    throw new Error("normal memory scope cannot have secretOwnerCharacterId");
+  }
+}
+
+export function storedIdempotencyKey(
+  key: string,
+  conversationSpace: ConversationSpace,
+  secretOwnerCharacterId?: string,
+): string {
+  assertMemorySpace(conversationSpace, secretOwnerCharacterId);
+  return conversationSpace === "secret"
+    ? `v37:secret:${secretOwnerCharacterId}:${key}`
+    : `v37:normal:${key}`;
+}
+
+function exposedIdempotencyKey(value: string): string {
+  if (value.startsWith("v37:normal:")) return value.slice("v37:normal:".length);
+  const secret = /^v37:secret:[A-Za-z0-9_-]+:(.*)$/su.exec(value);
+  return secret?.[1] ?? value;
 }
 
 function mapPendingMutation(row: Row): PendingRealMutation {

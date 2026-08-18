@@ -68,7 +68,7 @@ rewritten. Pi persists each normal turn as
 request retains the first request's complete message prefix, including its old
 turn context, and appends the new turn after the first assistant response.
 
-The System override is built directly from RP Agent's stable inputs so Pi's
+The System override is built directly from YourChar's stable inputs so Pi's
 automatically generated wall-clock date is not included. Tests hash consecutive
 System messages and calculate the provider-message longest common prefix.
 

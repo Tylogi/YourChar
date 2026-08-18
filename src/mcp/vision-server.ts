@@ -4,12 +4,15 @@ import * as z from "zod/v4";
 import type { CompanionStore } from "../domain/store.js";
 import type { ActionRecord } from "../domain/types.js";
 import { formatVisionAnalysis, type VisionService } from "../vision/index.js";
+import type { WorkspaceFileService } from "../workspace/file-service.js";
 import { connectMcpServerToPi, type McpPiBridge } from "./pi-adapter.js";
 
 export const visionMcpToolNames = ["analyze_image"] as const;
 
 export type VisionMcpContext = {
   visionService: VisionService;
+  workspaceFiles?: WorkspaceFileService;
+  cacheNamespace?: string;
   store: CompanionStore;
   sessionId: string;
   actions: () => ActionRecord[];
@@ -47,7 +50,16 @@ export function createVisionMcpServer(context: VisionMcpContext): McpServer {
         questionLength: [...input.question].length,
       };
       try {
-        const analysis = await context.visionService.analyzePath(input, extra.signal);
+        const analysis = await context.visionService.analyzePath(
+          input,
+          extra.signal,
+          context.workspaceFiles
+            ? {
+                workspaceFiles: context.workspaceFiles,
+                cacheNamespace: context.cacheNamespace ?? "workspace:default",
+              }
+            : undefined,
+        );
         context.actions().push(context.store.addAction("analyze_image", "completed", {
           ...audit,
           imageSha256: analysis.imageSha256,

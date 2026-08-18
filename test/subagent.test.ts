@@ -1,4 +1,7 @@
 import assert from "node:assert/strict";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import test from "node:test";
 import { createTestRuntime } from "../src/testing/index.js";
 
@@ -80,6 +83,60 @@ test("private Pi session delegates to an isolated read-only subagent and resumes
     JSON.stringify(traces.map((trace) => [trace.turnKind, trace.sessionId])));
   } finally {
     runtime.dispose();
+  }
+});
+
+test("a secret conversation subagent inherits only its character-scoped secret Workspace", async () => {
+  const root = mkdtempSync(join(tmpdir(), "rp-agent-secret-subagent-"));
+  const runtime = createTestRuntime({
+    stateDir: root,
+    workspaceDir: join(root, "workspace"),
+    seed: "subagent-secret-workspace",
+  });
+  try {
+    const character = runtime.kernel.createCharacter({ name: "私密审查角色" });
+    const normal = await runtime.kernel.openCanonicalPrivateConversation(character.id, "normal");
+    const secret = await runtime.kernel.openCanonicalPrivateConversation(character.id, "secret");
+    runtime.kernel.uploadSessionWorkspaceFile(normal.id, {
+      directory: "uploads",
+      name: "scope.txt",
+      bytes: Buffer.from("normal-only-sentinel\n", "utf8"),
+    });
+    runtime.kernel.uploadSessionWorkspaceFile(secret.id, {
+      directory: "uploads",
+      name: "scope.txt",
+      bytes: Buffer.from("secret-only-sentinel\n", "utf8"),
+    });
+    runtime.kernel.patchAgentPermissions({ workspaceAccess: "read_only" });
+    runtime.kernel.setAgentModuleEnabled("mcp:subagent", true);
+    runtime.model.enqueue([
+      {
+        kind: "tool_call",
+        name: "delegate_task",
+        arguments: {
+          role: "reviewer",
+          task: "Read uploads/scope.txt and report the exact sentinel.",
+        },
+      },
+      { kind: "tool_call", name: "read", arguments: { path: "uploads/scope.txt" } },
+      { kind: "assistant_text", text: "The exact value is secret-only-sentinel." },
+      { kind: "assistant_text", text: "独立审查确认值为 secret-only-sentinel。" },
+    ]);
+
+    const response = await runtime.kernel.sendMessage(secret.id, {
+      mode: "sms",
+      conversationSpace: "secret",
+      characterId: character.id,
+      text: "让审查员读取私密工作区。",
+    });
+    assert.equal(response.status, "completed");
+    assert.match(response.reply, /secret-only-sentinel/u);
+    const childAfterRead = JSON.stringify(runtime.model.requests[2].messages);
+    assert.match(childAfterRead, /secret-only-sentinel/u);
+    assert.doesNotMatch(childAfterRead, /normal-only-sentinel/u);
+  } finally {
+    runtime.dispose();
+    rmSync(root, { recursive: true, force: true });
   }
 });
 

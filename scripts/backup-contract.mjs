@@ -11,7 +11,7 @@ import { DatabaseSync } from "node:sqlite";
 import { parseDocument } from "yaml";
 
 export const BACKUP_SCHEMA_VERSION = 3;
-export const MAX_DATABASE_SCHEMA_VERSION = 35;
+export const MAX_DATABASE_SCHEMA_VERSION = 38;
 const V1_FRONTMATTER_KEYS = [
   "schemaVersion", "id", "kind", "realm", "scope", "type", "characterId", "sessionId",
   "validity", "confirmed", "sourceSessionId", "sourceMessageId", "createdAt", "updatedAt",
@@ -29,6 +29,10 @@ const V3_FRONTMATTER_KEYS = [
   ...V2_FRONTMATTER_KEYS,
   "personKey", "displayName", "aliases", "relationship", "visibility",
   "visibleToCharacterIds", "sourceMemoryIds", "personConfidence",
+].sort();
+const V4_FRONTMATTER_KEYS = [
+  ...V3_FRONTMATTER_KEYS,
+  "conversationSpace", "secretOwnerCharacterId",
 ].sort();
 
 export function sha256(source) {
@@ -59,7 +63,7 @@ export function assertWriterInactive(stateDir) {
       "SELECT owner_id, expires_at FROM memory_vault_writer_lease WHERE singleton = 1",
     ).get();
     if (row?.owner_id && row?.expires_at && String(row.expires_at) > new Date().toISOString()) {
-      throw new Error("RP Agent is holding the Memory Vault writer lease; stop it before backup or restore");
+      throw new Error("YourChar is holding the Memory Vault writer lease; stop it before backup or restore");
     }
   } finally {
     database.close();
@@ -73,6 +77,20 @@ export function validateBackupDirectory(root, manifest) {
   const actualFiles = payloadFiles(root);
   if (JSON.stringify(actualFiles) !== JSON.stringify(manifest.files)) {
     throw new Error("backup payload hash/size manifest mismatch");
+  }
+  if (
+    manifest.containsSecretWorkspace !== undefined &&
+    Boolean(manifest.containsSecretWorkspace) !==
+      actualFiles.some((file) => file.path.startsWith("workspace-secret/"))
+  ) {
+    throw new Error("backup secret Workspace metadata does not match payload");
+  }
+  if (
+    manifest.containsInstalledSkills !== undefined &&
+    Boolean(manifest.containsInstalledSkills) !==
+      actualFiles.some((file) => file.path.startsWith("skills/"))
+  ) {
+    throw new Error("backup installed Skill metadata does not match payload");
   }
   const database = validateDatabase(join(root, "rp-agent.sqlite"));
   const vault = validateVault(root, database);
@@ -159,7 +177,7 @@ function parseVaultDocument(source, relativePath) {
   });
   if (yaml.errors.length) throw new Error(`${relativePath}: ${yaml.errors.map((entry) => entry.message).join("; ")}`);
   const metadata = yaml.toJS({ maxAliasCount: 0 });
-  if (!metadata || typeof metadata !== "object" || ![1, 2, 3].includes(metadata.schemaVersion) ||
+  if (!metadata || typeof metadata !== "object" || ![1, 2, 3, 4].includes(metadata.schemaVersion) ||
       typeof metadata.id !== "string" || !/^[A-Za-z0-9_-]+$/.test(metadata.id) ||
       !["user_profile", "person_profile", "character_soul", "scene", "memory"].includes(metadata.kind) ||
       !["reality", "roleplay", "legacy"].includes(metadata.realm) ||
@@ -171,10 +189,25 @@ function parseVaultDocument(source, relativePath) {
     ? V1_FRONTMATTER_KEYS
     : metadata.schemaVersion === 2
       ? V2_FRONTMATTER_KEYS
-      : V3_FRONTMATTER_KEYS;
+      : metadata.schemaVersion === 3
+        ? V3_FRONTMATTER_KEYS
+        : V4_FRONTMATTER_KEYS;
   const actualKeys = Object.keys(metadata).sort();
   if (JSON.stringify(actualKeys) !== JSON.stringify(expectedKeys)) {
     throw new Error(`${relativePath}: frontmatter key set is not stable schema ${metadata.schemaVersion}`);
+  }
+  const conversationSpace = metadata.schemaVersion >= 4 ? metadata.conversationSpace : "normal";
+  const secretOwnerCharacterId = metadata.schemaVersion >= 4
+    ? metadata.secretOwnerCharacterId
+    : null;
+  if (!['normal', 'secret'].includes(conversationSpace) ||
+      (conversationSpace === 'normal' && secretOwnerCharacterId !== null) ||
+      (conversationSpace === 'secret' &&
+        (metadata.kind !== 'memory' ||
+          typeof secretOwnerCharacterId !== 'string' ||
+          !/^[A-Za-z0-9_-]+$/.test(secretOwnerCharacterId))) ||
+      (metadata.kind !== 'memory' && conversationSpace !== 'normal')) {
+    throw new Error(`${relativePath}: invalid conversation space frontmatter`);
   }
   if (relativePath !== expectedVaultPath(metadata)) {
     throw new Error(`${relativePath}: frontmatter resolves to ${expectedVaultPath(metadata)}`);
@@ -185,6 +218,9 @@ function parseVaultDocument(source, relativePath) {
 }
 
 function expectedVaultPath(metadata) {
+  if (metadata.kind === "memory" && metadata.conversationSpace === "secret") {
+    return `secret/characters/${safeId(metadata.secretOwnerCharacterId, "secretOwnerCharacterId")}/memories/${metadata.id}.md`;
+  }
   if (metadata.kind === "user_profile") return "reality/user-profile.md";
   if (metadata.kind === "person_profile") return `reality/people/${metadata.id}.md`;
   if (metadata.kind === "character_soul") return `roleplay/characters/${safeId(metadata.characterId, "characterId")}/SOUL.md`;
@@ -206,14 +242,31 @@ function validateSqliteProjection(path, documents) {
     const vaultMemories = documents.filter((entry) => entry.metadata.kind === "memory")
       .map((entry) => ({
         id: entry.metadata.id,
+        conversationSpace: entry.metadata.schemaVersion >= 4
+          ? entry.metadata.conversationSpace
+          : "normal",
+        secretOwnerCharacterId: entry.metadata.schemaVersion >= 4
+          ? entry.metadata.secretOwnerCharacterId
+          : null,
         realm: entry.metadata.realm,
         characterId: entry.metadata.characterId ?? null,
         validity: entry.metadata.validity,
         confirmed: entry.metadata.confirmed ? 1 : 0,
         content: entry.body.trimEnd(),
       })).sort((a, b) => a.id.localeCompare(b.id));
+    const memoryColumns = new Set(
+      database.prepare("PRAGMA table_info(rp_memories)").all().map((row) => String(row.name)),
+    );
     const rows = database.prepare(
-      "SELECT id, realm, character_id AS characterId, validity, confirmed, content FROM rp_memories ORDER BY id",
+      `SELECT id,
+        ${memoryColumns.has("conversation_space")
+          ? "conversation_space"
+          : "'normal'"} AS conversationSpace,
+        ${memoryColumns.has("secret_owner_character_id")
+          ? "secret_owner_character_id"
+          : "NULL"} AS secretOwnerCharacterId,
+        realm, character_id AS characterId, validity, confirmed, content
+       FROM rp_memories ORDER BY id`,
     ).all().map((row) => ({ ...row, confirmed: Number(row.confirmed) }));
     const vaultScenes = documents.filter((entry) => entry.metadata.kind === "scene")
       .map((entry) => ({ sessionId: entry.metadata.sessionId, summary: entry.body })).sort((a, b) => a.sessionId.localeCompare(b.sessionId));

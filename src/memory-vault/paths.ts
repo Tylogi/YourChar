@@ -28,6 +28,8 @@ export class MemoryVaultPaths {
       "roleplay",
       "roleplay/characters",
       "roleplay/scenes",
+      "secret",
+      "secret/characters",
       "legacy",
       "legacy/quarantine",
       "archive",
@@ -36,7 +38,11 @@ export class MemoryVaultPaths {
     }
   }
 
-  pathFor(metadata: Pick<VaultFrontmatter, "id" | "kind" | "realm" | "characterId" | "sessionId">): string {
+  pathFor(metadata: Pick<
+    VaultFrontmatter,
+    "id" | "kind" | "realm" | "characterId" | "sessionId" |
+      "conversationSpace" | "secretOwnerCharacterId"
+  >): string {
     return this.resolveRelative(relativePathForMetadata(metadata));
   }
 
@@ -111,9 +117,17 @@ export class MemoryVaultPaths {
 }
 
 export function relativePathForMetadata(
-  metadata: Pick<VaultFrontmatter, "id" | "kind" | "realm" | "characterId" | "sessionId">,
+  metadata: Pick<
+    VaultFrontmatter,
+    "id" | "kind" | "realm" | "characterId" | "sessionId" |
+      "conversationSpace" | "secretOwnerCharacterId"
+  >,
 ): string {
   assertIdentifier(metadata.id, "id");
+  if (metadata.kind === "memory" && metadata.conversationSpace === "secret") {
+    assertIdentifier(metadata.secretOwnerCharacterId, "secretOwnerCharacterId");
+    return `secret/characters/${metadata.secretOwnerCharacterId}/memories/${metadata.id}.md`;
+  }
   if (metadata.kind === "user_profile") return "reality/user-profile.md";
   if (metadata.kind === "person_profile") return `reality/people/${metadata.id}.md`;
   if (metadata.kind === "character_soul") {

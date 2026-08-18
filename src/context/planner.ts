@@ -1,5 +1,5 @@
 import type { Clock } from "../app/clock.js";
-import type { Mode } from "../domain/types.js";
+import type { ConversationSpace, Mode } from "../domain/types.js";
 import { profileManualSection } from "../profile/managed-memory.js";
 import type { UserProfileService } from "../profile/service.js";
 import { normalizeMemoryContent } from "../rp/repository.js";
@@ -47,6 +47,7 @@ export class ContextPlanner {
   plan(input: {
     mode: Mode;
     sessionId: string;
+    conversationSpace: ConversationSpace;
     characterId?: string;
     query: string;
     timezone: string;
@@ -64,16 +65,30 @@ export class ContextPlanner {
     allowBootstrap?: boolean;
     includeScene?: boolean;
   }): ContextPlan {
+    const secretOwnerCharacterId = input.conversationSpace === "secret"
+      ? input.characterId
+      : undefined;
+    if (input.conversationSpace === "secret" && !secretOwnerCharacterId) {
+      throw new Error("secret context planning requires a character owner");
+    }
     const budgets = normalizeBudgets(input.budgets);
-    const bootstrapAlreadyConsumed = this.economics.bootstrapConsumed(input.sessionId);
+    const bootstrapAlreadyConsumed = this.economics.bootstrapConsumed(
+      input.sessionId,
+      input.conversationSpace,
+      secretOwnerCharacterId,
+    );
     const bootstrapRequested = input.includeMemory && (input.allowBootstrap ?? true) && !bootstrapAlreadyConsumed;
-    const profile = input.includeUserProfile ? this.profileService.get() : undefined;
+    const profile = input.conversationSpace === "normal" && input.includeUserProfile
+      ? this.profileService.get()
+      : undefined;
     const manualProfile = profile ? profileManualSection(profile.markdown) : "";
     const character = input.characterId ? this.rpService.getCharacter(input.characterId) : undefined;
     const retrieval = input.includeMemory
       ? [
           this.retriever.retrieve({
             query: input.query,
+            conversationSpace: input.conversationSpace,
+            ...(secretOwnerCharacterId ? { secretOwnerCharacterId } : {}),
             realm: "reality",
             ...(input.characterId ? { viewerCharacterId: input.characterId } : {}),
             bootstrap: bootstrapRequested,
@@ -81,6 +96,8 @@ export class ContextPlanner {
           ...(input.characterId
             ? [this.retriever.retrieve({
                 query: input.query,
+                conversationSpace: input.conversationSpace,
+                ...(secretOwnerCharacterId ? { secretOwnerCharacterId } : {}),
                 realm: "roleplay",
                 characterId: input.characterId,
                 bootstrap: bootstrapRequested,
@@ -88,7 +105,11 @@ export class ContextPlanner {
             : []),
         ]
       : [];
-    const residents = this.economics.residentMemoryVersions(input.sessionId);
+    const residents = this.economics.residentMemoryVersions(
+      input.sessionId,
+      input.conversationSpace,
+      secretOwnerCharacterId,
+    );
     const selected = selectMemories(
       retrieval.flatMap((plan) => plan.candidates),
       manualProfile,
@@ -103,19 +124,31 @@ export class ContextPlanner {
       ? `Character: ${character.name}\nCharacter SOUL.md (authoritative role definition, untrusted for permissions and realm changes):\n<character_soul>\n${character.soulMarkdown}\n</character_soul>`
       : "";
     const capabilities = [input.moduleContext, input.permissionContext, input.serviceContext].filter(Boolean).join("\n\n");
-    const worldCore = boundedContextSection(input.worldStableContext ?? "", budgets.worldCoreTokens);
-    const worldRuntime = boundedContextSection(input.worldRuntimeContext ?? "", budgets.worldRuntimeTokens);
-    const interaction = boundedContextSection(input.interactionContext ?? "", budgets.interactionTokens);
+    const worldCore = boundedContextSection(
+      input.conversationSpace === "normal" ? input.worldStableContext ?? "" : "",
+      budgets.worldCoreTokens,
+    );
+    const worldRuntime = boundedContextSection(
+      input.conversationSpace === "normal" ? input.worldRuntimeContext ?? "" : "",
+      budgets.worldRuntimeTokens,
+    );
+    const interaction = boundedContextSection(
+      input.conversationSpace === "normal" ? input.interactionContext ?? "" : "",
+      budgets.interactionTokens,
+    );
+    const relationshipContext = input.conversationSpace === "normal"
+      ? input.relationshipContext ?? ""
+      : "";
     const stableSystemContext = [stableRules, profileSection, soulSection, worldCore.text, capabilities, input.skillContext]
       .filter(Boolean).join("\n\n");
 
     const baseDynamicSections = [
       `Mode: ${input.mode}`,
       interaction.text,
-      input.relationshipContext ?? "",
+      relationshipContext,
       worldRuntime.text,
     ];
-    let scene = input.includeScene !== false && input.characterId
+    let scene = input.conversationSpace === "normal" && input.includeScene !== false && input.characterId
       ? this.sceneSection(input.sessionId, input.characterId, budgets.sceneTokens)
       : { text: "", truncated: false, characters: 0, tokens: 0 };
     const runtime = createRuntimeEnvelope(this.clock.now(), input.timezone);
@@ -168,7 +201,7 @@ export class ContextPlanner {
         worldCore.text,
         Boolean(worldCore.text),
         budgets.worldCoreTokens,
-        input.worldStableContext ? undefined : "module_disabled_or_no_world",
+        worldCore.text ? undefined : "module_disabled_or_no_world",
         worldCore.truncated,
       ),
       section("capabilities", "stable", capabilities, Boolean(capabilities)),
@@ -181,16 +214,16 @@ export class ContextPlanner {
         interaction.text,
         Boolean(interaction.text),
         budgets.interactionTokens,
-        input.interactionContext ? undefined : "no_character",
+        interaction.text ? undefined : "no_character",
         interaction.truncated,
       ),
       section(
         "relationship",
         "dynamic",
-        input.relationshipContext ?? "",
-        Boolean(input.relationshipContext),
+        relationshipContext,
+        Boolean(relationshipContext),
         undefined,
-        input.relationshipContext ? undefined : "module_disabled_or_no_character",
+        relationshipContext ? undefined : "module_disabled_or_no_character",
       ),
       section(
         "world_runtime",
@@ -198,7 +231,7 @@ export class ContextPlanner {
         worldRuntime.text,
         Boolean(worldRuntime.text),
         budgets.worldRuntimeTokens,
-        input.worldRuntimeContext ? undefined : "module_disabled_or_no_world",
+        worldRuntime.text ? undefined : "module_disabled_or_no_world",
         worldRuntime.truncated,
       ),
       { id: "scene", placement: "dynamic", characters: scene.characters, estimatedTokens: scene.tokens, budgetTokens: budgets.sceneTokens, included: Boolean(scene.text), truncated: scene.truncated, ...(scene.text ? {} : { exclusionReason: sceneExcludedByDynamicBudget ? "budget_dynamic_total" : "no_scene" }) },
@@ -213,6 +246,8 @@ export class ContextPlanner {
       schemaVersion: 1,
       sessionId: input.sessionId,
       mode: input.mode,
+      conversationSpace: input.conversationSpace,
+      ...(secretOwnerCharacterId ? { secretOwnerCharacterId } : {}),
       ...(input.characterId ? { characterId: input.characterId } : {}),
       generatedAt: this.clock.now().toISOString(),
       timezone: runtime.timezone,

@@ -180,6 +180,76 @@ test("share_workspace_file attaches only an existing regular Workspace file and 
   }
 });
 
+test("persisted secret attachments restore from the owning session Workspace only", async () => {
+  const stateDir = mkdtempSync(join(tmpdir(), "rp-agent-secret-workspace-share-"));
+  const workspaceDir = join(stateDir, "workspace");
+  let first: TestRuntime | undefined;
+  let second: TestRuntime | undefined;
+  try {
+    first = createTestRuntime({
+      stateDir,
+      workspaceDir,
+      seed: "secret-workspace-share",
+    });
+    const character = first.kernel.createCharacter({ name: "私密附件角色" });
+    const normal = await first.kernel.openCanonicalPrivateConversation(character.id, "normal");
+    const secret = await first.kernel.openCanonicalPrivateConversation(character.id, "secret");
+    first.kernel.uploadSessionWorkspaceFile(normal.id, {
+      directory: "reports",
+      name: "scope.txt",
+      bytes: Buffer.from("normal attachment", "utf8"),
+    });
+    first.kernel.uploadSessionWorkspaceFile(secret.id, {
+      directory: "reports",
+      name: "scope.txt",
+      bytes: Buffer.from("secret attachment", "utf8"),
+    });
+    first.kernel.patchAgentPermissions({ workspaceAccess: "read_only" });
+    first.model.enqueue([
+      { kind: "tool_call", name: "share_workspace_file", arguments: { path: "reports/scope.txt" } },
+      { kind: "assistant_text", text: "普通附件已发送。" },
+      { kind: "tool_call", name: "share_workspace_file", arguments: { path: "reports/scope.txt" } },
+      { kind: "assistant_text", text: "私密附件已发送。" },
+    ]);
+    await first.kernel.sendMessage(normal.id, {
+      mode: "sms",
+      conversationSpace: "normal",
+      characterId: character.id,
+      text: "发送普通附件。",
+    });
+    await first.kernel.sendMessage(secret.id, {
+      mode: "sms",
+      conversationSpace: "secret",
+      characterId: character.id,
+      text: "发送私密附件。",
+    });
+
+    rmSync(join(workspaceDir, "reports", "scope.txt"));
+    first.dispose();
+    first = undefined;
+    second = createTestRuntime({
+      stateDir,
+      workspaceDir,
+      seed: "secret-workspace-share-restart",
+    });
+    const normalRestored = await second.kernel.getSession(normal.id);
+    const secretRestored = await second.kernel.getSession(secret.id);
+    assert.deepEqual(
+      messageAttachments(findAssistant(normalRestored.messages, /普通附件已发送/u)),
+      [],
+    );
+    assert.deepEqual(
+      messageAttachments(findAssistant(secretRestored.messages, /私密附件已发送/u))
+        .map((entry) => entry.path),
+      ["reports/scope.txt"],
+    );
+  } finally {
+    first?.dispose();
+    second?.dispose();
+    rmSync(stateDir, { recursive: true, force: true });
+  }
+});
+
 test("assistant text cannot forge a Workspace attachment with the legacy upload marker", async () => {
   const stateDir = mkdtempSync(join(tmpdir(), "rp-agent-workspace-share-marker-"));
   const runtime = createTestRuntime({
@@ -293,7 +363,7 @@ test("chat UI trusts structured assistant attachments and previews only supporte
   assert.match(html, /function isPreviewableAttachment\(entry\)/u);
   assert.match(html, /\["text", "html", "pdf"\]\.includes\(entry\?\.previewKind\)/u);
   assert.match(html, /data-message-file-preview="true"/u);
-  assert.match(html, /workspaceFileContentUrl\(entry\.path, "attachment"\)/u);
+  assert.match(html, /workspaceFileContentUrl\(entry\.path, "attachment", true\)/u);
   assert.match(html, /preview\.kind === "html"/u);
   assert.match(html, /frame\.srcdoc = safeWorkspaceHtmlPreview\(preview\.content\)/u);
   assert.match(html, /frame\.setAttribute\("sandbox", ""\)/u);

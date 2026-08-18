@@ -14,7 +14,10 @@ export type McpPiBridge = {
 export async function connectMcpServerToPi(
   server: McpServer,
   clientName: string,
-  options: { executionMode?: "sequential" | "parallel" } = {},
+  options: {
+    executionMode?: "sequential" | "parallel";
+    requestTimeoutMs?: number;
+  } = {},
 ): Promise<McpPiBridge> {
   const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
   const client = new Client({ name: clientName, version: "0.1.0" });
@@ -37,7 +40,15 @@ export async function connectMcpServerToPi(
               _meta: { "rp-agent/tool-call-id": toolCallId },
             },
             undefined,
-            { signal },
+            {
+              signal,
+              ...(options.requestTimeoutMs === undefined
+                ? {}
+                : {
+                    timeout: options.requestTimeoutMs,
+                    maxTotalTimeout: options.requestTimeoutMs,
+                  }),
+            },
           );
           const text = (Array.isArray(result.content) ? result.content : [])
             .map(mcpTextContent)

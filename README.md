@@ -1,6 +1,7 @@
-# RP Agent
+# YourChar
 
-RP companion app layered on the original Pi agent runtime.
+A local-first, open-source runtime for persistent AI characters and digital
+lives, layered on the original Pi agent runtime.
 
 The codebase uses the original `@earendil-works/pi-coding-agent` session runtime
 and adds the RP companion domain on top:
@@ -65,6 +66,9 @@ group contract remains only as a compatibility note in
 [`docs/group-chat-multi-model.md`](docs/group-chat-multi-model.md).
 Workspace, shell, and protected-document permissions are documented in
 [`docs/workspace-capabilities.md`](docs/workspace-capabilities.md).
+Per-character private-mode isolation, shared boundaries, backup behavior, and
+the non-encryption threat model are documented in
+[`docs/private-mode.md`](docs/private-mode.md).
 Tavily module enablement, Key handling, tool limits, and test contracts are
 documented in [`docs/tavily-search-mcp.md`](docs/tavily-search-mcp.md).
 Read-only URL extraction, network boundaries, TUN behavior, and test contracts
@@ -113,6 +117,12 @@ http://127.0.0.1:8765
 
 Persistent state is stored under `.rp-agent/` by default. Relevant runtime
 settings are:
+
+To keep existing installations upgrade-compatible, YourChar retains the legacy
+`.rp-agent/` state directory, `RP_AGENT_*` environment variables,
+`rp-agent.sqlite` database filename, `rp-agent.service` systemd unit, and
+`rp-agent/*` internal protocol identifiers. Do not rename these identifiers in
+an existing installation; they are compatibility names, not the product name.
 
 | Variable | Default | Purpose |
 |---|---|---|
@@ -185,9 +195,10 @@ M5 moves schedule operations behind an MCP server/client boundary and makes due
 reminders resume the originating Pi session before delivery. Debug also retains
 the latest 10 final provider request payloads, with role-colored messages and a
 complete raw JSON view; credential fields are redacted.
-M6 adds persisted MCP/Skill switches, Pi-native Skill discovery with restricted
-Skill-file reading, a management UI, and a switchable User Profile MCP backed by
-one Agent-maintained Markdown document.
+M6 adds persisted, space-aware MCP/Skill switches, Pi-native Skill discovery
+with package-scoped reading, a reviewed host-side HTTPS Skill installer, a
+management UI, and a switchable User Profile MCP backed by one Agent-maintained
+Markdown document.
 M7 adds a dedicated workspace, permission-gated read/write/edit tools, an
 OS-isolated Bubblewrap shell with a separate network switch, and independent
 Agent-edit authorization for User Profile and character SOUL Markdown.

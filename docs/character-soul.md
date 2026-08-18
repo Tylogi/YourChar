@@ -9,7 +9,7 @@ Each RP character has one static identity document at:
 ```
 
 The format is inspired by OpenClaw's `SOUL.md` responsibility and section model:
-core truths, boundaries, vibe, and continuity. RP Agent adapts that model for
+core truths, boundaries, vibe, and continuity. YourChar adapts that model for
 fictional characters and keeps dynamic state out of the file.
 
 `SOUL.md` answers "who is this character?" Current scene and confirmed long-term
@@ -46,7 +46,7 @@ Markdown freely as long as the document remains within the length limit.
 ## 3. Legacy migration
 
 The original `characters` table columns remain because database migrations are
-append-only. When an existing character has no SOUL file, RP Agent converts its
+append-only. When an existing character has no SOUL file, YourChar converts its
 identity, voice, narrative perspective, behavior, relationship defaults, and
 boundaries into Markdown, then writes the resulting file. New character writes no
 longer use those legacy columns.

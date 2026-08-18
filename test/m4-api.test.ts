@@ -94,7 +94,7 @@ test("readiness, model diagnostics, export, and confirmed deletion form a closed
       actions: unknown[];
       modelContextTraces: unknown[];
     };
-    assert.match(exported.headers.get("content-disposition") ?? "", /rp-agent-export\.json/);
+    assert.match(exported.headers.get("content-disposition") ?? "", /yourchar-export\.json/);
     assert.equal(exportBody.characters.length, 1);
     assert.equal(exportBody.scheduleItems.length, 1);
     assert.equal(exportBody.actions.length, 1);

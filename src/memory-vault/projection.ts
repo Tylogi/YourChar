@@ -1,6 +1,7 @@
 import { existsSync, readFileSync, rmSync } from "node:fs";
 import { dirname } from "node:path";
 import type { AppDatabase } from "../storage/database.js";
+import { storedIdempotencyKey } from "../rp/repository.js";
 import type { VaultDocument } from "./types.js";
 import { MemoryVaultError } from "./errors.js";
 import { durableAtomicWrite, fsyncDirectory, isSimulatedCrash, runFailpoint, type MemoryVaultFailpoint } from "./durability.js";
@@ -90,21 +91,26 @@ export class MemoryVaultProjection {
 
         const insertMemory = connection.prepare(`
           INSERT INTO rp_memories(
-            id, realm, scope, type, memory_key, content, normalized_content, source_session_id,
+            id, conversation_space, secret_owner_character_id,
+            realm, scope, type, memory_key, content, normalized_content, source_session_id,
             source_message_id, character_id, salience, confidence, validity,
             confirmed, confirmation_kind, confirmed_at, confirmation_evidence_message_id,
             rejected_at, archived_at, deleted_at, status_reason,
             tags_json, superseded_by_id, idempotency_key,
             created_at, updated_at, last_used_at
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?, ?, ?)
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?, ?, ?)
         `);
         const insertFts = connection.prepare(
-          "INSERT INTO rp_memories_fts(memory_id, content, tags) VALUES (?, ?, ?)",
+          `INSERT INTO rp_memories_fts(
+            memory_id, conversation_space, secret_owner_character_id, content, tags
+          ) VALUES (?, ?, ?, ?, ?)`,
         );
         for (const document of memories.sort(byId)) {
           const metadata = document.metadata;
           insertMemory.run(
             metadata.id,
+            metadata.conversationSpace,
+            metadata.secretOwnerCharacterId,
             metadata.realm,
             metadata.scope,
             metadata.type!,
@@ -126,13 +132,25 @@ export class MemoryVaultProjection {
             metadata.deletedAt,
             metadata.statusReason,
             JSON.stringify(metadata.tags),
-            metadata.idempotencyKey,
+            metadata.idempotencyKey
+              ? storedIdempotencyKey(
+                  metadata.idempotencyKey,
+                  metadata.conversationSpace,
+                  metadata.secretOwnerCharacterId ?? undefined,
+                )
+              : null,
             metadata.createdAt,
             metadata.updatedAt,
             metadata.lastUsedAt,
           );
           if (!["rejected", "archived", "deleted"].includes(metadata.validity!)) {
-            insertFts.run(metadata.id, document.body.trimEnd(), metadata.tags.join(" "));
+            insertFts.run(
+              metadata.id,
+              metadata.conversationSpace,
+              metadata.secretOwnerCharacterId,
+              document.body.trimEnd(),
+              metadata.tags.join(" "),
+            );
           }
         }
 
@@ -212,6 +230,14 @@ function preflight(database: AppDatabase, memories: VaultDocument[], scenes: Vau
     if (document.metadata.realm === "roleplay" && !characterIds.has(document.metadata.characterId!)) {
       invalid(`memory ${document.metadata.id} references unknown character ${document.metadata.characterId}`);
     }
+    if (
+      document.metadata.conversationSpace === "secret" &&
+      !characterIds.has(document.metadata.secretOwnerCharacterId!)
+    ) {
+      invalid(
+        `memory ${document.metadata.id} references unknown secret owner ${document.metadata.secretOwnerCharacterId}`,
+      );
+    }
   }
   for (const document of scenes) {
     if (!sessionIds.has(document.metadata.sessionId!)) {
@@ -226,11 +252,21 @@ function preflight(database: AppDatabase, memories: VaultDocument[], scenes: Vau
     if (previous && (!memoryIds.has(previous) || previous === document.metadata.id)) {
       invalid(`memory ${document.metadata.id} has invalid supersedes target ${previous}`);
     }
+    if (previous) {
+      const target = memories.find((entry) => entry.metadata.id === previous)!;
+      if (
+        target.metadata.conversationSpace !== document.metadata.conversationSpace ||
+        target.metadata.secretOwnerCharacterId !== document.metadata.secretOwnerCharacterId
+      ) invalid(`memory ${document.metadata.id} has a cross-space supersedes target ${previous}`);
+    }
     if (previous && superseded.has(previous)) invalid(`multiple memories supersede ${previous}`);
     if (previous) superseded.add(previous);
     const key = document.metadata.idempotencyKey;
-    if (key && idempotencyKeys.has(key)) invalid(`duplicate memory idempotency key ${key}`);
-    if (key) idempotencyKeys.add(key);
+    const scopedKey = key
+      ? `${document.metadata.conversationSpace}\0${document.metadata.secretOwnerCharacterId ?? ""}\0${key}`
+      : undefined;
+    if (scopedKey && idempotencyKeys.has(scopedKey)) invalid(`duplicate memory idempotency key ${key}`);
+    if (scopedKey) idempotencyKeys.add(scopedKey);
   }
 }
 

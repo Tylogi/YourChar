@@ -1,4 +1,5 @@
 import type { Clock } from "../app/clock.js";
+import type { ConversationSpace } from "../domain/types.js";
 import { normalizeMemoryContent, type RpRepository } from "../rp/repository.js";
 import type { RpMemory } from "../rp/types.js";
 import type { MemoryVaultService } from "../memory-vault/service.js";
@@ -23,18 +24,31 @@ export class MemoryRetriever {
 
   retrieve(input: {
     query: string;
+    conversationSpace?: ConversationSpace;
+    secretOwnerCharacterId?: string;
     realm: "reality" | "roleplay";
     characterId?: string;
     viewerCharacterId?: string;
     bootstrap?: boolean;
     limit?: number;
   }): MemoryRetrievalPlan {
+    const conversationSpace = input.conversationSpace ?? "normal";
+    if (conversationSpace === "secret" && !input.secretOwnerCharacterId) {
+      throw new Error("secret memory retrieval requires secretOwnerCharacterId");
+    }
+    if (conversationSpace === "normal" && input.secretOwnerCharacterId) {
+      throw new Error("normal memory retrieval cannot have secretOwnerCharacterId");
+    }
     if (input.realm === "roleplay" && !input.characterId) {
       return emptyPlan(input);
     }
     const query = input.query.trim();
     const normalizedQuery = normalizeMemoryContent(normalizeRetrievalIntent(query));
     const stored = this.repository.searchMemories({
+      conversationSpace,
+      ...(input.secretOwnerCharacterId
+        ? { secretOwnerCharacterId: input.secretOwnerCharacterId }
+        : {}),
       realm: input.realm,
       ...(input.characterId ? { characterId: input.characterId } : {}),
       validity: "active",
@@ -43,13 +57,17 @@ export class MemoryRetriever {
     }).filter((memory) => input.realm === "reality"
       ? memory.characterId === undefined
       : memory.characterId === input.characterId);
-    const strict = input.realm === "reality" && this.personDirectory
+    const strict = conversationSpace === "normal" && input.realm === "reality" && this.personDirectory
       ? this.personDirectory.contextualizeRealityMemories(stored, input.viewerCharacterId, query)
       : stored;
     const ftsRanks = query
       ? this.repository.rankMemoryFts({
           query,
           realm: input.realm,
+          conversationSpace,
+          ...(input.secretOwnerCharacterId
+            ? { secretOwnerCharacterId: input.secretOwnerCharacterId }
+            : {}),
           ...(input.characterId ? { characterId: input.characterId } : {}),
           limit: input.limit ?? 100,
         })
@@ -61,6 +79,10 @@ export class MemoryRetriever {
         return rightEligible - leftEligible || right.score - left.score || left.memoryId.localeCompare(right.memoryId);
       });
     return {
+      conversationSpace,
+      ...(input.secretOwnerCharacterId
+        ? { secretOwnerCharacterId: input.secretOwnerCharacterId }
+        : {}),
       realm: input.realm,
       ...(input.characterId ? { characterId: input.characterId } : {}),
       query,
@@ -125,6 +147,10 @@ export class MemoryRetriever {
     ].filter(Boolean).join("+") || "no_relevance";
     return {
       memoryId: memory.id,
+      conversationSpace: memory.conversationSpace,
+      ...(memory.secretOwnerCharacterId
+        ? { secretOwnerCharacterId: memory.secretOwnerCharacterId }
+        : {}),
       realm: memory.realm as "reality" | "roleplay",
       ...(memory.characterId ? { characterId: memory.characterId } : {}),
       type: memory.type,
@@ -145,8 +171,19 @@ export class MemoryRetriever {
   }
 }
 
-function emptyPlan(input: { query: string; realm: "reality" | "roleplay"; characterId?: string; bootstrap?: boolean }): MemoryRetrievalPlan {
+function emptyPlan(input: {
+  query: string;
+  conversationSpace?: ConversationSpace;
+  secretOwnerCharacterId?: string;
+  realm: "reality" | "roleplay";
+  characterId?: string;
+  bootstrap?: boolean;
+}): MemoryRetrievalPlan {
   return {
+    conversationSpace: input.conversationSpace ?? "normal",
+    ...(input.secretOwnerCharacterId
+      ? { secretOwnerCharacterId: input.secretOwnerCharacterId }
+      : {}),
     realm: input.realm,
     ...(input.characterId ? { characterId: input.characterId } : {}),
     query: input.query.trim(),

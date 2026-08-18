@@ -153,6 +153,122 @@ test("SOUL inference initializes one character-owned Skill and manual mode preve
   }
 });
 
+test("character workbench Skills keep independent normal and secret version histories", async () => {
+  const runtime = createTestRuntime({ seed: "character-skill-conversation-spaces" });
+  try {
+    const character = runtime.kernel.createCharacter({ name: "双空间工作角色" });
+    runtime.kernel.updateCharacterFunctionProfile(character.id, {
+      publicRole: "资料整理员",
+      taskPreferences: "按空间保留各自的工作方法。",
+      avoidedTasks: "不跨空间引用工作记录。",
+      maxConcurrentTasks: 1,
+      capabilities: [{
+        capabilityId: "research.analysis",
+        level: 3,
+        responsibility: "primary",
+        autoAccept: true,
+      }],
+    });
+
+    const normalV1 = runtime.kernel.getCharacterFunctionProfile(character.id, "normal")
+      .activeSkills[0];
+    assert.ok(normalV1);
+    assert.equal(runtime.kernel.listCharacterSkillVersions(character.id, 20, "secret").length, 0);
+    const secretV1 = runtime.kernel.getCharacterFunctionProfile(character.id, "secret")
+      .activeSkills[0];
+    assert.ok(secretV1);
+    assert.equal(normalV1.conversationSpace, "normal");
+    assert.equal(secretV1.conversationSpace, "secret");
+    assert.equal(normalV1.version, 1);
+    assert.equal(secretV1.version, 1);
+    assert.notEqual(normalV1.id, secretV1.id);
+
+    const repository = runtime.kernel.characterCapabilities.repository;
+    const now = runtime.clock.advance(1_000).toISOString();
+    repository.transaction(() => {
+      repository.supersedeActiveSkill(character.id, now, "secret");
+      repository.insertSkillVersion({
+        id: "secret-workbench-skill-v2",
+        characterId: character.id,
+        conversationSpace: "secret",
+        version: repository.nextSkillVersion(character.id, "secret"),
+        status: "active",
+        markdown: "# 私密工作方法\n\n- 仅使用私密空间内的资料和结论。",
+        changeSummary: "私密空间独立演进",
+        source: "manual",
+        contentHash: "secret-workbench-skill-v2",
+        createdAt: now,
+        activatedAt: now,
+      });
+    });
+
+    assert.equal(runtime.kernel.listCharacterSkillVersions(character.id, 20, "normal").length, 1);
+    assert.equal(runtime.kernel.listCharacterSkillVersions(character.id, 20, "secret").length, 2);
+    assert.equal(
+      runtime.kernel.getCharacterFunctionProfile(character.id, "normal").activeSkills[0].id,
+      normalV1.id,
+    );
+    assert.equal(
+      runtime.kernel.getCharacterFunctionProfile(character.id, "secret").activeSkills[0].id,
+      "secret-workbench-skill-v2",
+    );
+
+    runtime.model.enqueue([
+      { kind: "assistant_text", text: "普通空间完成。" },
+      { kind: "assistant_text", text: "私密空间完成。" },
+    ]);
+    await runtime.kernel.sendMessage("workbench-skill-normal", {
+      mode: "sms",
+      conversationSpace: "normal",
+      characterId: character.id,
+      text: "请按你的工作方法处理。",
+    });
+    const normalPayload = JSON.stringify(runtime.model.requests.at(-1)?.providerPayload);
+    assert.match(normalPayload, /Selected character workbench Skill \(conversationSpace=normal, version=1\)/);
+    assert.doesNotMatch(normalPayload, /仅使用私密空间内的资料和结论/);
+    await runtime.kernel.sendMessage("workbench-skill-secret", {
+      mode: "sms",
+      conversationSpace: "secret",
+      characterId: character.id,
+      text: "请按你的私密工作方法处理。",
+    });
+    const secretPayload = JSON.stringify(runtime.model.requests.at(-1)?.providerPayload);
+    assert.match(secretPayload, /Selected character workbench Skill \(conversationSpace=secret, version=2\)/);
+    assert.match(secretPayload, /仅使用私密空间内的资料和结论/);
+
+    const rolledBack = runtime.kernel.rollbackCharacterSkill(character.id, 1, "secret");
+    assert.equal(rolledBack.id, secretV1.id);
+    assert.equal(
+      runtime.kernel.getCharacterFunctionProfile(character.id, "normal").activeSkills[0].id,
+      normalV1.id,
+    );
+  } finally {
+    runtime.dispose();
+  }
+});
+
+test("opening a secret workbench never creates or replaces the normal Skill", async () => {
+  const runtime = createTestRuntime({ seed: "secret-open-no-normal-skill" });
+  try {
+    const character = runtime.kernel.createCharacter({ name: "只开私密工作台" });
+    assert.equal(runtime.kernel.listCharacterSkillVersions(character.id, 20, "normal").length, 0);
+    const privateSnapshot = runtime.kernel.getCharacterFunctionProfile(character.id, "secret");
+    assert.equal(privateSnapshot.activeSkills[0].conversationSpace, "secret");
+    assert.equal(runtime.kernel.listCharacterSkillVersions(character.id, 20, "normal").length, 0);
+    assert.throws(() => runtime.kernel.updateCharacterFunctionProfile(character.id, {
+      publicRole: "SECRET_PROFILE_MUST_NOT_ESCAPE",
+      maxConcurrentTasks: 1,
+      capabilities: [],
+    }, "secret"), /shared role attributes/);
+    await assert.rejects(
+      runtime.kernel.inferCharacterFunctionProfile(character.id, "secret"),
+      /shared role attributes/,
+    );
+  } finally {
+    runtime.dispose();
+  }
+});
+
 test("automatic routing is deterministic, capability-first, and load-aware", () => {
   const runtime = createTestRuntime({ seed: "character-capability-routing" });
   try {
@@ -436,7 +552,7 @@ test("invalid character Skill reflection cannot grant permissions or replace the
   }
 });
 
-test("functional profile and route preview HTTP APIs expose schema 35 behavior", async () => {
+test("functional profile and route preview HTTP APIs expose schema 38 behavior", async () => {
   const runtime = createTestRuntime({ seed: "character-capability-http" });
   const setup = setupWorld(runtime, ["HTTP 发起者", "HTTP 专家"]);
   const [source, target] = setup.characters;
@@ -488,6 +604,43 @@ test("functional profile and route preview HTTP APIs expose schema 35 behavior",
     assert.equal(skills[0].status, "active");
     assert.match(skills[0].markdown, /工作方法/);
 
+    const secretUpdateResponse = await fetch(
+      `${baseUrl}/api/v1/characters/${encodeURIComponent(target.id)}/function-profile?` +
+        `conversationSpace=secret&characterId=${encodeURIComponent(target.id)}`,
+      {
+        method: "PUT",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          publicRole: "HTTP_SECRET_WORKBENCH_SENTINEL",
+          maxConcurrentTasks: 1,
+          capabilities: [{
+            capabilityId: "software.implementation",
+            level: 4,
+            responsibility: "primary",
+            autoAccept: true,
+            moduleIds: [],
+          }],
+        }),
+      },
+    );
+    assert.equal(secretUpdateResponse.status, 400);
+    const normalSkillsAfterSecret = runtime.kernel.listCharacterSkillVersions(
+      target.id,
+      20,
+      "normal",
+    );
+    assert.equal(normalSkillsAfterSecret.length, 1);
+    assert.doesNotMatch(normalSkillsAfterSecret[0].markdown, /HTTP_SECRET_WORKBENCH_SENTINEL/);
+    assert.equal(runtime.kernel.listCharacterSkillVersions(target.id, 20, "secret").length, 0);
+    assert.equal((await fetch(
+      `${baseUrl}/api/v1/characters/${encodeURIComponent(target.id)}/function-profile?` +
+        "conversationSpace=secret",
+    )).status, 400);
+    assert.equal((await fetch(
+      `${baseUrl}/api/v1/characters/${encodeURIComponent(target.id)}/function-profile?` +
+        `conversationSpace=secret&characterId=${encodeURIComponent(source.id)}`,
+    )).status, 404);
+
     const automationResponse = await fetch(
       `${baseUrl}/api/v1/characters/${encodeURIComponent(target.id)}/function-profile/automation`,
       {
@@ -522,7 +675,7 @@ test("functional profile and route preview HTTP APIs expose schema 35 behavior",
     const migration = runtime.kernel.database.connection.prepare(
       "SELECT MAX(version) AS version FROM schema_migrations",
     ).get() as { version: number };
-    assert.equal(Number(migration.version), 35);
+    assert.equal(Number(migration.version), 38);
   } finally {
     await new Promise<void>((resolve, reject) =>
       server.close((error) => error ? reject(error) : resolve()));

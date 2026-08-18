@@ -28,7 +28,7 @@ test("server serves chat UI and debug model traces", async () => {
     const inlineScript = [...html.matchAll(/<script>([\s\S]*?)<\/script>/gu)].at(-1)?.[1] ?? "";
     assert.ok(inlineScript.length > 1_000);
     assert.doesNotThrow(() => new Script(inlineScript, { filename: "rendered-rp-agent-ui.js" }));
-    assert.match(html, /RP Agent/);
+    assert.match(html, /YourChar/);
     assert.match(html, /上下文调试/);
     assert.match(html, /Provider Trace/);
     assert.match(html, /Context Economics/);
@@ -235,6 +235,182 @@ test("server serves chat UI and debug model traces", async () => {
     assert.match(html, /id="worldDirectorModelProfile"/);
     assert.match(html, /id="worldAnalystModelProfile"/);
     assert.match(html, /id="conversationCharacter"/);
+    assert.match(html, /id="privateModeToggle"/);
+    assert.match(html, /conversationSpace: "normal"/);
+    assert.match(html, /conversationSpaceEpoch: 0/);
+    assert.match(html, /function togglePrivateMode/);
+    assert.match(html, /function clearConversationSpaceTransientState/);
+    const clearConversationSpaceScript = html.match(
+      /function clearConversationSpaceTransientState\(\)[\s\S]*?async function togglePrivateMode/,
+    )?.[0] ?? "";
+    assert.match(clearConversationSpaceScript, /nodes\.moduleDetailDialog\.open/);
+    assert.match(clearConversationSpaceScript, /nodes\.moduleDetailContent\.innerHTML = ""/);
+    assert.match(html, /function captureMemoryConversationScope/);
+    assert.match(html, /function captureCharacterMemoryScope/);
+    assert.match(html, /function memoryConversationScopeMatches/);
+    assert.match(html, /function characterMemoryScopeMatches/);
+    assert.match(html, /function memoryMatchesConversationScope/);
+    assert.match(html, /function clearMemoryConversationState/);
+    const memoryScopeScript = html.match(
+      /function captureMemoryConversationScope\(\)[\s\S]*?function captureCharacterMemoryScope/,
+    )?.[0] ?? "";
+    assert.match(memoryScopeScript, /state\.conversationSpaceEpoch/);
+    assert.match(memoryScopeScript, /state\.activeSessionId/);
+    assert.match(memoryScopeScript, /session\.conversationSpace !== "secret"/);
+    assert.match(memoryScopeScript, /session\.characterId !== characterId/);
+    const clearMemoryScript = html.match(
+      /function clearMemoryConversationState\(\)[\s\S]*?function conversationSpaceIdle/,
+    )?.[0] ?? "";
+    assert.match(clearMemoryScript, /state\.memories = \[\]/);
+    assert.match(clearMemoryScript, /state\.managedMemories = \[\]/);
+    assert.match(clearMemoryScript, /state\.memoryJobs = \[\]/);
+    assert.match(clearMemoryScript, /state\.retrievalPreview = null/);
+    assert.match(clearMemoryScript, /nodes\.memoryList\.innerHTML = ""/);
+    assert.match(clearMemoryScript, /nodes\.managedMemoryList\.innerHTML = ""/);
+    assert.match(clearMemoryScript, /nodes\.memoryJobList\.innerHTML = ""/);
+    assert.match(clearMemoryScript, /nodes\.retrievalPreviewResults\.innerHTML = ""/);
+    assert.match(clearMemoryScript, /nodes\.memorySearch\.value = ""/);
+    assert.match(clearMemoryScript, /nodes\.managedMemoryQuery\.value = ""/);
+    assert.match(clearMemoryScript, /nodes\.managedMemoryCreateContent\.value = ""/);
+    assert.match(clearMemoryScript, /nodes\.retrievalPreviewQuery\.value = ""/);
+    assert.match(html, /workspaceCharacterId !== scope\.characterId/);
+    const characterMemoryScript = html.match(
+      /async function loadMemories\(\)[\s\S]*?function splitLines/,
+    )?.[0] ?? "";
+    assert.match(characterMemoryScript, /fetch\(withConversationSpace\(/);
+    assert.match(characterMemoryScript, /scope\.conversationSpace,[\s\S]*?scope\.characterId/);
+    assert.match(characterMemoryScript, /characterMemoryScopeMatches\(scope\)/);
+    assert.match(characterMemoryScript, /memoryMatchesConversationScope\(memory, scope\)/);
+    assert.doesNotMatch(characterMemoryScript, /fetch\("\/api\/v1\/memories/);
+    const managedMemoryLoadScript = html.match(
+      /async function loadManagedMemories\(\)[\s\S]*?function renderManagedMemories/,
+    )?.[0] ?? "";
+    assert.match(managedMemoryLoadScript, /memory-coordinator\/status/);
+    assert.match(managedMemoryLoadScript, /memory-coordinator\/memories\?limit=100/);
+    assert.match(managedMemoryLoadScript, /memoryConversationScopeMatches\(scope\)/);
+    assert.match(managedMemoryLoadScript, /memoryMatchesConversationScope\(memory, scope\)/);
+    assert.match(managedMemoryLoadScript, /scope\.conversationSpace === "secret"[\s\S]*?scope\.characterId/);
+    const retrievalPreviewScript = html.match(
+      /async function runRetrievalPreview\(event\)[\s\S]*?function renderRetrievalPreview/,
+    )?.[0] ?? "";
+    assert.match(retrievalPreviewScript, /\? scope\.sessionId/);
+    assert.match(retrievalPreviewScript, /fetch\(withConversationSpace\(/);
+    assert.match(retrievalPreviewScript, /memoryConversationScopeMatches\(scope\)/);
+    const managedMemoryCreateScript = html.match(
+      /async function createManagedMemory\(event\)[\s\S]*?async function handleManagedMemoryAction/,
+    )?.[0] ?? "";
+    assert.match(managedMemoryCreateScript, /scope\.conversationSpace === "secret"[\s\S]*?scope\.characterId/);
+    assert.match(managedMemoryCreateScript, /fetch\(withConversationSpace\(/);
+    assert.match(managedMemoryCreateScript, /memoryConversationScopeMatches\(scope\)/);
+    const managedMemoryActionScript = html.match(
+      /async function handleManagedMemoryAction\(event\)[\s\S]*?function renderMemoryJobs/,
+    )?.[0] ?? "";
+    assert.match(managedMemoryActionScript, /memoryMatchesConversationScope\(memory, scope\)/);
+    assert.match(managedMemoryActionScript, /fetch\(withConversationSpace\(/);
+    assert.match(managedMemoryActionScript, /memoryConversationScopeMatches\(scope\)/);
+    const retryMemoryJobScript = html.match(
+      /async function retryMemoryJob\(event\)[\s\S]*?async function loadAgentModules/,
+    )?.[0] ?? "";
+    assert.match(retryMemoryJobScript, /memoryMatchesConversationScope\(job, scope\)/);
+    assert.match(retryMemoryJobScript, /fetch\(withConversationSpace\(/);
+    assert.match(retryMemoryJobScript, /memoryConversationScopeMatches\(scope\)/);
+    assert.match(html, /state\.debugTracesByScope = \{ conversation: \[\], background: \[\] \}/);
+    assert.match(html, /nodes\.textInput\.value = ""/);
+    assert.match(html, /expectedEpoch !== state\.conversationSpaceEpoch/);
+    assert.match(html, /JSON\.stringify\(\{ characterId, conversationSpace: requestedSpace \}\)/);
+    assert.match(html, /withConversationSpace\("\/api\/v1\/sessions"/);
+    assert.match(html, /"&characterId=" \+ encodeURIComponent\(characterId\)/);
+    assert.match(html, /state\.conversationSpace !== "normal"/);
+    assert.match(html, /data-module-spaces/);
+    assert.match(html, /enabledSpaces: enabledSpacesForSetting/);
+    const moduleDetailScript = html.match(
+      /async function openModuleDetailFromList\(event\)[\s\S]*?async function toggleAgentModule/,
+    )?.[0] ?? "";
+    assert.match(moduleDetailScript, /withConversationSpace\(/);
+    assert.match(moduleDetailScript, /state\.conversationSpaceEpoch !== scope\.epoch/);
+    assert.match(moduleDetailScript, /state\.selectedCharacterId !== scope\.characterId/);
+    assert.match(html, />仅普通<\/option>/);
+    assert.match(html, />仅私密<\/option>/);
+    assert.match(html, />普通 \+ 私密<\/option>/);
+    assert.match(html, /id="agentSkillInstallForm"/);
+    assert.match(html, /id="agentSkillSourceUrl" type="url"[^>]+placeholder="https:\/\/github\.com\/owner\/repo\/tree\/main\/path\/to\/skill"/);
+    assert.match(html, /GitHub 目录或 ZIP/);
+    assert.match(html, /id="agentSkillExpectedSha256"[^>]+maxlength="64"/);
+    assert.match(html, /id="previewAgentSkillInstallBtn"[^>]*>下载并预检<\/button>/);
+    assert.match(html, /预检不会安装或启用 Skill/);
+    assert.match(html, /id="agentSkillInstallPreview"[^>]+hidden/);
+    assert.match(html, /id="agentSkillInstallMarkdown"/);
+    assert.match(html, /SKILL\.md 文本预览/);
+    assert.match(html, /id="agentSkillInstallSpaces"/);
+    assert.match(html, /id="cancelAgentSkillInstallBtn"[^>]*>取消并删除预检<\/button>/);
+    assert.match(html, /id="confirmAgentSkillInstallBtn"[^>]*>确认安装并启用<\/button>/);
+    assert.match(html, /function controlPlaneFetch/);
+    const controlPlaneFetchScript = html.match(
+      /function controlPlaneFetch\(path, options = \{\}\)[\s\S]*?function captureAgentSkillInstallScope/,
+    )?.[0] ?? "";
+    assert.match(controlPlaneFetchScript, /new Headers\(options\.headers \|\| \{\}\)/);
+    assert.match(controlPlaneFetchScript, /headers\.set\("content-type", "application\/json"\)/);
+    assert.match(controlPlaneFetchScript, /credentials: "same-origin"/);
+    assert.doesNotMatch(controlPlaneFetchScript, /control-token|meta\[|querySelector/);
+    const skillInstallScript = html.match(
+      /function captureAgentSkillInstallScope[\s\S]*?async function loadAgentModules/,
+    )?.[0] ?? "";
+    assert.match(skillInstallScript, /expectedEpoch: state\.conversationSpaceEpoch/);
+    assert.match(skillInstallScript, /scope\.expectedEpoch === state\.conversationSpaceEpoch/);
+    assert.match(skillInstallScript, /state\.uiMode === "management" && state\.managementTab === "modules"/);
+    assert.match(skillInstallScript, /agentSkillInstallSpaces\.value = state\.conversationSpace === "secret" \? "secret" : "normal"/);
+    assert.match(skillInstallScript, /parsedSourceUrl = new URL\(sourceUrl\)/);
+    assert.match(skillInstallScript, /parsedSourceUrl\.protocol !== "https:"/);
+    assert.match(skillInstallScript, /\/api\/v1\/agent-skills\/install\/preview/);
+    assert.match(skillInstallScript, /\/api\/v1\/agent-skills\/install\/confirm/);
+    assert.match(skillInstallScript, /\/api\/v1\/agent-skills\/install\/stages\//);
+    assert.match(skillInstallScript, /controlPlaneFetch\("\/api\/v1\/agent-skills\/install\/preview"/);
+    assert.match(skillInstallScript, /controlPlaneFetch\("\/api\/v1\/agent-skills\/install\/confirm"/);
+    assert.match(skillInstallScript, /JSON\.stringify\(\{ stageId: stage\.id, sha256: stage\.sha256, enabledSpaces \}\)/);
+    assert.match(skillInstallScript, /window\.confirm\(/);
+    assert.match(skillInstallScript, /预检完成。请核对来源、摘要和 SKILL\.md，再明确确认安装/);
+    assert.match(skillInstallScript, /agentSkillInstallMarkdown\.textContent/);
+    assert.doesNotMatch(skillInstallScript, /renderMarkdown\(stage\.skillMarkdown|innerHTML = stage\.skillMarkdown/);
+    assert.match(skillInstallScript, /\["来源主机", stage\.sourceHost/);
+    assert.match(skillInstallScript, /\["规范化来源", stage\.sourceUrl/);
+    assert.match(skillInstallScript, /stage\.resolvedRef \? \[\["解析 Ref", stage\.resolvedRef\]\]/);
+    assert.match(skillInstallScript, /stage\.resolvedCommit \? \[\["解析 Commit", stage\.resolvedCommit\]\]/);
+    assert.match(skillInstallScript, /\["包目录", stage\.packageName/);
+    assert.match(skillInstallScript, /\["Skill 名称", stage\.skillName/);
+    assert.match(skillInstallScript, /\["SHA-256", stage\.sha256/);
+    assert.match(skillInstallScript, /stage\.files\.length/);
+    assert.doesNotMatch(skillInstallScript, /stage\.files\.(?:map|join)/);
+    assert.match(skillInstallScript, /formatFileSize\(stage\.totalBytes/);
+    assert.match(skillInstallScript, /formatTraceTime\(stage\.expiresAt\)/);
+    assert.match(skillInstallScript, /"来源：" \+ \(stage\.sourceUrl \|\| "未知"\)/);
+    assert.match(skillInstallScript, /stage\.resolvedCommit \? "解析 Commit：" \+ stage\.resolvedCommit/);
+    assert.match(clearConversationSpaceScript, /clearAgentSkillInstallStage\(\{ deleteRemote: true \}\)/);
+    const uiModeScript = html.match(/function setUiMode\(mode\)[\s\S]*?function setManagementTab/)?.[0] ?? "";
+    assert.match(uiModeScript, /mode !== "management"[\s\S]*?clearAgentSkillInstallStage/);
+    const managementTabScript = html.match(/function setManagementTab\(tab\)[\s\S]*?function loadManagement/)?.[0] ?? "";
+    assert.match(managementTabScript, /tab !== "modules"[\s\S]*?clearAgentSkillInstallStage/);
+    assert.match(html, /\/workspace\/files\/upload\?/);
+    assert.match(html, /function activeSecretWorkspaceManagerScope\(\)/);
+    assert.match(html, /session\.conversationSpace !== "secret" \|\| session\.characterId !== characterId/);
+    assert.match(html, /function requireWorkspaceManagerScope\(\)/);
+    assert.match(html, /请先打开当前角色的私密对话，再管理私密 Workspace/);
+    assert.match(html, /function workspaceManagerScopeIsCurrent\(scope\)/);
+    assert.match(html, /scope\.epoch !== state\.conversationSpaceEpoch/);
+    assert.match(html, /active\.sessionId === scope\.sessionId/);
+    assert.match(html, /active\.characterId === scope\.characterId/);
+    assert.match(html, /function workspaceManagerUrl\(scope, suffix, query = ""\)/);
+    assert.match(html, /scope\.conversationSpace,\s*scope\.characterId/);
+    assert.match(html, /fetch\(workspaceManagerUrl\(scope, "", query\)\)/);
+    assert.match(html, /workspaceManagerUrl\(requestScope, "\/upload", query\.toString\(\)\)/);
+    assert.match(html, /workspaceManagerUrl\(scope, ""\), \{\s*method: "PATCH"/);
+    assert.match(html, /workspaceManagerUrl\(scope, ""\), \{\s*method: "DELETE"/);
+    assert.match(html, /previewWorkspaceFile\(path, scope\.sessionScoped, scope\)/);
+    assert.match(html, /workspaceFileContentUrl\(path, "attachment", scope\.sessionScoped, scope\)/);
+    assert.match(html, /workspaceFileContentUrl\(path, "inline", sessionScoped, requestScope\)/);
+    assert.match(html, /state\.workspaceFileDirectory = "";\s*state\.workspaceFiles = \[\]/);
+    assert.match(html, /nodes\.workspaceFileList\.innerHTML = ""/);
+    assert.match(html, /nodes\.workspaceFileRefreshBtn\.disabled = true/);
+    assert.match(html, /clearWorkspaceManagerState\(\);/);
     assert.match(html, /id="visionSettingsTabBtn"/);
     assert.match(html, /id="visionSettingsPanel"/);
     assert.match(html, /id="apiVisionInputEnabled"/);
@@ -264,7 +440,7 @@ test("server serves chat UI and debug model traces", async () => {
       theme_color: string;
       icons: Array<{ src: string; sizes: string }>;
     };
-    assert.equal(manifest.name, "RP Agent");
+    assert.equal(manifest.name, "YourChar");
     assert.equal(manifest.theme_color, "#07c160");
     assert.equal(manifest.icons.some((icon) => icon.sizes === "192x192"), true);
     assert.equal(manifest.icons.some((icon) => icon.sizes === "512x512"), true);
@@ -303,7 +479,7 @@ test("server serves chat UI and debug model traces", async () => {
     };
     assert.equal(insightBody.insights.observationCount, 0);
     assert.deepEqual(insightBody.insights.recentObservations, []);
-    assert.match(await pageWithSlash.text(), /RP Agent/);
+    assert.match(await pageWithSlash.text(), /YourChar/);
 
     const apiHealth = await fetch(`${baseUrl}/api/health`);
     assert.equal(apiHealth.status, 200);

@@ -424,6 +424,10 @@ function mapContextLog(row: Row): ContextLogEntry {
     id: String(row.id),
     sessionId: String(row.session_id),
     mode: row.mode as Mode,
+    conversationSpace: row.conversation_space === "secret" ? "secret" : "normal",
+    ...(typeof row.secret_owner_character_id === "string" && row.secret_owner_character_id
+      ? { secretOwnerCharacterId: row.secret_owner_character_id }
+      : {}),
     requestText: String(row.request_text),
     systemPrompt: String(row.system_prompt_excerpt),
     messageCountBefore: Number(row.message_count_before),

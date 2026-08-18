@@ -22,6 +22,7 @@ import type { CompanionStore } from "../domain/store.js";
 import { createRpTools, type CompanionToolRuntimeState } from "../domain/tools.js";
 import type {
   ActionRecord,
+  ConversationSpace,
   MessageAttachment,
   Mode,
   SessionRecord,
@@ -71,6 +72,10 @@ import type { CharacterInteractionCoordinator } from "../world/character-interac
 import type { InteractionService } from "../interaction/service.js";
 import type { ContextEconomicsRepository } from "../context/economics-repository.js";
 import type { WorkspaceFileService } from "../workspace/file-service.js";
+import {
+  WorkspaceScopeRegistry,
+  type ScopedWorkspace,
+} from "../workspace/scope.js";
 import { assumedContextWindowTokens, buildContextBudget } from "../context/budget.js";
 import {
   measuredContextInputTokens,
@@ -111,6 +116,7 @@ const currentToolCallArgumentCharacters = 8_000;
 export type ConversationMetadata = {
   id: string;
   mode: Mode;
+  conversationSpace: ConversationSpace;
   characterId?: string;
   canonicalDirect?: boolean;
   title?: string;
@@ -214,11 +220,13 @@ export type PiSessionRuntimeOptions = {
   contextEconomics: ContextEconomicsRepository;
   workspaceDir: string;
   workspaceFiles: WorkspaceFileService;
+  workspaceRegistry?: WorkspaceScopeRegistry;
   conversationLifecycleThresholds?: Partial<ConversationLifecycleThresholds>;
 };
 
 export type PiSessionHandle = {
   metadata: ConversationMetadata;
+  workspace: ScopedWorkspace;
   session: AgentSession;
   sessionManager: SessionManager;
   authStorage: AuthStorage;
@@ -311,6 +319,7 @@ export class PiSessionRuntime {
   private readonly memoryLifecycle: MemoryLifecycleService;
   private readonly contextEconomics: ContextEconomicsRepository;
   private readonly workspaceFiles: WorkspaceFileService;
+  private readonly workspaceRegistry: WorkspaceScopeRegistry;
   private readonly conversationIndexPath?: string;
   private readonly piSessionDir?: string;
   private readonly piAgentDir: string;
@@ -352,6 +361,10 @@ export class PiSessionRuntime {
     this.memoryLifecycle = options.memoryLifecycle;
     this.contextEconomics = options.contextEconomics;
     this.workspaceFiles = options.workspaceFiles;
+    this.workspaceRegistry = options.workspaceRegistry ?? new WorkspaceScopeRegistry(
+      this.workspaceDir,
+      this.workspaceFiles,
+    );
     this.conversationLifecycleThresholds = normalizeConversationLifecycleThresholds(
       options.conversationLifecycleThresholds,
     );
@@ -361,9 +374,15 @@ export class PiSessionRuntime {
     this.loadConversationIndex();
   }
 
-  async getOrCreate(sessionId: string, mode: Mode, characterId?: string): Promise<PiSessionHandle> {
+  async getOrCreate(
+    sessionId: string,
+    mode: Mode,
+    characterId?: string,
+    conversationSpace?: ConversationSpace,
+  ): Promise<PiSessionHandle> {
     const id = normalizeSessionId(sessionId);
     const existing = this.metadata.get(id);
+    const effectiveSpace = existing?.conversationSpace ?? conversationSpace ?? "normal";
     let characterAttached = false;
     if (existing && existing.mode !== mode) {
       throw new SessionModeMismatchError(id, existing.mode, mode);
@@ -371,12 +390,21 @@ export class PiSessionRuntime {
     if (existing?.characterId && characterId && existing.characterId !== characterId) {
       throw new Error(`Session ${id} already belongs to character ${existing.characterId}`);
     }
+    if (existing && conversationSpace && existing.conversationSpace !== conversationSpace) {
+      throw new Error(
+        `Session ${id} belongs to ${existing.conversationSpace} conversation space, not ${conversationSpace}`,
+      );
+    }
+    if (effectiveSpace === "secret" && (mode !== "sms" || !characterId)) {
+      throw new Error("secret conversation space requires a character-bound SMS session");
+    }
 
     if (!existing) {
       const now = this.clock.now().toISOString();
       this.metadata.set(id, {
         id,
         mode,
+        conversationSpace: effectiveSpace,
         characterId,
         createdAt: now,
         updatedAt: now,
@@ -499,7 +527,13 @@ export class PiSessionRuntime {
   refreshResidentMemoryContext(handle: PiSessionHandle): void {
     this.contextEconomics.replaceResidentMemories(
       handle.metadata.id,
-      this.residentVersionsFromMessages(handle.session.messages, handle.metadata.characterId),
+      this.residentVersionsFromMessages(
+        handle.session.messages,
+        handle.metadata.characterId,
+        handle.metadata.conversationSpace,
+      ),
+      handle.metadata.conversationSpace,
+      handle.metadata.conversationSpace === "secret" ? handle.metadata.characterId : undefined,
     );
   }
 
@@ -682,7 +716,7 @@ export class PiSessionRuntime {
     const attachmentsByTarget = shouldProjectAttachments
       ? workspaceAttachmentsByTarget(
           entries.map((entry) => ({ entryId: entry.id, message: entry.message })),
-          (paths) => this.resolveWorkspaceAttachments(paths),
+          (paths) => this.resolveWorkspaceAttachments(handle.workspace.files, paths),
         )
       : new Map<string, MessageAttachment[]>();
     const attachmentsByMessage = new Map<AgentMessage, MessageAttachment[]>();
@@ -717,7 +751,7 @@ export class PiSessionRuntime {
     )?.id;
     const attachmentsByTarget = workspaceAttachmentsByTarget(
       entries.map((entry) => ({ entryId: entry.id, message: entry.message })),
-      (paths) => this.resolveWorkspaceAttachments(paths),
+      (paths) => this.resolveWorkspaceAttachments(handle.workspace.files, paths),
     );
     return entries.map((entry) => {
       if (entry.type !== "message") throw new Error("unreachable non-message transcript entry");
@@ -752,9 +786,17 @@ export class PiSessionRuntime {
     return handle;
   }
 
-  async listSessionRecords(): Promise<SessionRecord[]> {
+  async listSessionRecords(
+    conversationSpace?: ConversationSpace,
+    characterId?: string,
+  ): Promise<SessionRecord[]> {
     const records = await Promise.all(
-      [...this.metadata.values()].map((entry) =>
+      [...this.metadata.values()]
+        .filter((entry) =>
+          (conversationSpace === undefined || entry.conversationSpace === conversationSpace) &&
+          (characterId === undefined || entry.characterId === characterId)
+        )
+        .map((entry) =>
         this.getSessionRecord(entry.id, { projectAttachments: false })),
     );
     return records.sort((left, right) => left.id.localeCompare(right.id));
@@ -779,11 +821,15 @@ export class PiSessionRuntime {
       .sort((left, right) => left.id.localeCompare(right.id));
   }
 
-  getCanonicalDirectConversation(characterId: string): ConversationMetadata | undefined {
+  getCanonicalDirectConversation(
+    characterId: string,
+    conversationSpace: ConversationSpace = "normal",
+  ): ConversationMetadata | undefined {
     const normalizedCharacterId = normalizeCharacterId(characterId);
     const metadata = [...this.metadata.values()].find((entry) =>
       entry.mode === "sms" &&
       entry.characterId === normalizedCharacterId &&
+      entry.conversationSpace === conversationSpace &&
       entry.canonicalDirect === true
     );
     return metadata ? { ...metadata } : undefined;
@@ -799,23 +845,25 @@ export class PiSessionRuntime {
   async getOrCreateCanonicalDirect(
     sessionId: string,
     characterId: string,
+    conversationSpace: ConversationSpace = "normal",
   ): Promise<PiSessionHandle> {
     const normalizedCharacterId = normalizeCharacterId(characterId);
-    const current = this.getCanonicalDirectConversation(normalizedCharacterId);
+    const current = this.getCanonicalDirectConversation(normalizedCharacterId, conversationSpace);
     if (current) {
       if (current.archivedAt) this.restoreConversation(current.id);
-      return this.getOrCreate(current.id, "sms", normalizedCharacterId);
+      return this.getOrCreate(current.id, "sms", normalizedCharacterId, conversationSpace);
     }
 
-    const pending = this.canonicalDirectLoading.get(normalizedCharacterId);
+    const loadingKey = canonicalDirectKey(normalizedCharacterId, conversationSpace);
+    const pending = this.canonicalDirectLoading.get(loadingKey);
     if (pending) return pending;
-    const operation = this.createCanonicalDirect(sessionId, normalizedCharacterId);
-    this.canonicalDirectLoading.set(normalizedCharacterId, operation);
+    const operation = this.createCanonicalDirect(sessionId, normalizedCharacterId, conversationSpace);
+    this.canonicalDirectLoading.set(loadingKey, operation);
     try {
       return await operation;
     } finally {
-      if (this.canonicalDirectLoading.get(normalizedCharacterId) === operation) {
-        this.canonicalDirectLoading.delete(normalizedCharacterId);
+      if (this.canonicalDirectLoading.get(loadingKey) === operation) {
+        this.canonicalDirectLoading.delete(loadingKey);
       }
     }
   }
@@ -898,7 +946,7 @@ export class PiSessionRuntime {
     handle: PiSessionHandle,
     paths: readonly string[],
   ): MessageAttachment[] {
-    const attachments = this.resolveWorkspaceAttachments(paths);
+    const attachments = this.resolveWorkspaceAttachments(handle.workspace.files, paths);
     if (!attachments.length) return [];
     const target = [...handle.sessionManager.getBranch()].reverse().find((entry) =>
       entry.type === "message" && entry.message.role === "assistant");
@@ -913,13 +961,16 @@ export class PiSessionRuntime {
     return attachments;
   }
 
-  private resolveWorkspaceAttachments(paths: readonly string[]): MessageAttachment[] {
+  private resolveWorkspaceAttachments(
+    workspaceFiles: WorkspaceFileService,
+    paths: readonly string[],
+  ): MessageAttachment[] {
     const attachments: MessageAttachment[] = [];
     const seen = new Set<string>();
     for (const path of paths) {
       if (attachments.length >= MAX_WORKSPACE_ATTACHMENTS_PER_TURN) break;
       try {
-        const entry = this.workspaceFiles.asset(path, "attachment").entry;
+        const entry = workspaceFiles.asset(path, "attachment").entry;
         if (seen.has(entry.path)) continue;
         seen.add(entry.path);
         attachments.push({
@@ -1008,8 +1059,13 @@ export class PiSessionRuntime {
   private async createHandle(metadata: ConversationMetadata): Promise<PiSessionHandle> {
     // A persisted checkpoint can outlive Pi compaction or an interrupted shutdown.
     // Re-injection after a handle rebuild is cheaper than omitting durable memory.
-    this.contextEconomics.resetResidentMemories(metadata.id);
-    const sessionManager = this.createSessionManager(metadata);
+    this.contextEconomics.resetResidentMemories(
+      metadata.id,
+      metadata.conversationSpace,
+      metadata.conversationSpace === "secret" ? metadata.characterId : undefined,
+    );
+    const workspace = this.workspaceRegistry.resolve(metadata);
+    const sessionManager = this.createSessionManager(metadata, workspace.dir);
     const authStorage = AuthStorage.inMemory();
     const modelRegistry = ModelRegistry.inMemory(authStorage);
     const payloadOptions = this.providerPayloadOptions?.(metadata.id) ?? {};
@@ -1030,6 +1086,7 @@ export class PiSessionRuntime {
       rpService: this.rpService,
       sessionId: metadata.id,
       mode: metadata.mode,
+      conversationSpace: metadata.conversationSpace,
       characterId: metadata.characterId,
       actions: [],
       stableContextPrompt: "",
@@ -1059,7 +1116,8 @@ export class PiSessionRuntime {
       workspaceSharePaths: [],
     };
     const mcpBridges: McpPiBridge[] = [];
-    if (this.moduleCatalog.isEnabled(scheduleMcpModuleId)) {
+    const isSecret = metadata.conversationSpace === "secret";
+    if (!isSecret && this.moduleCatalog.isEnabled(scheduleMcpModuleId)) {
       mcpBridges.push(await createScheduleMcpBridge({
         scheduleService: this.scheduleService,
         store: this.store,
@@ -1077,7 +1135,7 @@ export class PiSessionRuntime {
         actions: () => toolState.actions,
       }));
     }
-    if (this.moduleCatalog.isEnabled(userProfileMcpModuleId)) {
+    if (!isSecret && this.moduleCatalog.isEnabled(userProfileMcpModuleId)) {
       const permissions = this.permissionCatalog.get();
       mcpBridges.push(await createUserProfileMcpBridge({
         profileService: this.profileService,
@@ -1113,6 +1171,8 @@ export class PiSessionRuntime {
     ) {
       mcpBridges.push(await createVisionMcpBridge({
         visionService: this.visionService,
+        workspaceFiles: workspace.files,
+        cacheNamespace: workspace.cacheNamespace,
         store: this.store,
         sessionId: metadata.id,
         actions: () => toolState.actions,
@@ -1126,6 +1186,11 @@ export class PiSessionRuntime {
         run: (request, signal) => this.runSubagent({
           parentSessionId: metadata.id,
           mode: metadata.mode,
+          conversationSpace: metadata.conversationSpace,
+          ...(metadata.conversationSpace === "secret" && metadata.characterId
+            ? { secretOwnerCharacterId: metadata.characterId }
+            : {}),
+          workspace,
           request,
           timezone: toolState.timezone,
           actions: toolState.actions,
@@ -1133,7 +1198,7 @@ export class PiSessionRuntime {
         }),
       }));
     }
-    if (metadata.characterId && this.moduleCatalog.isEnabled(relationshipStateMcpModuleId)) {
+    if (!isSecret && metadata.characterId && this.moduleCatalog.isEnabled(relationshipStateMcpModuleId)) {
       mcpBridges.push(await createRelationshipMcpBridge({
         relationshipService: this.relationshipService,
         sessionId: metadata.id,
@@ -1141,6 +1206,7 @@ export class PiSessionRuntime {
       }));
     }
     if (
+      !isSecret &&
       metadata.mode === "sms" &&
       metadata.characterId &&
       this.moduleCatalog.isEnabled(worldStateMcpModuleId) &&
@@ -1157,6 +1223,7 @@ export class PiSessionRuntime {
       }));
     }
     if (
+      !isSecret &&
       metadata.mode === "sms" &&
       metadata.characterId &&
       this.moduleCatalog.isEnabled(interactionStateMcpModuleId)
@@ -1178,6 +1245,10 @@ export class PiSessionRuntime {
           lifecycle: this.memoryLifecycle,
           store: this.store,
           sessionId: metadata.id,
+          conversationSpace: metadata.conversationSpace,
+          ...(isSecret && metadata.characterId
+            ? { secretOwnerCharacterId: metadata.characterId }
+            : {}),
           realm,
           ...(metadata.characterId ? { characterId: metadata.characterId } : {}),
           actions: () => toolState.actions,
@@ -1188,6 +1259,7 @@ export class PiSessionRuntime {
       }
     }
     if (
+      !isSecret &&
       metadata.characterId &&
       permissions.characterSoulWriteEnabled
     ) {
@@ -1199,16 +1271,16 @@ export class PiSessionRuntime {
         actions: () => toolState.actions,
       }));
     }
-    const enabledSkills = this.moduleCatalog.enabledSkills();
+    const enabledSkills = this.moduleCatalog.enabledSkills(metadata.conversationSpace);
     const skillReadTool = createSkillReadTool(
       enabledSkills,
       this.cwd,
-      this.workspaceDir,
+      workspace.dir,
       permissions.workspaceAccess,
     );
     const workspaceTools = createWorkspaceTools({
-      workspaceDir: this.workspaceDir,
-      workspaceFiles: this.workspaceFiles,
+      workspaceDir: workspace.dir,
+      workspaceFiles: workspace.files,
       access: permissions.workspaceAccess,
       store: this.store,
       sessionId: metadata.id,
@@ -1217,7 +1289,7 @@ export class PiSessionRuntime {
     });
     const shellTool = permissions.shellEnabled
       ? createSandboxedShellTool({
-          workspaceDir: this.workspaceDir,
+          workspaceDir: workspace.dir,
           workspaceAccess: permissions.workspaceAccess,
           networkEnabled: permissions.networkEnabled,
           store: this.store,
@@ -1233,7 +1305,7 @@ export class PiSessionRuntime {
       ...(shellTool ? [shellTool] : []),
     ];
     const resourceLoader = new DefaultResourceLoader({
-      cwd: this.workspaceDir,
+      cwd: workspace.dir,
       agentDir: this.piAgentDir,
       settingsManager,
       noExtensions: true,
@@ -1255,7 +1327,7 @@ export class PiSessionRuntime {
     let session: AgentSession;
     try {
       ({ session } = await createAgentSession({
-        cwd: this.workspaceDir,
+        cwd: workspace.dir,
         agentDir: this.piAgentDir,
         authStorage,
         modelRegistry,
@@ -1282,11 +1354,18 @@ export class PiSessionRuntime {
     }
     this.contextEconomics.replaceResidentMemories(
       metadata.id,
-      this.residentVersionsFromMessages(session.agent.state.messages, metadata.characterId),
+      this.residentVersionsFromMessages(
+        session.agent.state.messages,
+        metadata.characterId,
+        metadata.conversationSpace,
+      ),
+      metadata.conversationSpace,
+      metadata.conversationSpace === "secret" ? metadata.characterId : undefined,
     );
     this.persistConversationIndex();
     return {
       metadata,
+      workspace,
       session,
       sessionManager,
       authStorage,
@@ -1301,6 +1380,9 @@ export class PiSessionRuntime {
   private async runSubagent(input: {
     parentSessionId: string;
     mode: Mode;
+    conversationSpace: ConversationSpace;
+    secretOwnerCharacterId?: string;
+    workspace: ScopedWorkspace;
     request: SubagentRequest;
     timezone: string;
     actions: ActionRecord[];
@@ -1320,7 +1402,7 @@ export class PiSessionRuntime {
     const settingsManager = SettingsManager.inMemory({
       compaction: { enabled: false },
     });
-    const sessionManager = SessionManager.inMemory(this.workspaceDir);
+    const sessionManager = SessionManager.inMemory(input.workspace.dir);
     const childBridges: McpPiBridge[] = [];
     let child: AgentSession | undefined;
     let modelCalls = 0;
@@ -1354,24 +1436,27 @@ export class PiSessionRuntime {
       ) {
         childBridges.push(await createVisionMcpBridge({
           visionService: this.visionService,
+          workspaceFiles: input.workspace.files,
+          cacheNamespace: input.workspace.cacheNamespace,
           store: this.store,
           sessionId: childSessionId,
           actions: () => input.actions,
         }));
       }
 
-      const enabledSkills = this.moduleCatalog.enabledSkills();
+      const enabledSkills = this.moduleCatalog.enabledSkills(input.conversationSpace);
       const skillReadTool = createSkillReadTool(
         enabledSkills,
         this.cwd,
-        this.workspaceDir,
+        input.workspace.dir,
         childWorkspaceAccess,
       );
       const childTools = [
         ...childBridges.flatMap((bridge) => bridge.tools),
         ...(skillReadTool ? [skillReadTool] : []),
         ...createWorkspaceTools({
-          workspaceDir: this.workspaceDir,
+          workspaceDir: input.workspace.dir,
+          workspaceFiles: input.workspace.files,
           access: childWorkspaceAccess,
           store: this.store,
           sessionId: childSessionId,
@@ -1383,7 +1468,7 @@ export class PiSessionRuntime {
         input.timezone,
         this.clock.now(),
         childTools.map((tool) => tool.name),
-        this.moduleCatalog.skillContext(),
+        this.moduleCatalog.skillContext(input.conversationSpace),
       );
       const payloadOptions = this.providerPayloadOptions?.(input.parentSessionId) ?? {};
       const extensionFactory: ExtensionFactory = (pi) => {
@@ -1401,6 +1486,10 @@ export class PiSessionRuntime {
           this.store.addModelContextTrace({
             sessionId: childSessionId,
             mode: input.mode,
+            conversationSpace: input.conversationSpace,
+            ...(input.secretOwnerCharacterId
+              ? { secretOwnerCharacterId: input.secretOwnerCharacterId }
+              : {}),
             turnKind: "subagent",
             requestText: input.request.task,
             payload,
@@ -1409,7 +1498,7 @@ export class PiSessionRuntime {
         });
       };
       const resourceLoader = new DefaultResourceLoader({
-        cwd: this.workspaceDir,
+        cwd: input.workspace.dir,
         agentDir: this.piAgentDir,
         settingsManager,
         noExtensions: true,
@@ -1429,7 +1518,7 @@ export class PiSessionRuntime {
       });
       if (!model) throw new Error("Subagent model is unavailable");
       ({ session: child } = await createAgentSession({
-        cwd: this.workspaceDir,
+        cwd: input.workspace.dir,
         agentDir: this.piAgentDir,
         authStorage,
         modelRegistry,
@@ -1503,15 +1592,15 @@ export class PiSessionRuntime {
     }
   }
 
-  private createSessionManager(metadata: ConversationMetadata): SessionManager {
+  private createSessionManager(metadata: ConversationMetadata, workspaceDir: string): SessionManager {
     if (!this.piSessionDir) {
-      return SessionManager.inMemory(this.workspaceDir);
+      return SessionManager.inMemory(workspaceDir);
     }
     mkdirSync(this.piSessionDir, { recursive: true });
     if (metadata.piSessionFile && existsSync(metadata.piSessionFile)) {
-      return SessionManager.open(metadata.piSessionFile, this.piSessionDir, this.workspaceDir);
+      return SessionManager.open(metadata.piSessionFile, this.piSessionDir, workspaceDir);
     }
-    return SessionManager.create(this.workspaceDir, this.piSessionDir);
+    return SessionManager.create(workspaceDir, this.piSessionDir);
   }
 
   private createExtensionFactories(mode: Mode, toolState: CompanionToolRuntimeState): ExtensionFactory[] {
@@ -1520,7 +1609,11 @@ export class PiSessionRuntime {
         pi.on("session_before_compact", (event) => {
           // Reset before the rewrite is attempted. A failed compaction can cause one
           // duplicate injection; retaining a stale checkpoint can omit memory forever.
-          this.contextEconomics.resetResidentMemories(toolState.sessionId);
+          this.contextEconomics.resetResidentMemories(
+            toolState.sessionId,
+            toolState.conversationSpace,
+            toolState.conversationSpace === "secret" ? toolState.characterId : undefined,
+          );
           return { compaction: {
             summary: buildRoleplayConversationCheckpoint(
               event.preparation.messagesToSummarize,
@@ -1532,7 +1625,11 @@ export class PiSessionRuntime {
           } };
         });
         pi.on("session_compact", () => {
-          this.contextEconomics.resetResidentMemories(toolState.sessionId);
+          this.contextEconomics.resetResidentMemories(
+            toolState.sessionId,
+            toolState.conversationSpace,
+            toolState.conversationSpace === "secret" ? toolState.characterId : undefined,
+          );
           toolState.cacheBreakReason = "context_compacted";
         });
         pi.on("before_agent_start", () => ({
@@ -1566,7 +1663,13 @@ export class PiSessionRuntime {
             try {
                 this.contextEconomics.replaceResidentMemories(
                   toolState.sessionId,
-                  this.residentVersionsFromMessages(providerMessages, toolState.characterId),
+                  this.residentVersionsFromMessages(
+                    providerMessages,
+                    toolState.characterId,
+                    toolState.conversationSpace,
+                  ),
+                  toolState.conversationSpace,
+                  toolState.conversationSpace === "secret" ? toolState.characterId : undefined,
                 );
               this.commitProviderContext(toolState);
               const active = new Set(pi.getActiveTools());
@@ -1733,6 +1836,10 @@ export class PiSessionRuntime {
             this.store.addModelContextTrace({
               sessionId: toolState.sessionId,
               mode,
+              conversationSpace: toolState.conversationSpace,
+              ...(toolState.conversationSpace === "secret" && toolState.characterId
+                ? { secretOwnerCharacterId: toolState.characterId }
+                : {}),
               turnKind: toolState.traceKind,
               requestText: toolState.traceRequestText,
               payload,
@@ -1834,6 +1941,23 @@ export class PiSessionRuntime {
         changed = true;
         continue;
       }
+      const carrierSpace = schemaVersion >= 4 && details.conversationSpace === "secret"
+        ? "secret"
+        : "normal";
+      const carrierOwner = schemaVersion >= 4 && typeof details.secretOwnerCharacterId === "string"
+        ? details.secretOwnerCharacterId
+        : undefined;
+      const expectedOwner = toolState.conversationSpace === "secret"
+        ? toolState.characterId
+        : undefined;
+      if (
+        carrierSpace !== toolState.conversationSpace ||
+        carrierOwner !== expectedOwner
+      ) {
+        reason ??= "cross_space_turn_context_filtered";
+        changed = true;
+        continue;
+      }
       const memoryIds = stringArray(details.memoryIds);
       const memoryIsValid = () => {
         if (!memoryIds.length) return false;
@@ -1841,11 +1965,16 @@ export class PiSessionRuntime {
           reason ??= "memory_module_disabled_filtered_history";
           return false;
         }
-        currentById ??= new Map(this.memoryLifecycle.list().map((memory) => [memory.id, memory]));
+        currentById ??= new Map(this.memoryLifecycle.list({
+          conversationSpace: toolState.conversationSpace,
+          ...(expectedOwner ? { secretOwnerCharacterId: expectedOwner } : {}),
+        }).map((memory) => [memory.id, memory]));
         const versions = isRecord(details.memoryVersions) ? details.memoryVersions : {};
         const stale = memoryIds.some((id) => {
           const memory = currentById!.get(id);
           if (!memory || memory.validity !== "active" || !memory.confirmed) return true;
+          if (memory.conversationSpace !== toolState.conversationSpace) return true;
+          if (memory.secretOwnerCharacterId !== expectedOwner) return true;
           if (memory.realm === "roleplay" && memory.characterId !== toolState.characterId) return true;
           return typeof versions[id] !== "string" || versions[id] !== memoryContextVersion(memory);
         });
@@ -1891,7 +2020,13 @@ export class PiSessionRuntime {
     if (toolState.memoryTouchCompleted || !toolState.contextPlan) return;
     const memoryIds = toolState.contextPlan.selectedMemoryIds;
     try {
-      if (memoryIds.length) this.rpService.touchMemories(memoryIds);
+      if (memoryIds.length) {
+        this.rpService.touchMemories(
+          memoryIds,
+          toolState.conversationSpace,
+          toolState.conversationSpace === "secret" ? toolState.characterId : undefined,
+        );
+      }
     } catch (error) {
       toolState.actions.push(this.store.addAction("touch_injected_memories", "failed", {
         memoryIds,
@@ -1900,6 +2035,8 @@ export class PiSessionRuntime {
     }
     this.contextEconomics.commitProviderMemoryUse(
       toolState.sessionId,
+      toolState.conversationSpace,
+      toolState.conversationSpace === "secret" ? toolState.characterId : undefined,
       toolState.contextPlan.selectedMemoryVersions,
       !toolState.contextPlan.bootstrapAlreadyConsumed,
     );
@@ -1909,20 +2046,38 @@ export class PiSessionRuntime {
   private residentVersionsFromMessages(
     messages: AgentMessage[],
     characterId?: string,
+    conversationSpace: ConversationSpace = "normal",
   ): Map<string, string> {
     const output = new Map<string, string>();
     if (!this.moduleCatalog.isEnabled(memoryCoordinatorMcpModuleId)) return output;
-    const current = new Map(this.memoryLifecycle.list().map((memory) => [memory.id, memory]));
+    const current = new Map(this.memoryLifecycle.list({
+      conversationSpace,
+      ...(conversationSpace === "secret" && characterId
+        ? { secretOwnerCharacterId: characterId }
+        : {}),
+    }).map((memory) => [memory.id, memory]));
     for (const message of messages) {
       if (!isTurnContext(message) || !isRecord(message.details)) continue;
       if (Number(message.details.schemaVersion ?? 0) < 3) continue;
       const ids = stringArray(message.details.memoryIds);
+      const carrierSpace = Number(message.details.schemaVersion ?? 0) >= 4 &&
+          message.details.conversationSpace === "secret"
+        ? "secret"
+        : "normal";
+      const carrierOwner = Number(message.details.schemaVersion ?? 0) >= 4 &&
+          typeof message.details.secretOwnerCharacterId === "string"
+        ? message.details.secretOwnerCharacterId
+        : undefined;
+      const expectedOwner = conversationSpace === "secret" ? characterId : undefined;
+      if (carrierSpace !== conversationSpace || carrierOwner !== expectedOwner) continue;
       const versions = isRecord(message.details.memoryVersions) ? message.details.memoryVersions : {};
       const validCarrier = ids.length > 0 && ids.every((id) => {
         const memory = current.get(id);
         const version = versions[id];
         return memory?.validity === "active" && memory.confirmed && typeof version === "string" &&
           memoryContextVersion(memory) === version &&
+          memory.conversationSpace === conversationSpace &&
+          memory.secretOwnerCharacterId === expectedOwner &&
           (memory.realm !== "roleplay" || memory.characterId === characterId);
       });
       if (!validCarrier) continue;
@@ -1932,6 +2087,8 @@ export class PiSessionRuntime {
         if (
           memory?.validity === "active" && memory.confirmed && typeof version === "string" &&
           memoryContextVersion(memory) === version &&
+          memory.conversationSpace === conversationSpace &&
+          memory.secretOwnerCharacterId === expectedOwner &&
           (memory.realm !== "roleplay" || memory.characterId === characterId)
         ) output.set(id, version);
       }
@@ -1949,7 +2106,11 @@ export class PiSessionRuntime {
       hash: stableHash(message),
       estimatedTokens: estimateTokens(message),
     }));
-    const previous = this.contextEconomics.latestForSession(toolState.sessionId);
+    const previous = this.contextEconomics.latestForSession(
+      toolState.sessionId,
+      toolState.conversationSpace,
+      toolState.conversationSpace === "secret" ? toolState.characterId : undefined,
+    );
     let lcpMessageCount = 0;
     if (previous) {
       const limit = Math.min(previous.messageDigests.length, messageDigests.length);
@@ -1986,6 +2147,10 @@ export class PiSessionRuntime {
     return this.contextEconomics.record({
       sessionId: toolState.sessionId,
       mode,
+      conversationSpace: toolState.conversationSpace,
+      ...(toolState.conversationSpace === "secret" && toolState.characterId
+        ? { secretOwnerCharacterId: toolState.characterId }
+        : {}),
       turnKind: toolState.traceKind,
       systemHash,
       toolSchemaHash,
@@ -2012,7 +2177,11 @@ export class PiSessionRuntime {
     projectedAdditionalTokens = 0,
   ): ContextBudgetSnapshot {
     const metadata = handle.metadata;
-    const latest = this.contextEconomics.latestForSession(metadata.id);
+    const latest = this.contextEconomics.latestForSession(
+      metadata.id,
+      metadata.conversationSpace,
+      metadata.conversationSpace === "secret" ? metadata.characterId : undefined,
+    );
     const options = this.providerPayloadOptions?.(metadata.id) ?? {};
     const latestAfterCompaction = !metadata.lastCompactionAt ||
       Boolean(latest && latest.createdAt > metadata.lastCompactionAt);
@@ -2165,8 +2334,9 @@ export class PiSessionRuntime {
   private async createCanonicalDirect(
     sessionId: string,
     characterId: string,
+    conversationSpace: ConversationSpace,
   ): Promise<PiSessionHandle> {
-    const handle = await this.getOrCreate(sessionId, "sms", characterId);
+    const handle = await this.getOrCreate(sessionId, "sms", characterId, conversationSpace);
     handle.metadata.canonicalDirect = true;
     delete handle.metadata.archivedAt;
     this.touch(handle.metadata);
@@ -2177,9 +2347,10 @@ export class PiSessionRuntime {
     const groups = new Map<string, ConversationMetadata[]>();
     for (const metadata of this.metadata.values()) {
       if (metadata.mode !== "sms" || !metadata.characterId) continue;
-      const entries = groups.get(metadata.characterId) ?? [];
+      const key = canonicalDirectKey(metadata.characterId, metadata.conversationSpace);
+      const entries = groups.get(key) ?? [];
       entries.push(metadata);
-      groups.set(metadata.characterId, entries);
+      groups.set(key, entries);
     }
 
     let changed = false;
@@ -2700,6 +2871,10 @@ function normalizeCharacterId(value: string): string {
   return id;
 }
 
+function canonicalDirectKey(characterId: string, conversationSpace: ConversationSpace): string {
+  return `${conversationSpace}\u0000${characterId}`;
+}
+
 function compareConversationRecency(left: ConversationMetadata, right: ConversationMetadata): number {
   return right.updatedAt.localeCompare(left.updatedAt) ||
     right.createdAt.localeCompare(left.createdAt) ||
@@ -2720,6 +2895,7 @@ function normalizeMetadata(value: unknown): ConversationMetadata | undefined {
   return {
     id,
     mode,
+    conversationSpace: value.conversationSpace === "secret" ? "secret" : "normal",
     characterId: typeof value.characterId === "string" ? value.characterId : undefined,
     canonicalDirect: value.canonicalDirect === true ? true : undefined,
     title: typeof value.title === "string" && value.title.trim()

@@ -1,5 +1,6 @@
 import type { Clock } from "../app/clock.js";
 import type { IdGenerator } from "../app/id-generator.js";
+import type { ConversationSpace } from "../domain/types.js";
 import type { AppDatabase } from "../storage/database.js";
 import type {
   ActualProviderUsage,
@@ -27,13 +28,16 @@ export class ContextEconomicsRepository {
     };
     this.database.connection.prepare(`
       INSERT INTO context_economics(
-        id, session_id, mode, turn_kind, system_hash, metrics_json, plan_json,
+        id, session_id, mode, conversation_space, secret_owner_character_id,
+        turn_kind, system_hash, metrics_json, plan_json,
         message_digests_json, actual_json, created_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       entry.id,
       entry.sessionId,
       entry.mode,
+      entry.conversationSpace,
+      entry.secretOwnerCharacterId ?? null,
       entry.turnKind,
       entry.systemHash,
       JSON.stringify(metricsFor(entry)),
@@ -56,30 +60,64 @@ export class ContextEconomicsRepository {
     this.database.connection.prepare("DELETE FROM context_economics WHERE id = ?").run(id);
   }
 
-  latestForSession(sessionId: string): ContextEconomics | undefined {
+  latestForSession(
+    sessionId: string,
+    conversationSpace: ConversationSpace = "normal",
+    secretOwnerCharacterId?: string,
+  ): ContextEconomics | undefined {
+    assertContextSpace(conversationSpace, secretOwnerCharacterId);
     const row = this.database.connection.prepare(
-      "SELECT * FROM context_economics WHERE session_id = ? ORDER BY sequence DESC LIMIT 1",
-    ).get(sessionId) as Row | undefined;
+      `SELECT * FROM context_economics
+       WHERE session_id = ? AND conversation_space = ?
+         AND COALESCE(secret_owner_character_id, '') = COALESCE(?, '')
+       ORDER BY sequence DESC LIMIT 1`,
+    ).get(sessionId, conversationSpace, secretOwnerCharacterId ?? null) as Row | undefined;
     return row ? mapEconomics(row) : undefined;
   }
 
-  recent(limit = 50): ContextEconomics[] {
+  recent(
+    limit = 50,
+    conversationSpace: ConversationSpace = "normal",
+    secretOwnerCharacterId?: string,
+  ): ContextEconomics[] {
+    assertContextSpace(conversationSpace, secretOwnerCharacterId);
     const rows = this.database.connection.prepare(
-      "SELECT * FROM context_economics ORDER BY sequence DESC LIMIT ?",
-    ).all(Math.min(Math.max(limit, 1), 100)) as Row[];
+      `SELECT * FROM context_economics
+       WHERE conversation_space = ?
+         AND COALESCE(secret_owner_character_id, '') = COALESCE(?, '')
+       ORDER BY sequence DESC LIMIT ?`,
+    ).all(
+      conversationSpace,
+      secretOwnerCharacterId ?? null,
+      Math.min(Math.max(limit, 1), 100),
+    ) as Row[];
     return rows.map(mapEconomics);
   }
 
-  bootstrapConsumed(sessionId: string): boolean {
+  bootstrapConsumed(
+    sessionId: string,
+    conversationSpace: ConversationSpace = "normal",
+    secretOwnerCharacterId?: string,
+  ): boolean {
+    assertContextSpace(conversationSpace, secretOwnerCharacterId);
     return Boolean(this.database.connection.prepare(
-      "SELECT 1 FROM memory_context_sessions WHERE session_id = ?",
-    ).get(sessionId));
+      `SELECT 1 FROM memory_context_sessions
+       WHERE session_id = ? AND conversation_space = ?
+         AND COALESCE(secret_owner_character_id, '') = COALESCE(?, '')`,
+    ).get(sessionId, conversationSpace, secretOwnerCharacterId ?? null));
   }
 
-  residentMemoryVersions(sessionId: string): Map<string, string> {
+  residentMemoryVersions(
+    sessionId: string,
+    conversationSpace: ConversationSpace = "normal",
+    secretOwnerCharacterId?: string,
+  ): Map<string, string> {
+    assertContextSpace(conversationSpace, secretOwnerCharacterId);
     const rows = this.database.connection.prepare(
-      "SELECT memory_id, memory_version FROM memory_context_items WHERE session_id = ?",
-    ).all(sessionId) as Row[];
+      `SELECT memory_id, memory_version FROM memory_context_items
+       WHERE session_id = ? AND conversation_space = ?
+         AND COALESCE(secret_owner_character_id, '') = COALESCE(?, '')`,
+    ).all(sessionId, conversationSpace, secretOwnerCharacterId ?? null) as Row[];
     return new Map(rows.map((row) => [String(row.memory_id), String(row.memory_version)]));
   }
 
@@ -107,16 +145,20 @@ export class ContextEconomicsRepository {
 
   commitProviderMemoryUse(
     sessionId: string,
+    conversationSpace: ConversationSpace,
+    secretOwnerCharacterId: string | undefined,
     memoryVersions: Record<string, string>,
     consumeBootstrap: boolean,
   ): void {
+    assertContextSpace(conversationSpace, secretOwnerCharacterId);
     const now = this.clock.now().toISOString();
     this.database.transaction(() => {
       if (consumeBootstrap) {
         this.database.connection.prepare(`
-          INSERT INTO memory_context_sessions(session_id, bootstrap_completed_at)
-          VALUES (?, ?) ON CONFLICT(session_id) DO NOTHING
-        `).run(sessionId, now);
+          INSERT INTO memory_context_sessions(
+            session_id, bootstrap_completed_at, conversation_space, secret_owner_character_id
+          ) VALUES (?, ?, ?, ?) ON CONFLICT(session_id) DO NOTHING
+        `).run(sessionId, now, conversationSpace, secretOwnerCharacterId ?? null);
       }
       const statement = this.database.connection.prepare(`
         INSERT INTO memory_retrieval_stats(memory_id, hit_count, last_hit_at)
@@ -126,47 +168,94 @@ export class ContextEconomicsRepository {
           last_hit_at = excluded.last_hit_at
       `);
       const resident = this.database.connection.prepare(`
-        INSERT INTO memory_context_items(session_id, memory_id, memory_version, injected_at)
-        VALUES (?, ?, ?, ?)
+        INSERT INTO memory_context_items(
+          session_id, memory_id, memory_version, injected_at,
+          conversation_space, secret_owner_character_id
+        ) VALUES (?, ?, ?, ?, ?, ?)
         ON CONFLICT(session_id, memory_id) DO UPDATE SET
           memory_version = excluded.memory_version,
           injected_at = excluded.injected_at
       `);
       for (const [id, version] of Object.entries(memoryVersions)) {
         statement.run(id, now);
-        resident.run(sessionId, id, version, now);
+        resident.run(
+          sessionId,
+          id,
+          version,
+          now,
+          conversationSpace,
+          secretOwnerCharacterId ?? null,
+        );
       }
     });
   }
 
-  resetResidentMemories(sessionId: string): void {
-    this.replaceResidentMemories(sessionId, new Map());
+  resetResidentMemories(
+    sessionId: string,
+    conversationSpace: ConversationSpace = "normal",
+    secretOwnerCharacterId?: string,
+  ): void {
+    this.replaceResidentMemories(
+      sessionId,
+      new Map(),
+      conversationSpace,
+      secretOwnerCharacterId,
+    );
   }
 
-  replaceResidentMemories(sessionId: string, versions: Map<string, string>): void {
+  replaceResidentMemories(
+    sessionId: string,
+    versions: Map<string, string>,
+    conversationSpace: ConversationSpace = "normal",
+    secretOwnerCharacterId?: string,
+  ): void {
+    assertContextSpace(conversationSpace, secretOwnerCharacterId);
     const now = this.clock.now().toISOString();
     this.database.transaction(() => {
       this.database.connection.prepare(
-        "DELETE FROM memory_context_items WHERE session_id = ?",
-      ).run(sessionId);
+        `DELETE FROM memory_context_items
+         WHERE session_id = ? AND conversation_space = ?
+           AND COALESCE(secret_owner_character_id, '') = COALESCE(?, '')`,
+      ).run(sessionId, conversationSpace, secretOwnerCharacterId ?? null);
       const statement = this.database.connection.prepare(`
-        INSERT INTO memory_context_items(session_id, memory_id, memory_version, injected_at)
-        VALUES (?, ?, ?, ?)
+        INSERT INTO memory_context_items(
+          session_id, memory_id, memory_version, injected_at,
+          conversation_space, secret_owner_character_id
+        ) VALUES (?, ?, ?, ?, ?, ?)
       `);
-      for (const [id, version] of versions) statement.run(sessionId, id, version, now);
+      for (const [id, version] of versions) {
+        statement.run(
+          sessionId,
+          id,
+          version,
+          now,
+          conversationSpace,
+          secretOwnerCharacterId ?? null,
+        );
+      }
     });
   }
 
-  contextState(): {
+  contextState(
+    conversationSpace: ConversationSpace = "normal",
+    secretOwnerCharacterId?: string,
+  ): {
     bootstrapSessions: Array<{ sessionId: string; completedAt: string }>;
     residentMemories: Array<{ sessionId: string; memoryId: string; memoryVersion: string; injectedAt: string }>;
   } {
-    const bootstrap = this.database.connection.prepare(
-      "SELECT * FROM memory_context_sessions ORDER BY session_id",
-    ).all() as Row[];
-    const residents = this.database.connection.prepare(
-      "SELECT * FROM memory_context_items ORDER BY session_id, memory_id",
-    ).all() as Row[];
+    assertContextSpace(conversationSpace, secretOwnerCharacterId);
+    const bootstrap = this.database.connection.prepare(`
+      SELECT * FROM memory_context_sessions
+      WHERE conversation_space = ?
+        AND COALESCE(secret_owner_character_id, '') = COALESCE(?, '')
+      ORDER BY session_id
+    `).all(conversationSpace, secretOwnerCharacterId ?? null) as Row[];
+    const residents = this.database.connection.prepare(`
+      SELECT * FROM memory_context_items
+      WHERE conversation_space = ?
+        AND COALESCE(secret_owner_character_id, '') = COALESCE(?, '')
+      ORDER BY session_id, memory_id
+    `).all(conversationSpace, secretOwnerCharacterId ?? null) as Row[];
     return {
       bootstrapSessions: bootstrap.map((row) => ({
         sessionId: String(row.session_id),
@@ -181,10 +270,18 @@ export class ContextEconomicsRepository {
     };
   }
 
-  memoryStats(): MemoryRetrievalStat[] {
-    return (this.database.connection.prepare(
-      "SELECT * FROM memory_retrieval_stats ORDER BY hit_count DESC, memory_id",
-    ).all() as Row[]).map((row) => ({
+  memoryStats(
+    conversationSpace: ConversationSpace = "normal",
+    secretOwnerCharacterId?: string,
+  ): MemoryRetrievalStat[] {
+    assertContextSpace(conversationSpace, secretOwnerCharacterId);
+    return (this.database.connection.prepare(`
+      SELECT stats.* FROM memory_retrieval_stats stats
+      JOIN rp_memories memory ON memory.id = stats.memory_id
+      WHERE memory.conversation_space = ?
+        AND COALESCE(memory.secret_owner_character_id, '') = COALESCE(?, '')
+      ORDER BY stats.hit_count DESC, stats.memory_id
+    `).all(conversationSpace, secretOwnerCharacterId ?? null) as Row[]).map((row) => ({
       memoryId: String(row.memory_id),
       hitCount: Number(row.hit_count),
       ...(typeof row.last_hit_at === "string" ? { lastHitAt: row.last_hit_at } : {}),
@@ -213,6 +310,10 @@ function mapEconomics(row: Row): ContextEconomics {
     id: String(row.id),
     sessionId: String(row.session_id),
     mode: row.mode as ContextEconomics["mode"],
+    conversationSpace: row.conversation_space === "secret" ? "secret" : "normal",
+    ...(typeof row.secret_owner_character_id === "string" && row.secret_owner_character_id
+      ? { secretOwnerCharacterId: row.secret_owner_character_id }
+      : {}),
     turnKind: row.turn_kind as ContextEconomics["turnKind"],
     systemHash: String(row.system_hash),
     toolSchemaHash: typeof metrics.toolSchemaHash === "string" ? metrics.toolSchemaHash : "",
@@ -250,4 +351,16 @@ function parseJson<T>(value: unknown, fallback: T): T {
 
 function stringArray(value: unknown): string[] {
   return Array.isArray(value) ? value.filter((entry): entry is string => typeof entry === "string") : [];
+}
+
+function assertContextSpace(
+  conversationSpace: ConversationSpace,
+  secretOwnerCharacterId?: string,
+): void {
+  if (conversationSpace === "secret" && !secretOwnerCharacterId?.trim()) {
+    throw new Error("secret context economics requires secretOwnerCharacterId");
+  }
+  if (conversationSpace === "normal" && secretOwnerCharacterId) {
+    throw new Error("normal context economics cannot have secretOwnerCharacterId");
+  }
 }

@@ -2,7 +2,7 @@
 
 ## Purpose
 
-RP Agent supports image understanding even when the primary conversation model
+YourChar supports image understanding even when the primary conversation model
 is text-only. Image handling is an optional built-in module with an independent
 OpenAI-compatible vision endpoint and an explicit primary-model capability flag.
 

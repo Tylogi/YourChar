@@ -2,6 +2,7 @@ import { createHash, randomUUID } from "node:crypto";
 import { existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, rmSync } from "node:fs";
 import { dirname, join } from "node:path";
 import type { Clock } from "../app/clock.js";
+import type { ConversationSpace } from "../domain/types.js";
 import type { AppDatabase } from "../storage/database.js";
 import { UserProfileValidationError } from "../profile/service.js";
 import type { UserProfileDocument } from "../profile/types.js";
@@ -186,13 +187,27 @@ export class MemoryVaultService {
     };
   }
 
-  list(): VaultDocumentSummary[] {
-    return this.store.summaries();
+  list(
+    conversationSpace: ConversationSpace = "normal",
+    secretOwnerCharacterId?: string,
+  ): VaultDocumentSummary[] {
+    assertMemorySpace(conversationSpace, secretOwnerCharacterId);
+    return this.store.summaries().filter((document) =>
+      document.conversationSpace === conversationSpace &&
+      (document.secretOwnerCharacterId ?? undefined) === secretOwnerCharacterId
+    );
   }
 
-  documentsForInterchange(): VaultDocument[] {
+  documentsForInterchange(
+    conversationSpace: ConversationSpace = "normal",
+    secretOwnerCharacterId?: string,
+  ): VaultDocument[] {
+    assertMemorySpace(conversationSpace, secretOwnerCharacterId);
     this.syncIfChanged();
-    return this.store.list().map((document) => ({
+    return this.store.list().filter((document) =>
+      document.metadata.conversationSpace === conversationSpace &&
+      (document.metadata.secretOwnerCharacterId ?? undefined) === secretOwnerCharacterId
+    ).map((document) => ({
       ...document,
       metadata: {
         ...document.metadata,
@@ -364,6 +379,7 @@ export class MemoryVaultService {
       document,
     ]));
     return memories.flatMap((memory) => {
+      if (memory.conversationSpace !== "normal") return [memory];
       if (memory.realm !== "reality" || memory.type !== "person") return [memory];
       const profile = profiles.get(normalizePersonKey(personKeyForMemory(memory)));
       if (!profile) return [memory];
@@ -497,6 +513,7 @@ export class MemoryVaultService {
   }
 
   writeMemory(memory: RpMemory, idempotencyKey?: string, supersedes?: string): RpMemory {
+    assertMemorySpace(memory.conversationSpace, memory.secretOwnerCharacterId);
     const existing = this.store.get(memory.id);
     const input = memoryInput(
       memory,
@@ -508,10 +525,15 @@ export class MemoryVaultService {
       this.syncPersonProfileDocuments();
       this.rebuildDocuments(this.store.list());
     });
-    return this.readMemory(memory.id)!;
+    return this.readMemory(
+      memory.id,
+      memory.conversationSpace,
+      memory.secretOwnerCharacterId,
+    )!;
   }
 
   writeMemoryPair(memory: RpMemory, previous: RpMemory, idempotencyKey?: string): RpMemory {
+    assertSameMemorySpace(memory, previous);
     const previousDocument = this.store.get(previous.id);
     if (!previousDocument) throw new MemoryVaultError(`missing superseded memory ${previous.id}`, "MEMORY_VAULT_INVALID_DOCUMENT");
     const previousInput = memoryInput(
@@ -526,7 +548,11 @@ export class MemoryVaultService {
       this.syncPersonProfileDocuments();
       this.rebuildDocuments(this.store.list());
     });
-    return this.readMemory(memory.id)!;
+    return this.readMemory(
+      memory.id,
+      memory.conversationSpace,
+      memory.secretOwnerCharacterId,
+    )!;
   }
 
   writeMemoriesAtomically(
@@ -571,21 +597,43 @@ export class MemoryVaultService {
       this.syncPersonProfileDocuments();
       this.rebuildDocuments(this.store.list());
     });
-    return entries.map((entry) => this.readMemory(entry.memory.id)!);
+    return entries.map((entry) => this.readMemory(
+      entry.memory.id,
+      entry.memory.conversationSpace,
+      entry.memory.secretOwnerCharacterId,
+    )!);
   }
 
-  readMemory(id: string): RpMemory | undefined {
+  readMemory(
+    id: string,
+    conversationSpace: ConversationSpace = "normal",
+    secretOwnerCharacterId?: string,
+  ): RpMemory | undefined {
+    assertMemorySpace(conversationSpace, secretOwnerCharacterId);
     const document = this.store.get(id);
     if (!document || document.metadata.kind !== "memory") return undefined;
+    if (
+      document.metadata.conversationSpace !== conversationSpace ||
+      (document.metadata.secretOwnerCharacterId ?? undefined) !== secretOwnerCharacterId
+    ) return undefined;
     const successor = this.store.getByKind("memory").find((entry) => entry.metadata.supersedes === id)?.metadata.id;
     return memoryFromDocument(document, successor);
   }
 
-  touchMemories(ids: string[]): void {
+  touchMemories(
+    ids: string[],
+    conversationSpace: ConversationSpace = "normal",
+    secretOwnerCharacterId?: string,
+  ): void {
+    assertMemorySpace(conversationSpace, secretOwnerCharacterId);
     const now = this.now();
     const documents = ids
       .map((id) => this.store.get(id))
-      .filter((document): document is VaultDocument => document?.metadata.kind === "memory");
+      .filter((document): document is VaultDocument =>
+        document?.metadata.kind === "memory" &&
+        document.metadata.conversationSpace === conversationSpace &&
+        (document.metadata.secretOwnerCharacterId ?? undefined) === secretOwnerCharacterId
+      );
     if (!documents.length) return;
     this.atomicMutation("memory_touch", `memory-touch:${now}:${documents.map((entry) => entry.metadata.id).sort().join(",")}`, () => {
       for (const document of documents) {
@@ -655,6 +703,7 @@ export class MemoryVaultService {
           const source = byId.get(memoryId);
           if (
             source?.metadata.kind !== "memory" || source.metadata.realm !== "reality" ||
+            source.metadata.conversationSpace !== "normal" ||
             source.metadata.type !== "person" ||
             normalizePersonKey(source.metadata.memoryKey ?? `memory:${source.metadata.id}`) !==
               normalizePersonKey(document.metadata.personKey!)
@@ -666,6 +715,19 @@ export class MemoryVaultService {
           }
         }
       }
+      if (document.metadata.kind === "memory" && document.metadata.supersedes) {
+        const previous = byId.get(document.metadata.supersedes);
+        if (
+          previous?.metadata.kind !== "memory" ||
+          previous.metadata.conversationSpace !== document.metadata.conversationSpace ||
+          previous.metadata.secretOwnerCharacterId !== document.metadata.secretOwnerCharacterId
+        ) {
+          throw new MemoryVaultError(
+            `memory ${document.metadata.id} has a cross-space supersedes target`,
+            "MEMORY_VAULT_INVALID_DOCUMENT",
+          );
+        }
+      }
     }
     return this.projection.rebuild(documents, this.store.hash(documents), this.now());
   }
@@ -674,6 +736,7 @@ export class MemoryVaultService {
     const documents = this.store.list();
     const personMemories = documents.filter((document) =>
       document.metadata.kind === "memory" &&
+      document.metadata.conversationSpace === "normal" &&
       document.metadata.realm === "reality" &&
       document.metadata.type === "person"
     );
@@ -804,7 +867,11 @@ export class MemoryVaultService {
 
   private casForWrite(
     existing: VaultDocument | undefined,
-    target: Pick<VaultFrontmatter, "id" | "kind" | "realm" | "characterId" | "sessionId">,
+    target: Pick<
+      VaultFrontmatter,
+      "id" | "kind" | "realm" | "characterId" | "sessionId" |
+        "conversationSpace" | "secretOwnerCharacterId"
+    >,
     override: VaultCas = {},
   ): VaultCas {
     const targetPath = existing?.relativePath ?? relativePathForMetadata(target);
@@ -1053,6 +1120,7 @@ function migrationDocuments(snapshot: LegacyVaultSnapshot): VaultWriteInput[] {
   for (const memory of snapshot.memories) {
     inputs.push(memoryInput({
       ...memory,
+      conversationSpace: memory.conversationSpace ?? "normal",
       normalizedContent: "",
     }, memory.idempotencyKey, supersedes.get(memory.id)));
   }
@@ -1076,6 +1144,8 @@ function memoryInput(
     metadata: baseMetadata({
       id: memory.id,
       kind: "memory",
+      conversationSpace: memory.conversationSpace ?? "normal",
+      secretOwnerCharacterId: memory.secretOwnerCharacterId ?? null,
       realm: memory.realm,
       scope: memory.scope,
       type: memory.type,
@@ -1119,6 +1189,10 @@ function memoryFromDocument(document: VaultDocument, successor?: string): RpMemo
   const metadata = document.metadata;
   return {
     id: metadata.id,
+    conversationSpace: metadata.conversationSpace,
+    ...(metadata.secretOwnerCharacterId === null
+      ? {}
+      : { secretOwnerCharacterId: metadata.secretOwnerCharacterId }),
     realm: metadata.realm,
     scope: metadata.scope === "session" ? "character" : metadata.scope,
     type: metadata.type!,
@@ -1162,6 +1236,8 @@ function baseMetadata(
     kind: patch.kind,
     realm: patch.realm,
     scope: patch.scope,
+    conversationSpace: patch.conversationSpace ?? "normal",
+    secretOwnerCharacterId: patch.secretOwnerCharacterId ?? null,
     type: patch.type ?? null,
     characterId: patch.characterId ?? null,
     sessionId: patch.sessionId ?? null,
@@ -1199,6 +1275,36 @@ function baseMetadata(
 function stripGenerated(metadata: VaultFrontmatter): VaultWriteInput["metadata"] {
   const { schemaVersion: _schemaVersion, revision, contentHash: _contentHash, ...rest } = metadata;
   return { ...rest, revision };
+}
+
+function assertMemorySpace(
+  conversationSpace: ConversationSpace,
+  secretOwnerCharacterId?: string,
+): void {
+  if (conversationSpace === "secret" && !secretOwnerCharacterId?.trim()) {
+    throw new MemoryVaultError(
+      "secret memory requires secretOwnerCharacterId",
+      "MEMORY_VAULT_INVALID_DOCUMENT",
+    );
+  }
+  if (conversationSpace === "normal" && secretOwnerCharacterId) {
+    throw new MemoryVaultError(
+      "normal memory cannot have secretOwnerCharacterId",
+      "MEMORY_VAULT_INVALID_DOCUMENT",
+    );
+  }
+}
+
+function assertSameMemorySpace(left: RpMemory, right: RpMemory): void {
+  if (
+    left.conversationSpace !== right.conversationSpace ||
+    left.secretOwnerCharacterId !== right.secretOwnerCharacterId
+  ) {
+    throw new MemoryVaultError(
+      "superseding memories must belong to the same conversation space",
+      "MEMORY_VAULT_INVALID_DOCUMENT",
+    );
+  }
 }
 
 function sceneMarkdown(scene: SceneState): string {

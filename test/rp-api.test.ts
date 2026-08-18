@@ -50,6 +50,7 @@ test("RP v1 API supports characters, scenes, memory confirmation, correction, an
     assert.equal(overLimit.status, 400);
     assert.equal((await overLimit.json() as { code: string }).code, "CHARACTER_SOUL_INVALID");
 
+    await kernel.sessionRuntime.getOrCreate("api-rp", "rp", character.id);
     const scene = await json("/api/v1/sessions/api-rp/scene", {
       method: "PATCH",
       headers: { "content-type": "application/json" },

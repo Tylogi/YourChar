@@ -1,4 +1,5 @@
 import type { AgentModuleType } from "../modules/types.js";
+import type { ConversationSpace } from "../domain/types.js";
 
 export const characterCapabilityIds = [
   "research.web",
@@ -112,6 +113,7 @@ export type CharacterFunctionProfileUpdate = {
 
 export type CharacterFunctionInferenceInput = {
   characterId: string;
+  conversationSpace: ConversationSpace;
   characterName: string;
   soulMarkdown: string;
   catalog: CharacterCapabilityDefinition[];
@@ -147,6 +149,7 @@ export type CharacterSkillVersionSource =
 export type CharacterSkillVersion = {
   id: string;
   characterId: string;
+  conversationSpace: ConversationSpace;
   version: number;
   status: CharacterSkillVersionStatus;
   markdown: string;

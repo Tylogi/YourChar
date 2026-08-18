@@ -3,7 +3,7 @@ import type { ServerNotification, ServerRequest } from "@modelcontextprotocol/sd
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import * as z from "zod/v4";
 import type { CompanionStore } from "../domain/store.js";
-import type { ActionRecord } from "../domain/types.js";
+import type { ActionRecord, ConversationSpace } from "../domain/types.js";
 import type { MemoryLifecycleService } from "../memory-coordinator/lifecycle.js";
 import type { MemoryTargetRealm } from "../memory-coordinator/types.js";
 import { connectMcpServerToPi, type McpPiBridge } from "./pi-adapter.js";
@@ -14,6 +14,8 @@ export type MemoryMcpContext = {
   lifecycle: MemoryLifecycleService;
   store: CompanionStore;
   sessionId: string;
+  conversationSpace?: ConversationSpace;
+  secretOwnerCharacterId?: string;
   realm: MemoryTargetRealm;
   characterId?: string;
   actions: () => ActionRecord[];
@@ -24,8 +26,12 @@ const realityType = z.enum(["user_fact", "preference", "goal", "person", "projec
 const roleplayType = z.enum(["relationship_event", "world_fact", "plot_event", "boundary"]);
 
 export function createMemoryMcpServer(context: MemoryMcpContext): McpServer {
+  const conversationSpace = context.conversationSpace ?? "normal";
   if (context.realm === "roleplay" && !context.characterId) {
     throw new Error("roleplay memory MCP requires a bound character");
+  }
+  if (conversationSpace === "secret" && !context.secretOwnerCharacterId) {
+    throw new Error("secret memory MCP requires a character owner");
   }
   const server = new McpServer(
     { name: "rp-agent-memory", version: "1.0.0" },
@@ -49,6 +55,10 @@ export function createMemoryMcpServer(context: MemoryMcpContext): McpServer {
     },
     async ({ query, limit }) => {
       const memories = context.lifecycle.searchConfirmed({
+        conversationSpace,
+        ...(context.secretOwnerCharacterId
+          ? { secretOwnerCharacterId: context.secretOwnerCharacterId }
+          : {}),
         realm: context.realm,
         ...(context.characterId ? { characterId: context.characterId } : {}),
         query,
@@ -89,6 +99,10 @@ export function createMemoryMcpServer(context: MemoryMcpContext): McpServer {
       async (input, extra) => {
         const toolCallId = mcpToolCallId(extra);
         const memory = context.lifecycle.propose({
+          conversationSpace,
+          ...(context.secretOwnerCharacterId
+            ? { secretOwnerCharacterId: context.secretOwnerCharacterId }
+            : {}),
           realm: context.realm,
           type: input.type,
           key: input.key,
@@ -105,6 +119,7 @@ export function createMemoryMcpServer(context: MemoryMcpContext): McpServer {
           transport: "mcp",
           mcpServer: "rp-agent-memory",
           sessionId: context.sessionId,
+          conversationSpace,
           realm: context.realm,
           characterId: context.characterId,
           memoryId: memory.id,

@@ -4,6 +4,8 @@ import { stableHash } from "./tokens.js";
 export function memoryContextVersion(memory: RpMemory): string {
   return stableHash({
     id: memory.id,
+    conversationSpace: memory.conversationSpace,
+    secretOwnerCharacterId: memory.secretOwnerCharacterId ?? null,
     realm: memory.realm,
     scope: memory.scope,
     characterId: memory.characterId ?? null,

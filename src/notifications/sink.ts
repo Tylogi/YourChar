@@ -46,7 +46,7 @@ export class NotifySendNotificationSink implements NotificationSink {
     return new Promise((resolve, reject) => {
       const child = spawn(
         "notify-send",
-        ["--app-name", "RP Agent", notification.title, notification.body],
+        ["--app-name", "YourChar", notification.title, notification.body],
         { stdio: "ignore" },
       );
       child.once("error", reject);

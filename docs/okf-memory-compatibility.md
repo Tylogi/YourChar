@@ -2,7 +2,7 @@
 
 ## Status
 
-RP Agent supports Open Knowledge Format (OKF) v0.1 as an interchange format.
+YourChar supports Open Knowledge Format (OKF) v0.1 as an interchange format.
 The internal Memory Vault remains the authoritative store. SQLite and FTS remain
 derived indexes, and the existing realm, confirmation, lifecycle, durability,
 and context-budget contracts are unchanged.
@@ -23,7 +23,7 @@ query flags opt into additional sensitive documents:
 
 Every concept has a non-empty `type`, standard Markdown content, recommended
 OKF metadata, and an `rp_agent` extension object. The extension preserves stable
-RP Agent IDs and ownership metadata while the OKF concept ID remains the
+YourChar IDs and ownership metadata while the OKF concept ID remains the
 bundle-relative file path. A generated root `index.md` provides progressive
 disclosure and declares `okf_version: "0.1"`.
 
@@ -43,7 +43,7 @@ The optional query parameters are:
 - `realm=auto|reality|roleplay`; default `auto`.
 - `characterId=<id>`; required when a document is forced or mapped to roleplay.
 
-In `auto` mode, an RP Agent export may supply a reality or roleplay realm in its
+In `auto` mode, a YourChar export may supply a reality or roleplay realm in its
 extension. Other OKF concepts default to reality. Only the following OKF types
 can become memories:
 

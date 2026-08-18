@@ -33,7 +33,7 @@ if (verifyOnly || dryRun) {
 
 if (existsSync(stateDir)) {
   assertWriterInactive(stateDir);
-  if (!force) throw new Error(`state directory exists: ${stateDir}; stop RP Agent and pass --force to replace it`);
+  if (!force) throw new Error(`state directory exists: ${stateDir}; stop YourChar and pass --force to replace it`);
 }
 
 const parent = dirname(stateDir);

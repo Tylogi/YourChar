@@ -18,6 +18,7 @@ test("module details expose MCP documentation and complete skill Markdown", asyn
     assert.match(mcpBody.detail.content, /create_schedule_item/);
     assert.match(mcpBody.detail.content, /timeExpression/);
 
+    kernel.setAgentSkillEnabledSpaces("skill:roleplay-continuity", ["normal"]);
     const skill = await fetch(`${baseUrl}/api/v1/agent-modules/${encodeURIComponent("skill:roleplay-continuity")}`);
     assert.equal(skill.status, 200);
     const skillBody = await skill.json() as { detail: { content: string } };

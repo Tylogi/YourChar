@@ -1,3 +1,5 @@
+import type { ConversationSpace } from "../domain/types.js";
+
 export type NarrativePerspective = "first_person" | "third_person";
 
 export type CharacterProfile = {
@@ -118,6 +120,8 @@ export type MemoryConfirmationProvenance = {
 
 export type RpMemory = {
   id: string;
+  conversationSpace: ConversationSpace;
+  secretOwnerCharacterId?: string;
   realm: MemoryRealm;
   scope: MemoryScope;
   type: MemoryType;
@@ -145,6 +149,8 @@ export type RpMemory = {
 };
 
 export type CreateMemoryInput = {
+  conversationSpace?: ConversationSpace;
+  secretOwnerCharacterId?: string;
   realm: RpMemoryRealm;
   scope: RpMemoryScope;
   type: RoleplayMemoryType;
@@ -167,6 +173,8 @@ export type UpdateMemoryInput = Partial<
 >;
 
 export type MemorySearchFilter = {
+  conversationSpace?: ConversationSpace;
+  secretOwnerCharacterId?: string;
   query?: string;
   characterId?: string;
   realm?: MemoryRealm;

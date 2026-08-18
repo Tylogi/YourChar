@@ -163,7 +163,7 @@ and projection/migration state, then recreates an empty safe Vault layout.
 - Character names and role-session bindings remain authoritative SQLite
   metadata; only SOUL, scene, profile, and memory facts are Vault-sourced.
 - R2 assumes one application writer. SQLite serializes projection rebuilds, but
-  there is no cross-process filesystem lease for two RP Agent processes sharing
+  there is no cross-process filesystem lease for two YourChar processes sharing
   one state directory.
 - Obsidian must preserve the strict frontmatter schema. Invalid YAML blocks sync
   without replacing the previous projection.

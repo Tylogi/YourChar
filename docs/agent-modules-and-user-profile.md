@@ -43,7 +43,31 @@ Skills are disabled by default and discovered from `skills/`,
 `.agents/skills/`, `.pi/skills/`, and `<stateDir>/skills/`. Pi's original
 `loadSkills` parser supplies metadata. Enabled Skill files are passed to
 `DefaultResourceLoader`; the replacement `read` tool resolves symlinks and only
-permits files inside enabled Skill directories.
+permits the main file and real resources inside enabled, standalone Skill
+packages. Loose root Markdown, symlinked packages, and overlapping packages are
+ignored.
+
+Management can install a public Skill from an HTTPS ZIP URL or a GitHub tree
+URL. This is a host-side, user-confirmed control-plane operation rather than an
+Agent or shell tool. Preview resolves a GitHub ref to an immutable commit,
+downloads into a private quarantine directory, validates the archive and one
+direct `SKILL.md`, and shows the normalized source, commit, manifest digest,
+metadata, and bounded Markdown body. Confirm publishes the reviewed bytes by an
+atomic rename and enables the Skill for normal, private, or both spaces. v1
+never overwrites an existing package and executes no Git hooks, install scripts,
+submodules, LFS filters, or package code.
+
+The downloader accepts public HTTPS on port 443 only. It rejects credentials,
+query strings, local hostnames, private/special addresses, mixed public/private
+DNS answers, unsafe redirects, oversized responses, ZIP traversal, links,
+special files, collisions, nested archives, ZIP64/encryption, excessive
+expansion, and digest mismatches. Every redirect is resolved and checked again,
+and the production transport connects only to an already validated DNS answer.
+For Clash-style TUN on this deployment, `198.18.0.0/15` Fake-IP answers are
+accepted only for the exact GitHub web/API/codeload hosts and only when the same
+lookup also contains a genuine public-unicast fallback. Literal Fake-IP input,
+generic hosts, private-only answers, or any mixture containing another private
+or special address still fail closed.
 
 Changing any module invalidates current Pi handles. Persistent sessions reopen
 their JSONL transcript, while in-memory test sessions retain a detached message
@@ -117,7 +141,10 @@ other mutating tools.
 | Method | Path | Purpose |
 |---|---|---|
 | GET | `/api/v1/agent-modules` | Rediscover and list MCP/Skill modules |
-| PATCH | `/api/v1/agent-modules/{id}` | Set `{ "enabled": boolean }` |
+| PATCH | `/api/v1/agent-modules/{id}` | Set MCP `{ "enabled": boolean }` or Skill `{ "enabledSpaces": [...] }` |
+| POST | `/api/v1/agent-skills/install/preview` | Download, quarantine, validate, and return a review stage |
+| POST | `/api/v1/agent-skills/install/confirm` | Publish a reviewed `{ stageId, sha256, enabledSpaces }` |
+| DELETE | `/api/v1/agent-skills/install/stages/{id}` | Cancel and remove a quarantined review stage |
 | GET | `/api/v1/agent-permissions` | Read workspace, shell, profile, and SOUL permissions |
 | PATCH | `/api/v1/agent-permissions` | Update one or more permission fields |
 | GET | `/api/v1/user-profile` | Read Markdown and length metadata |
@@ -128,13 +155,21 @@ other mutating tools.
 An over-limit profile returns HTTP 400 with code `USER_PROFILE_INVALID`. Export
 includes the profile document. Complete data deletion removes the Markdown file.
 
+Installer mutations and Skill enabled-space changes require same-origin JSON
+from the loopback UI plus a per-process, unguessable HttpOnly cookie. Host and
+Origin must match the actual loopback socket, so a hostile web page or
+DNS-rebinding hostname cannot trigger a download, persistent install, or
+private-to-normal enablement change. The token is never placed in HTML, model
+context, Workspace, or shell environment.
+
 Workspace and protected-document capability details are specified in
 [`workspace-capabilities.md`](workspace-capabilities.md).
 
 ## 6. Adding modules
 
-For a Skill, place a valid `SKILL.md` under a discovery root. It appears after a
-rescan and remains disabled until explicitly enabled.
+For a Skill, use the reviewed installer or place a valid
+`<package>/SKILL.md` under a discovery root. A manually added package appears
+after a rescan and remains disabled until explicitly enabled.
 
 For an MCP module, add its descriptor to the catalog, construct its bridge only
 when enabled, and append it to `PiSessionHandle.mcpBridges`. Keep direct domain

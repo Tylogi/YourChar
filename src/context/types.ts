@@ -1,4 +1,4 @@
-import type { Mode } from "../domain/types.js";
+import type { ConversationSpace, Mode } from "../domain/types.js";
 import type { MemoryRealm, MemoryType } from "../rp/types.js";
 
 export type ContextPlannerBudgets = {
@@ -29,6 +29,8 @@ export type RetrievalScoreBreakdown = {
 
 export type MemoryRetrievalCandidate = {
   memoryId: string;
+  conversationSpace: ConversationSpace;
+  secretOwnerCharacterId?: string;
   realm: Exclude<MemoryRealm, "legacy">;
   characterId?: string;
   type: MemoryType;
@@ -48,6 +50,8 @@ export type MemoryRetrievalCandidate = {
 };
 
 export type MemoryRetrievalPlan = {
+  conversationSpace: ConversationSpace;
+  secretOwnerCharacterId?: string;
   realm: "reality" | "roleplay";
   characterId?: string;
   query: string;
@@ -75,6 +79,8 @@ export type ContextPlan = {
   schemaVersion: 1;
   sessionId: string;
   mode: Mode;
+  conversationSpace: ConversationSpace;
+  secretOwnerCharacterId?: string;
   characterId?: string;
   generatedAt: string;
   timezone: string;
@@ -140,6 +146,8 @@ export type ContextEconomics = {
   id: string;
   sessionId: string;
   mode: Mode;
+  conversationSpace: ConversationSpace;
+  secretOwnerCharacterId?: string;
   turnKind: "user" | "reminder_due" | "world_director";
   systemHash: string;
   toolSchemaHash: string;

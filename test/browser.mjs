@@ -110,6 +110,7 @@ kernel.store.addModelContextTrace({
 kernel.contextEconomics.record({
   sessionId: "browser-economics",
   mode: "sms",
+  conversationSpace: "normal",
   turnKind: "user",
   systemHash: "browser-system-hash",
   toolSchemaHash: "browser-tools-hash",
@@ -131,6 +132,7 @@ kernel.contextEconomics.record({
     schemaVersion: 1,
     sessionId: "browser-economics",
     mode: "sms",
+    conversationSpace: "normal",
     generatedAt: "2026-07-16T02:00:00.000Z",
     timezone: "Asia/Shanghai",
     query: null,
@@ -178,7 +180,7 @@ kernel.store.addModelContextTrace({
     model: "browser-model",
     temperature: 0.2,
     messages: [
-      { role: "system", content: "You are RP Agent.\n" + "Follow the complete system policy without omitting context.\n".repeat(12) },
+      { role: "system", content: "You are YourChar.\n" + "Follow the complete system policy without omitting context.\n".repeat(12) },
       { role: "user", content: "帮我检查完整上下文" },
       { role: "assistant", content: "我会调用工具确认。", tool_calls: [{ id: "call-1", function: { name: "list_schedule_items", arguments: "{}" } }] },
       { role: "tool", tool_call_id: "call-1", content: "[]" },
@@ -294,8 +296,10 @@ async function runDesktopWorkflow(browser, baseUrl, outputDir) {
   await page.locator("#managementPage").waitFor({ state: "visible" });
   const planningModule = page.locator(".module-row").filter({ hasText: "daily-planning" });
   await planningModule.waitFor();
-  await planningModule.locator('input[type="checkbox"]').check();
-  await planningModule.getByText("已启用", { exact: true }).waitFor();
+  const planningSpaces = planningModule.locator("select[data-module-spaces]");
+  await planningSpaces.selectOption("normal");
+  await page.locator("#status").filter({ hasText: "daily-planning 可用空间已更新" }).waitFor();
+  assert.equal(await planningModule.locator("select[data-module-spaces]").inputValue(), "normal");
   assert.equal(await page.locator(".module-row").count(), 12);
   await page.locator(".module-row").filter({ hasText: "Tavily Search MCP" }).waitFor();
   assert.equal(await page.locator(".module-token").count(), 12);
@@ -338,7 +342,7 @@ async function runDesktopWorkflow(browser, baseUrl, outputDir) {
   await profileInsight.filter({ hasText: "用户已覆盖" }).waitFor();
   await profileInsight.getByRole("button", { name: "恢复自动判断" }).click();
   await profileInsight.filter({ hasText: "已写入画像" }).waitFor();
-  const profileMarkdown = "# 用户画像\n\n## 基本信息\n\n- 称呼：Vector\n\n## 偏好与沟通\n\n- 直接、简洁，先给结论\n\n## 当前目标\n\n- 保持规律作息\n- 持续改进 RP Agent";
+  const profileMarkdown = "# 用户画像\n\n## 基本信息\n\n- 称呼：Vector\n\n## 偏好与沟通\n\n- 直接、简洁，先给结论\n\n## 当前目标\n\n- 保持规律作息\n- 持续改进 YourChar";
   await page.locator("#profileMarkdown").fill(profileMarkdown);
   await page.locator("#profileCharacterCount").filter({ hasText: String([...profileMarkdown].length) + " / 2000" }).waitFor();
   await page.getByRole("button", { name: "保存画像" }).click();
@@ -696,7 +700,7 @@ async function runDesktopWorkflow(browser, baseUrl, outputDir) {
   const okfDownloadPromise = page.waitForEvent("download");
   await page.getByRole("button", { name: "导出 OKF", exact: true }).click();
   const okfDownload = await okfDownloadPromise;
-  assert.match(okfDownload.suggestedFilename(), /^rp-agent-memory-okf-\d{8}T\d{6}Z\.zip$/);
+  assert.match(okfDownload.suggestedFilename(), /^yourchar-memory-okf-\d{8}T\d{6}Z\.zip$/);
   await okfDownload.cancel();
   await page.locator("#okfImportInput").setInputFiles({
     name: "browser-okf.zip",
@@ -798,7 +802,7 @@ async function runDesktopWorkflow(browser, baseUrl, outputDir) {
   await assertElementUnclipped(page, "#contextBudgetDialog");
   await captureValidatedScreenshot(page, resolve(outputDir, "chat-context-budget.png"));
   await page.getByRole("button", { name: "关闭上下文余量" }).click();
-  const smsMessagesRoute = "**/api/v1/sessions/" + smsSessionId + "/messages";
+  const smsMessagesRoute = "**/api/v1/sessions/" + smsSessionId + "/messages**";
   await page.route(smsMessagesRoute, (route) => route.fulfill({
     status: 200,
     contentType: "application/json; charset=utf-8",
@@ -1280,7 +1284,7 @@ async function runDesktopWorkflow(browser, baseUrl, outputDir) {
   const unreadObserverSession = await kernel.openCanonicalPrivateConversation(targetCharacter.id);
   const unreadObserverSessionId = unreadObserverSession.id;
   await page.evaluate(() => window.loadSessions());
-  const directMessagesRoute = "**/api/v1/sessions/" + smsSessionId + "/messages";
+  const directMessagesRoute = "**/api/v1/sessions/" + smsSessionId + "/messages**";
   await page.route(directMessagesRoute, (route) => route.fulfill({
     status: 200,
     contentType: "application/json; charset=utf-8",
@@ -1523,7 +1527,7 @@ async function runDesktopWorkflow(browser, baseUrl, outputDir) {
 async function runMobileWorkflow(browser, baseUrl, outputDir) {
   const page = await browser.newPage({ viewport: { width: 390, height: 844 }, isMobile: true });
   const errors = collectErrors(page);
-  const mobileMessagesRoute = /\/api\/v1\/sessions\/[^/]+\/messages$/;
+  const mobileMessagesRoute = /\/api\/v1\/sessions\/[^/]+\/messages(?:\?.*)?$/;
   await page.route(mobileMessagesRoute, (route) => route.fulfill({
     status: 200,
     contentType: "application/json; charset=utf-8",
@@ -1929,7 +1933,8 @@ async function runMobileWorkflow(browser, baseUrl, outputDir) {
   await page.locator("#sessionActionInput").fill("DELETE_ALL_DATA");
   await page.locator("#sessionActionInput").press("Enter");
   await page.locator("#sessionActionDialog").waitFor({ state: "hidden" });
-  await page.waitForFunction(() => document.querySelector("#status")?.textContent === "全部用户数据已删除");
+  await page.waitForFunction(() => document.querySelector("#status")?.textContent ===
+    "用户数据已删除；普通与私密 Workspace 文件及已安装 Skill 包仍保留但已禁用");
   assert.deepEqual(errors, [], `mobile console errors: ${errors.join(" | ")}`);
   await page.close();
 }

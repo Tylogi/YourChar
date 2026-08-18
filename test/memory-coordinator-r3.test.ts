@@ -896,6 +896,7 @@ test("failed jobs retry without duplicates and running jobs recover after restar
       sessionId: log.sessionId,
       sourceMessageId: "message_restart",
       mode: "sms",
+      conversationSpace: "normal",
       realm: "reality",
       triggerKind: "durable_signal",
       triggerReason: "durable_signal_detected",
@@ -1015,5 +1016,7 @@ function downgradeToSchema1(source: string): string {
   delete metadata.visibleToCharacterIds;
   delete metadata.sourceMemoryIds;
   delete metadata.personConfidence;
+  delete metadata.conversationSpace;
+  delete metadata.secretOwnerCharacterId;
   return `---\n${stringify(metadata, { lineWidth: 0 })}---\n${match[2]}`;
 }

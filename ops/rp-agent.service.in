@@ -1,5 +1,5 @@
 [Unit]
-Description=RP Agent local companion
+Description=YourChar local companion
 After=network-online.target
 Wants=network-online.target
 

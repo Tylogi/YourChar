@@ -1,4 +1,4 @@
-# RP Agent Operations
+# YourChar Operations
 
 ## Managed user service
 
@@ -44,7 +44,7 @@ responsibility.
 
 ## Backup
 
-Stop RP Agent before backup so the writer lease is inactive. The backup command
+Stop YourChar before backup so the writer lease is inactive. The backup command
 fails rather than capture state while an application writer is live:
 
 ```bash
@@ -55,9 +55,10 @@ systemctl --user start rp-agent.service
 
 The backup script uses SQLite's online backup API and copies Pi transcripts,
 conversation metadata, the complete Memory Vault, its projection/migration
-state, the R1 profile/SOUL compatibility mirrors, Pi agent state, and the
-dedicated workspace. Vault Markdown is copied byte-for-byte, preserving its
-frontmatter revisions and hashes. Backup schema v3 records every payload file's
+state, the R1 profile/SOUL compatibility mirrors, Pi agent state, and both the
+normal Workspace and per-character secret Workspaces, plus packages installed
+under `<stateDir>/skills`. Vault Markdown is copied byte-for-byte, preserving
+its frontmatter revisions and hashes. Backup schema v3 records every payload file's
 SHA-256 and size, SQLite schema and `integrity_check`, Vault hashes, and
 Vault-to-SQLite projection consistency. The destination is staged, fully
 validated, and only then published by rename.
@@ -65,7 +66,7 @@ validated, and only then published by rename.
 An explicit source and destination may be supplied:
 
 ```bash
-node --disable-warning=ExperimentalWarning scripts/backup-state.mjs .rp-agent /secure/path/rp-agent-backup
+node --disable-warning=ExperimentalWarning scripts/backup-state.mjs .rp-agent /secure/path/yourchar-backup
 ```
 
 Backups have directory mode `0700`. They may include `model-api.json` and
@@ -73,15 +74,17 @@ Backups have directory mode `0700`. They may include `model-api.json` and
 treated as secret. The backup manifest records credential-file presence without
 copying either Key into the manifest.
 `tavily.json` may also contain an authenticated proxy URL and must be protected
-even when no Tavily Key is present.
+even when no Tavily Key is present. Backups are not encrypted by YourChar and
+contain private-mode transcripts, memories, Workspace files, and private-only
+Skill bodies; store or encrypt the backup accordingly.
 
 ## Restore
 
 Verify a backup without changing the target, then inspect a restore dry run:
 
 ```bash
-node scripts/restore-state.mjs /secure/path/rp-agent-backup --verify
-node scripts/restore-state.mjs /secure/path/rp-agent-backup .rp-agent --dry-run
+node scripts/restore-state.mjs /secure/path/yourchar-backup --verify
+node scripts/restore-state.mjs /secure/path/yourchar-backup .rp-agent --dry-run
 ```
 
 Stop the service before replacing state. Restore validates the source, copies
@@ -91,13 +94,13 @@ place:
 
 ```bash
 systemctl --user stop rp-agent.service
-node scripts/restore-state.mjs /secure/path/rp-agent-backup .rp-agent --force
+node scripts/restore-state.mjs /secure/path/yourchar-backup .rp-agent --force
 systemctl --user start rp-agent.service
 curl -fsS http://127.0.0.1:8765/api/v1/readiness
 ```
 
 The restore script refuses to overwrite an existing state directory without
-`--force`. On startup RP Agent replays pending Vault operations, validates the
+`--force`. On startup YourChar replays pending Vault operations, validates the
 restored Vault, rebuilds SQLite/FTS, aligns profile/SOUL mirrors, and removes
 stale resident-memory versions before provider use. Keep the original backup
 until sessions, schedules, characters, and memories have been checked.

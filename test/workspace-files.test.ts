@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, relative } from "node:path";
 import test from "node:test";
 import { CompanionKernel } from "../src/domain/kernel.js";
 import { createHttpServer } from "../src/http/router.js";
@@ -162,6 +162,130 @@ test("workspace file control plane uploads, previews, downloads, moves, deletes,
   } finally {
     await closeServer(server);
     kernel.dispose();
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("session-bound Workspace APIs isolate normal and per-character secret roots", async () => {
+  const root = mkdtempSync(join(tmpdir(), "rp-agent-workspace-scopes-"));
+  const workspaceDir = join(root, "workspace");
+  const runtime = createTestRuntime({
+    stateDir: root,
+    workspaceDir,
+    seed: "workspace-scope-http",
+  });
+  const server = createHttpServer({ kernel: runtime.kernel });
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  try {
+    const first = runtime.kernel.createCharacter({ name: "私密工作区甲" });
+    const second = runtime.kernel.createCharacter({ name: "私密工作区乙" });
+    const normal = await runtime.kernel.openCanonicalPrivateConversation(first.id, "normal");
+    const firstSecret = await runtime.kernel.openCanonicalPrivateConversation(first.id, "secret");
+    const secondSecret = await runtime.kernel.openCanonicalPrivateConversation(second.id, "secret");
+    const baseUrl = addressOf(server);
+    const upload = async (
+      sessionId: string,
+      value: string,
+      conversationSpace = "normal",
+      characterId?: string,
+    ) => {
+      const response = await fetch(
+        `${baseUrl}/api/v1/sessions/${encodeURIComponent(sessionId)}/workspace/files/upload` +
+          `?name=${encodeURIComponent("same.txt")}&conversationSpace=${conversationSpace}` +
+          (characterId ? `&characterId=${encodeURIComponent(characterId)}` : ""),
+        { method: "POST", body: Buffer.from(value, "utf8") },
+      );
+      assert.equal(response.status, 201);
+      const body = await response.json() as { entry: { path: string } };
+      assert.equal(body.entry.path, "uploads/same.txt");
+    };
+    await upload(normal.id, "normal-sentinel");
+    await upload(firstSecret.id, "first-secret-sentinel", "secret", first.id);
+    await upload(secondSecret.id, "second-secret-sentinel", "secret", second.id);
+
+    const secretImageUpload = await fetch(
+      `${baseUrl}/api/v1/sessions/${encodeURIComponent(firstSecret.id)}/workspace/files/upload` +
+        `?name=${encodeURIComponent("pixel.png")}&conversationSpace=secret` +
+        `&characterId=${encodeURIComponent(first.id)}`,
+      {
+        method: "POST",
+        body: Buffer.from(
+          "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=",
+          "base64",
+        ),
+      },
+    );
+    assert.equal(secretImageUpload.status, 201);
+    const secretImagePreview = await fetch(
+      `${baseUrl}/api/v1/sessions/${encodeURIComponent(firstSecret.id)}/workspace/files/preview` +
+        `?path=${encodeURIComponent("uploads/pixel.png")}&conversationSpace=secret` +
+        `&characterId=${encodeURIComponent(first.id)}`,
+    );
+    assert.equal(secretImagePreview.status, 200);
+    const secretImagePreviewBody = await secretImagePreview.json() as {
+      preview: { url: string };
+    };
+    assert.match(secretImagePreviewBody.preview.url, /conversationSpace=secret/);
+    assert.match(
+      secretImagePreviewBody.preview.url,
+      new RegExp(`characterId=${encodeURIComponent(first.id)}`),
+    );
+    assert.equal((await fetch(`${baseUrl}${secretImagePreviewBody.preview.url}`)).status, 200);
+
+    const download = async (
+      sessionId: string,
+      conversationSpace = "normal",
+      characterId?: string,
+    ) => {
+      const response = await fetch(
+        `${baseUrl}/api/v1/sessions/${encodeURIComponent(sessionId)}/workspace/files/content` +
+          `?path=${encodeURIComponent("uploads/same.txt")}&conversationSpace=${conversationSpace}` +
+          (characterId ? `&characterId=${encodeURIComponent(characterId)}` : ""),
+      );
+      assert.equal(response.status, 200);
+      return response.text();
+    };
+    assert.equal(await download(normal.id), "normal-sentinel");
+    assert.equal(await download(firstSecret.id, "secret", first.id), "first-secret-sentinel");
+    assert.equal(await download(secondSecret.id, "secret", second.id), "second-secret-sentinel");
+    assert.equal((await fetch(
+      `${baseUrl}/api/v1/sessions/${encodeURIComponent(firstSecret.id)}/workspace/files/content` +
+        `?path=${encodeURIComponent("uploads/same.txt")}&conversationSpace=secret` +
+        `&characterId=${encodeURIComponent(second.id)}`,
+    )).status, 404);
+    assert.equal(await fetch(
+      `${baseUrl}/api/v1/sessions/${encodeURIComponent(firstSecret.id)}/workspace/files/content` +
+        `?path=${encodeURIComponent("uploads/same.txt")}&conversationSpace=normal`,
+    ).then((response) => response.status), 404);
+
+    const legacyNormal = await fetch(
+      `${baseUrl}/api/v1/workspace/files/content?path=${encodeURIComponent("uploads/same.txt")}`,
+    );
+    assert.equal(legacyNormal.status, 200);
+    assert.equal(await legacyNormal.text(), "normal-sentinel");
+    assert.equal((await fetch(
+      `${baseUrl}/api/v1/sessions/missing/workspace/files?path=uploads`,
+    )).status, 404);
+    assert.equal((await fetch(
+      `${baseUrl}/api/v1/sessions/${encodeURIComponent(firstSecret.id)}/workspace/files/preview` +
+        `?path=${encodeURIComponent("../workspace/uploads/same.txt")}&conversationSpace=secret` +
+        `&characterId=${encodeURIComponent(first.id)}`,
+    )).status, 400);
+
+    const firstSecretWorkspace = runtime.kernel.workspaceRegistry.resolve({
+      conversationSpace: "secret",
+      characterId: first.id,
+    });
+    const secondSecretWorkspace = runtime.kernel.workspaceRegistry.resolve({
+      conversationSpace: "secret",
+      characterId: second.id,
+    });
+    assert.notEqual(firstSecretWorkspace.dir, secondSecretWorkspace.dir);
+    assert.equal(relative(workspaceDir, firstSecretWorkspace.dir).startsWith(".."), true);
+    assert.equal(relative(workspaceDir, secondSecretWorkspace.dir).startsWith(".."), true);
+  } finally {
+    await closeServer(server);
+    runtime.dispose();
     rmSync(root, { recursive: true, force: true });
   }
 });

@@ -240,7 +240,7 @@ async function verifyProviderCacheContract(mode: Mode): Promise<void> {
     assert.equal(turnContexts.length, 2);
     assert.equal(turnContexts.every((message) => message.role === "custom" && message.display === false), true);
     assert.equal(turnContexts.every((message) =>
-      message.role === "custom" && (message.details as { schemaVersion?: number })?.schemaVersion === 3
+      message.role === "custom" && (message.details as { schemaVersion?: number })?.schemaVersion === 4
     ), true);
   } finally {
     kernel.dispose();

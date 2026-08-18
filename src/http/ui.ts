@@ -7,8 +7,8 @@ export function renderAppHtml(): string {
   <meta name="theme-color" content="#07c160" />
   <meta name="apple-mobile-web-app-capable" content="yes" />
   <meta name="apple-mobile-web-app-status-bar-style" content="default" />
-  <meta name="apple-mobile-web-app-title" content="RP Agent" />
-  <title>RP Agent</title>
+  <meta name="apple-mobile-web-app-title" content="YourChar" />
+  <title>YourChar</title>
   <link rel="manifest" href="/manifest.webmanifest" />
   <link rel="icon" type="image/png" sizes="32x32" href="/assets/icons/favicon-32.png" />
   <link rel="apple-touch-icon" sizes="180x180" href="/assets/icons/apple-touch-icon-180.png" />
@@ -1271,6 +1271,96 @@ export function renderAppHtml(): string {
       border-bottom: 1px solid var(--line);
     }
     .module-detail-button { width: 32px; height: 32px; }
+    .module-space-select { width: auto; min-width: 116px; height: 34px; }
+    .agent-skill-installer {
+      margin-bottom: 18px;
+      padding: 14px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: #f8faf9;
+      display: grid;
+      gap: 12px;
+    }
+    .agent-skill-installer-head {
+      display: flex;
+      align-items: baseline;
+      justify-content: space-between;
+      gap: 12px;
+      flex-wrap: wrap;
+    }
+    .agent-skill-installer-head h4 { margin: 0; font-size: 14px; }
+    .agent-skill-installer-head span { color: var(--muted); font-size: 11px; }
+    .agent-skill-install-fields {
+      display: grid;
+      grid-template-columns: minmax(0, 2fr) minmax(220px, 1fr) auto;
+      align-items: end;
+      gap: 10px;
+    }
+    .agent-skill-install-fields label,
+    .agent-skill-install-space {
+      min-width: 0;
+      display: grid;
+      gap: 6px;
+      color: var(--muted);
+      font-size: 11px;
+    }
+    .agent-skill-install-preview {
+      padding-top: 12px;
+      border-top: 1px solid var(--line);
+      display: grid;
+      gap: 12px;
+    }
+    .agent-skill-install-preview[hidden] { display: none; }
+    .agent-skill-install-summary {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 1px;
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      overflow: hidden;
+      background: var(--line);
+    }
+    .agent-skill-install-summary > div {
+      min-width: 0;
+      padding: 9px 10px;
+      display: grid;
+      gap: 3px;
+      background: #ffffff;
+    }
+    .agent-skill-install-summary span { color: var(--muted); font-size: 10px; }
+    .agent-skill-install-summary strong,
+    .agent-skill-install-summary code {
+      min-width: 0;
+      overflow-wrap: anywhere;
+      font-size: 11px;
+    }
+    .agent-skill-install-review {
+      max-height: 280px;
+      padding: 10px 12px;
+      overflow: auto;
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      background: #ffffff;
+    }
+    .agent-skill-install-review h5 { margin: 0 0 8px; font-size: 12px; }
+    .agent-skill-install-review pre {
+      margin: 0;
+      white-space: pre-wrap;
+      overflow-wrap: anywhere;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      font-size: 11px;
+      line-height: 1.55;
+    }
+    .agent-skill-install-actions {
+      display: flex;
+      align-items: end;
+      justify-content: flex-end;
+      gap: 8px;
+      flex-wrap: wrap;
+    }
+    .agent-skill-install-actions .agent-skill-install-space { margin-right: auto; }
+    .agent-skill-install-state { min-height: 16px; color: var(--muted); font-size: 11px; }
+    .agent-skill-install-state.error { color: var(--danger); }
     .module-detail-dialog,
     .message-edit-dialog {
       width: min(720px, calc(100vw - 28px));
@@ -2263,6 +2353,13 @@ export function renderAppHtml(): string {
       .module-row { grid-template-columns: auto minmax(0, 1fr); }
       .module-row .module-detail-button { grid-column: 1; justify-self: start; }
       .module-row .toggle { grid-column: 2; grid-row: 2; justify-self: start; }
+      .module-row .module-space-select { grid-column: 2; grid-row: 2; justify-self: start; }
+      .agent-skill-install-fields { grid-template-columns: 1fr; }
+      .agent-skill-install-fields button { width: 100%; }
+      .agent-skill-install-summary { grid-template-columns: 1fr; }
+      .agent-skill-install-actions { align-items: stretch; flex-direction: column; }
+      .agent-skill-install-actions .agent-skill-install-space { width: 100%; margin-right: 0; }
+      .agent-skill-install-actions button { width: 100%; }
       .permission-row { grid-template-columns: 1fr; }
       .permission-row .toggle { justify-self: start; }
       .permission-path { max-width: 100%; text-align: left; }
@@ -4314,6 +4411,20 @@ export function renderAppHtml(): string {
       white-space: nowrap;
     }
     .conversation-header-actions { flex: 0 0 auto; display: flex; align-items: center; gap: 6px; }
+    .private-mode-toggle {
+      width: auto;
+      min-width: 34px;
+      padding: 0 9px;
+      gap: 5px;
+      color: #52615a;
+      white-space: nowrap;
+    }
+    .private-mode-toggle span { font-size: 11px; }
+    .private-mode-toggle[aria-pressed="true"] {
+      color: #7c3aed;
+      border-color: #c4b5fd;
+      background: #f5f3ff;
+    }
     .conversation-header-actions > .icon-button,
     .mobile-session-actions > .icon-button { width: 34px; height: 34px; }
     .conversation-header-actions > .context-budget-button {
@@ -4417,6 +4528,8 @@ export function renderAppHtml(): string {
       .conversation-header-actions { gap: 4px; }
       .conversation-header-actions > .icon-button,
       .mobile-session-actions > .icon-button { width: 32px; height: 32px; }
+      .conversation-header-actions > .private-mode-toggle { width: 32px; min-width: 32px; padding: 0; }
+      .private-mode-toggle span { display: none; }
       .conversation-header-actions > .context-budget-button { width: 32px; min-width: 32px; padding: 0; gap: 0; }
       .context-budget-button svg,
       .context-budget-tokens { display: none; }
@@ -4461,7 +4574,7 @@ export function renderAppHtml(): string {
   <div class="app">
     <header>
       <div class="header-left">
-        <h1><span id="brandUserAvatar" class="brand-mark">我</span><span class="brand-name">RP Agent</span></h1>
+        <h1><span id="brandUserAvatar" class="brand-mark">我</span><span class="brand-name">YourChar</span></h1>
         <div class="segmented nav-segmented" aria-label="UI mode">
           <button id="normalBtn" class="active" type="button"><i data-lucide="message-circle" aria-hidden="true"></i><span>聊天</span></button>
           <button id="scheduleBtn" type="button"><i data-lucide="calendar-days" aria-hidden="true"></i><span>日程</span></button>
@@ -4481,6 +4594,7 @@ export function renderAppHtml(): string {
           </span>
         </div>
         <div class="conversation-header-actions">
+          <button id="privateModeToggle" class="secondary icon-button private-mode-toggle" type="button" title="开启私密模式" aria-label="开启私密模式" aria-pressed="false" hidden><i data-lucide="lock-keyhole" aria-hidden="true"></i><span>私密</span></button>
           <button id="contextBudgetBtn" class="secondary icon-button context-budget-button" type="button" title="上下文余量" aria-label="查看上下文余量" hidden><i data-lucide="gauge" aria-hidden="true"></i><span id="contextBudgetTokens" class="context-budget-tokens">--</span><span id="contextBudgetPercent" class="context-budget-percent">--</span></button>
           <button id="interactionToggleBtn" class="secondary icon-button" type="button" title="发起见面" aria-label="发起见面" hidden><i data-lucide="map-pin" aria-hidden="true"></i></button>
           <button id="interactionUndoBtn" class="secondary icon-button" type="button" title="撤销上次状态切换" aria-label="撤销上次状态切换" hidden><i data-lucide="undo-2" aria-hidden="true"></i></button>
@@ -4842,6 +4956,44 @@ export function renderAppHtml(): string {
               <h3>MCP 与 Skills</h3>
               <button id="refreshModulesBtn" class="secondary" type="button">重新扫描</button>
             </div>
+            <form id="agentSkillInstallForm" class="agent-skill-installer">
+              <div class="agent-skill-installer-head">
+                <h4>安装 Agent Skill</h4>
+                <span>先下载到临时区预检；预检不会安装或启用 Skill</span>
+              </div>
+              <div class="agent-skill-install-fields">
+                <label>
+                  <span>公开 HTTPS 地址（GitHub 目录或 ZIP）</span>
+                  <input id="agentSkillSourceUrl" type="url" inputmode="url" autocomplete="off" required placeholder="https://github.com/owner/repo/tree/main/path/to/skill" />
+                </label>
+                <label>
+                  <span>预期 Skill 内容 SHA-256（可选）</span>
+                  <input id="agentSkillExpectedSha256" inputmode="text" autocomplete="off" spellcheck="false" maxlength="64" placeholder="预检清单的 64 位十六进制摘要" />
+                </label>
+                <button id="previewAgentSkillInstallBtn" class="secondary" type="submit">下载并预检</button>
+              </div>
+              <div id="agentSkillInstallState" class="agent-skill-install-state" role="status" aria-live="polite"></div>
+              <section id="agentSkillInstallPreview" class="agent-skill-install-preview" aria-label="Skill 安装预检结果" hidden>
+                <div id="agentSkillInstallSummary" class="agent-skill-install-summary"></div>
+                <div class="agent-skill-install-review">
+                  <h5>SKILL.md 文本预览</h5>
+                  <p class="muted">这里只展示主说明；包内其他资源仅核对路径、大小与摘要，确认安装即表示信任完整文件清单。</p>
+                  <pre id="agentSkillInstallMarkdown"></pre>
+                </div>
+                <div class="agent-skill-install-actions">
+                  <label class="agent-skill-install-space">
+                    <span>安装后的可用空间</span>
+                    <select id="agentSkillInstallSpaces" aria-label="安装后的 Skill 可用空间">
+                      <option value="normal">仅普通</option>
+                      <option value="secret">仅私密</option>
+                      <option value="both">普通 + 私密</option>
+                    </select>
+                  </label>
+                  <button id="cancelAgentSkillInstallBtn" class="secondary" type="button">取消并删除预检</button>
+                  <button id="confirmAgentSkillInstallBtn" class="primary" type="button">确认安装并启用</button>
+                </div>
+              </section>
+            </form>
             <div id="moduleList" class="module-list"></div>
             <div class="permission-section">
               <div class="schedule-head">
@@ -5626,6 +5778,8 @@ export function renderAppHtml(): string {
   <script>
     const state = {
       uiMode: "normal",
+      conversationSpace: "normal",
+      conversationSpaceEpoch: 0,
       messages: [],
       busy: false,
       sessions: [],
@@ -5719,6 +5873,8 @@ export function renderAppHtml(): string {
       workspaceFileDirectory: "",
       workspaceFiles: [],
       agentModules: [],
+      agentSkillInstallStage: null,
+      agentSkillInstallRequestId: 0,
       agentPermissions: null,
       userInsights: null,
       insightReceiptBaselines: new Map(),
@@ -5826,6 +5982,17 @@ export function renderAppHtml(): string {
       workspaceFileUploadInput: document.getElementById("workspaceFileUploadInput"),
       refreshModulesBtn: document.getElementById("refreshModulesBtn"),
       moduleList: document.getElementById("moduleList"),
+      agentSkillInstallForm: document.getElementById("agentSkillInstallForm"),
+      agentSkillSourceUrl: document.getElementById("agentSkillSourceUrl"),
+      agentSkillExpectedSha256: document.getElementById("agentSkillExpectedSha256"),
+      previewAgentSkillInstallBtn: document.getElementById("previewAgentSkillInstallBtn"),
+      agentSkillInstallState: document.getElementById("agentSkillInstallState"),
+      agentSkillInstallPreview: document.getElementById("agentSkillInstallPreview"),
+      agentSkillInstallSummary: document.getElementById("agentSkillInstallSummary"),
+      agentSkillInstallMarkdown: document.getElementById("agentSkillInstallMarkdown"),
+      agentSkillInstallSpaces: document.getElementById("agentSkillInstallSpaces"),
+      cancelAgentSkillInstallBtn: document.getElementById("cancelAgentSkillInstallBtn"),
+      confirmAgentSkillInstallBtn: document.getElementById("confirmAgentSkillInstallBtn"),
       workspacePath: document.getElementById("workspacePath"),
       permissionControls: document.getElementById("permissionControls"),
       workspaceAccessControls: document.getElementById("workspaceAccessControls"),
@@ -5940,6 +6107,7 @@ export function renderAppHtml(): string {
       conversationMode: document.getElementById("conversationMode"),
       conversationScene: document.getElementById("conversationScene"),
       conversationHeaderAvatar: document.getElementById("conversationHeaderAvatar"),
+      privateModeToggle: document.getElementById("privateModeToggle"),
       contextBudgetBtn: document.getElementById("contextBudgetBtn"),
       contextBudgetTokens: document.getElementById("contextBudgetTokens"),
       contextBudgetPercent: document.getElementById("contextBudgetPercent"),
@@ -6346,6 +6514,9 @@ export function renderAppHtml(): string {
     nodes.refreshModulesBtn.addEventListener("click", loadCapabilityManagement);
     nodes.moduleList.addEventListener("change", toggleAgentModule);
     nodes.moduleList.addEventListener("click", openModuleDetailFromList);
+    nodes.agentSkillInstallForm.addEventListener("submit", previewAgentSkillInstall);
+    nodes.cancelAgentSkillInstallBtn.addEventListener("click", cancelAgentSkillInstall);
+    nodes.confirmAgentSkillInstallBtn.addEventListener("click", confirmAgentSkillInstall);
     nodes.permissionControls.addEventListener("change", toggleAgentPermission);
     nodes.workspaceAccessControls.addEventListener("click", setWorkspaceAccess);
     nodes.profileDocumentForm.addEventListener("submit", saveUserProfile);
@@ -6432,6 +6603,7 @@ export function renderAppHtml(): string {
     nodes.conversationBatchArchiveBtn.addEventListener("click", () => runConversationBatchAction("archive"));
     nodes.conversationBatchDeleteBtn.addEventListener("click", () => runConversationBatchAction("delete"));
     nodes.conversationListToggle.addEventListener("click", toggleConversationList);
+    nodes.privateModeToggle.addEventListener("click", togglePrivateMode);
     nodes.conversationList.addEventListener("click", selectConversationFromList);
     nodes.conversationList.addEventListener("change", updateConversationBatchSelection);
     nodes.renameSessionBtn.addEventListener("click", renameCurrentSession);
@@ -6502,6 +6674,11 @@ export function renderAppHtml(): string {
     });
     nodes.chatCharacterSelect.addEventListener("change", () => {
       state.selectedCharacterId = nodes.chatCharacterSelect.value;
+      if (state.conversationSpace === "secret") {
+        clearWorkspaceManagerState();
+        clearMemoryConversationState();
+      }
+      updateWorkspaceManagerAvailability();
       updateChatIdentity();
       renderConversationList();
       void loadConversationScene();
@@ -6764,8 +6941,12 @@ export function renderAppHtml(): string {
     }
 
     function setUiMode(mode) {
+      if (mode !== "management") {
+        void clearAgentSkillInstallStage({ deleteRemote: true });
+      }
       state.uiMode = mode;
       document.body.dataset.uiMode = mode;
+      updatePrivateModeChrome();
       updateInteractionChrome();
       updateContextBudgetChrome();
       nodes.normalBtn.classList.toggle("active", mode === "normal");
@@ -6809,6 +6990,9 @@ export function renderAppHtml(): string {
     }
 
     function setManagementTab(tab) {
+      if (tab !== "modules") {
+        void clearAgentSkillInstallStage({ deleteRemote: true });
+      }
       state.managementTab = tab;
       nodes.modulesTabBtn.classList.toggle("active", tab === "modules");
       nodes.profileTabBtn.classList.toggle("active", tab === "profile");
@@ -7369,22 +7553,114 @@ export function renderAppHtml(): string {
 	      nodes.importMeetingPresetBtn.disabled = true;
 	    }
 
+	    function activeSecretWorkspaceManagerScope() {
+      if (state.conversationSpace !== "secret") return null;
+      const characterId = state.selectedCharacterId;
+      const session = state.sessions.find((entry) => entry.id === state.activeSessionId);
+      if (
+        state.activeConversationKind !== "direct" || state.sessionDraft ||
+        !state.activeSessionId || !characterId || !session ||
+        session.conversationSpace !== "secret" || session.characterId !== characterId
+      ) return null;
+      return {
+        sessionScoped: true,
+        sessionId: state.activeSessionId,
+        conversationSpace: "secret",
+        characterId,
+        epoch: state.conversationSpaceEpoch
+      };
+    }
+
+    function requireWorkspaceManagerScope() {
+      if (state.conversationSpace === "normal") {
+        return {
+          sessionScoped: false,
+          sessionId: "",
+          conversationSpace: "normal",
+          characterId: "",
+          epoch: state.conversationSpaceEpoch
+        };
+      }
+      const scope = activeSecretWorkspaceManagerScope();
+      if (!scope) throw new Error("请先打开当前角色的私密对话，再管理私密 Workspace");
+      return scope;
+    }
+
+    function workspaceManagerScopeIsCurrent(scope) {
+      if (
+        !scope || scope.epoch !== state.conversationSpaceEpoch ||
+        scope.conversationSpace !== state.conversationSpace
+      ) return false;
+      if (!scope.sessionScoped) return scope.conversationSpace === "normal";
+      const active = activeSecretWorkspaceManagerScope();
+      return Boolean(
+        active && active.sessionId === scope.sessionId &&
+        active.characterId === scope.characterId && active.epoch === scope.epoch
+      );
+    }
+
+    function workspaceManagerUrl(scope, suffix, query = "") {
+      const tail = query ? "?" + query : "";
+      if (!scope.sessionScoped) return "/api/v1/workspace/files" + suffix + tail;
+      return withConversationSpace(
+        "/api/v1/sessions/" + encodeURIComponent(scope.sessionId) +
+        "/workspace/files" + suffix + tail,
+        scope.conversationSpace,
+        scope.characterId
+      );
+    }
+
+    function clearWorkspaceManagerState(message = "") {
+      state.workspaceFileDirectory = "";
+      state.workspaceFiles = [];
+      nodes.workspaceFileUploadInput.value = "";
+      if (nodes.workspaceFilePreviewDialog.open) nodes.workspaceFilePreviewDialog.close();
+      nodes.workspaceFilePreviewContent.innerHTML = "";
+      nodes.workspaceFilePath.textContent = "/";
+      nodes.workspaceFileState.textContent = message;
+      nodes.workspaceFileList.innerHTML = "";
+      nodes.workspaceFileUpBtn.disabled = true;
+      nodes.workspaceFileRefreshBtn.disabled = true;
+      nodes.workspaceFileUploadBtn.disabled = true;
+    }
+
+    function updateWorkspaceManagerAvailability() {
+      const available = state.conversationSpace === "normal" || Boolean(activeSecretWorkspaceManagerScope());
+      nodes.workspaceFileUpBtn.disabled = !available || !state.workspaceFileDirectory;
+      nodes.workspaceFileRefreshBtn.disabled = !available;
+      nodes.workspaceFileUploadBtn.disabled = !available;
+    }
+
 	    async function loadWorkspaceFiles() {
-      nodes.workspaceFileState.textContent = "加载中...";
+      let scope;
       try {
-        const query = encodeURIComponent(state.workspaceFileDirectory || ".");
-        const response = await fetch("/api/v1/workspace/files?path=" + query);
+        scope = requireWorkspaceManagerScope();
+      } catch (error) {
+        const message = error.message || String(error);
+        clearWorkspaceManagerState(message);
+        nodes.workspaceFileList.innerHTML = '<div class="workspace-file-empty error">' + escapeHtml(message) + '</div>';
+        setStatus(message, true);
+        return;
+      }
+      nodes.workspaceFileState.textContent = "加载中...";
+      updateWorkspaceManagerAvailability();
+      try {
+        const query = "path=" + encodeURIComponent(state.workspaceFileDirectory || ".");
+        const response = await fetch(workspaceManagerUrl(scope, "", query));
         const body = await response.json();
+        if (!workspaceManagerScopeIsCurrent(scope)) return;
         if (!response.ok) throw new Error(body.error || "文件列表加载失败");
         state.workspaceFileDirectory = body.path === "." ? "" : body.path;
         state.workspaceFiles = Array.isArray(body.entries) ? body.entries : [];
         nodes.workspaceFilePath.textContent = "/" + state.workspaceFileDirectory;
-        nodes.workspaceFileUpBtn.disabled = !state.workspaceFileDirectory;
         nodes.workspaceFileState.textContent = state.workspaceFiles.length + " 项";
+        updateWorkspaceManagerAvailability();
         renderWorkspaceFiles();
       } catch (error) {
+        if (!workspaceManagerScopeIsCurrent(scope)) return;
         nodes.workspaceFileState.textContent = error.message || String(error);
         nodes.workspaceFileList.innerHTML = '<div class="workspace-file-empty error">' + escapeHtml(error.message || String(error)) + '</div>';
+        updateWorkspaceManagerAvailability();
       }
     }
 
@@ -7430,17 +7706,35 @@ export function renderAppHtml(): string {
       const files = Array.from(nodes.workspaceFileUploadInput.files || []);
       nodes.workspaceFileUploadInput.value = "";
       if (!files.length) return;
+      let scope;
+      try {
+        scope = requireWorkspaceManagerScope();
+      } catch (error) {
+        const message = error.message || String(error);
+        clearWorkspaceManagerState(message);
+        nodes.workspaceFileList.innerHTML = '<div class="workspace-file-empty error">' + escapeHtml(message) + '</div>';
+        setStatus(message, true);
+        return;
+      }
       nodes.workspaceFileUploadBtn.disabled = true;
       nodes.workspaceFileState.textContent = "上传中...";
       try {
-        await uploadWorkspaceFiles(files, state.workspaceFileDirectory || ".");
+        await uploadWorkspaceFiles(
+          files,
+          state.workspaceFileDirectory || ".",
+          scope.sessionScoped,
+          scope
+        );
+        if (!workspaceManagerScopeIsCurrent(scope)) return;
         await loadWorkspaceFiles();
+        if (!workspaceManagerScopeIsCurrent(scope)) return;
         setStatus(files.length + " 个文件已上传");
       } catch (error) {
+        if (!workspaceManagerScopeIsCurrent(scope)) return;
         nodes.workspaceFileState.textContent = error.message || String(error);
         setStatus(error.message || String(error), true);
       } finally {
-        nodes.workspaceFileUploadBtn.disabled = false;
+        updateWorkspaceManagerAvailability();
       }
     }
 
@@ -7449,18 +7743,28 @@ export function renderAppHtml(): string {
       if (!button) return;
       const path = button.dataset.filePath || "";
       const action = button.dataset.fileAction;
+      let scope;
+      try {
+        scope = requireWorkspaceManagerScope();
+      } catch (error) {
+        const message = error.message || String(error);
+        clearWorkspaceManagerState(message);
+        nodes.workspaceFileList.innerHTML = '<div class="workspace-file-empty error">' + escapeHtml(message) + '</div>';
+        setStatus(message, true);
+        return;
+      }
       if (action === "open") {
         state.workspaceFileDirectory = path;
         await loadWorkspaceFiles();
         return;
       }
       if (action === "preview") {
-        await previewWorkspaceFile(path);
+        await previewWorkspaceFile(path, scope.sessionScoped, scope);
         return;
       }
       if (action === "download") {
         const link = document.createElement("a");
-        link.href = workspaceFileContentUrl(path, "attachment");
+        link.href = workspaceFileContentUrl(path, "attachment", scope.sessionScoped, scope);
         link.click();
         return;
       }
@@ -7474,16 +7778,20 @@ export function renderAppHtml(): string {
           confirmLabel: "移动",
           validate: (value) => !value.trim() ? "目标路径不能为空。" : "",
           onConfirm: async (value) => {
-            const response = await fetch("/api/v1/workspace/files", {
+            if (!workspaceManagerScopeIsCurrent(scope)) {
+              throw new Error("Workspace 对话空间已切换，请重试");
+            }
+            const response = await fetch(workspaceManagerUrl(scope, ""), {
               method: "PATCH",
               headers: { "content-type": "application/json" },
               body: JSON.stringify({ from: path, to: value.trim() })
             });
             const body = await response.json();
+            if (!workspaceManagerScopeIsCurrent(scope)) return;
             if (!response.ok) throw new Error(body.error || "文件移动失败");
           }
         });
-        if (moved) await loadWorkspaceFiles();
+        if (moved && workspaceManagerScopeIsCurrent(scope)) await loadWorkspaceFiles();
         return;
       }
       if (action === "delete") {
@@ -7492,26 +7800,44 @@ export function renderAppHtml(): string {
           description: "将从 Workspace 永久删除 “" + path + "”。",
           confirmLabel: "删除",
           onConfirm: async () => {
-            const response = await fetch("/api/v1/workspace/files", {
+            if (!workspaceManagerScopeIsCurrent(scope)) {
+              throw new Error("Workspace 对话空间已切换，请重试");
+            }
+            const response = await fetch(workspaceManagerUrl(scope, ""), {
               method: "DELETE",
               headers: { "content-type": "application/json" },
               body: JSON.stringify({ path })
             });
             const body = await response.json();
+            if (!workspaceManagerScopeIsCurrent(scope)) return;
             if (!response.ok) throw new Error(body.error || "文件删除失败");
           }
         });
-        if (deleted) await loadWorkspaceFiles();
+        if (deleted && workspaceManagerScopeIsCurrent(scope)) await loadWorkspaceFiles();
       }
     }
 
-    async function previewWorkspaceFile(path) {
+    async function previewWorkspaceFile(path, sessionScoped = false, requestScope = null) {
       nodes.workspaceFilePreviewTitle.textContent = path.split("/").pop() || path;
       nodes.workspaceFilePreviewContent.innerHTML = '<div class="workspace-file-empty">加载中...</div>';
       nodes.workspaceFilePreviewDialog.showModal();
       try {
-        const response = await fetch("/api/v1/workspace/files/preview?path=" + encodeURIComponent(path));
+        const previewUrl = requestScope
+          ? workspaceManagerUrl(
+              requestScope,
+              "/preview",
+              "path=" + encodeURIComponent(path)
+            )
+          : sessionScoped && state.activeConversationKind === "direct" &&
+          state.activeSessionId && !state.sessionDraft
+          ? withConversationSpace(
+              "/api/v1/sessions/" + encodeURIComponent(state.activeSessionId) +
+              "/workspace/files/preview?path=" + encodeURIComponent(path)
+            )
+          : "/api/v1/workspace/files/preview?path=" + encodeURIComponent(path);
+        const response = await fetch(previewUrl);
         const body = await response.json();
+        if (requestScope && !workspaceManagerScopeIsCurrent(requestScope)) return;
         if (!response.ok) throw new Error(body.error || "文件预览失败");
         const preview = body.preview || {};
         nodes.workspaceFilePreviewContent.innerHTML = "";
@@ -7521,12 +7847,12 @@ export function renderAppHtml(): string {
           nodes.workspaceFilePreviewContent.append(pre);
         } else if (preview.kind === "image") {
           const image = document.createElement("img");
-          image.src = workspaceFileContentUrl(path, "inline");
+          image.src = workspaceFileContentUrl(path, "inline", sessionScoped, requestScope);
           image.alt = preview.entry?.name || "文件预览";
           nodes.workspaceFilePreviewContent.append(image);
         } else if (preview.kind === "pdf") {
           const frame = document.createElement("iframe");
-          frame.src = workspaceFileContentUrl(path, "inline");
+          frame.src = workspaceFileContentUrl(path, "inline", sessionScoped, requestScope);
           frame.title = preview.entry?.name || "PDF 预览";
           nodes.workspaceFilePreviewContent.append(frame);
         } else if (preview.kind === "html") {
@@ -7544,7 +7870,7 @@ export function renderAppHtml(): string {
             const notice = document.createElement("div");
             notice.className = "workspace-html-preview-notice";
             const copy = document.createElement("span");
-            copy.innerHTML = "<strong>此页面包含交互脚本</strong>当前显示的是安全静态预览。可在隔离沙箱中运行脚本及其引用的 HTTPS 资源；页面仍无法读取 RP Agent 数据、提交表单、打开弹窗或跳转主页面。";
+            copy.innerHTML = "<strong>此页面包含交互脚本</strong>当前显示的是安全静态预览。可在隔离沙箱中运行脚本及其引用的 HTTPS 资源；页面仍无法读取 YourChar 数据、提交表单、打开弹窗或跳转主页面。";
             const runButton = document.createElement("button");
             runButton.type = "button";
             runButton.className = "secondary";
@@ -7561,7 +7887,7 @@ export function renderAppHtml(): string {
                 frame.setAttribute("sandbox", "");
                 frame.srcdoc = safeWorkspaceHtmlPreview(preview.content);
                 runButton.textContent = "运行交互预览";
-                copy.innerHTML = "<strong>此页面包含交互脚本</strong>当前显示的是安全静态预览。可在隔离沙箱中运行脚本及其引用的 HTTPS 资源；页面仍无法读取 RP Agent 数据、提交表单、打开弹窗或跳转主页面。";
+                copy.innerHTML = "<strong>此页面包含交互脚本</strong>当前显示的是安全静态预览。可在隔离沙箱中运行脚本及其引用的 HTTPS 资源；页面仍无法读取 YourChar 数据、提交表单、打开弹窗或跳转主页面。";
               }
             });
             notice.append(copy, runButton);
@@ -7573,6 +7899,7 @@ export function renderAppHtml(): string {
           nodes.workspaceFilePreviewContent.innerHTML = '<div class="workspace-file-empty">此文件类型不支持预览，可下载后查看。</div>';
         }
       } catch (error) {
+        if (requestScope && !workspaceManagerScopeIsCurrent(requestScope)) return;
         nodes.workspaceFilePreviewContent.innerHTML = '<div class="workspace-file-empty error">' + escapeHtml(error.message || String(error)) + '</div>';
       }
     }
@@ -7663,7 +7990,23 @@ export function renderAppHtml(): string {
       return "<!doctype html>" + documentValue.documentElement.outerHTML;
     }
 
-    function workspaceFileContentUrl(path, disposition) {
+    function workspaceFileContentUrl(path, disposition, sessionScoped = false, requestScope = null) {
+      if (requestScope?.sessionScoped) {
+        return workspaceManagerUrl(
+          requestScope,
+          "/content",
+          "path=" + encodeURIComponent(path) + "&disposition=" + disposition
+        );
+      }
+      if (
+        sessionScoped && state.activeConversationKind === "direct" &&
+        state.activeSessionId && !state.sessionDraft
+      ) {
+        return withConversationSpace(
+          "/api/v1/sessions/" + encodeURIComponent(state.activeSessionId) +
+          "/workspace/files/content?path=" + encodeURIComponent(path) + "&disposition=" + disposition
+        );
+      }
       return "/api/v1/workspace/files/content?path=" + encodeURIComponent(path) + "&disposition=" + disposition;
     }
 
@@ -7687,20 +8030,20 @@ export function renderAppHtml(): string {
       if (filePreviewTrigger) {
         event.preventDefault();
         const path = filePreviewTrigger.dataset.filePath || "";
-        if (isSafeWorkspacePath(path)) await previewWorkspaceFile(path);
+        if (isSafeWorkspacePath(path)) await previewWorkspaceFile(path, true);
         return;
       }
       const trigger = event.target.closest("[data-message-image]");
       if (!trigger) return;
       event.preventDefault();
       const path = trigger.dataset.imagePath || "";
-      const source = path ? workspaceFileContentUrl(path, "inline") : trigger.dataset.imageSrc || "";
+      const source = path ? workspaceFileContentUrl(path, "inline", true) : trigger.dataset.imageSrc || "";
       if (!source) return;
       const name = trigger.dataset.imageName || "图片预览";
       nodes.chatImageTitle.textContent = name;
       nodes.chatImagePreview.alt = name;
       nodes.chatImagePreview.src = source;
-      nodes.chatImageDownloadBtn.href = path ? workspaceFileContentUrl(path, "attachment") : source;
+      nodes.chatImageDownloadBtn.href = path ? workspaceFileContentUrl(path, "attachment", true) : source;
       nodes.chatImageDownloadBtn.target = path ? "" : "_blank";
       nodes.chatImageDownloadBtn.rel = path ? "" : "noopener noreferrer";
       if (path) nodes.chatImageDownloadBtn.setAttribute("download", "");
@@ -7716,17 +8059,27 @@ export function renderAppHtml(): string {
       nodes.chatImageDownloadBtn.removeAttribute("href");
     }
 
-    async function uploadWorkspaceFiles(files, directory) {
+    async function uploadWorkspaceFiles(files, directory, sessionScoped = false, requestScope = null) {
       const entries = [];
       for (const file of files) {
         if (file.size > 20 * 1024 * 1024) throw new Error(file.name + " 超过 20 MiB 上传限制");
         const query = new URLSearchParams({ directory, name: file.name });
-        const response = await fetch("/api/v1/workspace/files/upload?" + query.toString(), {
+        const uploadUrl = requestScope
+          ? workspaceManagerUrl(requestScope, "/upload", query.toString())
+          : sessionScoped && state.activeConversationKind === "direct" &&
+          state.activeSessionId && !state.sessionDraft
+          ? withConversationSpace(
+              "/api/v1/sessions/" + encodeURIComponent(state.activeSessionId) +
+              "/workspace/files/upload?" + query.toString()
+            )
+          : "/api/v1/workspace/files/upload?" + query.toString();
+        const response = await fetch(uploadUrl, {
           method: "POST",
           headers: { "content-type": file.type || "application/octet-stream" },
           body: file
         });
         const body = await response.json();
+        if (requestScope && !workspaceManagerScopeIsCurrent(requestScope)) return entries;
         if (!response.ok) throw new Error(body.error || (file.name + " 上传失败"));
         entries.push(body.entry);
       }
@@ -8183,6 +8536,248 @@ export function renderAppHtml(): string {
       if (nodes.scheduleEndField.hidden) nodes.scheduleEnd.value = "";
     }
 
+
+    function withConversationSpace(
+      path,
+      conversationSpace = state.conversationSpace,
+      characterId = state.selectedCharacterId
+    ) {
+      const separator = path.includes("?") ? "&" : "?";
+      const scoped = path + separator + "conversationSpace=" + encodeURIComponent(conversationSpace);
+      if (conversationSpace !== "secret" || !characterId) return scoped;
+      return scoped + "&characterId=" + encodeURIComponent(characterId);
+    }
+
+    function captureMemoryConversationScope() {
+      const conversationSpace = state.conversationSpace;
+      const characterId = state.selectedCharacterId;
+      if (conversationSpace === "secret" && !characterId) return null;
+      let sessionId = "";
+      if (conversationSpace === "secret") {
+        const session = state.sessions.find((entry) => entry.id === state.activeSessionId);
+        if (
+          state.activeConversationKind !== "direct" || state.sessionDraft ||
+          !state.activeSessionId || !session || session.conversationSpace !== "secret" ||
+          session.characterId !== characterId
+        ) return null;
+        sessionId = session.id;
+      }
+      return {
+        epoch: state.conversationSpaceEpoch,
+        conversationSpace,
+        characterId,
+        sessionId
+      };
+    }
+
+    function memoryConversationScopeMatches(scope) {
+      if (
+        !scope || scope.epoch !== state.conversationSpaceEpoch ||
+        scope.conversationSpace !== state.conversationSpace ||
+        scope.characterId !== state.selectedCharacterId
+      ) return false;
+      if (scope.conversationSpace !== "secret") return true;
+      const session = state.sessions.find((entry) => entry.id === state.activeSessionId);
+      return Boolean(
+        session && state.activeConversationKind === "direct" && !state.sessionDraft &&
+        session.id === scope.sessionId && session.conversationSpace === "secret" &&
+        session.characterId === scope.characterId
+      );
+    }
+
+    function captureCharacterMemoryScope() {
+      const scope = captureMemoryConversationScope();
+      const workspaceCharacterId = state.workspaceCharacterId;
+      if (!scope || !workspaceCharacterId) return null;
+      if (scope.conversationSpace === "secret" && workspaceCharacterId !== scope.characterId) return null;
+      return { ...scope, workspaceCharacterId };
+    }
+
+    function characterMemoryScopeMatches(scope) {
+      return memoryConversationScopeMatches(scope) &&
+        scope.workspaceCharacterId === state.workspaceCharacterId &&
+        (scope.conversationSpace !== "secret" || scope.workspaceCharacterId === scope.characterId);
+    }
+
+    function memoryMatchesConversationScope(memory, scope) {
+      if (!memory || !scope) return false;
+      if (scope.conversationSpace === "secret") {
+        return memory.conversationSpace === "secret" &&
+          memory.secretOwnerCharacterId === scope.characterId;
+      }
+      return memory.conversationSpace !== "secret";
+    }
+
+    function clearMemoryConversationState() {
+      state.memories = [];
+      state.managedMemories = [];
+      state.personProfiles = [];
+      state.memoryJobs = [];
+      state.retrievalPreview = null;
+      nodes.memoryList.innerHTML = "";
+      nodes.memoryState.textContent = "";
+      nodes.managedMemoryList.innerHTML = "";
+      nodes.managedMemoryActionState.textContent = "";
+      nodes.memoryCoordinatorState.textContent = "";
+      nodes.memoryJobCount.textContent = "";
+      nodes.memoryJobList.innerHTML = "";
+      nodes.personProfileCount.textContent = "";
+      nodes.personProfileList.innerHTML = "";
+      nodes.retrievalPreviewState.textContent = "";
+      nodes.retrievalPreviewResults.innerHTML = "";
+      nodes.retrievalPreviewResults.hidden = true;
+      if (nodes.memoryEditorDialog.open) nodes.memoryEditorDialog.close();
+      if (actionDialogState) finishSessionActionDialog(false);
+      nodes.sessionActionDescription.textContent = "";
+      nodes.sessionActionInput.value = "";
+      nodes.memoryForm.reset();
+      nodes.memorySearch.value = "";
+      nodes.managedMemoryQuery.value = "";
+      nodes.managedMemoryCreateKey.value = "";
+      nodes.managedMemoryCreateContent.value = "";
+      nodes.retrievalPreviewQuery.value = "";
+    }
+
+    function conversationSpaceIdle() {
+      return !state.busy && !state.uploadingAttachments && !state.contextCompacting &&
+        !state.privateInboxRunning && !state.privateInboxMessages.some((message) =>
+          message.status === "queued" || message.status === "processing"
+        );
+    }
+
+    function updatePrivateModeChrome() {
+      const secret = state.conversationSpace === "secret";
+      const directChat = state.uiMode === "normal" && state.activeConversationKind === "direct";
+      document.body.dataset.conversationSpace = state.conversationSpace;
+      nodes.privateModeToggle.hidden = !directChat;
+      nodes.privateModeToggle.disabled = !state.selectedCharacterId || !conversationSpaceIdle();
+      nodes.privateModeToggle.setAttribute("aria-pressed", String(secret));
+      nodes.privateModeToggle.title = secret ? "关闭私密模式" : "开启私密模式";
+      nodes.privateModeToggle.setAttribute("aria-label", nodes.privateModeToggle.title);
+      nodes.privateModeToggle.innerHTML = '<i data-lucide="' + (secret ? "lock-keyhole" : "unlock-keyhole") +
+        '" aria-hidden="true"></i><span>' + (secret ? "私密中" : "私密") + '</span>';
+      nodes.newConversationGroupBtn.hidden = secret;
+      refreshIcons();
+    }
+
+    function clearConversationSpaceTransientState() {
+      void clearAgentSkillInstallStage({ deleteRemote: true });
+      closePrivateInboxEvents();
+      if (state.privateTypingHeartbeatTimer) window.clearTimeout(state.privateTypingHeartbeatTimer);
+      state.privateTypingHeartbeatTimer = null;
+      state.messages = [];
+      state.sessions = [];
+      state.archivedSessions = [];
+      state.unreadConversations = [];
+      state.unreadProactiveMessages = [];
+      state.activeProactiveMessages = [];
+      state.debugTracesByScope = { conversation: [], background: [] };
+      state.debugEconomics = [];
+      state.debugProactiveMessages = [];
+      state.selectedTraceIndexes = { conversation: 0, background: 0 };
+      state.selectedEconomicsIndex = 0;
+      clearMemoryConversationState();
+      nodes.textInput.value = "";
+      nodes.messageEditText.value = "";
+      closeMessageEditDialog();
+      closeCharacterChannel();
+      closeChatImagePreview();
+      if (nodes.moduleDetailDialog.open) nodes.moduleDetailDialog.close();
+      nodes.moduleDetailTitle.textContent = "模块详情";
+      nodes.moduleDetailContent.innerHTML = "";
+      if (nodes.workspaceFilePreviewDialog.open) nodes.workspaceFilePreviewDialog.close();
+      nodes.workspaceFilePreviewContent.innerHTML = "";
+      clearWorkspaceManagerState();
+      if (nodes.contextBudgetDialog.open) nodes.contextBudgetDialog.close();
+      state.worldConversations = [];
+      state.characterChannels = [];
+      state.worlds = [];
+      state.pendingAttachments = [];
+      state.attachmentUploadQueue = [];
+      state.privateInboxMessages = [];
+      state.privateInboxRunning = false;
+      state.contextBudget = null;
+      state.characterLiveState = null;
+      state.characterFunction = null;
+      state.characterFunctionOpenCapabilities = [];
+      state.characterSkillVersions = [];
+      state.characterSkillViewingHistory = false;
+      state.characterFunctionPollAttempts = 0;
+      clearCharacterFunctionPoll();
+      state.lastTurnStatus = null;
+      state.lastTurnCanRetry = false;
+      state.activeSessionId = "";
+      state.activeWorldId = "";
+      state.activeGroupId = "";
+      state.activeConversationKind = "direct";
+      state.sessionDraft = false;
+      state.conversationBatchMode = false;
+      state.selectedSessionIds.clear();
+      resetCharacterCollaborationState();
+      clearInteractionState();
+      clearConversationScene();
+      renderCharacterFunction();
+      renderAttachmentQueue();
+      updateContextBudgetChrome();
+      updateRetryState();
+      renderSessionOptions();
+      renderConversationList();
+      renderMessages();
+      nodes.traceIndex.innerHTML = "";
+      nodes.traceContent.textContent = "";
+      nodes.traceDetail.hidden = true;
+      nodes.traceEmpty.hidden = false;
+      nodes.traceEmpty.textContent = "切换对话空间后请重新加载诊断数据";
+      nodes.initiativeDebugList.innerHTML = "";
+      nodes.initiativeSummary.textContent = "";
+    }
+
+    async function togglePrivateMode() {
+      if (state.activeConversationKind !== "direct") return;
+      if (!conversationSpaceIdle()) {
+        setStatus("当前消息仍在排队或生成，结束后才能切换私密模式", true);
+        return;
+      }
+      const characterId = state.selectedCharacterId;
+      if (!characterId) {
+        setStatus("请先选择一个角色，再切换私密模式", true);
+        return;
+      }
+      const nextSpace = state.conversationSpace === "secret" ? "normal" : "secret";
+      const epoch = ++state.conversationSpaceEpoch;
+      clearConversationSpaceTransientState();
+      state.conversationSpace = nextSpace;
+      state.selectedCharacterId = characterId;
+      nodes.chatCharacterSelect.value = characterId;
+      updatePrivateModeChrome();
+      updateWorkspaceManagerAvailability();
+      updateChatIdentity();
+      setStatus(nextSpace === "secret" ? "正在打开私密对话..." : "正在返回普通对话...");
+      try {
+        const response = await fetch("/api/v1/direct-conversations", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ characterId, conversationSpace: nextSpace })
+        });
+        const body = await response.json();
+        if (!response.ok) throw new Error(body.error || "对话空间切换失败");
+        if (epoch !== state.conversationSpaceEpoch || state.conversationSpace !== nextSpace) return;
+        await refreshConversationMetadata(epoch);
+        if (epoch !== state.conversationSpaceEpoch || state.conversationSpace !== nextSpace) return;
+        const session = state.sessions.find((entry) => entry.id === body.session?.id);
+        if (!session) throw new Error("目标对话未出现在当前空间");
+        await applySession(session, epoch);
+        if (epoch !== state.conversationSpaceEpoch || state.conversationSpace !== nextSpace) return;
+        setStatus(nextSpace === "secret" ? "私密模式已开启" : "已返回普通模式");
+      } catch (error) {
+        if (epoch !== state.conversationSpaceEpoch || state.conversationSpace !== nextSpace) return;
+        startNewSession();
+        setStatus(error.message || String(error), true);
+      } finally {
+        updatePrivateModeChrome();
+      }
+    }
+
 	    async function initializeChat() {
 	      await Promise.all([
 	        loadModelProfiles(),
@@ -8194,20 +8789,22 @@ export function renderAppHtml(): string {
       await pollIncomingMessages();
     }
 
-    async function refreshConversationMetadata() {
+    async function refreshConversationMetadata(expectedEpoch = state.conversationSpaceEpoch) {
+      const requestedSpace = state.conversationSpace;
       const [response, worldResponse, channelResponse] = await Promise.all([
-        fetch("/api/v1/sessions"),
-        fetch("/api/v1/world-conversations"),
-        fetch("/api/v1/character-channels")
+        fetch(withConversationSpace("/api/v1/sessions", requestedSpace)),
+        requestedSpace === "normal" ? fetch("/api/v1/world-conversations") : Promise.resolve(null),
+        requestedSpace === "normal" ? fetch("/api/v1/character-channels") : Promise.resolve(null)
       ]);
       const [body, worldBody, channelBody] = await Promise.all([
         response.json(),
-        worldResponse.json(),
-        channelResponse.json()
+        worldResponse ? worldResponse.json() : Promise.resolve({ conversations: [] }),
+        channelResponse ? channelResponse.json() : Promise.resolve({ channels: [] })
       ]);
       if (!response.ok) throw new Error(body.error || "会话状态刷新失败");
-      if (!worldResponse.ok) throw new Error(worldBody.error || "世界会话状态刷新失败");
-      if (!channelResponse.ok) throw new Error(channelBody.error || "角色通信状态刷新失败");
+      if (worldResponse && !worldResponse.ok) throw new Error(worldBody.error || "世界会话状态刷新失败");
+      if (channelResponse && !channelResponse.ok) throw new Error(channelBody.error || "角色通信状态刷新失败");
+      if (expectedEpoch !== state.conversationSpaceEpoch || requestedSpace !== state.conversationSpace) return false;
       state.sessions = Array.isArray(body.sessions)
         ? body.sessions.slice().sort((left, right) => String(right.updatedAt || "").localeCompare(String(left.updatedAt || "")))
         : [];
@@ -8220,30 +8817,34 @@ export function renderAppHtml(): string {
       renderSessionOptions();
       renderConversationList();
       renderCharacterCards();
+      return true;
     }
 
     async function pollIncomingMessages() {
       try {
+        const requestedSpace = state.conversationSpace;
+        const expectedEpoch = state.conversationSpaceEpoch;
         const previousCounts = new Map(state.unreadConversations.map((entry) => [entry.sessionId, Number(entry.unreadCount || 0)]));
         const previousProactive = new Set(state.unreadProactiveMessages.map((message) => message.id));
         const previousWorldCounts = new Map(state.worldConversations.map((entry) => [entry.worldId, Number(entry.unreadCount || 0)]));
         const previousChannelCounts = new Map(state.characterChannels.map((entry) => [entry.id, Number(entry.unreadCount || 0)]));
         const [unreadResponse, proactiveResponse, worldResponse, channelResponse] = await Promise.all([
-          fetch("/api/v1/conversation-unread"),
-          fetch("/api/v1/proactive-messages?unreadOnly=1&limit=100"),
-          fetch("/api/v1/world-conversations"),
-          fetch("/api/v1/character-channels")
+          fetch(withConversationSpace("/api/v1/conversation-unread", requestedSpace)),
+          requestedSpace === "normal" ? fetch("/api/v1/proactive-messages?unreadOnly=1&limit=100") : Promise.resolve(null),
+          requestedSpace === "normal" ? fetch("/api/v1/world-conversations") : Promise.resolve(null),
+          requestedSpace === "normal" ? fetch("/api/v1/character-channels") : Promise.resolve(null)
         ]);
         const [unreadBody, proactiveBody, worldBody, channelBody] = await Promise.all([
           unreadResponse.json(),
-          proactiveResponse.json(),
-          worldResponse.json(),
-          channelResponse.json()
+          proactiveResponse ? proactiveResponse.json() : Promise.resolve({ messages: [] }),
+          worldResponse ? worldResponse.json() : Promise.resolve({ conversations: [] }),
+          channelResponse ? channelResponse.json() : Promise.resolve({ channels: [] })
         ]);
         if (!unreadResponse.ok) throw new Error(unreadBody.error || "未读消息状态加载失败");
-        if (!proactiveResponse.ok) throw new Error(proactiveBody.error || "主动消息状态加载失败");
-        if (!worldResponse.ok) throw new Error(worldBody.error || "世界未读状态加载失败");
-        if (!channelResponse.ok) throw new Error(channelBody.error || "角色通信状态加载失败");
+        if (proactiveResponse && !proactiveResponse.ok) throw new Error(proactiveBody.error || "主动消息状态加载失败");
+        if (worldResponse && !worldResponse.ok) throw new Error(worldBody.error || "世界未读状态加载失败");
+        if (channelResponse && !channelResponse.ok) throw new Error(channelBody.error || "角色通信状态加载失败");
+        if (expectedEpoch !== state.conversationSpaceEpoch || requestedSpace !== state.conversationSpace) return;
         state.unreadConversations = Array.isArray(unreadBody.conversations) ? unreadBody.conversations : [];
         state.unreadProactiveMessages = Array.isArray(proactiveBody.messages) ? proactiveBody.messages : [];
         state.worldConversations = Array.isArray(worldBody.conversations) ? worldBody.conversations : [];
@@ -8257,7 +8858,8 @@ export function renderAppHtml(): string {
         const addedChannels = state.characterChannels.filter((entry) =>
           Number(entry.unreadCount || 0) > Number(previousChannelCounts.get(entry.id) || 0));
         if (addedConversations.length || addedProactive.length || addedWorlds.length || addedChannels.length) {
-          await refreshConversationMetadata();
+          await refreshConversationMetadata(expectedEpoch);
+          if (expectedEpoch !== state.conversationSpaceEpoch || requestedSpace !== state.conversationSpace) return;
           if (nodes.characterChannelDialog.open && state.activeCharacterChannelId &&
               addedChannels.some((entry) => entry.id === state.activeCharacterChannelId)) {
             await openCharacterChannel(state.activeCharacterChannelId, true);
@@ -8313,7 +8915,9 @@ export function renderAppHtml(): string {
 
     async function markConversationRead(sessionId) {
       if (!sessionId) return;
-      const response = await fetch("/api/v1/sessions/" + encodeURIComponent(sessionId) + "/read", { method: "POST" });
+      const response = await fetch(withConversationSpace(
+        "/api/v1/sessions/" + encodeURIComponent(sessionId) + "/read"
+      ), { method: "POST" });
       if (!response.ok) return;
       state.unreadConversations = state.unreadConversations.filter((entry) => entry.sessionId !== sessionId);
       state.unreadProactiveMessages = state.unreadProactiveMessages.filter((message) => message.sessionId !== sessionId);
@@ -8347,20 +8951,23 @@ export function renderAppHtml(): string {
     }
 
     async function loadSessions() {
+      const requestedSpace = state.conversationSpace;
+      const expectedEpoch = state.conversationSpaceEpoch;
       try {
         const [response, worldResponse, channelResponse] = await Promise.all([
-          fetch("/api/v1/sessions"),
-          fetch("/api/v1/world-conversations"),
-          fetch("/api/v1/character-channels")
+          fetch(withConversationSpace("/api/v1/sessions", requestedSpace)),
+          requestedSpace === "normal" ? fetch("/api/v1/world-conversations") : Promise.resolve(null),
+          requestedSpace === "normal" ? fetch("/api/v1/character-channels") : Promise.resolve(null)
         ]);
         const [body, worldBody, channelBody] = await Promise.all([
           response.json(),
-          worldResponse.json(),
-          channelResponse.json()
+          worldResponse ? worldResponse.json() : Promise.resolve({ conversations: [] }),
+          channelResponse ? channelResponse.json() : Promise.resolve({ channels: [] })
         ]);
         if (!response.ok) throw new Error(body.error || "会话加载失败");
-        if (!worldResponse.ok) throw new Error(worldBody.error || "世界会话加载失败");
-        if (!channelResponse.ok) throw new Error(channelBody.error || "角色通信加载失败");
+        if (worldResponse && !worldResponse.ok) throw new Error(worldBody.error || "世界会话加载失败");
+        if (channelResponse && !channelResponse.ok) throw new Error(channelBody.error || "角色通信加载失败");
+        if (expectedEpoch !== state.conversationSpaceEpoch || requestedSpace !== state.conversationSpace) return;
         state.sessions = Array.isArray(body.sessions)
           ? body.sessions.slice().sort((left, right) => String(right.updatedAt || "").localeCompare(String(left.updatedAt || "")))
           : [];
@@ -8379,7 +8986,7 @@ export function renderAppHtml(): string {
         }
         const current = state.sessions.find((entry) => entry.id === state.activeSessionId);
         if (current) {
-          await applySession(current);
+          await applySession(current, expectedEpoch);
           return;
         }
         const recentBound = state.sessions.find((entry) => entry.characterId);
@@ -8389,7 +8996,7 @@ export function renderAppHtml(): string {
           return;
         }
         if (recentBound) {
-          await applySession(recentBound);
+          await applySession(recentBound, expectedEpoch);
           return;
         }
         if (state.worldConversations[0]) {
@@ -8398,6 +9005,7 @@ export function renderAppHtml(): string {
         }
         startNewSession();
       } catch (error) {
+        if (expectedEpoch !== state.conversationSpaceEpoch || requestedSpace !== state.conversationSpace) return;
         setStatus(error.message || String(error), true);
         if (!state.activeSessionId) startNewSession();
       }
@@ -8406,6 +9014,7 @@ export function renderAppHtml(): string {
     function startNewSession() {
       if (state.busy) return;
       closePrivateInboxEvents();
+      if (state.conversationSpace === "secret") clearWorkspaceManagerState();
       state.activeConversationKind = "direct";
       state.activeGroupId = "";
       state.activeWorldId = "";
@@ -8429,6 +9038,8 @@ export function renderAppHtml(): string {
       renderConversationList();
       updateSessionActionState();
       updateChatIdentity();
+      updatePrivateModeChrome();
+      updateWorkspaceManagerAvailability();
       clearConversationScene();
       setStatus(state.selectedCharacterId ? "新会话已准备" : "点击会话列表中的 + 开始新对话");
     }
@@ -8456,6 +9067,7 @@ export function renderAppHtml(): string {
         ? state.activeWorldId
         : state.worldConversations[0]?.worldId || "";
       nodes.newConversationError.textContent = state.characters.length ? "" : "请先在角色页创建角色。";
+      nodes.newConversationGroupBtn.hidden = state.conversationSpace === "secret";
       setNewConversationKind("direct");
       nodes.newConversationDialog.showModal();
       refreshIcons();
@@ -8470,7 +9082,7 @@ export function renderAppHtml(): string {
     }
 
     function setNewConversationKind(kind) {
-      state.newConversationKind = kind === "world" ? "world" : "direct";
+      state.newConversationKind = kind === "world" && state.conversationSpace === "normal" ? "world" : "direct";
       const world = state.newConversationKind === "world";
       nodes.newConversationDirectBtn.classList.toggle("active", !world);
       nodes.newConversationGroupBtn.classList.toggle("active", world);
@@ -8512,26 +9124,37 @@ export function renderAppHtml(): string {
         nodes.newConversationError.textContent = "请选择角色。";
         return;
       }
+      if (state.conversationSpace === "secret" && state.selectedCharacterId !== characterId) {
+        ++state.conversationSpaceEpoch;
+        clearConversationSpaceTransientState();
+      }
       state.selectedCharacterId = characterId;
       state.newConversationPreferredCharacterId = "";
       nodes.chatCharacterSelect.value = characterId;
       nodes.modeSelect.value = "sms";
+      updatePrivateModeChrome();
+      updateChatIdentity();
       nodes.createConversationBtn.disabled = true;
+      const expectedEpoch = state.conversationSpaceEpoch;
+      const requestedSpace = state.conversationSpace;
       try {
         const response = await fetch("/api/v1/direct-conversations", {
           method: "POST",
           headers: { "content-type": "application/json" },
-          body: JSON.stringify({ characterId })
+          body: JSON.stringify({ characterId, conversationSpace: requestedSpace })
         });
         const body = await response.json();
         if (!response.ok) throw new Error(body.error || "私聊打开失败");
-        await refreshConversationMetadata();
+        if (expectedEpoch !== state.conversationSpaceEpoch || requestedSpace !== state.conversationSpace) return;
+        await refreshConversationMetadata(expectedEpoch);
+        if (expectedEpoch !== state.conversationSpaceEpoch) return;
         const session = state.sessions.find((entry) => entry.id === body.session?.id);
         if (!session) throw new Error("私聊会话未出现在会话列表中");
         closeNewConversationDialog();
-        await applySession(session);
+        await applySession(session, expectedEpoch);
         requestAnimationFrame(() => nodes.textInput.focus());
       } catch (error) {
+        if (expectedEpoch !== state.conversationSpaceEpoch || requestedSpace !== state.conversationSpace) return;
         nodes.newConversationError.textContent = error.message || String(error);
         nodes.createConversationBtn.disabled = false;
       }
@@ -8543,11 +9166,21 @@ export function renderAppHtml(): string {
       await applySession(session);
     }
 
-    async function applySession(session) {
+    async function applySession(session, expectedEpoch = state.conversationSpaceEpoch) {
+      const sessionSpace = session.conversationSpace === "secret" ? "secret" : "normal";
+      if (expectedEpoch !== state.conversationSpaceEpoch || sessionSpace !== state.conversationSpace) return;
       const changedSession = state.activeSessionId !== session.id || state.activeConversationKind !== "direct";
       if (changedSession) closePrivateInboxEvents();
-      if (changedSession) resetCharacterCollaborationState(session.id);
-      else ensureCharacterCollaborationSession(session.id);
+      if (changedSession && state.conversationSpace === "secret") {
+        clearWorkspaceManagerState();
+        if (state.selectedCharacterId !== (session.characterId || "")) clearMemoryConversationState();
+      }
+      if (state.conversationSpace === "normal") {
+        if (changedSession) resetCharacterCollaborationState(session.id);
+        else ensureCharacterCollaborationSession(session.id);
+      } else {
+        resetCharacterCollaborationState();
+      }
       state.activeConversationKind = "direct";
       state.activeGroupId = "";
       state.activeWorldId = "";
@@ -8562,7 +9195,7 @@ export function renderAppHtml(): string {
       updateRetryState();
       nodes.modeSelect.value = "sms";
       state.selectedCharacterId = session.characterId || "";
-      state.interactionState = session.interactionPresence ? {
+      state.interactionState = state.conversationSpace === "normal" && session.interactionPresence ? {
         presence: session.interactionPresence,
         location: session.interactionLocation || "",
         continuity: "canonical",
@@ -8574,18 +9207,24 @@ export function renderAppHtml(): string {
       renderSessionOptions();
       updateSessionActionState();
       updateChatIdentity();
+      updatePrivateModeChrome();
+      updateWorkspaceManagerAvailability();
       setConversationListOpen(false);
       renderConversationList();
+      if (state.uiMode === "management" && state.managementTab === "files") void loadWorkspaceFiles();
       if (session.characterId) openPrivateInboxEvents(session.id);
-      await refreshSessionMessages(false);
+      await refreshSessionMessages(false, expectedEpoch);
+      if (expectedEpoch !== state.conversationSpaceEpoch) return;
       if (isConversationVisible(session.id)) await markConversationRead(session.id);
-      await loadConversationScene();
+      if (state.conversationSpace === "normal") await loadConversationScene();
+      else clearConversationScene();
       if (!session.characterId) {
         setStatus("这是未绑定角色的旧会话，仅供查看；请新建会话后继续。", true);
       }
     }
 
     async function applyWorldConversation(conversation) {
+      if (state.conversationSpace !== "normal") return;
       closePrivateInboxEvents();
       resetCharacterCollaborationState();
       state.activeConversationKind = "world";
@@ -8612,6 +9251,7 @@ export function renderAppHtml(): string {
       updateRetryState();
       updateSessionActionState();
       updateChatIdentity();
+      updatePrivateModeChrome();
       setConversationListOpen(false);
       renderConversationList();
       clearConversationScene();
@@ -8827,17 +9467,19 @@ export function renderAppHtml(): string {
 
     function renderRoleConversationSection() {
       if (!state.sessions.length) return "";
+      const secret = state.conversationSpace === "secret";
+      const roleLabel = secret ? "私密角色" : "角色";
       const sectionKey = "__roles__";
       const collapsed = state.collapsedConversationGroups.has(sectionKey);
       const unreadCount = state.sessions.reduce((total, session) => total + conversationUnreadCount(session.id), 0);
       const allSelected = state.sessions.length > 0 && state.sessions.every((session) => state.selectedSessionIds.has(session.id));
       const head = state.conversationBatchMode
         ? '<label class="conversation-group-head batch"><input type="checkbox" data-role-conversations-select-all aria-label="选择全部角色会话"' + (allSelected ? ' checked' : '') + ' />' +
-          '<span class="conversation-group-avatar"><i data-lucide="message-circle" aria-hidden="true"></i></span>' +
-          '<span class="conversation-group-copy"><strong>角色</strong><span>' + state.sessions.length + ' 个私聊</span></span></label>'
+          '<span class="conversation-group-avatar"><i data-lucide="' + (secret ? "lock-keyhole" : "message-circle") + '" aria-hidden="true"></i></span>' +
+          '<span class="conversation-group-copy"><strong>' + roleLabel + '</strong><span>' + state.sessions.length + ' 个私聊</span></span></label>'
         : '<button class="conversation-group-head" type="button" data-conversation-group-toggle="' + sectionKey + '" aria-expanded="' + String(!collapsed) + '">' +
-          '<span class="conversation-group-avatar"><i data-lucide="message-circle" aria-hidden="true"></i></span>' +
-          '<span class="conversation-group-copy"><span class="conversation-group-title"><strong>角色</strong>' +
+          '<span class="conversation-group-avatar"><i data-lucide="' + (secret ? "lock-keyhole" : "message-circle") + '" aria-hidden="true"></i></span>' +
+          '<span class="conversation-group-copy"><span class="conversation-group-title"><strong>' + roleLabel + '</strong>' +
           conversationUnreadBadge(unreadCount, "角色未读消息") + '</span><span>' + state.sessions.length + ' 个私聊</span></span>' +
           '<i class="conversation-group-chevron" data-lucide="chevron-down" aria-hidden="true"></i></button>';
       const items = state.sessions.map((session) => renderConversationItem(session)).join("");
@@ -8959,7 +9601,14 @@ export function renderAppHtml(): string {
           const response = await fetch("/api/v1/conversations/batch", {
             method: "POST",
             headers: { "content-type": "application/json" },
-            body: JSON.stringify({ action, sessionIds, groupIds: [], confirmation: deleting ? value : undefined })
+            body: JSON.stringify({
+              action,
+              sessionIds,
+              groupIds: [],
+              confirmation: deleting ? value : undefined,
+              conversationSpace: state.conversationSpace,
+              characterId: state.conversationSpace === "secret" ? state.selectedCharacterId : undefined
+            })
           });
           const body = await response.json();
           if (!response.ok) throw new Error(body.error || (deleting ? "批量删除失败" : "批量归档失败"));
@@ -9127,7 +9776,9 @@ export function renderAppHtml(): string {
         description: "归档“" + (current?.title || "当前会话") + "”后，将切换到最近的可用会话。",
         confirmLabel: "归档",
         onConfirm: async () => {
-          const response = await fetch("/api/v1/sessions/" + encodeURIComponent(archivedId) + "/archive", {
+          const response = await fetch(withConversationSpace(
+            "/api/v1/sessions/" + encodeURIComponent(archivedId) + "/archive"
+          ), {
             method: "POST"
           });
           const body = await response.json();
@@ -9152,7 +9803,7 @@ export function renderAppHtml(): string {
 
     async function loadArchivedSessions() {
       try {
-        const response = await fetch("/api/v1/sessions?includeArchived=1");
+        const response = await fetch(withConversationSpace("/api/v1/sessions?includeArchived=1"));
         const body = await response.json();
         if (!response.ok) throw new Error(body.error || "归档会话加载失败");
         state.archivedSessions = (Array.isArray(body.sessions) ? body.sessions : [])
@@ -9217,7 +9868,9 @@ export function renderAppHtml(): string {
       if (!session) return;
       if (button.dataset.archivedAction === "restore") {
         try {
-          const response = await fetch("/api/v1/sessions/" + encodeURIComponent(session.id) + "/restore", { method: "POST" });
+          const response = await fetch(withConversationSpace(
+            "/api/v1/sessions/" + encodeURIComponent(session.id) + "/restore"
+          ), { method: "POST" });
           const body = await response.json();
           if (!response.ok) throw new Error(body.error || "恢复失败");
           nodes.archivedSessionsDialog.close();
@@ -9337,7 +9990,17 @@ export function renderAppHtml(): string {
           const response = await fetch("/api/v1/sessions/" + encodeURIComponent(session.id), {
             method: deleting ? "DELETE" : "PATCH",
             headers: { "content-type": "application/json" },
-            body: JSON.stringify(deleting ? { confirmation: value } : { title: value.trim() })
+            body: JSON.stringify(deleting
+              ? {
+                  confirmation: value,
+                  conversationSpace: state.conversationSpace,
+                  characterId: state.conversationSpace === "secret" ? state.selectedCharacterId : undefined
+                }
+              : {
+                  title: value.trim(),
+                  conversationSpace: state.conversationSpace,
+                  characterId: state.conversationSpace === "secret" ? state.selectedCharacterId : undefined
+                })
           });
           const body = await response.json();
           if (!response.ok) throw new Error(body.error || (deleting ? "永久删除失败" : "重命名失败"));
@@ -9521,11 +10184,12 @@ export function renderAppHtml(): string {
       const character = state.characters.find((entry) => entry.id === state.selectedCharacterId);
       nodes.conversationHeaderAvatar.classList.remove("group");
       nodes.conversationCharacter.textContent = character?.name || "未选择角色";
-      nodes.conversationMode.textContent = "角色私聊";
+      nodes.conversationMode.textContent = state.conversationSpace === "secret" ? "私密对话" : "角色私聊";
       nodes.conversationHeaderAvatar.style.setProperty("--avatar-hue", avatarHue(character?.name || "角色"));
       nodes.conversationHeaderAvatar.innerHTML = avatarImageOrInitial(character?.avatarUrl, character?.name, "角");
       setHeaderCharacterProfileTarget(character);
       updateInteractionChrome();
+      updatePrivateModeChrome();
       renderConversationList();
       renderMessages();
     }
@@ -9613,7 +10277,7 @@ export function renderAppHtml(): string {
       updateContextBudgetChrome();
       try {
         const response = await fetch(
-          "/api/v1/sessions/" + encodeURIComponent(requestedSessionId) + "/compact",
+          withConversationSpace("/api/v1/sessions/" + encodeURIComponent(requestedSessionId) + "/compact"),
           { method: "POST" }
         );
         const body = await response.json().catch(() => ({}));
@@ -9641,10 +10305,15 @@ export function renderAppHtml(): string {
         return;
       }
       const available = state.uiMode === "normal" && state.activeConversationKind === "direct" &&
-        !state.sessionDraft && nodes.modeSelect.value === "sms" && Boolean(state.interactionState);
+        state.conversationSpace === "normal" && !state.sessionDraft && nodes.modeSelect.value === "sms" &&
+        Boolean(state.interactionState);
       nodes.interactionToggleBtn.hidden = !available;
       nodes.interactionUndoBtn.hidden = !available || !state.interactionCanUndo;
       if (!available) {
+        if (state.activeConversationKind === "direct" && state.conversationSpace === "secret") {
+          nodes.conversationMode.textContent = "私密对话";
+          nodes.conversationScene.hidden = true;
+        }
         nodes.textInput.placeholder = nodes.modeSelect.value === "rp" ? "继续当前剧情" : "发消息";
         return;
       }
@@ -9762,7 +10431,7 @@ export function renderAppHtml(): string {
       updateInteractionChrome();
       try {
         const response = await fetch(
-          "/api/v1/sessions/" + encodeURIComponent(state.activeSessionId) + "/interaction",
+          withConversationSpace("/api/v1/sessions/" + encodeURIComponent(state.activeSessionId) + "/interaction"),
           {
             method: "POST",
             headers: { "content-type": "application/json" },
@@ -9807,7 +10476,7 @@ export function renderAppHtml(): string {
     }
 
     async function loadConversationScene(preserveDialog = false) {
-      if (nodes.modeSelect.value !== "rp") {
+      if (state.conversationSpace !== "normal" || nodes.modeSelect.value !== "rp") {
         state.currentScene = null;
         nodes.sceneInfoBtn.hidden = true;
         if (!preserveDialog && nodes.sceneInfoDialog.open) nodes.sceneInfoDialog.close();
@@ -9822,13 +10491,21 @@ export function renderAppHtml(): string {
         !state.activeSessionId ||
         !state.selectedCharacterId
       ) return;
+      const requestedSessionId = state.activeSessionId;
+      const expectedEpoch = state.conversationSpaceEpoch;
       try {
         const response = await fetch(
-          "/api/v1/sessions/" + encodeURIComponent(state.activeSessionId) +
-          "/scene?characterId=" + encodeURIComponent(state.selectedCharacterId)
+          withConversationSpace(
+            "/api/v1/sessions/" + encodeURIComponent(requestedSessionId) +
+            "/scene?characterId=" + encodeURIComponent(state.selectedCharacterId)
+          )
         );
         const body = await response.json();
         if (!response.ok) return;
+        if (
+          expectedEpoch !== state.conversationSpaceEpoch || state.conversationSpace !== "normal" ||
+          state.activeSessionId !== requestedSessionId
+        ) return;
         const scene = body.scene || {};
         state.currentScene = scene;
         nodes.sceneInfoBtn.hidden = false;
@@ -10050,7 +10727,10 @@ export function renderAppHtml(): string {
       const cards = state.characters.map((character) => {
         const sessions = state.sessions.filter((session) => session.characterId === character.id).length;
         const active = character.id === state.workspaceCharacterId;
-        return '<button class="character-card' + (active ? ' active' : '') + '" type="button" data-character-card-id="' + escapeHtml(character.id) + '">' +
+        const privateLocked = state.conversationSpace === "secret" &&
+          character.id !== state.selectedCharacterId;
+        return '<button class="character-card' + (active ? ' active' : '') + '" type="button" data-character-card-id="' + escapeHtml(character.id) + '"' +
+          (privateLocked ? ' disabled title="请先切换到该角色的私密对话"' : '') + '>' +
           '<span class="character-card-avatar" style="--avatar-hue:' + avatarHue(character.name) + '">' + avatarImageOrInitial(character.avatarUrl, character.name) + '</span>' +
           '<span class="character-card-copy"><strong>' + escapeHtml(character.name) + '</strong><span>' + sessions + ' 个会话 · ' + Number(character.soulCharacterCount || 0).toLocaleString() + ' 字设定</span></span>' +
         '</button>';
@@ -10104,7 +10784,12 @@ export function renderAppHtml(): string {
     async function selectCharacterCard(event) {
       const card = event.target.closest("button[data-character-card-id]");
       if (!card) return;
-      state.workspaceCharacterId = card.dataset.characterCardId || "";
+      const characterId = card.dataset.characterCardId || "";
+      if (state.conversationSpace === "secret" && characterId !== state.selectedCharacterId) {
+        setStatus("私密模式下只能查看当前角色的私密工作台", true);
+        return;
+      }
+      state.workspaceCharacterId = characterId;
       renderCharacterCards();
       await loadCharacterWorkspace();
       revealCharacterDetailWhenNeeded();
@@ -10113,6 +10798,15 @@ export function renderAppHtml(): string {
     async function loadCharacterWorkspace() {
       const character = state.characters.find((entry) => entry.id === state.workspaceCharacterId);
       if (!character) return;
+      if (
+        state.conversationSpace === "secret" &&
+        character.id !== state.selectedCharacterId
+      ) {
+        state.workspaceCharacterId = state.selectedCharacterId || "";
+        renderCharacterCards();
+        hideCharacterDetail();
+        return;
+      }
       nodes.characterDetail.hidden = false;
 	      nodes.characterDetailTitle.textContent = character.name || "未命名角色";
 	      nodes.characterName.value = character.name || "";
@@ -10213,21 +10907,50 @@ export function renderAppHtml(): string {
       if (life) void loadCharacterLife();
     }
 
-    async function loadCharacterFunction(silent) {
+    function captureCharacterWorkspaceScope() {
       const characterId = state.workspaceCharacterId;
-      if (!characterId) return;
+      const conversationSpace = state.conversationSpace;
+      if (!characterId) return null;
+      if (conversationSpace === "secret" && characterId !== state.selectedCharacterId) return null;
+      return {
+        characterId,
+        conversationSpace,
+        epoch: state.conversationSpaceEpoch
+      };
+    }
+
+    function characterWorkspaceScopeIsCurrent(scope) {
+      return Boolean(scope) &&
+        state.workspaceCharacterId === scope.characterId &&
+        state.conversationSpace === scope.conversationSpace &&
+        state.conversationSpaceEpoch === scope.epoch &&
+        (scope.conversationSpace !== "secret" || state.selectedCharacterId === scope.characterId);
+    }
+
+    async function loadCharacterFunction(silent) {
+      const scope = captureCharacterWorkspaceScope();
+      if (!scope) return;
+      const characterId = scope.characterId;
       clearCharacterFunctionPoll();
       if (!silent) nodes.characterFunctionState.textContent = "加载中...";
       nodes.saveCharacterFunctionBtn.disabled = true;
       try {
         const [response, skillResponse] = await Promise.all([
-          fetch("/api/v1/characters/" + encodeURIComponent(characterId) + "/function-profile"),
-          fetch("/api/v1/characters/" + encodeURIComponent(characterId) + "/skill-versions?limit=50")
+          fetch(withConversationSpace(
+            "/api/v1/characters/" + encodeURIComponent(characterId) + "/function-profile",
+            scope.conversationSpace,
+            characterId
+          )),
+          fetch(withConversationSpace(
+            "/api/v1/characters/" + encodeURIComponent(characterId) + "/skill-versions?limit=50",
+            scope.conversationSpace,
+            characterId
+          ))
         ]);
         const [body, skillBody] = await Promise.all([response.json(), skillResponse.json()]);
         if (!response.ok) throw new Error(body.error || "职责能力加载失败");
         if (!skillResponse.ok) throw new Error(skillBody.error || "Skill 历史加载失败");
-        if (state.workspaceCharacterId !== characterId) return;
+        if (!characterWorkspaceScopeIsCurrent(scope)) return;
         state.characterFunction = body.functionProfile || null;
         state.characterSkillVersions = Array.isArray(skillBody.skillVersions)
           ? skillBody.skillVersions
@@ -10235,9 +10958,13 @@ export function renderAppHtml(): string {
         renderCharacterFunction();
         scheduleCharacterFunctionPoll();
       } catch (error) {
-        nodes.characterFunctionState.textContent = error.message || String(error);
+        if (characterWorkspaceScopeIsCurrent(scope)) {
+          nodes.characterFunctionState.textContent = error.message || String(error);
+        }
       } finally {
-        nodes.saveCharacterFunctionBtn.disabled = false;
+        if (characterWorkspaceScopeIsCurrent(scope)) {
+          nodes.saveCharacterFunctionBtn.disabled = scope.conversationSpace === "secret";
+        }
       }
     }
 
@@ -10253,6 +10980,7 @@ export function renderAppHtml(): string {
       const profile = state.characterFunction?.profile || {};
       if (
         state.characterTab !== "capabilities" ||
+        state.conversationSpace === "secret" ||
         profile.manualLocked ||
         !["pending", "uninitialized"].includes(profile.inferenceStatus)
       ) {
@@ -10405,6 +11133,24 @@ export function renderAppHtml(): string {
           '</details>' +
         '</article>';
       }).join("");
+      if (state.conversationSpace === "secret") {
+        nodes.characterFunctionAutomatic.disabled = true;
+        nodes.refreshCharacterFunctionBtn.disabled = true;
+        nodes.saveCharacterFunctionBtn.disabled = true;
+        nodes.characterPublicRole.disabled = true;
+        nodes.characterTaskPreferences.disabled = true;
+        nodes.characterAvoidedTasks.disabled = true;
+        nodes.characterMaxConcurrentTasks.disabled = true;
+        nodes.characterCapabilityList.querySelectorAll("input, select, textarea, button")
+          .forEach((control) => { control.disabled = true; });
+        nodes.characterFunctionState.textContent =
+          "职责与能力是角色共享属性，私密模式下只读；上方 SKILL.md 与普通模式独立。";
+      } else {
+        nodes.characterPublicRole.disabled = false;
+        nodes.characterTaskPreferences.disabled = false;
+        nodes.characterAvoidedTasks.disabled = false;
+        nodes.characterMaxConcurrentTasks.disabled = false;
+      }
       updateCharacterCapabilityCount();
       refreshIcons();
     }
@@ -10463,28 +11209,38 @@ export function renderAppHtml(): string {
     }
 
     async function activateCharacterSkillVersion() {
-      const characterId = state.workspaceCharacterId;
+      const scope = captureCharacterWorkspaceScope();
+      if (!scope) return;
+      const characterId = scope.characterId;
       const version = Number(nodes.activateCharacterSkillVersionBtn.dataset.version || 0);
       if (!characterId || !Number.isInteger(version) || version < 1) return;
       nodes.activateCharacterSkillVersionBtn.disabled = true;
       nodes.characterFunctionState.textContent = "正在恢复 Skill...";
       try {
-        const response = await fetch(
-          "/api/v1/characters/" + encodeURIComponent(characterId) +
-            "/skill-versions/" + encodeURIComponent(String(version)) + "/activate",
+          const response = await fetch(
+            withConversationSpace(
+              "/api/v1/characters/" + encodeURIComponent(characterId) +
+              "/skill-versions/" + encodeURIComponent(String(version)) + "/activate",
+              scope.conversationSpace,
+              characterId
+            ),
           { method: "POST" }
         );
         const body = await response.json();
         if (!response.ok) throw new Error(body.error || "Skill 恢复失败");
-        if (state.workspaceCharacterId !== characterId) return;
+        if (!characterWorkspaceScopeIsCurrent(scope)) return;
         state.characterSkillViewingHistory = false;
         state.characterFunction = body.functionProfile || state.characterFunction;
         await loadCharacterFunction(true);
         nodes.characterFunctionState.textContent = "已恢复 Skill v" + version;
       } catch (error) {
-        nodes.characterFunctionState.textContent = error.message || String(error);
+        if (characterWorkspaceScopeIsCurrent(scope)) {
+          nodes.characterFunctionState.textContent = error.message || String(error);
+        }
       } finally {
-        nodes.activateCharacterSkillVersionBtn.disabled = false;
+        if (characterWorkspaceScopeIsCurrent(scope)) {
+          nodes.activateCharacterSkillVersionBtn.disabled = false;
+        }
       }
     }
 
@@ -10523,15 +11279,24 @@ export function renderAppHtml(): string {
     }
 
     async function updateCharacterFunctionAutomation() {
-      const characterId = state.workspaceCharacterId;
-      if (!characterId) return;
+      const scope = captureCharacterWorkspaceScope();
+      if (!scope) return;
+      if (scope.conversationSpace === "secret") {
+        setStatus("职责自动维护是角色共享设置，请返回普通模式修改", true);
+        return;
+      }
+      const characterId = scope.characterId;
       const automatic = nodes.characterFunctionAutomatic.checked;
       nodes.characterFunctionAutomatic.disabled = true;
       nodes.refreshCharacterFunctionBtn.disabled = true;
       nodes.characterFunctionState.textContent = automatic ? "正在启用自动维护..." : "正在切换为手动维护...";
       try {
         const response = await fetch(
-          "/api/v1/characters/" + encodeURIComponent(characterId) + "/function-profile/automation",
+          withConversationSpace(
+            "/api/v1/characters/" + encodeURIComponent(characterId) + "/function-profile/automation",
+            scope.conversationSpace,
+            characterId
+          ),
           {
             method: "PATCH",
             headers: { "content-type": "application/json" },
@@ -10540,53 +11305,79 @@ export function renderAppHtml(): string {
         );
         const body = await response.json();
         if (!response.ok) throw new Error(body.error || "自动维护设置失败");
-        if (state.workspaceCharacterId !== characterId) return;
+        if (!characterWorkspaceScopeIsCurrent(scope)) return;
         state.characterSkillViewingHistory = false;
         state.characterFunction = body.functionProfile || null;
         await loadCharacterFunction(true);
         nodes.characterFunctionState.textContent = automatic ? "自动维护已启用" : "已切换为手动维护";
       } catch (error) {
         const message = error.message || String(error);
-        await loadCharacterFunction(true);
-        nodes.characterFunctionState.textContent = message;
+        if (characterWorkspaceScopeIsCurrent(scope)) {
+          await loadCharacterFunction(true);
+          if (characterWorkspaceScopeIsCurrent(scope)) {
+            nodes.characterFunctionState.textContent = message;
+          }
+        }
       } finally {
-        nodes.characterFunctionAutomatic.disabled = false;
-        nodes.refreshCharacterFunctionBtn.disabled = false;
+        if (characterWorkspaceScopeIsCurrent(scope)) {
+          nodes.characterFunctionAutomatic.disabled = false;
+          nodes.refreshCharacterFunctionBtn.disabled = false;
+        }
       }
     }
 
     async function refreshCharacterFunction() {
-      const characterId = state.workspaceCharacterId;
-      if (!characterId) return;
+      const scope = captureCharacterWorkspaceScope();
+      if (!scope) return;
+      if (scope.conversationSpace === "secret") {
+        setStatus("职责推断会更新角色共享属性，请返回普通模式执行", true);
+        return;
+      }
+      const characterId = scope.characterId;
       nodes.characterFunctionAutomatic.disabled = true;
       nodes.refreshCharacterFunctionBtn.disabled = true;
       nodes.characterFunctionState.textContent = "正在根据 SOUL.md 重新分析...";
       try {
         const response = await fetch(
-          "/api/v1/characters/" + encodeURIComponent(characterId) + "/function-profile/infer",
+          withConversationSpace(
+            "/api/v1/characters/" + encodeURIComponent(characterId) + "/function-profile/infer",
+            scope.conversationSpace,
+            characterId
+          ),
           { method: "POST" }
         );
         const body = await response.json();
         if (!response.ok) throw new Error(body.error || "角色职能分析失败");
-        if (state.workspaceCharacterId !== characterId) return;
+        if (!characterWorkspaceScopeIsCurrent(scope)) return;
         state.characterSkillViewingHistory = false;
         state.characterFunction = body.functionProfile || null;
         await loadCharacterFunction(true);
         nodes.characterFunctionState.textContent = "已根据 SOUL.md 更新";
       } catch (error) {
         const message = error.message || String(error);
-        await loadCharacterFunction(true);
-        nodes.characterFunctionState.textContent = message;
+        if (characterWorkspaceScopeIsCurrent(scope)) {
+          await loadCharacterFunction(true);
+          if (characterWorkspaceScopeIsCurrent(scope)) {
+            nodes.characterFunctionState.textContent = message;
+          }
+        }
       } finally {
-        nodes.characterFunctionAutomatic.disabled = false;
-        nodes.refreshCharacterFunctionBtn.disabled = false;
+        if (characterWorkspaceScopeIsCurrent(scope)) {
+          nodes.characterFunctionAutomatic.disabled = false;
+          nodes.refreshCharacterFunctionBtn.disabled = false;
+        }
       }
     }
 
     async function saveCharacterFunction(event) {
       event.preventDefault();
-      const characterId = state.workspaceCharacterId;
-      if (!characterId) return;
+      const scope = captureCharacterWorkspaceScope();
+      if (!scope) return;
+      if (scope.conversationSpace === "secret") {
+        setStatus("职责与能力是角色共享属性，请返回普通模式修改", true);
+        return;
+      }
+      const characterId = scope.characterId;
       const capabilities = [...nodes.characterCapabilityList.querySelectorAll(
         "[data-capability-id]"
       )].filter((row) => row.querySelector("[data-capability-enabled]")?.checked).map((row) => ({
@@ -10613,7 +11404,11 @@ export function renderAppHtml(): string {
       nodes.characterFunctionState.textContent = "保存中...";
       try {
         const response = await fetch(
-          "/api/v1/characters/" + encodeURIComponent(characterId) + "/function-profile",
+          withConversationSpace(
+            "/api/v1/characters/" + encodeURIComponent(characterId) + "/function-profile",
+            scope.conversationSpace,
+            characterId
+          ),
           {
             method: "PUT",
             headers: { "content-type": "application/json" },
@@ -10622,15 +11417,19 @@ export function renderAppHtml(): string {
         );
         const body = await response.json();
         if (!response.ok) throw new Error(body.error || "职责能力保存失败");
-        if (state.workspaceCharacterId !== characterId) return;
+        if (!characterWorkspaceScopeIsCurrent(scope)) return;
         state.characterFunction = body.functionProfile || null;
         state.characterSkillViewingHistory = false;
         await loadCharacterFunction(true);
         nodes.characterFunctionState.textContent = "已保存 · 手动维护";
       } catch (error) {
-        nodes.characterFunctionState.textContent = error.message || String(error);
+        if (characterWorkspaceScopeIsCurrent(scope)) {
+          nodes.characterFunctionState.textContent = error.message || String(error);
+        }
       } finally {
-        nodes.saveCharacterFunctionBtn.disabled = false;
+        if (characterWorkspaceScopeIsCurrent(scope)) {
+          nodes.saveCharacterFunctionBtn.disabled = false;
+        }
       }
     }
 
@@ -11405,7 +12204,9 @@ export function renderAppHtml(): string {
       };
       nodes.saveSceneBtn.disabled = true;
       try {
-        const response = await fetch("/api/v1/sessions/" + sessionId + "/scene", {
+        const response = await fetch(withConversationSpace(
+          "/api/v1/sessions/" + sessionId + "/scene"
+        ), {
           method: "PATCH",
           headers: { "content-type": "application/json" },
           body: JSON.stringify(payload)
@@ -11423,26 +12224,44 @@ export function renderAppHtml(): string {
     }
 
     async function loadMemories() {
-      if (!state.workspaceCharacterId) {
+      const scope = captureCharacterMemoryScope();
+      if (!scope) {
         state.memories = [];
         renderMemories();
+        nodes.memoryState.textContent = state.conversationSpace === "secret" && state.workspaceCharacterId
+          ? "私密记忆仅可查看当前对话角色"
+          : "";
         return;
       }
-      const common = "characterId=" + encodeURIComponent(state.workspaceCharacterId) +
+      const common = "characterId=" + encodeURIComponent(scope.workspaceCharacterId) +
         "&query=" + encodeURIComponent(nodes.memorySearch.value.trim());
+      nodes.memoryState.textContent = "加载中...";
       try {
         const [activeResponse, pendingResponse] = await Promise.all([
-          fetch("/api/v1/memories?" + common + "&validity=active"),
-          fetch("/api/v1/memories?" + common + "&validity=pending")
+          fetch(withConversationSpace(
+            "/api/v1/memories?" + common + "&validity=active",
+            scope.conversationSpace,
+            scope.characterId
+          )),
+          fetch(withConversationSpace(
+            "/api/v1/memories?" + common + "&validity=pending",
+            scope.conversationSpace,
+            scope.characterId
+          ))
         ]);
         const active = await activeResponse.json();
         const pending = await pendingResponse.json();
+        if (!characterMemoryScopeMatches(scope)) return;
         if (!activeResponse.ok) throw new Error(active.error || "记忆加载失败");
         if (!pendingResponse.ok) throw new Error(pending.error || "记忆加载失败");
-        state.memories = [...(pending.memories || []), ...(active.memories || [])];
+        state.memories = [...(pending.memories || []), ...(active.memories || [])].filter((memory) =>
+          memoryMatchesConversationScope(memory, scope) &&
+          memory.characterId === scope.workspaceCharacterId
+        );
         renderMemories();
         nodes.memoryState.textContent = state.memories.length + " 条";
       } catch (error) {
+        if (!characterMemoryScopeMatches(scope)) return;
         nodes.memoryState.textContent = error.message || String(error);
       }
     }
@@ -11469,7 +12288,12 @@ export function renderAppHtml(): string {
     }
 
     function openMemoryEditor() {
-      if (!state.workspaceCharacterId) return;
+      if (!captureCharacterMemoryScope()) {
+        nodes.memoryState.textContent = state.conversationSpace === "secret"
+          ? "私密记忆仅可编辑当前对话角色"
+          : "请先选择角色";
+        return;
+      }
       nodes.memoryForm.reset();
       nodes.memoryEditorState.textContent = "";
       nodes.memoryEditorDialog.showModal();
@@ -11483,8 +12307,11 @@ export function renderAppHtml(): string {
 
     async function pinMemory(event) {
       event.preventDefault();
-      if (!state.workspaceCharacterId) {
-        nodes.memoryEditorState.textContent = "请先选择角色";
+      const scope = captureCharacterMemoryScope();
+      if (!scope) {
+        nodes.memoryEditorState.textContent = state.conversationSpace === "secret"
+          ? "私密记忆仅可写入当前对话角色"
+          : "请先选择角色";
         return;
       }
       const payload = {
@@ -11493,24 +12320,31 @@ export function renderAppHtml(): string {
         type: nodes.memoryType.value,
         key: nodes.memoryKey.value.trim() || undefined,
         content: nodes.memoryContent.value.trim(),
-        characterId: state.workspaceCharacterId,
+        characterId: scope.workspaceCharacterId,
         confirmed: true,
         tags: splitComma(nodes.memoryTags.value)
       };
       if (!payload.content) return;
       try {
-        const response = await fetch("/api/v1/memories", {
+        const response = await fetch(withConversationSpace(
+          "/api/v1/memories",
+          scope.conversationSpace,
+          scope.characterId
+        ), {
           method: "POST",
           headers: { "content-type": "application/json" },
           body: JSON.stringify(payload)
         });
         const body = await response.json();
+        if (!characterMemoryScopeMatches(scope)) return;
         if (!response.ok) throw new Error(body.error || "记忆保存失败");
         nodes.memoryForm.reset();
         closeMemoryEditor();
         await loadMemories();
+        if (!characterMemoryScopeMatches(scope)) return;
         nodes.memoryState.textContent = "已固定";
       } catch (error) {
+        if (!characterMemoryScopeMatches(scope)) return;
         nodes.memoryEditorState.textContent = error.message || String(error);
       }
     }
@@ -11520,8 +12354,10 @@ export function renderAppHtml(): string {
       if (!button) return;
       const id = button.dataset.id;
       const action = button.dataset.memoryAction;
+      const scope = captureCharacterMemoryScope();
+      if (!scope) return;
       const memory = state.memories.find((entry) => entry.id === id);
-      if (!memory) return;
+      if (!memory || !memoryMatchesConversationScope(memory, scope) || memory.characterId !== scope.workspaceCharacterId) return;
       let method = "PATCH";
       let body;
       if (action === "confirm") body = JSON.stringify({ confirmed: true, validity: "active" });
@@ -11540,6 +12376,7 @@ export function renderAppHtml(): string {
           onConfirm: (value) => { content = value.trim(); }
         });
         if (!corrected) return;
+        if (!characterMemoryScopeMatches(scope)) return;
         body = JSON.stringify({ content: content.trim(), confirmed: true, validity: "active" });
       }
       if (action === "delete") {
@@ -11549,18 +12386,25 @@ export function renderAppHtml(): string {
           confirmLabel: "删除"
         });
         if (!confirmed) return;
+        if (!characterMemoryScopeMatches(scope)) return;
         method = "DELETE";
       }
       try {
-        const response = await fetch("/api/v1/memories/" + encodeURIComponent(id), {
+        const response = await fetch(withConversationSpace(
+          "/api/v1/memories/" + encodeURIComponent(id),
+          scope.conversationSpace,
+          scope.characterId
+        ), {
           method,
           headers: body ? { "content-type": "application/json" } : undefined,
           body
         });
         const result = await response.json();
+        if (!characterMemoryScopeMatches(scope)) return;
         if (!response.ok) throw new Error(result.error || "记忆操作失败");
         await loadMemories();
       } catch (error) {
+        if (!characterMemoryScopeMatches(scope)) return;
         nodes.memoryState.textContent = error.message || String(error);
       }
     }
@@ -11588,34 +12432,68 @@ export function renderAppHtml(): string {
     }
 
     async function loadManagedMemories() {
+      const scope = captureMemoryConversationScope();
+      if (!scope) {
+        clearMemoryConversationState();
+        nodes.memoryCoordinatorState.textContent = "请先选择当前私密角色";
+        return;
+      }
       nodes.memoryCoordinatorState.textContent = "加载中...";
       try {
         const [statusResponse, memoriesResponse, charactersResponse, profilesResponse] = await Promise.all([
-          fetch("/api/v1/memory-coordinator/status"),
-          fetch("/api/v1/memory-coordinator/memories?limit=100"),
+          fetch(withConversationSpace(
+            "/api/v1/memory-coordinator/status",
+            scope.conversationSpace,
+            scope.characterId
+          )),
+          fetch(withConversationSpace(
+            "/api/v1/memory-coordinator/memories?limit=100",
+            scope.conversationSpace,
+            scope.characterId
+          )),
           fetch("/api/v1/characters"),
-          fetch("/api/v1/person-profiles")
+          fetch(withConversationSpace(
+            "/api/v1/person-profiles",
+            scope.conversationSpace,
+            scope.characterId
+          ))
         ]);
         const statusBody = await statusResponse.json();
         const memoriesBody = await memoriesResponse.json();
         const charactersBody = await charactersResponse.json();
         const profilesBody = await profilesResponse.json();
+        if (!memoryConversationScopeMatches(scope)) return;
         if (!statusResponse.ok) throw new Error(statusBody.error || "捕获状态加载失败");
         if (!memoriesResponse.ok) throw new Error(memoriesBody.error || "记忆加载失败");
+        if (!charactersResponse.ok) throw new Error(charactersBody.error || "角色加载失败");
         if (!profilesResponse.ok) throw new Error(profilesBody.error || "人物档案加载失败");
-        state.managedMemories = Array.isArray(memoriesBody.memories) ? memoriesBody.memories : [];
-        state.personProfiles = Array.isArray(profilesBody.profiles) ? profilesBody.profiles : [];
-        state.memoryJobs = Array.isArray(statusBody.coordinator?.recentJobs) ? statusBody.coordinator.recentJobs : [];
+        state.managedMemories = (Array.isArray(memoriesBody.memories) ? memoriesBody.memories : [])
+          .filter((memory) => memoryMatchesConversationScope(memory, scope));
+        state.personProfiles = scope.conversationSpace === "normal" && Array.isArray(profilesBody.profiles)
+          ? profilesBody.profiles
+          : [];
+        state.memoryJobs = (Array.isArray(statusBody.coordinator?.recentJobs) ? statusBody.coordinator.recentJobs : [])
+          .filter((job) => memoryMatchesConversationScope(job, scope));
         state.characters = Array.isArray(charactersBody.characters) ? charactersBody.characters : state.characters;
-        const characterOptions = state.characters.map((character) =>
+        const availableCharacters = scope.conversationSpace === "secret"
+          ? state.characters.filter((character) => character.id === scope.characterId)
+          : state.characters;
+        const characterOptions = availableCharacters.map((character) =>
           '<option value="' + escapeHtml(character.id) + '">' + escapeHtml(character.name) + '</option>'
         ).join("");
         const selectedFilter = nodes.managedMemoryCharacter.value;
         const selectedCreate = nodes.managedMemoryCreateCharacter.value;
-        nodes.managedMemoryCharacter.innerHTML = '<option value="">全部角色</option>' + characterOptions;
-        nodes.managedMemoryCreateCharacter.innerHTML = '<option value="">不绑定角色</option>' + characterOptions;
-        nodes.managedMemoryCharacter.value = selectedFilter;
-        nodes.managedMemoryCreateCharacter.value = selectedCreate;
+        nodes.managedMemoryCharacter.innerHTML = scope.conversationSpace === "secret"
+          ? '<option value="">当前私密角色</option>'
+          : '<option value="">全部角色</option>' + characterOptions;
+        nodes.managedMemoryCreateCharacter.innerHTML = scope.conversationSpace === "secret"
+          ? characterOptions
+          : '<option value="">不绑定角色</option>' + characterOptions;
+        nodes.managedMemoryCharacter.disabled = scope.conversationSpace === "secret";
+        nodes.managedMemoryCharacter.value = scope.conversationSpace === "secret" ? "" : selectedFilter;
+        nodes.managedMemoryCreateCharacter.value = scope.conversationSpace === "secret"
+          ? scope.characterId
+          : selectedCreate;
         const coordinator = statusBody.coordinator || {};
         nodes.memoryCoordinatorState.textContent = (coordinator.enabled ? "自动捕获已启用" : "自动捕获已关闭") +
           " · " + Number(coordinator.pendingCandidateCount || 0) + " 个待确认 · " +
@@ -11626,6 +12504,7 @@ export function renderAppHtml(): string {
         renderPersonProfiles();
         renderMemoryJobs();
       } catch (error) {
+        if (!memoryConversationScopeMatches(scope)) return;
         nodes.memoryCoordinatorState.textContent = error.message || String(error);
       }
     }
@@ -11725,13 +12604,19 @@ export function renderAppHtml(): string {
       const form = event.target.closest("form[data-person-profile-form]");
       if (!form) return;
       event.preventDefault();
+      const scope = captureMemoryConversationScope();
+      if (!scope || scope.conversationSpace !== "normal") return;
       const data = new FormData(form);
       const status = form.querySelector("[data-person-save-state]");
       const button = form.querySelector('button[type="submit"]');
       if (button) button.disabled = true;
       if (status) status.textContent = "保存中...";
       try {
-        const response = await fetch("/api/v1/person-profiles/" + encodeURIComponent(form.dataset.personProfileForm), {
+        const response = await fetch(withConversationSpace(
+          "/api/v1/person-profiles/" + encodeURIComponent(form.dataset.personProfileForm),
+          scope.conversationSpace,
+          scope.characterId
+        ), {
           method: "PATCH",
           headers: { "content-type": "application/json" },
           body: JSON.stringify({
@@ -11744,12 +12629,14 @@ export function renderAppHtml(): string {
           })
         });
         const body = await response.json();
+        if (!memoryConversationScopeMatches(scope)) return;
         if (!response.ok) throw new Error(body.error || "人物档案保存失败");
         const index = state.personProfiles.findIndex((profile) => profile.id === body.profile.id);
         if (index >= 0) state.personProfiles[index] = body.profile;
         renderPersonProfiles();
         nodes.managedMemoryActionState.textContent = "人物档案已保存";
       } catch (error) {
+        if (!memoryConversationScopeMatches(scope)) return;
         if (status) status.textContent = error.message || String(error);
         if (button) button.disabled = false;
       }
@@ -11757,24 +12644,45 @@ export function renderAppHtml(): string {
 
     async function runRetrievalPreview(event) {
       event.preventDefault();
+      const scope = captureMemoryConversationScope();
+      if (!scope) {
+        state.retrievalPreview = null;
+        nodes.retrievalPreviewResults.innerHTML = "";
+        nodes.retrievalPreviewResults.hidden = true;
+        nodes.retrievalPreviewState.textContent = state.conversationSpace === "secret"
+          ? "请先打开当前角色的私密会话"
+          : "请先选择角色";
+        return;
+      }
+      state.retrievalPreview = null;
       nodes.retrievalPreviewState.textContent = "检索中...";
       nodes.retrievalPreviewResults.hidden = true;
       const params = new URLSearchParams({
         mode: nodes.retrievalPreviewMode.value,
-        sessionId: state.activeSessionId || "ui-retrieval-preview",
+        sessionId: scope.conversationSpace === "secret"
+          ? scope.sessionId
+          : state.activeSessionId || "ui-retrieval-preview",
         query: nodes.retrievalPreviewQuery.value.trim(),
         memoryTokens: String(Number(nodes.retrievalPreviewBudget.value) || 360),
         timezone: Intl.DateTimeFormat().resolvedOptions().timeZone || "Asia/Shanghai",
       });
-      const characterId = nodes.managedMemoryCharacter.value || state.selectedCharacterId;
+      const characterId = scope.conversationSpace === "secret"
+        ? scope.characterId
+        : nodes.managedMemoryCharacter.value || scope.characterId;
       if (characterId) params.set("characterId", characterId);
       try {
-        const response = await fetch("/api/v1/memory-retrieval/preview?" + params.toString());
+        const response = await fetch(withConversationSpace(
+          "/api/v1/memory-retrieval/preview?" + params.toString(),
+          scope.conversationSpace,
+          scope.characterId
+        ));
         const body = await response.json();
+        if (!memoryConversationScopeMatches(scope)) return;
         if (!response.ok) throw new Error(body.error || "检索预览失败");
         state.retrievalPreview = body;
         renderRetrievalPreview();
       } catch (error) {
+        if (!memoryConversationScopeMatches(scope)) return;
         nodes.retrievalPreviewState.textContent = error.message || String(error);
       }
     }
@@ -11798,9 +12706,12 @@ export function renderAppHtml(): string {
     async function jumpFromMemoryDiagnostic(event) {
       const button = event.target.closest("[data-memory-jump]");
       if (!button) return;
+      const scope = captureMemoryConversationScope();
+      if (!scope) return;
       setUiMode("management");
       setManagementTab("memory");
       await loadManagedMemories();
+      if (!memoryConversationScopeMatches(scope)) return;
       nodes.managedMemoryRealm.value = "";
       nodes.managedMemoryCharacter.value = "";
       nodes.managedMemoryValidity.value = "";
@@ -11811,25 +12722,38 @@ export function renderAppHtml(): string {
 
     function updateManagedMemoryCreateControls() {
       const reality = nodes.managedMemoryCreateRealm.value === "reality";
+      const secret = state.conversationSpace === "secret";
       const types = reality
         ? [["user_fact", "用户事实"], ["preference", "偏好"], ["goal", "目标"], ["person", "人物"], ["project", "项目"], ["boundary", "边界"]]
         : [["relationship_event", "关系事件"], ["world_fact", "世界事实"], ["plot_event", "剧情事件"], ["boundary", "边界"]];
       nodes.managedMemoryCreateType.innerHTML = types.map((entry) => '<option value="' + entry[0] + '">' + entry[1] + '</option>').join("");
-      nodes.managedMemoryCreateCharacter.disabled = reality;
+      nodes.managedMemoryCreateCharacter.disabled = reality || secret;
       if (reality) nodes.managedMemoryCreateCharacter.value = "";
+      else if (secret) nodes.managedMemoryCreateCharacter.value = state.selectedCharacterId;
     }
 
     async function createManagedMemory(event) {
       event.preventDefault();
+      const scope = captureMemoryConversationScope();
+      if (!scope) {
+        nodes.managedMemoryActionState.textContent = "请先选择当前私密角色";
+        return;
+      }
       const realm = nodes.managedMemoryCreateRealm.value;
-      const characterId = nodes.managedMemoryCreateCharacter.value;
+      const characterId = scope.conversationSpace === "secret"
+        ? scope.characterId
+        : nodes.managedMemoryCreateCharacter.value;
       if (realm === "roleplay" && !characterId) {
         nodes.managedMemoryActionState.textContent = "角色记忆必须选择角色";
         return;
       }
       nodes.managedMemoryActionState.textContent = "保存中...";
       try {
-        const response = await fetch(realm === "reality" ? "/api/v1/reality-memories" : "/api/v1/memories", {
+        const response = await fetch(withConversationSpace(
+          realm === "reality" ? "/api/v1/reality-memories" : "/api/v1/memories",
+          scope.conversationSpace,
+          scope.characterId
+        ), {
           method: "POST",
           headers: { "content-type": "application/json" },
           body: JSON.stringify({
@@ -11844,12 +12768,14 @@ export function renderAppHtml(): string {
           })
         });
         const body = await response.json();
+        if (!memoryConversationScopeMatches(scope)) return;
         if (!response.ok) throw new Error(body.error || "记忆保存失败");
         nodes.managedMemoryCreateKey.value = "";
         nodes.managedMemoryCreateContent.value = "";
         nodes.managedMemoryActionState.textContent = "已固定";
         await loadManagedMemories();
       } catch (error) {
+        if (!memoryConversationScopeMatches(scope)) return;
         nodes.managedMemoryActionState.textContent = error.message || String(error);
       }
     }
@@ -11857,8 +12783,10 @@ export function renderAppHtml(): string {
     async function handleManagedMemoryAction(event) {
       const button = event.target.closest("button[data-managed-memory-action]");
       if (!button) return;
+      const scope = captureMemoryConversationScope();
+      if (!scope) return;
       const memory = state.managedMemories.find((entry) => entry.id === button.dataset.id);
-      if (!memory) return;
+      if (!memory || !memoryMatchesConversationScope(memory, scope)) return;
       const action = button.dataset.managedMemoryAction;
       let content = memory.content;
       if (action === "correct") {
@@ -11873,6 +12801,7 @@ export function renderAppHtml(): string {
           onConfirm: (value) => { content = value.trim(); }
         });
         if (!edited) return;
+        if (!memoryConversationScopeMatches(scope)) return;
       } else if (action !== "confirm") {
         const accepted = await openActionDialog({
           title: action === "reject" ? "拒绝候选" : action === "archive" ? "归档记忆" : "遗忘记忆",
@@ -11880,17 +12809,23 @@ export function renderAppHtml(): string {
           confirmLabel: action === "reject" ? "拒绝" : action === "archive" ? "归档" : "遗忘"
         });
         if (!accepted) return;
+        if (!memoryConversationScopeMatches(scope)) return;
       }
       try {
         const endpoint = memory.realm === "legacy" && action === "forget"
           ? "/api/v1/memories/" + encodeURIComponent(memory.id)
           : "/api/v1/memories/" + encodeURIComponent(memory.id) + "/" + action;
-        const response = await fetch(endpoint, {
+        const response = await fetch(withConversationSpace(
+          endpoint,
+          scope.conversationSpace,
+          scope.characterId
+        ), {
           method: memory.realm === "legacy" && action === "forget" ? "DELETE" : "POST",
           headers: { "content-type": "application/json" },
           body: memory.realm === "legacy" && action === "forget" ? undefined : JSON.stringify(action === "correct" ? { content } : {})
         });
         const body = await response.json();
+        if (!memoryConversationScopeMatches(scope)) return;
         if (!response.ok) throw new Error(body.error || "记忆操作失败");
         if (body.diff) {
           nodes.managedMemoryActionState.textContent = "已替换旧记忆";
@@ -11899,9 +12834,11 @@ export function renderAppHtml(): string {
             description: "旧内容：" + body.diff.previous + "\\n\\n新内容：" + body.diff.next,
             confirmLabel: "关闭"
           });
+          if (!memoryConversationScopeMatches(scope)) return;
         }
         await loadManagedMemories();
       } catch (error) {
+        if (!memoryConversationScopeMatches(scope)) return;
         nodes.managedMemoryActionState.textContent = error.message || String(error);
       }
     }
@@ -11920,8 +12857,10 @@ export function renderAppHtml(): string {
     async function retryMemoryJob(event) {
       const filterButton = event.target.closest("button[data-memory-job-filter]");
       if (filterButton) {
+        const scope = captureMemoryConversationScope();
+        if (!scope) return;
         const job = state.memoryJobs.find((entry) => entry.id === filterButton.dataset.memoryJobFilter);
-        if (!job) return;
+        if (!job || !memoryMatchesConversationScope(job, scope)) return;
         nodes.managedMemoryRealm.value = job.realm || "";
         nodes.managedMemoryCharacter.value = job.characterId || "";
         nodes.managedMemoryValidity.value = "active";
@@ -11932,27 +12871,266 @@ export function renderAppHtml(): string {
       }
       const button = event.target.closest("button[data-memory-job-retry]");
       if (!button) return;
+      const scope = captureMemoryConversationScope();
+      if (!scope) return;
+      const job = state.memoryJobs.find((entry) => entry.id === button.dataset.memoryJobRetry);
+      if (!job || !memoryMatchesConversationScope(job, scope)) return;
       button.disabled = true;
       try {
-        const response = await fetch("/api/v1/memory-coordinator/jobs/" + encodeURIComponent(button.dataset.memoryJobRetry) + "/retry", { method: "POST" });
+        const response = await fetch(withConversationSpace(
+          "/api/v1/memory-coordinator/jobs/" + encodeURIComponent(button.dataset.memoryJobRetry) + "/retry",
+          scope.conversationSpace,
+          scope.characterId
+        ), { method: "POST" });
         const body = await response.json();
+        if (!memoryConversationScopeMatches(scope)) return;
         if (!response.ok) throw new Error(body.error || "重试失败");
         await loadManagedMemories();
       } catch (error) {
+        if (!memoryConversationScopeMatches(scope)) return;
         nodes.managedMemoryActionState.textContent = error.message || String(error);
         button.disabled = false;
       }
     }
 
-    async function loadAgentModules() {
+    function controlPlaneFetch(path, options = {}) {
+      const headers = new Headers(options.headers || {});
+      headers.set("content-type", "application/json");
+      return fetch(path, {
+        ...options,
+        credentials: "same-origin",
+        headers
+      });
+    }
+
+    function captureAgentSkillInstallScope(requestId = state.agentSkillInstallRequestId) {
+      return {
+        expectedEpoch: state.conversationSpaceEpoch,
+        conversationSpace: state.conversationSpace,
+        characterId: state.selectedCharacterId,
+        requestId
+      };
+    }
+
+    function agentSkillInstallScopeIsCurrent(scope) {
+      return Boolean(
+        scope && scope.expectedEpoch === state.conversationSpaceEpoch &&
+        scope.conversationSpace === state.conversationSpace &&
+        scope.characterId === state.selectedCharacterId &&
+        scope.requestId === state.agentSkillInstallRequestId &&
+        state.uiMode === "management" && state.managementTab === "modules"
+      );
+    }
+
+    function setAgentSkillInstallBusy(busy) {
+      nodes.agentSkillSourceUrl.disabled = busy;
+      nodes.agentSkillExpectedSha256.disabled = busy;
+      nodes.previewAgentSkillInstallBtn.disabled = busy;
+      nodes.agentSkillInstallSpaces.disabled = busy;
+      nodes.cancelAgentSkillInstallBtn.disabled = busy;
+      nodes.confirmAgentSkillInstallBtn.disabled = busy;
+    }
+
+    function resetAgentSkillInstallUi(preserveInputs = false) {
+      state.agentSkillInstallStage = null;
+      nodes.agentSkillInstallPreview.hidden = true;
+      nodes.agentSkillInstallSummary.innerHTML = "";
+      nodes.agentSkillInstallMarkdown.textContent = "";
+      nodes.agentSkillInstallState.textContent = "";
+      nodes.agentSkillInstallState.classList.remove("error");
+      nodes.agentSkillInstallSpaces.value = state.conversationSpace === "secret" ? "secret" : "normal";
+      if (!preserveInputs) {
+        nodes.agentSkillSourceUrl.value = "";
+        nodes.agentSkillExpectedSha256.value = "";
+      }
+      setAgentSkillInstallBusy(false);
+    }
+
+    async function deleteRemoteAgentSkillInstallStage(stageId, expectedEpoch) {
+      const response = await controlPlaneFetch(
+        "/api/v1/agent-skills/install/stages/" + encodeURIComponent(stageId),
+        { method: "DELETE" }
+      );
+      if (expectedEpoch !== state.conversationSpaceEpoch) return response.ok;
+      if (!response.ok) {
+        let message = "服务端预检暂存删除失败";
+        try {
+          const body = await response.json();
+          message = body.error || message;
+        } catch {}
+        throw new Error(message);
+      }
+      return true;
+    }
+
+    async function clearAgentSkillInstallStage({ deleteRemote = false, preserveInputs = false } = {}) {
+      const stageId = state.agentSkillInstallStage?.id || "";
+      const expectedEpoch = state.conversationSpaceEpoch;
+      ++state.agentSkillInstallRequestId;
+      resetAgentSkillInstallUi(preserveInputs);
+      if (!deleteRemote || !stageId) return true;
+      try {
+        return await deleteRemoteAgentSkillInstallStage(stageId, expectedEpoch);
+      } catch {
+        return false;
+      }
+    }
+
+    function renderAgentSkillInstallStage(stage) {
+      const fileCount = Array.isArray(stage.files)
+        ? stage.files.length
+        : Math.max(0, Number(stage.files || 0));
+      const fields = [
+        ["来源主机", stage.sourceHost || ""],
+        ["规范化来源", stage.sourceUrl || ""],
+        ...(stage.resolvedRef ? [["解析 Ref", stage.resolvedRef]] : []),
+        ...(stage.resolvedCommit ? [["解析 Commit", stage.resolvedCommit]] : []),
+        ["包目录", stage.packageName || ""],
+        ["Skill 名称", stage.skillName || ""],
+        ["说明", stage.description || "未提供"],
+        ["SHA-256", stage.sha256 || ""],
+        ["文件", fileCount.toLocaleString() + " 个"],
+        ["总大小", formatFileSize(stage.totalBytes || 0)],
+        ["预检到期", formatTraceTime(stage.expiresAt)]
+      ];
+      nodes.agentSkillInstallSummary.innerHTML = fields.map((field) =>
+        '<div><span>' + escapeHtml(field[0]) + '</span>' +
+          (field[0] === "SHA-256"
+            ? '<code>' + escapeHtml(field[1]) + '</code>'
+            : '<strong>' + escapeHtml(field[1]) + '</strong>') +
+        '</div>'
+      ).join("");
+      nodes.agentSkillInstallMarkdown.textContent = typeof stage.skillMarkdown === "string"
+        ? stage.skillMarkdown
+        : "未提供 SKILL.md 预览";
+      nodes.agentSkillInstallSpaces.value = state.conversationSpace === "secret" ? "secret" : "normal";
+      nodes.agentSkillInstallPreview.hidden = false;
+      nodes.agentSkillInstallState.textContent = "预检完成。请核对来源、摘要和 SKILL.md，再明确确认安装。";
+      nodes.agentSkillInstallState.classList.remove("error");
+    }
+
+    async function previewAgentSkillInstall(event) {
+      event.preventDefault();
+      await clearAgentSkillInstallStage({ deleteRemote: true, preserveInputs: true });
+      if (state.uiMode !== "management" || state.managementTab !== "modules") return;
+      const sourceUrl = nodes.agentSkillSourceUrl.value.trim();
+      const expectedSha256 = nodes.agentSkillExpectedSha256.value.trim().toLowerCase();
+      let parsedSourceUrl;
+      try {
+        parsedSourceUrl = new URL(sourceUrl);
+      } catch {
+        nodes.agentSkillInstallState.textContent = "请输入有效的 HTTPS 下载地址";
+        nodes.agentSkillInstallState.classList.add("error");
+        return;
+      }
+      if (parsedSourceUrl.protocol !== "https:") {
+        nodes.agentSkillInstallState.textContent = "Skill 安装只接受 HTTPS 下载地址";
+        nodes.agentSkillInstallState.classList.add("error");
+        return;
+      }
+      if (expectedSha256 && !/^[a-f0-9]{64}$/u.test(expectedSha256)) {
+        nodes.agentSkillInstallState.textContent = "SHA-256 必须是 64 位十六进制字符串";
+        nodes.agentSkillInstallState.classList.add("error");
+        return;
+      }
+      const requestId = ++state.agentSkillInstallRequestId;
+      const scope = captureAgentSkillInstallScope(requestId);
+      setAgentSkillInstallBusy(true);
+      nodes.agentSkillInstallState.textContent = "正在下载到临时区并执行安全预检...";
+      nodes.agentSkillInstallState.classList.remove("error");
+      try {
+        const response = await controlPlaneFetch("/api/v1/agent-skills/install/preview", {
+          method: "POST",
+          body: JSON.stringify({
+            sourceUrl,
+            ...(expectedSha256 ? { expectedSha256 } : {})
+          })
+        });
+        const body = await response.json();
+        const stage = body.stage || null;
+        if (!agentSkillInstallScopeIsCurrent(scope)) {
+          if (stage?.id) void deleteRemoteAgentSkillInstallStage(stage.id, scope.expectedEpoch).catch(() => {});
+          return;
+        }
+        if (!response.ok) {
+          if (stage?.id) void deleteRemoteAgentSkillInstallStage(stage.id, scope.expectedEpoch).catch(() => {});
+          throw new Error(body.error || "Skill 预检失败");
+        }
+        if (!stage?.id || !stage.sha256) throw new Error("预检响应缺少暂存标识或摘要");
+        state.agentSkillInstallStage = stage;
+        renderAgentSkillInstallStage(stage);
+      } catch (error) {
+        if (!agentSkillInstallScopeIsCurrent(scope)) return;
+        nodes.agentSkillInstallState.textContent = error.message || String(error);
+        nodes.agentSkillInstallState.classList.add("error");
+      } finally {
+        if (agentSkillInstallScopeIsCurrent(scope)) setAgentSkillInstallBusy(false);
+      }
+    }
+
+    async function cancelAgentSkillInstall() {
+      const expectedEpoch = state.conversationSpaceEpoch;
+      const removed = await clearAgentSkillInstallStage({ deleteRemote: true });
+      if (
+        expectedEpoch !== state.conversationSpaceEpoch ||
+        state.uiMode !== "management" || state.managementTab !== "modules"
+      ) return;
+      nodes.agentSkillInstallState.textContent = removed
+        ? "预检已取消，临时下载已删除"
+        : "本地预检已清除；服务端临时下载会在到期后自动删除";
+      nodes.agentSkillInstallState.classList.toggle("error", !removed);
+    }
+
+    async function confirmAgentSkillInstall() {
+      const stage = state.agentSkillInstallStage;
+      if (!stage?.id || !stage.sha256) return;
+      const enabledSpaces = enabledSpacesForSetting(nodes.agentSkillInstallSpaces.value);
+      if (!enabledSpaces.length) return;
+      const spaceLabel = nodes.agentSkillInstallSpaces.selectedOptions[0]?.textContent || "所选空间";
+      const confirmed = window.confirm(
+        "确认安装并启用 Agent Skill “" + (stage.skillName || stage.packageName || "未命名") + "”？\\n\\n" +
+        "来源：" + (stage.sourceUrl || "未知") + "\\n" +
+        (stage.resolvedCommit ? "解析 Commit：" + stage.resolvedCommit + "\\n" : "") +
+        "SHA-256：" + stage.sha256 + "\\n" +
+        "可用空间：" + spaceLabel
+      );
+      if (!confirmed) return;
+      const scope = captureAgentSkillInstallScope(state.agentSkillInstallRequestId);
+      setAgentSkillInstallBusy(true);
+      nodes.agentSkillInstallState.textContent = "正在安装并启用 Skill...";
+      nodes.agentSkillInstallState.classList.remove("error");
+      try {
+        const response = await controlPlaneFetch("/api/v1/agent-skills/install/confirm", {
+          method: "POST",
+          body: JSON.stringify({ stageId: stage.id, sha256: stage.sha256, enabledSpaces })
+        });
+        const body = await response.json();
+        if (!agentSkillInstallScopeIsCurrent(scope)) return;
+        if (!response.ok) throw new Error(body.error || "Skill 安装失败");
+        state.agentSkillInstallStage = null;
+        ++state.agentSkillInstallRequestId;
+        resetAgentSkillInstallUi(false);
+        nodes.agentSkillInstallState.textContent = "Skill 已安装，并已按所选空间启用";
+        await loadAgentModules(scope.expectedEpoch);
+      } catch (error) {
+        if (!agentSkillInstallScopeIsCurrent(scope)) return;
+        nodes.agentSkillInstallState.textContent = error.message || String(error);
+        nodes.agentSkillInstallState.classList.add("error");
+        setAgentSkillInstallBusy(false);
+      }
+    }
+
+    async function loadAgentModules(expectedEpoch = state.conversationSpaceEpoch) {
       nodes.moduleList.innerHTML = '<div class="muted" style="padding: 14px 0;">扫描中...</div>';
       try {
         const response = await fetch("/api/v1/agent-modules");
         const body = await response.json();
+        if (expectedEpoch !== state.conversationSpaceEpoch) return;
         if (!response.ok) throw new Error(body.error || "模块加载失败");
         state.agentModules = Array.isArray(body.modules) ? body.modules : [];
         renderAgentModules();
       } catch (error) {
+        if (expectedEpoch !== state.conversationSpaceEpoch) return;
         nodes.moduleList.innerHTML = '<div class="error" style="padding: 14px 0;">' + escapeHtml(error.message || String(error)) + '</div>';
       }
     }
@@ -12048,8 +13226,19 @@ export function renderAppHtml(): string {
         nodes.moduleList.innerHTML = '<div class="muted" style="padding: 14px 0;">未发现模块</div>';
         return;
       }
-      nodes.moduleList.innerHTML = state.agentModules.map((module) =>
-        '<div class="module-row">' +
+      nodes.moduleList.innerHTML = state.agentModules.map((module) => {
+        const control = module.type === "skill"
+          ? '<select class="module-space-select" data-module-id="' + escapeHtml(module.id) +
+              '" data-module-spaces aria-label="设置 ' + escapeHtml(module.name) + ' 可用空间">' +
+              '<option value="off"' + (skillSpaceSetting(module) === "off" ? ' selected' : '') + '>关闭</option>' +
+              '<option value="normal"' + (skillSpaceSetting(module) === "normal" ? ' selected' : '') + '>仅普通</option>' +
+              '<option value="secret"' + (skillSpaceSetting(module) === "secret" ? ' selected' : '') + '>仅私密</option>' +
+              '<option value="both"' + (skillSpaceSetting(module) === "both" ? ' selected' : '') + '>普通 + 私密</option>' +
+            '</select>'
+          : '<label class="toggle"><span>' + (module.enabled ? "已启用" : "已关闭") + '</span>' +
+              '<input type="checkbox" data-module-id="' + escapeHtml(module.id) + '" aria-label="切换 ' +
+                escapeHtml(module.name) + '"' + (module.enabled ? ' checked' : '') + ' /></label>';
+        return '<div class="module-row">' +
           '<span class="module-type ' + escapeHtml(module.type) + '">' + escapeHtml(module.type === "mcp" ? "MCP" : "SKILL") + '</span>' +
           '<div><div class="module-name">' + escapeHtml(module.name) + '</div>' +
             '<div class="module-description">' + escapeHtml(module.description || "") + '</div>' +
@@ -12058,22 +13247,49 @@ export function renderAppHtml(): string {
                 escapeHtml(module.type === "mcp"
                   ? "约 " + Number(module.estimatedTokens || 0).toLocaleString() + " tokens/轮"
                   : "索引约 " + Number(module.estimatedTokens || 0).toLocaleString() + " tokens/轮 · 全文约 " + Number(module.fullContentEstimatedTokens || 0).toLocaleString() + " tokens/调用") +
-              '</span></div></div>' +
+          '</span></div></div>' +
           '<button class="secondary icon-button module-detail-button" type="button" data-module-detail="' + escapeHtml(module.id) + '" title="查看模块详情" aria-label="查看 ' + escapeHtml(module.name) + ' 详情"><i data-lucide="file-text" aria-hidden="true"></i></button>' +
-          '<label class="toggle"><span>' + (module.enabled ? "已启用" : "已关闭") + '</span>' +
-            '<input type="checkbox" data-module-id="' + escapeHtml(module.id) + '" aria-label="切换 ' + escapeHtml(module.name) + '"' + (module.enabled ? ' checked' : '') + ' /></label>' +
-        '</div>'
-      ).join("");
+          control + '</div>';
+      }).join("");
       refreshIcons();
+    }
+
+    function skillSpaceSetting(module) {
+      const spaces = Array.isArray(module.enabledSpaces) ? module.enabledSpaces : [];
+      const normal = spaces.includes("normal");
+      const secret = spaces.includes("secret");
+      return normal && secret ? "both" : normal ? "normal" : secret ? "secret" : "off";
+    }
+
+    function enabledSpacesForSetting(value) {
+      if (value === "both") return ["normal", "secret"];
+      if (value === "normal" || value === "secret") return [value];
+      return [];
     }
 
     async function openModuleDetailFromList(event) {
       const button = event.target.closest("button[data-module-detail]");
       if (!button) return;
+      const scope = {
+        epoch: state.conversationSpaceEpoch,
+        conversationSpace: state.conversationSpace,
+        characterId: state.selectedCharacterId,
+        moduleId: button.dataset.moduleDetail
+      };
+      if (scope.conversationSpace === "secret" && !scope.characterId) return;
       button.disabled = true;
       try {
-        const response = await fetch("/api/v1/agent-modules/" + encodeURIComponent(button.dataset.moduleDetail));
+        const response = await fetch(withConversationSpace(
+          "/api/v1/agent-modules/" + encodeURIComponent(scope.moduleId),
+          scope.conversationSpace,
+          scope.characterId
+        ));
         const body = await response.json();
+        if (
+          state.conversationSpaceEpoch !== scope.epoch ||
+          state.conversationSpace !== scope.conversationSpace ||
+          state.selectedCharacterId !== scope.characterId
+        ) return;
         if (!response.ok) throw new Error(body.error || "模块详情加载失败");
         const detail = body.detail || {};
         nodes.moduleDetailTitle.textContent = detail.module?.name || "模块详情";
@@ -12083,29 +13299,40 @@ export function renderAppHtml(): string {
         nodes.moduleDetailDialog.showModal();
         refreshIcons();
       } catch (error) {
-        setStatus(error.message || String(error), true);
+        if (
+          state.conversationSpaceEpoch === scope.epoch &&
+          state.conversationSpace === scope.conversationSpace &&
+          state.selectedCharacterId === scope.characterId
+        ) {
+          setStatus(error.message || String(error), true);
+        }
       } finally {
         button.disabled = false;
       }
     }
 
     async function toggleAgentModule(event) {
-      const input = event.target.closest("input[data-module-id]");
-      if (!input) return;
-      input.disabled = true;
+      const control = event.target.closest("[data-module-id]");
+      if (!control) return;
+      const skillSpaces = control.matches("select[data-module-spaces]");
+      control.disabled = true;
       try {
-        const response = await fetch("/api/v1/agent-modules/" + encodeURIComponent(input.dataset.moduleId), {
+        const response = await controlPlaneFetch("/api/v1/agent-modules/" + encodeURIComponent(control.dataset.moduleId), {
           method: "PATCH",
-          headers: { "content-type": "application/json" },
-          body: JSON.stringify({ enabled: input.checked })
+          body: JSON.stringify(skillSpaces
+            ? { enabledSpaces: enabledSpacesForSetting(control.value) }
+            : { enabled: control.checked })
         });
         const body = await response.json();
         if (!response.ok) throw new Error(body.error || "模块更新失败");
-        setStatus(body.module.name + (body.module.enabled ? " 已启用" : " 已关闭"));
+        setStatus(body.module.name + (skillSpaces
+          ? " 可用空间已更新"
+          : body.module.enabled ? " 已启用" : " 已关闭"));
         await loadAgentModules();
       } catch (error) {
-        input.checked = !input.checked;
-        input.disabled = false;
+        if (!skillSpaces) control.checked = !control.checked;
+        control.disabled = false;
+        if (skillSpaces) await loadAgentModules();
         setStatus(error.message || String(error), true);
       }
     }
@@ -12554,6 +13781,7 @@ export function renderAppHtml(): string {
     function shouldRefreshCharacterCollaborations() {
       if (
         state.uiMode !== "normal" ||
+        state.conversationSpace !== "normal" ||
         state.activeConversationKind !== "direct" ||
         state.sessionDraft ||
         !state.activeSessionId ||
@@ -12597,6 +13825,7 @@ export function renderAppHtml(): string {
     async function refreshCharacterCollaborations() {
       if (
         state.characterCollaborationRefreshInFlight ||
+        state.conversationSpace !== "normal" ||
         state.activeConversationKind !== "direct" ||
         state.sessionDraft ||
         !state.activeSessionId
@@ -12606,8 +13835,10 @@ export function renderAppHtml(): string {
       state.characterCollaborationRefreshInFlight = true;
       try {
         const response = await fetch(
-          "/api/v1/sessions/" + encodeURIComponent(requestedSessionId) +
-          "/character-collaborations?limit=100"
+          withConversationSpace(
+            "/api/v1/sessions/" + encodeURIComponent(requestedSessionId) +
+            "/character-collaborations?limit=100"
+          )
         );
         const body = await response.json().catch(() => ({}));
         if (!response.ok) {
@@ -12644,6 +13875,7 @@ export function renderAppHtml(): string {
     function beginOptimisticCharacterCollaboration(toolCallId) {
       if (
         !toolCallId ||
+        state.conversationSpace !== "normal" ||
         state.activeConversationKind !== "direct" ||
         state.sessionDraft ||
         !state.activeSessionId
@@ -12701,10 +13933,14 @@ export function renderAppHtml(): string {
       return refreshSessionMessages(false);
     }
 
-    async function refreshSessionMessages(silent) {
+    async function refreshSessionMessages(silent, expectedEpoch = state.conversationSpaceEpoch) {
       if (!state.activeSessionId || state.sessionDraft) return;
+      const requestedSpace = state.conversationSpace;
+      if (expectedEpoch !== state.conversationSpaceEpoch) return;
       const requestedSessionId = state.activeSessionId;
-      ensureCharacterCollaborationSession(requestedSessionId);
+      const sharedStateEnabled = requestedSpace === "normal";
+      if (sharedStateEnabled) ensureCharacterCollaborationSession(requestedSessionId);
+      else resetCharacterCollaborationState();
       const sessionId = encodeURIComponent(requestedSessionId);
       if (!silent) setStatus("加载会话...");
       try {
@@ -12716,12 +13952,24 @@ export function renderAppHtml(): string {
           proactiveResponse,
           collaborationResponse
         ] = await Promise.all([
-          fetch("/api/v1/sessions/" + sessionId + "/messages"),
-          fetch("/api/v1/sessions/" + sessionId + "/interaction"),
-          fetch("/api/v1/sessions/" + sessionId + "/inbox"),
-          fetch("/api/v1/sessions/" + sessionId + "/context-budget"),
-          fetch("/api/v1/proactive-messages?sessionId=" + sessionId + "&status=delivered&limit=100"),
-          fetch("/api/v1/sessions/" + sessionId + "/character-collaborations?limit=100")
+          fetch(withConversationSpace("/api/v1/sessions/" + sessionId + "/messages", requestedSpace)),
+          sharedStateEnabled
+            ? fetch(withConversationSpace("/api/v1/sessions/" + sessionId + "/interaction", requestedSpace))
+            : Promise.resolve(null),
+          fetch(withConversationSpace("/api/v1/sessions/" + sessionId + "/inbox", requestedSpace)),
+          fetch(withConversationSpace("/api/v1/sessions/" + sessionId + "/context-budget", requestedSpace)),
+          sharedStateEnabled
+            ? fetch(withConversationSpace(
+                "/api/v1/proactive-messages?sessionId=" + sessionId + "&status=delivered&limit=100",
+                requestedSpace
+              ))
+            : Promise.resolve(null),
+          sharedStateEnabled
+            ? fetch(withConversationSpace(
+                "/api/v1/sessions/" + sessionId + "/character-collaborations?limit=100",
+                requestedSpace
+              ))
+            : Promise.resolve(null)
         ]);
         const [
           body,
@@ -12732,17 +13980,20 @@ export function renderAppHtml(): string {
           collaborationBody
         ] = await Promise.all([
           response.json(),
-          interactionResponse.json().catch(() => ({})),
+          interactionResponse ? interactionResponse.json().catch(() => ({})) : Promise.resolve({}),
           inboxResponse.json().catch(() => ({})),
           budgetResponse.json().catch(() => ({})),
-          proactiveResponse.json().catch(() => ({})),
-          collaborationResponse.json().catch(() => ({}))
+          proactiveResponse ? proactiveResponse.json().catch(() => ({})) : Promise.resolve({}),
+          collaborationResponse ? collaborationResponse.json().catch(() => ({})) : Promise.resolve({})
         ]);
         if (!response.ok) {
           throw new Error(body.error || "加载会话失败");
         }
-        if (state.activeConversationKind !== "direct" || state.activeSessionId !== requestedSessionId) return;
-        if (interactionResponse.ok) {
+        if (
+          expectedEpoch !== state.conversationSpaceEpoch || requestedSpace !== state.conversationSpace ||
+          state.activeConversationKind !== "direct" || state.activeSessionId !== requestedSessionId
+        ) return;
+        if (interactionResponse?.ok) {
           state.interactionState = interactionBody.state || null;
           state.interactionEvents = Array.isArray(interactionBody.events) ? interactionBody.events : [];
           state.interactionCanUndo = Boolean(interactionBody.canUndo);
@@ -12760,10 +14011,10 @@ export function renderAppHtml(): string {
         state.privateInboxRunning = Boolean(
           inboxResponse.ok && inboxBody.running && activePrivateBurstIds(state.privateInboxMessages).size
         );
-        state.activeProactiveMessages = proactiveResponse.ok && Array.isArray(proactiveBody.messages)
+        state.activeProactiveMessages = proactiveResponse?.ok && Array.isArray(proactiveBody.messages)
           ? proactiveBody.messages
           : [];
-        if (collaborationResponse.ok && Array.isArray(collaborationBody.collaborations)) {
+        if (collaborationResponse?.ok && Array.isArray(collaborationBody.collaborations)) {
           reconcilePendingCharacterCollaborations(collaborationBody.collaborations);
           state.characterCollaborations = mergeCharacterCollaborationSnapshots(
             collaborationBody.collaborations
@@ -12794,9 +14045,10 @@ export function renderAppHtml(): string {
           renderMessages({ preserveScroll: Boolean(silent) });
         }
         updateDirectGenerationControls();
-        scheduleCharacterCollaborationRefresh();
+        if (sharedStateEnabled) scheduleCharacterCollaborationRefresh();
         if (!silent) setStatus("就绪");
       } catch (error) {
+        if (expectedEpoch !== state.conversationSpaceEpoch || requestedSpace !== state.conversationSpace) return;
         if (!silent) setStatus(error.message || String(error), true);
       }
     }
@@ -12845,6 +14097,10 @@ export function renderAppHtml(): string {
 
     async function queueChatAttachments(files) {
       if (!files.length) return;
+      if (state.conversationSpace === "secret" && (state.sessionDraft || !state.activeSessionId)) {
+        setStatus("请先打开角色的私密对话，再上传附件", true);
+        return;
+      }
       state.attachmentUploadQueue.push(...files);
       if (state.uploadingAttachments) {
         setStatus(state.attachmentUploadQueue.length + " 个附件等待上传...");
@@ -12860,7 +14116,7 @@ export function renderAppHtml(): string {
         while (state.attachmentUploadQueue.length) {
           const file = state.attachmentUploadQueue.shift();
           try {
-            const entries = await uploadWorkspaceFiles([file], "uploads");
+            const entries = await uploadWorkspaceFiles([file], "uploads", true);
             state.pendingAttachments.push(...entries);
             uploadedCount += entries.length;
             renderAttachmentQueue();
@@ -12923,19 +14179,31 @@ export function renderAppHtml(): string {
       if (!sessionId || state.activeConversationKind !== "direct") return;
       if (state.privateInboxSource && state.privateInboxSessionId === sessionId) return;
       closePrivateInboxEvents();
+      const expectedEpoch = state.conversationSpaceEpoch;
+      const requestedSpace = state.conversationSpace;
       const source = new EventSource(
-        "/api/v1/sessions/" + encodeURIComponent(sessionId) + "/inbox/events"
+        withConversationSpace(
+          "/api/v1/sessions/" + encodeURIComponent(sessionId) + "/inbox/events",
+          requestedSpace
+        )
       );
       state.privateInboxSource = source;
       state.privateInboxSessionId = sessionId;
       source.onmessage = (messageEvent) => {
         if (
           state.privateInboxSource !== source ||
+          expectedEpoch !== state.conversationSpaceEpoch ||
+          requestedSpace !== state.conversationSpace ||
           state.activeConversationKind !== "direct" ||
           state.activeSessionId !== sessionId
         ) return;
         try {
-          void handlePrivateInboxEvent(JSON.parse(messageEvent.data)).catch((error) => {
+          void handlePrivateInboxEvent(
+            JSON.parse(messageEvent.data),
+            sessionId,
+            expectedEpoch,
+            requestedSpace
+          ).catch((error) => {
             setStatus("消息事件处理失败：" + (error.message || String(error)), true);
           });
         } catch (error) {
@@ -12948,8 +14216,17 @@ export function renderAppHtml(): string {
       };
     }
 
-    async function handlePrivateInboxEvent(event) {
+    async function handlePrivateInboxEvent(
+      event,
+      expectedSessionId = state.activeSessionId,
+      expectedEpoch = state.conversationSpaceEpoch,
+      requestedSpace = state.conversationSpace
+    ) {
       if (!event || typeof event !== "object") return;
+      if (
+        expectedEpoch !== state.conversationSpaceEpoch || requestedSpace !== state.conversationSpace ||
+        state.activeSessionId !== expectedSessionId
+      ) return;
       if (event.type === "snapshot") {
         const inbox = event.inbox || {};
         state.privateInboxMessages = Array.isArray(inbox.messages) ? inbox.messages : [];
@@ -12966,6 +14243,10 @@ export function renderAppHtml(): string {
         updateDirectGenerationControls();
         if (recoveredMissedCompletion) {
           await refreshSessionMessages(true);
+          if (
+            expectedEpoch !== state.conversationSpaceEpoch || requestedSpace !== state.conversationSpace ||
+            state.activeSessionId !== expectedSessionId
+          ) return;
           if (!state.privateInboxRunning) {
             if (state.lastTurnStatus) {
               applyTurnOutcome({
@@ -13261,6 +14542,7 @@ export function renderAppHtml(): string {
       updateRetryState();
       updateSessionActionState();
       updateInteractionChrome();
+      updatePrivateModeChrome();
     }
 
     function schedulePrivateTypingHeartbeat() {
@@ -13288,7 +14570,9 @@ export function renderAppHtml(): string {
       state.privateTypingHeartbeatLastSentAt = performance.now();
       try {
         await fetch(
-          "/api/v1/sessions/" + encodeURIComponent(sessionId) + "/inbox/typing",
+          withConversationSpace(
+            "/api/v1/sessions/" + encodeURIComponent(sessionId) + "/inbox/typing"
+          ),
           { method: "POST" }
         );
       } catch {
@@ -13318,6 +14602,8 @@ export function renderAppHtml(): string {
         return;
       }
       const sessionIdValue = state.activeSessionId;
+      const expectedEpoch = state.conversationSpaceEpoch;
+      const requestedSpace = state.conversationSpace;
       const clientMessageId = generateClientMessageId();
       setStatus("已加入发送队列");
       closeEmojiPicker();
@@ -13341,6 +14627,7 @@ export function renderAppHtml(): string {
           body: JSON.stringify({
             clientMessageId,
             mode: nodes.modeSelect.value,
+            conversationSpace: requestedSpace,
             text,
             characterId: nodes.chatCharacterSelect.value,
             attachments: attachments.map((entry) => ({
@@ -13355,7 +14642,10 @@ export function renderAppHtml(): string {
         if (!response.ok) {
           throw new Error(body.error || "消息入队失败");
         }
-        if (state.activeConversationKind === "direct" && state.activeSessionId === sessionIdValue) {
+        if (
+          expectedEpoch === state.conversationSpaceEpoch && requestedSpace === state.conversationSpace &&
+          state.activeConversationKind === "direct" && state.activeSessionId === sessionIdValue
+        ) {
           const resolvedSessionId = body.message?.sessionId || sessionIdValue;
           const localMessage = state.messages.find((message) => message.localId === localId);
           if (localMessage && body.message) {
@@ -13379,7 +14669,10 @@ export function renderAppHtml(): string {
           if (wasDraft || resolvedSessionId !== sessionIdValue) void loadSessions();
         }
       } catch (error) {
-        if (state.activeConversationKind === "direct" && state.activeSessionId === sessionIdValue) {
+        if (
+          expectedEpoch === state.conversationSpaceEpoch && requestedSpace === state.conversationSpace &&
+          state.activeConversationKind === "direct" && state.activeSessionId === sessionIdValue
+        ) {
           const localMessage = state.messages.find((message) => message.localId === localId);
           if (localMessage) {
             localMessage.queueStatus = "failed";
@@ -13387,7 +14680,9 @@ export function renderAppHtml(): string {
           }
           renderMessages();
         }
-        setStatus(error.message || String(error), true);
+        if (expectedEpoch === state.conversationSpaceEpoch && requestedSpace === state.conversationSpace) {
+          setStatus(error.message || String(error), true);
+        }
       } finally {
         nodes.sendBtn.disabled = state.uploadingAttachments;
         nodes.textInput.focus();
@@ -13690,7 +14985,9 @@ export function renderAppHtml(): string {
       if (!state.privateInboxRunning) return;
       const sessionId = encodeURIComponent(state.activeSessionId);
       try {
-        await fetch("/api/v1/sessions/" + sessionId + "/messages/cancel", { method: "POST" });
+        await fetch(withConversationSpace(
+          "/api/v1/sessions/" + sessionId + "/messages/cancel"
+        ), { method: "POST" });
         setStatus("正在停止...");
       } catch (error) {
         setStatus(error.message || String(error), true);
@@ -13708,7 +15005,9 @@ export function renderAppHtml(): string {
         progress: [{ key: "retry", label: "重新调用模型", status: "active" }]
       });
       try {
-        const response = await fetch("/api/v1/sessions/" + sessionId + "/messages/retry", { method: "POST" });
+        const response = await fetch(withConversationSpace(
+          "/api/v1/sessions/" + sessionId + "/messages/retry"
+        ), { method: "POST" });
         const body = await response.json();
         if (!response.ok) throw new Error(body.error || "重试失败");
         state.messages[assistantIndex].text = body.reply || "";
@@ -14432,7 +15731,7 @@ export function renderAppHtml(): string {
         ? '<div class="message-image-grid' + (images.length > 1 ? ' multiple' : '') + '">' + images.map((entry) => {
             const name = entry.name || entry.path.split("/").pop() || "图片";
             return '<button class="message-image-thumb" type="button" data-message-image="true" data-image-path="' + escapeHtml(entry.path) + '" data-image-name="' + escapeHtml(name) + '" aria-label="查看图片 ' + escapeHtml(name) + '">' +
-              '<img src="' + escapeHtml(workspaceFileContentUrl(entry.path, "inline")) + '" alt="' + escapeHtml(name) + '" loading="lazy" /></button>';
+              '<img src="' + escapeHtml(workspaceFileContentUrl(entry.path, "inline", true)) + '" alt="' + escapeHtml(name) + '" loading="lazy" /></button>';
           }).join("") + '</div>'
         : "";
       const fileList = files.map((entry) => {
@@ -14444,7 +15743,7 @@ export function renderAppHtml(): string {
           '<i data-lucide="' + workspaceFileIcon(entry) + '" aria-hidden="true"></i><span class="message-file-copy"><strong>' + escapeHtml(name) + '</strong><small>' + escapeHtml(entry.sizeLabel || formatFileSize(entry.size)) + '</small></span>' +
           '<span class="message-file-actions">' +
             previewAction +
-            '<a class="message-file-action" href="' + escapeHtml(workspaceFileContentUrl(entry.path, "attachment")) + '" download title="下载" aria-label="下载 ' + escapeHtml(name) + '"><i data-lucide="download" aria-hidden="true"></i></a>' +
+            '<a class="message-file-action" href="' + escapeHtml(workspaceFileContentUrl(entry.path, "attachment", true)) + '" download title="下载" aria-label="下载 ' + escapeHtml(name) + '"><i data-lucide="download" aria-hidden="true"></i></a>' +
           '</span></div>';
       }).join("");
       return '<div class="message-attachments">' + imageGrid + fileList + '</div>';
@@ -14600,8 +15899,10 @@ export function renderAppHtml(): string {
       try {
         const response = queued
           ? await fetch(
-              "/api/v1/sessions/" + encodeURIComponent(state.activeSessionId) +
-                "/inbox/" + encodeURIComponent(message.inboxMessageId),
+              withConversationSpace(
+                "/api/v1/sessions/" + encodeURIComponent(state.activeSessionId) +
+                  "/inbox/" + encodeURIComponent(message.inboxMessageId)
+              ),
               {
                 method: action === "edit" ? "PATCH" : "DELETE",
                 headers: { "content-type": "application/json" },
@@ -14609,8 +15910,10 @@ export function renderAppHtml(): string {
               },
             )
           : await fetch(
-              "/api/v1/sessions/" + encodeURIComponent(state.activeSessionId) +
-                "/messages/" + encodeURIComponent(message.entryId) + "/" + action,
+              withConversationSpace(
+                "/api/v1/sessions/" + encodeURIComponent(state.activeSessionId) +
+                  "/messages/" + encodeURIComponent(message.entryId) + "/" + action
+              ),
               {
                 method: "POST",
                 headers: { "content-type": "application/json" },
@@ -14977,7 +16280,7 @@ export function renderAppHtml(): string {
           image.replaceWith(document.createTextNode("[图片路径不可用]"));
           return;
         }
-        image.setAttribute("src", workspaceFileContentUrl(path, "inline"));
+        image.setAttribute("src", workspaceFileContentUrl(path, "inline", true));
         image.dataset.workspacePath = path;
       });
       const sanitized = window.DOMPurify.sanitize(renderedTemplate.innerHTML, {
@@ -15220,16 +16523,18 @@ export function renderAppHtml(): string {
     }
 
     async function loadDebugLogs() {
+      const requestedSpace = state.conversationSpace;
+      const expectedEpoch = state.conversationSpaceEpoch;
       nodes.traceIndex.innerHTML = '<div class="muted">加载中...</div>';
       nodes.traceDetail.hidden = true;
       nodes.traceEmpty.hidden = false;
       nodes.traceEmpty.textContent = "正在加载上下文诊断...";
       try {
         const [conversationResponse, backgroundResponse, economicsResponse, proactiveResponse] = await Promise.all([
-          fetch("/api/debug/model-traces?scope=conversation&limit=10"),
-          fetch("/api/debug/model-traces?scope=background&limit=10"),
-          fetch("/api/debug/context-economics?limit=30"),
-          fetch("/api/v1/proactive-messages?limit=500")
+          fetch(withConversationSpace("/api/debug/model-traces?scope=conversation&limit=10", requestedSpace)),
+          fetch(withConversationSpace("/api/debug/model-traces?scope=background&limit=10", requestedSpace)),
+          fetch(withConversationSpace("/api/debug/context-economics?limit=30", requestedSpace)),
+          fetch(withConversationSpace("/api/v1/proactive-messages?limit=500", requestedSpace))
         ]);
         const [conversationBody, backgroundBody, economicsBody, proactiveBody] = await Promise.all([
           readJsonApiResponse(conversationResponse, "会话内 Provider Trace"),
@@ -15241,6 +16546,7 @@ export function renderAppHtml(): string {
         if (!backgroundResponse.ok) throw new Error(backgroundBody.error || "会话外 Trace 加载失败");
         if (!economicsResponse.ok) throw new Error(economicsBody.error || "Economics 加载失败");
         if (!proactiveResponse.ok) throw new Error(proactiveBody.error || "主动决策加载失败");
+        if (expectedEpoch !== state.conversationSpaceEpoch || requestedSpace !== state.conversationSpace) return;
         state.debugEconomics = Array.isArray(economicsBody.economics) ? economicsBody.economics : [];
         state.debugProactiveMessages = Array.isArray(proactiveBody.messages) ? proactiveBody.messages : [];
         renderModelTraces({
@@ -15249,6 +16555,7 @@ export function renderAppHtml(): string {
         });
         renderDebugDataset();
       } catch (error) {
+        if (expectedEpoch !== state.conversationSpaceEpoch || requestedSpace !== state.conversationSpace) return;
         nodes.traceIndex.innerHTML = "";
         nodes.traceEmpty.hidden = false;
         nodes.traceEmpty.innerHTML = '<span class="error">' + escapeHtml(error.message || String(error)) + '</span>';
@@ -15610,7 +16917,7 @@ export function renderAppHtml(): string {
       const anchor = document.createElement("a");
       const model = String(report.target?.model || "model").replace(/[^A-Za-z0-9._-]+/g, "-").slice(0, 60) || "model";
       anchor.href = objectUrl;
-      anchor.download = "rp-agent-adaptation-" + model + "-" + report.ranAt.replace(/[:.]/g, "-") + ".json";
+      anchor.download = "yourchar-adaptation-" + model + "-" + report.ranAt.replace(/[:.]/g, "-") + ".json";
       anchor.click();
       setTimeout(() => URL.revokeObjectURL(objectUrl), 0);
     }
@@ -16224,7 +17531,7 @@ export function renderAppHtml(): string {
 
     function exportData() {
       const link = document.createElement("a");
-      link.href = "/api/v1/export";
+      link.href = withConversationSpace("/api/v1/export");
       link.click();
     }
 
@@ -16326,7 +17633,7 @@ export function renderAppHtml(): string {
       const confirmation = "DELETE_ALL_DATA";
       const deleted = await openActionDialog({
         title: "删除全部数据",
-        description: "所有会话、日程、角色和记忆都将被永久删除。输入 DELETE_ALL_DATA 确认。",
+        description: "所有会话、日程、角色和记忆都将被永久删除。普通与私密 Workspace 中的用户文件，以及已安装 Skill 包，不会删除；如需清理，请另行删除这些文件。输入 DELETE_ALL_DATA 确认。",
         fieldLabel: "输入确认短语",
         confirmLabel: "删除全部数据",
         validate: (value) => value !== confirmation ? "确认短语不匹配，未删除。" : "",
@@ -16350,7 +17657,7 @@ export function renderAppHtml(): string {
         state.workspaceCharacterId = "";
         renderCharacterOptions();
         startNewSession();
-        setStatus("全部用户数据已删除");
+        setStatus("用户数据已删除；普通与私密 Workspace 文件及已安装 Skill 包仍保留但已禁用");
       }
     }
 

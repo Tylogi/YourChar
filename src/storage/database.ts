@@ -1800,12 +1800,235 @@ const migrations: Migration[] = [
       WHERE reported_at IS NOT NULL;
     `,
   },
+  {
+    version: 36,
+    sql: `
+      CREATE TABLE agent_skill_space_settings (
+        module_id TEXT PRIMARY KEY,
+        normal_enabled INTEGER NOT NULL DEFAULT 0 CHECK (normal_enabled IN (0, 1)),
+        secret_enabled INTEGER NOT NULL DEFAULT 0 CHECK (secret_enabled IN (0, 1)),
+        updated_at TEXT NOT NULL
+      );
+
+      INSERT INTO agent_skill_space_settings(
+        module_id, normal_enabled, secret_enabled, updated_at
+      )
+      SELECT module_id, enabled, 0, updated_at
+      FROM agent_module_settings
+      WHERE module_id LIKE 'skill:%';
+    `,
+  },
+  {
+    version: 37,
+    sql: `
+      ALTER TABLE rp_memories
+        ADD COLUMN conversation_space TEXT NOT NULL DEFAULT 'normal'
+          CHECK (conversation_space IN ('normal', 'secret'));
+      ALTER TABLE rp_memories
+        ADD COLUMN secret_owner_character_id TEXT
+          REFERENCES characters(id) ON DELETE CASCADE
+          CHECK (
+            (conversation_space = 'normal' AND secret_owner_character_id IS NULL) OR
+            (conversation_space = 'secret' AND secret_owner_character_id IS NOT NULL)
+          );
+      UPDATE rp_memories
+      SET idempotency_key = 'v37:normal:' || idempotency_key
+      WHERE idempotency_key IS NOT NULL;
+
+      DROP INDEX rp_memories_character_idx;
+      DROP INDEX rp_memories_key_idx;
+      DROP INDEX rp_memories_retrieval_idx;
+      CREATE INDEX rp_memories_character_idx
+        ON rp_memories(
+          conversation_space, secret_owner_character_id, realm,
+          character_id, validity, confirmed
+        );
+      CREATE INDEX rp_memories_key_idx
+        ON rp_memories(
+          conversation_space, secret_owner_character_id, realm,
+          character_id, memory_key, validity
+        );
+      CREATE INDEX rp_memories_retrieval_idx
+        ON rp_memories(
+          conversation_space, secret_owner_character_id, realm,
+          validity, confirmed, salience DESC, updated_at DESC
+        );
+
+      DROP TABLE rp_memories_fts;
+      CREATE VIRTUAL TABLE rp_memories_fts USING fts5(
+        memory_id UNINDEXED,
+        conversation_space UNINDEXED,
+        secret_owner_character_id UNINDEXED,
+        content,
+        tags,
+        tokenize = 'unicode61'
+      );
+      INSERT INTO rp_memories_fts(
+        memory_id, conversation_space, secret_owner_character_id, content, tags
+      )
+      SELECT
+        id, conversation_space, secret_owner_character_id,
+        content, replace(replace(tags_json, '[', ''), ']', '')
+      FROM rp_memories
+      WHERE validity NOT IN ('rejected', 'archived', 'deleted');
+
+      ALTER TABLE memory_extraction_jobs
+        ADD COLUMN conversation_space TEXT NOT NULL DEFAULT 'normal'
+          CHECK (conversation_space IN ('normal', 'secret'));
+      ALTER TABLE memory_extraction_jobs
+        ADD COLUMN secret_owner_character_id TEXT
+          REFERENCES characters(id) ON DELETE CASCADE
+          CHECK (
+            (conversation_space = 'normal' AND secret_owner_character_id IS NULL) OR
+            (conversation_space = 'secret' AND secret_owner_character_id IS NOT NULL)
+          );
+      DROP INDEX memory_extraction_jobs_work_idx;
+      DROP INDEX memory_extraction_jobs_recent_idx;
+      DROP INDEX memory_extraction_jobs_lease_idx;
+      CREATE INDEX memory_extraction_jobs_work_idx
+        ON memory_extraction_jobs(
+          conversation_space, secret_owner_character_id, status, available_at, created_at
+        );
+      CREATE INDEX memory_extraction_jobs_recent_idx
+        ON memory_extraction_jobs(
+          conversation_space, secret_owner_character_id, updated_at DESC, id DESC
+        );
+      CREATE INDEX memory_extraction_jobs_lease_idx
+        ON memory_extraction_jobs(
+          conversation_space, secret_owner_character_id, status, lease_expires_at, available_at
+        );
+
+      ALTER TABLE context_economics
+        ADD COLUMN conversation_space TEXT NOT NULL DEFAULT 'normal'
+          CHECK (conversation_space IN ('normal', 'secret'));
+      ALTER TABLE context_economics
+        ADD COLUMN secret_owner_character_id TEXT
+          REFERENCES characters(id) ON DELETE CASCADE
+          CHECK (
+            (conversation_space = 'normal' AND secret_owner_character_id IS NULL) OR
+            (conversation_space = 'secret' AND secret_owner_character_id IS NOT NULL)
+          );
+      DROP INDEX context_economics_session_idx;
+      CREATE INDEX context_economics_session_idx
+        ON context_economics(
+          conversation_space, secret_owner_character_id, session_id, sequence DESC
+        );
+
+      ALTER TABLE memory_context_sessions
+        ADD COLUMN conversation_space TEXT NOT NULL DEFAULT 'normal'
+          CHECK (conversation_space IN ('normal', 'secret'));
+      ALTER TABLE memory_context_sessions
+        ADD COLUMN secret_owner_character_id TEXT
+          REFERENCES characters(id) ON DELETE CASCADE
+          CHECK (
+            (conversation_space = 'normal' AND secret_owner_character_id IS NULL) OR
+            (conversation_space = 'secret' AND secret_owner_character_id IS NOT NULL)
+          );
+      ALTER TABLE memory_context_items
+        ADD COLUMN conversation_space TEXT NOT NULL DEFAULT 'normal'
+          CHECK (conversation_space IN ('normal', 'secret'));
+      ALTER TABLE memory_context_items
+        ADD COLUMN secret_owner_character_id TEXT
+          REFERENCES characters(id) ON DELETE CASCADE
+          CHECK (
+            (conversation_space = 'normal' AND secret_owner_character_id IS NULL) OR
+            (conversation_space = 'secret' AND secret_owner_character_id IS NOT NULL)
+          );
+      DROP INDEX memory_context_items_session_idx;
+      CREATE INDEX memory_context_items_session_idx
+        ON memory_context_items(
+          conversation_space, secret_owner_character_id, session_id, injected_at DESC
+        );
+
+      ALTER TABLE context_log_summaries
+        ADD COLUMN conversation_space TEXT NOT NULL DEFAULT 'normal'
+          CHECK (conversation_space IN ('normal', 'secret'));
+      ALTER TABLE context_log_summaries
+        ADD COLUMN secret_owner_character_id TEXT
+          REFERENCES characters(id) ON DELETE CASCADE
+          CHECK (
+            (conversation_space = 'normal' AND secret_owner_character_id IS NULL) OR
+            (conversation_space = 'secret' AND secret_owner_character_id IS NOT NULL)
+          );
+      DROP INDEX context_log_summaries_created_idx;
+      DROP INDEX context_log_summaries_session_idx;
+      CREATE INDEX context_log_summaries_created_idx
+        ON context_log_summaries(
+          conversation_space, secret_owner_character_id, created_at DESC, id DESC
+        );
+      CREATE INDEX context_log_summaries_session_idx
+        ON context_log_summaries(
+          conversation_space, secret_owner_character_id, session_id, created_at DESC
+        );
+
+      ALTER TABLE model_context_traces
+        ADD COLUMN conversation_space TEXT NOT NULL DEFAULT 'normal'
+          CHECK (conversation_space IN ('normal', 'secret'));
+      ALTER TABLE model_context_traces
+        ADD COLUMN secret_owner_character_id TEXT
+          REFERENCES characters(id) ON DELETE CASCADE
+          CHECK (
+            (conversation_space = 'normal' AND secret_owner_character_id IS NULL) OR
+            (conversation_space = 'secret' AND secret_owner_character_id IS NOT NULL)
+          );
+      DROP INDEX model_context_traces_session_idx;
+      CREATE INDEX model_context_traces_session_idx
+        ON model_context_traces(
+          conversation_space, secret_owner_character_id, session_id, sequence DESC
+        );
+    `,
+  },
+  {
+    version: 38,
+    sql: `
+      DROP INDEX character_skill_versions_active_idx;
+      DROP INDEX character_skill_versions_history_idx;
+      ALTER TABLE character_skill_versions RENAME TO character_skill_versions_v37;
+
+      CREATE TABLE character_skill_versions (
+        id TEXT PRIMARY KEY,
+        character_id TEXT NOT NULL REFERENCES characters(id) ON DELETE CASCADE,
+        conversation_space TEXT NOT NULL
+          CHECK (conversation_space IN ('normal', 'secret')),
+        version INTEGER NOT NULL CHECK (version >= 1),
+        status TEXT NOT NULL CHECK (status IN ('active', 'superseded', 'rejected')),
+        markdown TEXT NOT NULL,
+        change_summary TEXT NOT NULL DEFAULT '',
+        source TEXT NOT NULL CHECK (source IN ('bootstrap', 'character_reflection', 'manual')),
+        source_task_id TEXT,
+        content_hash TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        activated_at TEXT,
+        superseded_at TEXT,
+        UNIQUE(character_id, conversation_space, version),
+        UNIQUE(character_id, conversation_space, source_task_id)
+      );
+
+      INSERT INTO character_skill_versions(
+        id, character_id, conversation_space, version, status, markdown,
+        change_summary, source, source_task_id, content_hash, created_at,
+        activated_at, superseded_at
+      )
+      SELECT
+        id, character_id, 'normal', version, status, markdown,
+        change_summary, source, source_task_id, content_hash, created_at,
+        activated_at, superseded_at
+      FROM character_skill_versions_v37;
+
+      DROP TABLE character_skill_versions_v37;
+      CREATE UNIQUE INDEX character_skill_versions_active_idx
+        ON character_skill_versions(character_id, conversation_space)
+        WHERE status = 'active';
+      CREATE INDEX character_skill_versions_history_idx
+        ON character_skill_versions(character_id, conversation_space, version DESC);
+    `,
+  },
 ];
 
 export class AppDatabase {
   readonly connection: DatabaseSync;
 
-  constructor(path: string) {
+  constructor(path: string, options: { maxMigrationVersion?: number } = {}) {
     if (path !== ":memory:") {
       mkdirSync(dirname(path), { recursive: true });
     }
@@ -1815,7 +2038,7 @@ export class AppDatabase {
     if (path !== ":memory:") {
       this.connection.exec("PRAGMA journal_mode = WAL");
     }
-    this.migrate();
+    this.migrate(options.maxMigrationVersion);
   }
 
   transaction<T>(operation: () => T): T {
@@ -1834,7 +2057,7 @@ export class AppDatabase {
     this.connection.close();
   }
 
-  private migrate(): void {
+  private migrate(maxMigrationVersion = Number.POSITIVE_INFINITY): void {
     this.connection.exec(`
       CREATE TABLE IF NOT EXISTS schema_migrations (
         version INTEGER PRIMARY KEY,
@@ -1845,7 +2068,9 @@ export class AppDatabase {
       version: number;
     }>;
     const applied = new Set(rows.map((row) => Number(row.version)));
+    this.reconcileReusedPrivateMigrationMarkers(applied, maxMigrationVersion);
     for (const migration of migrations) {
+      if (migration.version > maxMigrationVersion) continue;
       if (applied.has(migration.version)) {
         continue;
       }
@@ -1856,5 +2081,43 @@ export class AppDatabase {
           .run(migration.version, new Date().toISOString());
       });
     }
+  }
+
+  private reconcileReusedPrivateMigrationMarkers(
+    applied: Set<number>,
+    maxMigrationVersion: number,
+  ): void {
+    const staleVersions: number[] = [];
+    if (
+      maxMigrationVersion >= 36 && applied.has(36) &&
+      !this.tableExists("agent_skill_space_settings")
+    ) staleVersions.push(36);
+    if (
+      maxMigrationVersion >= 37 && applied.has(37) &&
+      !this.columnExists("rp_memories", "conversation_space")
+    ) staleVersions.push(37);
+    if (
+      maxMigrationVersion >= 38 && applied.has(38) &&
+      !this.columnExists("character_skill_versions", "conversation_space")
+    ) staleVersions.push(38);
+    if (!staleVersions.length) return;
+    this.transaction(() => {
+      const remove = this.connection.prepare("DELETE FROM schema_migrations WHERE version = ?");
+      for (const version of staleVersions) remove.run(version);
+    });
+    for (const version of staleVersions) applied.delete(version);
+  }
+
+  private tableExists(name: string): boolean {
+    return Boolean(this.connection.prepare(`
+      SELECT 1 AS present FROM sqlite_master
+      WHERE type = 'table' AND name = ?
+    `).get(name));
+  }
+
+  private columnExists(table: string, column: string): boolean {
+    if (!this.tableExists(table)) return false;
+    return (this.connection.prepare(`PRAGMA table_info(${table})`).all() as Array<{ name: string }>)
+      .some((entry) => entry.name === column);
   }
 }

@@ -26,7 +26,7 @@ test("Tavily MCP requires both its module and API Key, then searches through Pi"
     sendJson(response, 200, {
       query: searchBody.query,
       results: [{
-        title: "RP Agent release notes",
+        title: "YourChar release notes",
         url: "https://example.test/rp-agent",
         content: "Current release information from a test source.",
         score: 0.92,
@@ -50,7 +50,7 @@ test("Tavily MCP requires both its module and API Key, then searches through Pi"
         kind: "tool_call",
         name: "tavily_search",
         arguments: {
-          query: "RP Agent latest release",
+          query: "YourChar latest release",
           topic: "news",
           searchDepth: "basic",
           maxResults: 3,
@@ -70,12 +70,12 @@ test("Tavily MCP requires both its module and API Key, then searches through Pi"
     runtime.kernel.setAgentModuleEnabled("mcp:tavily-search", true);
     const searched = await runtime.kernel.sendMessage("tavily-session", {
       mode: "sms",
-      text: "搜索 RP Agent 最新版本",
+      text: "搜索 YourChar 最新版本",
     });
     assert.equal(runtime.model.requests[1].toolNames.includes("tavily_search"), true);
     assert.equal(authorization, "Bearer tvly-secret-test-key");
     assert.deepEqual(searchBody, {
-      query: "RP Agent latest release",
+      query: "YourChar latest release",
       search_depth: "basic",
       topic: "news",
       max_results: 3,

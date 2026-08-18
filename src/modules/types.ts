@@ -1,3 +1,5 @@
+import type { ConversationSpace } from "../domain/types.js";
+
 export type AgentModuleType = "mcp" | "skill";
 
 export type WorkspaceAccess = "off" | "read_only" | "read_write";
@@ -34,6 +36,7 @@ export type AgentModule = {
   description: string;
   source: string;
   enabled: boolean;
+  enabledSpaces?: ConversationSpace[];
   defaultEnabled: boolean;
   estimatedTokens: number;
   fullContentEstimatedTokens?: number;

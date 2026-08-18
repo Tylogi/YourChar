@@ -1,11 +1,17 @@
-import { readFileSync } from "node:fs";
-import { join, relative, resolve, sep } from "node:path";
+import { readFileSync, realpathSync } from "node:fs";
+import { basename, join, relative, resolve, sep } from "node:path";
 import { formatSkillsForPrompt, loadSkills, type Skill } from "@earendil-works/pi-coding-agent";
 import type { Clock } from "../app/clock.js";
+import type { ConversationSpace } from "../domain/types.js";
 import type { AppDatabase } from "../storage/database.js";
 import type { AgentModule, AgentModuleDetail } from "./types.js";
 
 type SettingRow = { module_id: string; enabled: number };
+type SkillSpaceSettingRow = {
+  module_id: string;
+  normal_enabled: number;
+  secret_enabled: number;
+};
 
 export const scheduleMcpModuleId = "mcp:schedule";
 export const userProfileMcpModuleId = "mcp:user-profile";
@@ -221,6 +227,12 @@ export class AgentModuleCatalog {
       (this.database.connection.prepare("SELECT module_id, enabled FROM agent_module_settings").all() as SettingRow[])
         .map((row) => [row.module_id, Boolean(row.enabled)]),
     );
+    const skillSpaceSettings = new Map(
+      (this.database.connection.prepare(`
+        SELECT module_id, normal_enabled, secret_enabled
+        FROM agent_skill_space_settings
+      `).all() as SkillSpaceSettingRow[]).map((row) => [row.module_id, row]),
+    );
     const modules: AgentModule[] = [
       {
         id: interactionStateMcpModuleId,
@@ -324,13 +336,19 @@ export class AgentModuleCatalog {
       },
       ...this.discoverSkills().map((skill) => {
         const id = skillModuleId(skill);
+        const spaceSetting = skillSpaceSettings.get(id);
+        const enabledSpaces: ConversationSpace[] = [
+          ...(spaceSetting?.normal_enabled ? ["normal" as const] : []),
+          ...(spaceSetting?.secret_enabled ? ["secret" as const] : []),
+        ];
         return {
           id,
           type: "skill" as const,
           name: skill.name,
           description: skill.description,
           source: this.displayPath(skill.filePath),
-          enabled: settings.get(id) ?? false,
+          enabled: enabledSpaces.length > 0,
+          enabledSpaces,
           defaultEnabled: false,
           estimatedTokens: skill.disableModelInvocation ? 0 : estimateTokens(formatSkillsForPrompt([skill])),
           fullContentEstimatedTokens: estimateSkillContentTokens(skill),
@@ -340,7 +358,10 @@ export class AgentModuleCatalog {
     return modules.sort((left, right) => left.type.localeCompare(right.type) || left.name.localeCompare(right.name));
   }
 
-  getDetail(moduleId: string): AgentModuleDetail {
+  getDetail(
+    moduleId: string,
+    conversationSpace: ConversationSpace = "normal",
+  ): AgentModuleDetail {
     const module = this.listModules().find((entry) => entry.id === moduleId);
     if (!module) throw new Error(`unknown agent module: ${moduleId}`);
     if (module.type === "mcp") {
@@ -348,6 +369,13 @@ export class AgentModuleCatalog {
         module,
         format: "markdown",
         content: mcpDetails[module.id] ?? `# ${module.name}\n\n${module.description}\n`,
+      };
+    }
+    if (!module.enabledSpaces?.includes(conversationSpace)) {
+      return {
+        module,
+        format: "markdown",
+        content: "",
       };
     }
     const skill = this.discoverSkills().find((entry) => skillModuleId(entry) === module.id);
@@ -362,6 +390,9 @@ export class AgentModuleCatalog {
   setEnabled(moduleId: string, enabled: boolean): AgentModule {
     const module = this.listModules().find((entry) => entry.id === moduleId);
     if (!module) throw new Error(`unknown agent module: ${moduleId}`);
+    if (module.type === "skill") {
+      return this.setSkillEnabledSpaces(moduleId, enabled ? ["normal"] : []);
+    }
     this.database.connection.prepare(`
       INSERT INTO agent_module_settings(module_id, enabled, updated_at)
       VALUES (?, ?, ?)
@@ -370,37 +401,88 @@ export class AgentModuleCatalog {
     return { ...module, enabled };
   }
 
+  setSkillEnabledSpaces(moduleId: string, spaces: readonly ConversationSpace[]): AgentModule {
+    const module = this.listModules().find((entry) => entry.id === moduleId);
+    if (!module) throw new Error(`unknown agent module: ${moduleId}`);
+    if (module.type !== "skill") throw new Error(`${moduleId} is not an Agent Skill`);
+    const normalized = [...new Set(spaces)];
+    if (normalized.some((space) => space !== "normal" && space !== "secret")) {
+      throw new Error("Skill spaces must be normal and/or secret");
+    }
+    const normalEnabled = normalized.includes("normal");
+    const secretEnabled = normalized.includes("secret");
+    this.database.connection.prepare(`
+      INSERT INTO agent_skill_space_settings(
+        module_id, normal_enabled, secret_enabled, updated_at
+      ) VALUES (?, ?, ?, ?)
+      ON CONFLICT(module_id) DO UPDATE SET
+        normal_enabled = excluded.normal_enabled,
+        secret_enabled = excluded.secret_enabled,
+        updated_at = excluded.updated_at
+    `).run(
+      moduleId,
+      normalEnabled ? 1 : 0,
+      secretEnabled ? 1 : 0,
+      this.clock.now().toISOString(),
+    );
+    return {
+      ...module,
+      enabled: normalEnabled || secretEnabled,
+      enabledSpaces: normalized,
+    };
+  }
+
+  clearSkillEnabledSpaces(moduleId: string): void {
+    this.database.connection.prepare(`
+      DELETE FROM agent_skill_space_settings
+      WHERE module_id = ?
+    `).run(moduleId);
+  }
+
+  getSkillPackageLocation(moduleId: string): { baseDir: string; filePath: string } | undefined {
+    const skill = this.discoverSkills().find((entry) => skillModuleId(entry) === moduleId);
+    return skill
+      ? { baseDir: resolve(skill.baseDir), filePath: resolve(skill.filePath) }
+      : undefined;
+  }
+
   isEnabled(moduleId: string): boolean {
     return this.listModules().find((entry) => entry.id === moduleId)?.enabled ?? false;
   }
 
-  enabledSkills(): Skill[] {
-    const enabled = new Set(this.listModules().filter((entry) => entry.type === "skill" && entry.enabled).map((entry) => entry.id));
+  enabledSkills(conversationSpace: ConversationSpace = "normal"): Skill[] {
+    const enabled = new Set(this.listModules().filter((entry) =>
+      entry.type === "skill" && entry.enabledSpaces?.includes(conversationSpace)
+    ).map((entry) => entry.id));
     return this.discoverSkills().filter((skill) => enabled.has(skillModuleId(skill)));
   }
 
-  skillContext(): string {
-    return formatSkillsForPrompt(this.enabledSkills());
+  skillContext(conversationSpace: ConversationSpace = "normal"): string {
+    return formatSkillsForPrompt(this.enabledSkills(conversationSpace));
   }
 
-  contextStatus(): string {
+  contextStatus(conversationSpace: ConversationSpace = "normal"): string {
+    const sharedRoleplayStateAvailable = conversationSpace === "normal";
     return [
-      this.isEnabled(scheduleMcpModuleId)
+      conversationSpace === "secret"
+        ? "Conversation space: secret. Shared profile, schedule, relationship, interaction, world, and collaboration state are unavailable."
+        : "Conversation space: normal.",
+      sharedRoleplayStateAvailable && this.isEnabled(scheduleMcpModuleId)
         ? "Capability status: Schedule MCP is enabled."
         : "Capability status: Schedule MCP is disabled. Do not claim to create, change, or inspect schedules.",
-      this.isEnabled(userProfileMcpModuleId)
+      sharedRoleplayStateAvailable && this.isEnabled(userProfileMcpModuleId)
         ? "Capability status: User Profile MCP is enabled."
         : "Capability status: User Profile MCP is disabled. Do not claim to read or update the user profile.",
       this.isEnabled(memoryCoordinatorMcpModuleId)
         ? "Capability status: Memory Coordinator is enabled. Direct Agent proposals remain pending; trusted low-risk daily capture depends on Reality Memory Write permission."
         : "Capability status: Memory Coordinator is disabled. Do not search, propose, or claim to store long-term memory.",
-      this.isEnabled(relationshipStateMcpModuleId)
+      sharedRoleplayStateAvailable && this.isEnabled(relationshipStateMcpModuleId)
         ? "Capability status: Relationship State is enabled. Reflect the trusted qualitative snapshot implicitly; never expose or invent internal metrics."
         : "Capability status: Relationship State is disabled. Do not claim to track relationship or affect metrics.",
-      this.isEnabled(worldStateMcpModuleId)
+      sharedRoleplayStateAvailable && this.isEnabled(worldStateMcpModuleId)
         ? "Capability status: World State is enabled for characters assigned to a canonical shared world in SMS mode. Use fixed place capabilities. Character-tool routing follows the expected work product, not surface wording: request_character_help is mandatory when another character must do bounded work or produce a lookup, research result, analysis, plan, checklist, evaluation, task-focused advice, decision, solution, or other deliverable for the current character to use or relay, including task requests phrased as asking, messaging, privately chatting with, or checking with them. send_character_message is for ordinary social conversation, check-ins, simple relays, clarification, coordination, and questions about the target's own current state, feelings, preferences, availability, or willingness, even when the reply will be relayed. Use request_character_contact only when the target should contact the user directly; never impersonate the target or claim unconfirmed delivery."
         : "Capability status: World State is disabled. Do not claim to know or change canonical character locations or offscreen events.",
-      this.isEnabled(interactionStateMcpModuleId)
+      sharedRoleplayStateAvailable && this.isEnabled(interactionStateMcpModuleId)
         ? "Capability status: Interaction State MCP is enabled in canonical private SMS. Confirm meeting facts, never technical modes; begin_meeting requires explicit user arrival evidence."
         : "Capability status: Interaction State MCP is disabled. Follow the injected interaction state but do not claim to change meeting presence through a tool.",
       this.isEnabled(visionMcpModuleId)
@@ -416,17 +498,16 @@ export class AgentModuleCatalog {
   }
 
   private discoverSkills(): Skill[] {
-    return loadSkills({
+    const skillRoots = agentSkillDiscoveryRoots(this.cwd, this.agentDir);
+    const candidates = loadSkills({
       cwd: this.cwd,
       agentDir: this.agentDir,
-      skillPaths: [
-        join(this.cwd, "skills"),
-        join(this.cwd, ".agents", "skills"),
-        join(this.cwd, ".pi", "skills"),
-        join(this.agentDir, "..", "skills"),
-      ],
+      skillPaths: skillRoots,
       includeDefaults: false,
-    }).skills;
+    }).skills.filter((skill) => isIsolatedSkillPackage(skill, skillRoots));
+    return candidates.filter((skill) => !candidates.some((other) =>
+      other !== skill && isStrictlyWithin(resolve(skill.baseDir), resolve(other.baseDir))
+    ));
   }
 
   private displayPath(path: string): string {
@@ -436,6 +517,46 @@ export class AgentModuleCatalog {
       ? projectRelative
       : normalized;
   }
+}
+
+export function agentSkillDiscoveryRoots(cwd: string, agentDir: string): string[] {
+  return [...new Set([
+    join(resolve(cwd), "skills"),
+    join(resolve(cwd), ".agents", "skills"),
+    join(resolve(cwd), ".pi", "skills"),
+    join(resolve(agentDir), "..", "skills"),
+  ].map((path) => resolve(path)))];
+}
+
+function isIsolatedSkillPackage(skill: Skill, discoveryRoots: readonly string[]): boolean {
+  if (basename(skill.filePath) !== "SKILL.md") return false;
+  try {
+    const filePath = resolve(skill.filePath);
+    const baseDir = resolve(skill.baseDir);
+    const realFilePath = realpathSync(filePath);
+    const realBaseDir = realpathSync(baseDir);
+    if (filePath !== realFilePath || baseDir !== realBaseDir) return false;
+    if (realFilePath !== join(realBaseDir, "SKILL.md")) return false;
+    return discoveryRoots.some((root) => {
+      const normalizedRoot = resolve(root);
+      let realRoot: string;
+      try {
+        realRoot = realpathSync(normalizedRoot);
+      } catch {
+        return false;
+      }
+      if (normalizedRoot !== realRoot || realBaseDir === realRoot) return false;
+      const nested = relative(realRoot, realBaseDir);
+      return nested !== "" && nested !== ".." && !nested.startsWith(`..${sep}`);
+    });
+  } catch {
+    return false;
+  }
+}
+
+function isStrictlyWithin(root: string, path: string): boolean {
+  const nested = relative(root, path);
+  return nested !== "" && nested !== ".." && !nested.startsWith(`..${sep}`);
 }
 
 function skillModuleId(skill: Skill): string {

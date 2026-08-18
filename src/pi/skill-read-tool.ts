@@ -1,5 +1,5 @@
 import { existsSync, readFileSync, realpathSync, statSync } from "node:fs";
-import { isAbsolute, relative, resolve, sep } from "node:path";
+import { basename, isAbsolute, relative, resolve, sep } from "node:path";
 import { defineTool, type Skill, type ToolDefinition } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 import type { WorkspaceAccess } from "../modules/types.js";
@@ -19,7 +19,18 @@ export function createSkillReadTool(
   workspaceAccess: WorkspaceAccess = "off",
 ): ToolDefinition<typeof readParameters, unknown> | undefined {
   if (!skills.length && workspaceAccess === "off") return undefined;
-  const skillRoots = skills.map((skill) => realpathSync(skill.baseDir));
+  const skillFiles = skills.map((skill) => realpathSync(skill.filePath));
+  const skillRoots = skills.flatMap((skill) => {
+    if (basename(skill.filePath) !== "SKILL.md") return [];
+    const baseDir = resolve(skill.baseDir);
+    const filePath = resolve(skill.filePath);
+    const realBaseDir = realpathSync(baseDir);
+    const realFilePath = realpathSync(filePath);
+    if (baseDir !== realBaseDir || filePath !== realFilePath || !isWithin(realBaseDir, realFilePath)) {
+      return [];
+    }
+    return [realBaseDir];
+  });
   const workspaceRoot = workspaceDir && workspaceAccess !== "off"
     ? realpathSync(workspaceDir)
     : undefined;
@@ -32,7 +43,7 @@ export function createSkillReadTool(
     parameters: readParameters,
     executionMode: "parallel",
     async execute(_toolCallId, input) {
-      const path = resolveReadablePath(input.path, appRoot, skillRoots, workspaceRoot);
+      const path = resolveReadablePath(input.path, appRoot, skillFiles, skillRoots, workspaceRoot);
       if (!statSync(path).isFile()) throw new Error("read path must be a file");
       const stats = statSync(path);
       if (stats.size > maxReadableBytes) throw new Error("read path exceeds the 1 MiB limit");
@@ -53,6 +64,7 @@ export function createSkillReadTool(
 function resolveReadablePath(
   requestedPath: string,
   appRoot: string,
+  skillFiles: string[],
   skillRoots: string[],
   workspaceRoot?: string,
 ): string {
@@ -66,6 +78,7 @@ function resolveReadablePath(
     if (!existsSync(candidate)) continue;
     const path = realpathSync(candidate);
     if (
+      skillFiles.includes(path) ||
       (workspaceRoot && isWithin(workspaceRoot, path)) ||
       skillRoots.some((root) => isWithin(root, path))
     ) {

@@ -11,7 +11,7 @@ import {
 } from "./backup-contract.mjs";
 
 const stateDir = resolve(process.argv[2] ?? process.env.RP_AGENT_STATE_DIR ?? ".rp-agent");
-const destination = resolve(process.argv[3] ?? join("backups", `rp-agent-${safeTimestamp()}`));
+const destination = resolve(process.argv[3] ?? join("backups", `yourchar-${safeTimestamp()}`));
 const staging = `${destination}.preparing-${randomUUID()}`;
 if (!existsSync(stateDir)) throw new Error(`state directory not found: ${stateDir}`);
 if (existsSync(destination)) throw new Error(`backup destination already exists: ${destination}`);
@@ -23,6 +23,7 @@ try {
     "conversations.json", "pi-sessions", "pi-agent", "model-api.json", "tavily.json", "vision.json",
     "user-profile.md", "characters", "memory-vault", "memory-vault-state.json",
     "memory-vault-migration.json", "memory-vault-journal", "memory-vault-recovery.json", "workspace",
+    "workspace-secret", "skills",
     "avatars", "system-prompts", "trace-archive.json", "trace-archive",
   ]) {
     const source = join(stateDir, name);
@@ -41,11 +42,12 @@ try {
   const database = validateDatabase(join(staging, "rp-agent.sqlite"));
   const vault = validateVault(staging, database);
   const createdAt = new Date().toISOString();
+  const files = payloadFiles(staging);
   const manifest = {
     schemaVersion: BACKUP_SCHEMA_VERSION,
     createdAt,
     sourceDirectoryName: basename(stateDir),
-    files: payloadFiles(staging),
+    files,
     database,
     vault,
     consistency: {
@@ -62,6 +64,8 @@ try {
     containsTavilyCredentials: existsSync(join(staging, "tavily.json")),
     containsVisionCredentials: existsSync(join(staging, "vision.json")),
     containsMemoryVault: vault.present,
+    containsSecretWorkspace: files.some((file) => file.path.startsWith("workspace-secret/")),
+    containsInstalledSkills: files.some((file) => file.path.startsWith("skills/")),
   };
   writeFileSync(join(staging, "backup-manifest.json"), `${JSON.stringify(manifest, null, 2)}\n`, { mode: 0o600 });
   validateBackupDirectory(staging, manifest);

@@ -1,5 +1,6 @@
 import type { Clock } from "../app/clock.js";
 import type { IdGenerator } from "../app/id-generator.js";
+import type { ConversationSpace } from "../domain/types.js";
 import type { MemoryVaultService } from "../memory-vault/service.js";
 import { projectRealityMemoriesIntoProfile } from "../profile/managed-memory.js";
 import { normalizeMemoryContent, type RpRepository } from "../rp/repository.js";
@@ -38,7 +39,12 @@ export class MemoryLifecycleService {
   propose(input: MemoryCandidateInput): RpMemory {
     this.assertInput(input);
     this.vault.syncIfChanged();
-    const idempotent = this.repository.findMemoryByIdempotencyKey(input.idempotencyKey);
+    const scope = memoryInputScope(input);
+    const idempotent = this.repository.findMemoryByIdempotencyKey(
+      input.idempotencyKey,
+      scope.conversationSpace,
+      scope.secretOwnerCharacterId,
+    );
     if (idempotent) return idempotent;
     const memory = this.buildMemory(input, false);
     return this.vault.writeMemory(memory, input.idempotencyKey);
@@ -58,11 +64,22 @@ export class MemoryLifecycleService {
   ): RpMemory {
     this.assertInput(input);
     this.vault.syncIfChanged();
-    const idempotent = this.repository.findMemoryByIdempotencyKey(input.idempotencyKey);
+    const scope = memoryInputScope(input);
+    const idempotent = this.repository.findMemoryByIdempotencyKey(
+      input.idempotencyKey,
+      scope.conversationSpace,
+      scope.secretOwnerCharacterId,
+    );
     if (idempotent) return idempotent;
     const memory = this.buildMemory(input, true, provenanceKind);
     const conflict = memory.key
-      ? this.repository.findActiveMemoryByKeyInRealm(memory.key, memory.realm, memory.characterId)
+      ? this.repository.findActiveMemoryByKeyInRealm(
+          memory.key,
+          memory.realm,
+          memory.characterId,
+          memory.conversationSpace,
+          memory.secretOwnerCharacterId,
+        )
       : undefined;
     if (!conflict || conflict.normalizedContent === memory.normalizedContent) {
       return conflict ?? this.commit([
@@ -78,9 +95,14 @@ export class MemoryLifecycleService {
     return next;
   }
 
-  confirm(id: string, edit: MemoryControlPlaneEdit = {}): MemoryConfirmationResult {
+  confirm(
+    id: string,
+    edit: MemoryControlPlaneEdit = {},
+    conversationSpace: ConversationSpace = "normal",
+    secretOwnerCharacterId?: string,
+  ): MemoryConfirmationResult {
     this.vault.syncIfChanged();
-    const current = this.require(id);
+    const current = this.require(id, conversationSpace, secretOwnerCharacterId);
     if (current.validity !== "pending") {
       throw new MemoryLifecycleError("only pending memory can be confirmed", "MEMORY_NOT_PENDING");
     }
@@ -101,7 +123,13 @@ export class MemoryLifecycleService {
       updatedAt: now,
     };
     const conflict = active.key
-      ? this.repository.findActiveMemoryByKeyInRealm(active.key, active.realm, active.characterId)
+      ? this.repository.findActiveMemoryByKeyInRealm(
+          active.key,
+          active.realm,
+          active.characterId,
+          active.conversationSpace,
+          active.secretOwnerCharacterId,
+        )
       : undefined;
     if (!conflict || conflict.id === active.id || conflict.normalizedContent === active.normalizedContent) {
       return { memory: this.commit([{ memory: active }])[0] };
@@ -117,10 +145,17 @@ export class MemoryLifecycleService {
     };
   }
 
-  correct(id: string, edit: MemoryControlPlaneEdit): MemoryConfirmationResult {
+  correct(
+    id: string,
+    edit: MemoryControlPlaneEdit,
+    conversationSpace: ConversationSpace = "normal",
+    secretOwnerCharacterId?: string,
+  ): MemoryConfirmationResult {
     this.vault.syncIfChanged();
-    const current = this.require(id);
-    if (current.validity === "pending") return this.confirm(id, edit);
+    const current = this.require(id, conversationSpace, secretOwnerCharacterId);
+    if (current.validity === "pending") {
+      return this.confirm(id, edit, conversationSpace, secretOwnerCharacterId);
+    }
     if (current.validity !== "active" || !current.confirmed) {
       throw new MemoryLifecycleError("only pending or active memory can be corrected", "MEMORY_NOT_EDITABLE");
     }
@@ -159,12 +194,22 @@ export class MemoryLifecycleService {
     };
   }
 
-  reject(id: string, reason = "rejected_by_user"): RpMemory {
-    return this.transition(id, "rejected", reason);
+  reject(
+    id: string,
+    reason = "rejected_by_user",
+    conversationSpace: ConversationSpace = "normal",
+    secretOwnerCharacterId?: string,
+  ): RpMemory {
+    return this.transition(id, "rejected", reason, conversationSpace, secretOwnerCharacterId);
   }
 
-  archive(id: string, reason = "archived_by_user"): RpMemory {
-    return this.transition(id, "archived", reason);
+  archive(
+    id: string,
+    reason = "archived_by_user",
+    conversationSpace: ConversationSpace = "normal",
+    secretOwnerCharacterId?: string,
+  ): RpMemory {
+    return this.transition(id, "archived", reason, conversationSpace, secretOwnerCharacterId);
   }
 
   archiveActiveRealityByKey(key: string, reason: string): RpMemory | undefined {
@@ -207,20 +252,32 @@ export class MemoryLifecycleService {
     return this.vault.writeProfile(projectRealityMemoriesIntoProfile(markdown, active));
   }
 
-  forget(id: string, reason = "forgotten_by_user"): RpMemory {
-    return this.transition(id, "deleted", reason);
+  forget(
+    id: string,
+    reason = "forgotten_by_user",
+    conversationSpace: ConversationSpace = "normal",
+    secretOwnerCharacterId?: string,
+  ): RpMemory {
+    return this.transition(id, "deleted", reason, conversationSpace, secretOwnerCharacterId);
   }
 
-  get(id: string): RpMemory {
+  get(
+    id: string,
+    conversationSpace: ConversationSpace = "normal",
+    secretOwnerCharacterId?: string,
+  ): RpMemory {
     this.vault.syncIfChanged();
-    return this.require(id);
+    return this.require(id, conversationSpace, secretOwnerCharacterId);
   }
 
   list(filter: MemorySearchFilter = {}): RpMemory[] {
     this.vault.syncIfChanged();
     return filter.validity || filter.validities
       ? this.repository.searchMemories(filter)
-      : this.repository.listAllMemories().filter((memory) => {
+      : this.repository.listAllMemories(
+          filter.conversationSpace ?? "normal",
+          filter.secretOwnerCharacterId,
+        ).filter((memory) => {
           if (filter.realm && memory.realm !== filter.realm) return false;
           if (filter.characterId && memory.characterId !== filter.characterId) return false;
           if (filter.type && memory.type !== filter.type) return false;
@@ -233,16 +290,28 @@ export class MemoryLifecycleService {
     return this.repository.searchMemories({ ...filter, validity: "active", confirmedOnly: true });
   }
 
-  pendingCandidateCount(): number {
+  pendingCandidateCount(
+    conversationSpace: ConversationSpace = "normal",
+    secretOwnerCharacterId?: string,
+  ): number {
     this.vault.syncIfChanged();
-    return this.repository.listAllMemories().filter((memory) =>
+    return this.repository.listAllMemories(
+      conversationSpace,
+      secretOwnerCharacterId,
+    ).filter((memory) =>
       memory.realm !== "legacy" && memory.validity === "pending" && !memory.confirmed
     ).length;
   }
 
-  private transition(id: string, validity: "rejected" | "archived" | "deleted", reason: string): RpMemory {
+  private transition(
+    id: string,
+    validity: "rejected" | "archived" | "deleted",
+    reason: string,
+    conversationSpace: ConversationSpace = "normal",
+    secretOwnerCharacterId?: string,
+  ): RpMemory {
     this.vault.syncIfChanged();
-    const current = this.require(id);
+    const current = this.require(id, conversationSpace, secretOwnerCharacterId);
     if (current.validity === "deleted") return current;
     if (validity === "rejected" && current.validity !== "pending") {
       throw new MemoryLifecycleError("only pending memory can be rejected", "MEMORY_NOT_PENDING");
@@ -263,11 +332,13 @@ export class MemoryLifecycleService {
   private commit(
     entries: Array<{ memory: RpMemory; idempotencyKey?: string; supersedes?: string }>,
   ): RpMemory[] {
-    const changesReality = entries.some((entry) => entry.memory.realm === REALITY_MEMORY_REALM);
+    const changesReality = entries.some((entry) =>
+      entry.memory.realm === REALITY_MEMORY_REALM && entry.memory.conversationSpace === "normal"
+    );
     let profileMarkdown: string | undefined;
     if (changesReality && this.profileAutoWriteEnabled()) {
       const projected = new Map(
-        this.repository.listAllMemories()
+        this.repository.listAllMemories("normal")
           .filter((memory) => memory.realm === REALITY_MEMORY_REALM)
           .map((memory) => [memory.id, memory]),
       );
@@ -290,6 +361,14 @@ export class MemoryLifecycleService {
     const content = cleanText(input.content, "content", 2_000);
     return {
       id: this.idGenerator.next("memory"),
+      conversationSpace: input.conversationSpace ?? "normal",
+      ...(input.secretOwnerCharacterId
+        ? { secretOwnerCharacterId: cleanText(
+            input.secretOwnerCharacterId,
+            "secretOwnerCharacterId",
+            240,
+          ) }
+        : {}),
       realm: input.realm,
       scope: input.realm === REALITY_MEMORY_REALM ? REALITY_MEMORY_SCOPE : RP_MEMORY_SCOPE,
       type: input.type,
@@ -335,13 +414,40 @@ export class MemoryLifecycleService {
   private assertInput(input: MemoryCandidateInput): void {
     if (!input.idempotencyKey.trim()) throw new MemoryLifecycleError("idempotencyKey is required", "MEMORY_IDEMPOTENCY_REQUIRED");
     this.assertMemoryRealmType({
+      conversationSpace: input.conversationSpace ?? "normal",
+      secretOwnerCharacterId: input.secretOwnerCharacterId,
       realm: input.realm,
       type: input.type,
       characterId: input.characterId,
     });
   }
 
-  private assertMemoryRealmType(memory: Pick<RpMemory, "realm" | "type" | "characterId">): void {
+  private assertMemoryRealmType(memory: Pick<
+    RpMemory,
+    "conversationSpace" | "secretOwnerCharacterId" | "realm" | "type" | "characterId"
+  >): void {
+    if (memory.conversationSpace === "secret" && !memory.secretOwnerCharacterId) {
+      throw new MemoryLifecycleError(
+        "secret memory requires a character owner",
+        "MEMORY_SPACE_CONTRACT_INVALID",
+      );
+    }
+    if (memory.conversationSpace === "normal" && memory.secretOwnerCharacterId) {
+      throw new MemoryLifecycleError(
+        "normal memory cannot have a secret character owner",
+        "MEMORY_SPACE_CONTRACT_INVALID",
+      );
+    }
+    if (
+      memory.conversationSpace === "secret" &&
+      memory.realm === RP_MEMORY_REALM &&
+      memory.characterId !== memory.secretOwnerCharacterId
+    ) {
+      throw new MemoryLifecycleError(
+        "secret roleplay memory must belong to its secret character owner",
+        "MEMORY_SPACE_CONTRACT_INVALID",
+      );
+    }
     if (memory.realm === REALITY_MEMORY_REALM) {
       if (memory.characterId || !isRealityMemoryType(memory.type)) {
         throw new MemoryLifecycleError(
@@ -359,11 +465,27 @@ export class MemoryLifecycleService {
     }
   }
 
-  private require(id: string): RpMemory {
-    const memory = this.repository.getMemory(id);
+  private require(
+    id: string,
+    conversationSpace: ConversationSpace,
+    secretOwnerCharacterId?: string,
+  ): RpMemory {
+    const memory = this.repository.getMemory(id, conversationSpace, secretOwnerCharacterId);
     if (!memory) throw new MemoryLifecycleError(`memory not found: ${id}`, "MEMORY_NOT_FOUND");
     return memory;
   }
+}
+
+function memoryInputScope(input: MemoryCandidateInput): {
+  conversationSpace: ConversationSpace;
+  secretOwnerCharacterId?: string;
+} {
+  return {
+    conversationSpace: input.conversationSpace ?? "normal",
+    ...(input.secretOwnerCharacterId
+      ? { secretOwnerCharacterId: input.secretOwnerCharacterId }
+      : {}),
+  };
 }
 
 function cleanText(value: string | undefined, field: string, max: number): string {

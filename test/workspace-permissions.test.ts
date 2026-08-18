@@ -1,8 +1,8 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, relative } from "node:path";
 import test from "node:test";
 import { VirtualClock } from "../src/app/clock.js";
 import { CompanionKernel } from "../src/domain/index.js";
@@ -256,7 +256,141 @@ test("agent permission API persists settings and prevents network without shell"
   }
 });
 
-test("operational backup and restore include profile, avatars, character SOUL, workspace, and service credentials", () => {
+test("private state fails closed against shell access to the loopback HTTP API", async () => {
+  const stateDir = mkdtempSync(join(tmpdir(), "rp-agent-private-shell-network-"));
+  const runtime = createTestRuntime({
+    stateDir,
+    seed: "private-shell-network",
+    workspaceDir: join(stateDir, "workspace"),
+  });
+  let app: ReturnType<typeof createHttpServer> | undefined;
+  let restarted: CompanionKernel | undefined;
+  let runtimeDisposed = false;
+  try {
+    const character = runtime.kernel.createCharacter({
+      name: "私密网络边界",
+      soulMarkdown: "# SOUL.md - 私密网络边界\n\n守住边界。\n",
+    });
+    runtime.kernel.patchAgentPermissions({
+      workspaceAccess: "read_write",
+      shellEnabled: true,
+      networkEnabled: true,
+    });
+    app = createHttpServer({ kernel: runtime.kernel });
+    await new Promise<void>((resolve) => app!.listen(0, "127.0.0.1", resolve));
+    const address = app.address();
+    assert.ok(address && typeof address === "object");
+    const baseUrl = `http://127.0.0.1:${address.port}`;
+    const secretUrl = `${baseUrl}/api/v1/sessions?conversationSpace=secret&characterId=${encodeURIComponent(character.id)}`;
+
+    runtime.model.enqueue([
+      { kind: "assistant_text", text: "普通回复", delayMs: 500 },
+    ]);
+    const activeTurn = runtime.kernel.sendMessage("network-active", {
+      mode: "sms",
+      text: "保持普通会话运行",
+    });
+    await waitUntil(() => runtime.model.requests.length === 1);
+    await assert.rejects(
+      runtime.kernel.openCanonicalPrivateConversation(character.id, "secret"),
+      /finish active Agent turns before opening or writing private-mode data/,
+    );
+    const activeControlPlaneRequest = await fetch(secretUrl);
+    assert.equal(activeControlPlaneRequest.status, 400);
+    assert.equal(
+      runtime.kernel.listConversationMetadata().some((entry) => entry.conversationSpace === "secret"),
+      false,
+    );
+    await activeTurn;
+
+    const secret = await runtime.kernel.openCanonicalPrivateConversation(character.id, "secret");
+    assert.equal(secret.conversationSpace, "secret");
+    assert.equal(runtime.kernel.getAgentPermissions().networkEnabled, false);
+    assert.throws(
+      () => runtime.kernel.patchAgentPermissions({ networkEnabled: true }),
+      /cannot be enabled while private-mode data or private-only Skills exist/,
+    );
+
+    const permissionResponse = await fetch(`${baseUrl}/api/v1/agent-permissions`, {
+      method: "PATCH",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ networkEnabled: true }),
+    });
+    assert.equal(permissionResponse.status, 400);
+
+    runtime.model.enqueue([
+      {
+        kind: "tool_call",
+        name: "bash",
+        arguments: {
+          command:
+            `if /usr/bin/curl -fsS --max-time 2 '${secretUrl}' >/dev/null 2>&1; ` +
+            "then printf LOOPBACK_REACHABLE; else printf LOOPBACK_BLOCKED; fi",
+        },
+      },
+      { kind: "assistant_text", text: "本机接口不可达" },
+    ]);
+    await runtime.kernel.sendMessage("network-isolated", {
+      mode: "sms",
+      text: "尝试访问本机接口",
+    });
+    assert.match(JSON.stringify(runtime.model.requests[2].messages), /LOOPBACK_BLOCKED/);
+    assert.doesNotMatch(
+      JSON.stringify(runtime.model.requests[2].messages),
+      /"output":"LOOPBACK_REACHABLE"/,
+    );
+    const shellAction = [...runtime.kernel.store.actions].reverse().find((action) =>
+      action.actionType === "workspace_shell"
+    );
+    assert.ok(shellAction);
+    assert.match(JSON.stringify(shellAction.payload), /"networkEnabled":false/);
+
+    await new Promise<void>((resolve, reject) => app!.close((error) => error ? reject(error) : resolve()));
+    app = undefined;
+    runtime.kernel.database.connection.prepare(`
+      UPDATE agent_module_settings
+      SET enabled = 1
+      WHERE module_id = 'permission:workspace-network'
+    `).run();
+    runtime.dispose();
+    runtimeDisposed = true;
+    restarted = new CompanionKernel({ stateDir, startScheduler: false });
+    assert.equal(restarted.getAgentPermissions().shellEnabled, true);
+    assert.equal(restarted.getAgentPermissions().networkEnabled, false);
+  } finally {
+    if (app) await new Promise<void>((resolve) => app!.close(() => resolve()));
+    restarted?.dispose();
+    if (!runtimeDisposed) runtime.dispose();
+    rmSync(stateDir, { recursive: true, force: true });
+  }
+});
+
+test("Workspace configuration cannot overlap protected state or Agent Skill roots", () => {
+  const root = mkdtempSync(join(tmpdir(), "rp-agent-workspace-config-boundary-"));
+  try {
+    const stateDir = join(root, "state");
+    assert.throws(
+      () => new CompanionKernel({
+        stateDir,
+        workspaceDir: stateDir,
+        startScheduler: false,
+      }),
+      /must not overlap the protected YourChar state directory/,
+    );
+    assert.throws(
+      () => new CompanionKernel({
+        stateDir,
+        workspaceDir: process.cwd(),
+        startScheduler: false,
+      }),
+      /must not overlap Agent Skill discovery roots/,
+    );
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("operational backup and restore include normal/secret Workspaces and service state", () => {
   const root = mkdtempSync(join(tmpdir(), "rp-agent-capability-backup-"));
   const stateDir = join(root, "state");
   const backupDir = join(root, "backup");
@@ -279,6 +413,27 @@ test("operational backup and restore include profile, avatars, character SOUL, w
       apiKey: "vision-backup-secret",
     });
     writeFileSync(join(stateDir, "workspace", "project.txt"), "workspace-data", "utf8");
+    const secretWorkspace = kernel.workspaceRegistry.resolve({
+      conversationSpace: "secret",
+      characterId: character.id,
+    });
+    const secretEntry = secretWorkspace.files.upload({
+      directory: "projects",
+      name: "private.txt",
+      bytes: Buffer.from("secret-workspace-data", "utf8"),
+    });
+    const secretRelativePath = relative(
+      stateDir,
+      join(secretWorkspace.dir, secretEntry.path),
+    );
+    assert.equal(secretRelativePath.startsWith(".."), false);
+    const installedSkillDir = join(stateDir, "skills", "backup-skill");
+    mkdirSync(installedSkillDir, { recursive: true });
+    writeFileSync(
+      join(installedSkillDir, "SKILL.md"),
+      "---\nname: backup-skill\ndescription: Backed up installed Skill\n---\n\n# Backup Skill\n",
+      "utf8",
+    );
     kernel.dispose();
 
     execFileSync(process.execPath, ["scripts/backup-state.mjs", stateDir, backupDir], {
@@ -296,6 +451,14 @@ test("operational backup and restore include profile, avatars, character SOUL, w
       "# SOUL.md - 备份角色\n\n保持完整。\n",
     );
     assert.equal(readFileSync(join(restoredDir, "workspace", "project.txt"), "utf8"), "workspace-data");
+    assert.equal(
+      readFileSync(join(restoredDir, secretRelativePath), "utf8"),
+      "secret-workspace-data",
+    );
+    assert.match(
+      readFileSync(join(restoredDir, "skills", "backup-skill", "SKILL.md"), "utf8"),
+      /# Backup Skill/,
+    );
     assert.equal(readFileSync(join(restoredDir, "avatars", "user.png")).byteLength > 0, true);
     assert.equal(readFileSync(join(restoredDir, "avatars", `character-${character.id}.png`)).byteLength > 0, true);
     assert.match(readFileSync(join(restoredDir, "tavily.json"), "utf8"), /tvly-backup-secret/);
@@ -306,6 +469,8 @@ test("operational backup and restore include profile, avatars, character SOUL, w
       true,
     );
     assert.equal(manifest.containsVisionCredentials, true);
+    assert.equal(manifest.containsSecretWorkspace, true);
+    assert.equal(manifest.containsInstalledSkills, true);
     assert.equal(manifest.credentials.visionConfigPresent, true);
   } finally {
     rmSync(root, { recursive: true, force: true });
@@ -318,4 +483,12 @@ function hasRole(value: unknown, role: string): boolean {
 
 function isUserPrompt(value: unknown): boolean {
   return hasRole(value, "user") && !JSON.stringify(value).includes("[RP_AGENT_");
+}
+
+async function waitUntil(predicate: () => boolean, timeoutMs = 1_000): Promise<void> {
+  const startedAt = Date.now();
+  while (!predicate()) {
+    if (Date.now() - startedAt >= timeoutMs) throw new Error("condition was not met before timeout");
+    await new Promise((resolve) => setTimeout(resolve, 5));
+  }
 }

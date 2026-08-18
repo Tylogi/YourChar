@@ -50,6 +50,8 @@ test("R0 null-character memories stay quarantined through management, export, ba
       ],
     );
     for (const memory of initialLegacy) {
+      assert.equal(memory.conversationSpace, "normal");
+      assert.equal(memory.secretOwnerCharacterId, undefined);
       assert.equal(memory.realm, "legacy");
       assert.equal(memory.scope, "quarantine");
       assert.equal(memory.characterId, undefined);
@@ -148,6 +150,10 @@ test("R0 null-character memories stay quarantined through management, export, ba
         count: number;
       };
       assert.equal(Number(count.count), 4);
+      const normalCount = raw.prepare(
+        "SELECT COUNT(*) AS count FROM rp_memories WHERE conversation_space = 'normal' AND secret_owner_character_id IS NULL",
+      ).get() as { count: number };
+      assert.equal(Number(normalCount.count), 5);
     } finally {
       raw.close();
     }

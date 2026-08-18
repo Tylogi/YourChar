@@ -1,4 +1,4 @@
-import type { Mode } from "../domain/types.js";
+import type { ConversationSpace, Mode } from "../domain/types.js";
 import type {
   MemoryRealm,
   MemoryType,
@@ -10,6 +10,8 @@ import type {
 export type MemoryTargetRealm = Exclude<MemoryRealm, "legacy">;
 
 export type MemoryCandidateInput = {
+  conversationSpace?: ConversationSpace;
+  secretOwnerCharacterId?: string;
   realm: MemoryTargetRealm;
   type: RealityMemoryType | RoleplayMemoryType;
   key?: string;
@@ -43,6 +45,8 @@ export type MemoryExtractionJob = {
   sessionId: string;
   sourceMessageId: string;
   mode: Mode;
+  conversationSpace: ConversationSpace;
+  secretOwnerCharacterId?: string;
   realm: MemoryTargetRealm;
   characterId?: string;
   triggerKind: MemoryExtractionTrigger;
@@ -64,6 +68,8 @@ export type MemoryExtractionJob = {
 
 export type MemoryExtractionInput = {
   mode: Mode;
+  conversationSpace?: ConversationSpace;
+  secretOwnerCharacterId?: string;
   realm: MemoryTargetRealm;
   characterId?: string;
   sourceSessionId: string;

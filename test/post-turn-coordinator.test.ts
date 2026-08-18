@@ -334,7 +334,7 @@ test("schema 21 upgrades coordinator state through schema 35 collaboration timin
     legacy.close();
   }
 
-  const upgraded = new AppDatabase(path);
+  const upgraded = new AppDatabase(path, { maxMigrationVersion: 35 });
   try {
     assert.equal(
       Number((upgraded.connection.prepare("SELECT MAX(version) AS version FROM schema_migrations").get() as { version: number }).version),

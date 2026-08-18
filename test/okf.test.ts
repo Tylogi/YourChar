@@ -41,7 +41,7 @@ test("OKF adapter exports conformant selected memory and stages imports only as 
   try {
     const exported = kernel.exportOkfBundle();
     assert.equal(exported.conceptCount, 2);
-    assert.match(exported.filename, /^rp-agent-memory-okf-\d{8}T\d{6}Z\.zip$/u);
+    assert.match(exported.filename, /^yourchar-memory-okf-\d{8}T\d{6}Z\.zip$/u);
     const files = unzipSync(exported.bytes);
     assert.deepEqual(Object.keys(files).sort(), [
       "index.md",
@@ -149,7 +149,7 @@ test("OKF HTTP routes download, preview, and idempotently stage a ZIP", async ()
     assert.equal(exported.status, 200);
     assert.equal(exported.headers.get("content-type"), "application/zip");
     assert.equal(exported.headers.get("x-okf-version"), "0.1");
-    assert.match(exported.headers.get("content-disposition") ?? "", /rp-agent-memory-okf-.*\.zip/u);
+    assert.match(exported.headers.get("content-disposition") ?? "", /yourchar-memory-okf-.*\.zip/u);
     const bytes = new Uint8Array(await exported.arrayBuffer());
 
     const previewResponse = await fetch(`${baseUrl}/api/v1/memory-vault/okf/import/preview?realm=auto`, {

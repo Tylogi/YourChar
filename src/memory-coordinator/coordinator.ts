@@ -1,7 +1,7 @@
 import { createHash, randomUUID } from "node:crypto";
 import type { Clock } from "../app/clock.js";
 import type { IdGenerator } from "../app/id-generator.js";
-import type { ContextLogEntry, Mode } from "../domain/types.js";
+import type { ContextLogEntry, ConversationSpace, Mode } from "../domain/types.js";
 import type { AgentModuleCatalog } from "../modules/catalog.js";
 import { memoryCoordinatorMcpModuleId } from "../modules/catalog.js";
 import type { RoleplayMemoryType, RealityMemoryType } from "../rp/types.js";
@@ -38,14 +38,17 @@ export class MemoryCoordinator {
     this.schedule();
   }
 
-  enqueueTurn(log: ContextLogEntry, context: { characterId?: string }): MemoryExtractionJob | undefined {
+  enqueueTurn(
+    log: ContextLogEntry,
+    context: { characterId?: string; conversationSpace?: ConversationSpace },
+  ): MemoryExtractionJob | undefined {
     if (log.status !== "completed") return undefined;
     return this.enqueue(log, context);
   }
 
   enqueueOutputGuardRecovery(
     log: ContextLogEntry,
-    context: { characterId?: string },
+    context: { characterId?: string; conversationSpace?: ConversationSpace },
   ): MemoryExtractionJob | undefined {
     if (log.status !== "failed" || log.mode !== "sms") return undefined;
     if (!explicitCapture(log.requestText) && !explicitForget(log.requestText)) return undefined;
@@ -54,10 +57,13 @@ export class MemoryCoordinator {
 
   private enqueue(
     log: ContextLogEntry,
-    context: { characterId?: string },
+    context: { characterId?: string; conversationSpace?: ConversationSpace },
     recoveryReason?: "output_guard_exhausted",
   ): MemoryExtractionJob | undefined {
     const realm: MemoryTargetRealm = log.mode === "rp" ? "roleplay" : "reality";
+    const conversationSpace = context.conversationSpace ?? "normal";
+    const secretOwnerCharacterId = conversationSpace === "secret" ? context.characterId : undefined;
+    if (conversationSpace === "secret" && !secretOwnerCharacterId) return undefined;
     const characterId = realm === "roleplay" ? context.characterId : undefined;
     if (realm === "roleplay" && !characterId) return undefined;
     const explicit = explicitCapture(log.requestText);
@@ -86,6 +92,8 @@ export class MemoryCoordinator {
       sessionId: log.sessionId,
       sourceMessageId,
       mode: log.mode,
+      conversationSpace,
+      ...(secretOwnerCharacterId ? { secretOwnerCharacterId } : {}),
       realm,
       ...(characterId ? { characterId } : {}),
       triggerKind,
@@ -105,20 +113,41 @@ export class MemoryCoordinator {
     return job;
   }
 
-  status(): MemoryCoordinatorStatus {
+  status(
+    conversationSpace: ConversationSpace = "normal",
+    secretOwnerCharacterId?: string,
+  ): MemoryCoordinatorStatus {
     return {
       enabled: this.modules.isEnabled(memoryCoordinatorMcpModuleId),
-      pendingCount: this.repository.pendingCount(),
-      pendingCandidateCount: this.lifecycle.pendingCandidateCount(),
+      pendingCount: this.repository.pendingCount(conversationSpace, secretOwnerCharacterId),
+      pendingCandidateCount: this.lifecycle.pendingCandidateCount(
+        conversationSpace,
+        secretOwnerCharacterId,
+      ),
       estimatedTokensLast24Hours: this.repository.estimatedTokensSince(
         new Date(this.clock.now().getTime() - 24 * 60 * 60_000).toISOString(),
+        conversationSpace,
+        secretOwnerCharacterId,
       ),
-      recentJobs: this.repository.listRecent(20).map(({ ownerId: _ownerId, claimToken: _claimToken, ...job }) => job),
+      recentJobs: this.repository.listRecent(
+        20,
+        conversationSpace,
+        secretOwnerCharacterId,
+      ).map(({ ownerId: _ownerId, claimToken: _claimToken, ...job }) => job),
     };
   }
 
-  retry(id: string): MemoryExtractionJob {
-    const job = this.repository.retry(id, this.now());
+  retry(
+    id: string,
+    conversationSpace: ConversationSpace = "normal",
+    secretOwnerCharacterId?: string,
+  ): MemoryExtractionJob {
+    const job = this.repository.retry(
+      id,
+      this.now(),
+      conversationSpace,
+      secretOwnerCharacterId,
+    );
     this.schedule();
     return job;
   }
@@ -185,6 +214,10 @@ export class MemoryCoordinator {
       }
       const log = this.repository.getContextLog(job.sourceContextLogId);
       if (!log) throw new Error("source context log is unavailable");
+      if (
+        log.conversationSpace !== job.conversationSpace ||
+        log.secretOwnerCharacterId !== job.secretOwnerCharacterId
+      ) throw new Error("source context log belongs to a different conversation space");
       if ([...log.requestText].length > 8_000) throw new Error("source user message exceeds extraction limits");
       let resultCount = 0;
       const forgetting = explicitForget(log.requestText);
@@ -193,6 +226,10 @@ export class MemoryCoordinator {
         resultCount = this.handleExplicitForget(job, forgetting);
       } else if (explicit) {
         this.lifecycle.captureAuthorized({
+          conversationSpace: job.conversationSpace,
+          ...(job.secretOwnerCharacterId
+            ? { secretOwnerCharacterId: job.secretOwnerCharacterId }
+            : {}),
           realm: job.realm,
           type: explicitType(job.realm, explicit),
           key: explicitKey(job.realm, explicit),
@@ -210,6 +247,10 @@ export class MemoryCoordinator {
         if ([...log.reply].length > 12_000) throw new Error("source assistant reply exceeds extraction limits");
         const input: MemoryExtractionInput = {
           mode: job.mode,
+          conversationSpace: job.conversationSpace,
+          ...(job.secretOwnerCharacterId
+            ? { secretOwnerCharacterId: job.secretOwnerCharacterId }
+            : {}),
           realm: job.realm,
           ...(job.characterId ? { characterId: job.characterId } : {}),
           sourceSessionId: job.sessionId,
@@ -245,6 +286,10 @@ export class MemoryCoordinator {
               ])]
             : candidateTags;
           const memoryInput = {
+            conversationSpace: job.conversationSpace,
+            ...(job.secretOwnerCharacterId
+              ? { secretOwnerCharacterId: job.secretOwnerCharacterId }
+              : {}),
             realm: job.realm,
             type: candidate.type,
             key: trustedKey ?? candidate.key,
@@ -259,7 +304,10 @@ export class MemoryCoordinator {
             tags: trustedTags,
             idempotencyKey: `${job.idempotencyKey}:candidate:${index}`,
           };
-          if (trustedEvidence && trustedKey && this.observeTrustedReality) {
+          if (
+            job.conversationSpace === "normal" &&
+            trustedEvidence && trustedKey && this.observeTrustedReality
+          ) {
             this.observeTrustedReality({
               sourceSessionId: job.sessionId,
               sourceMessageId: job.sourceMessageId,
@@ -301,6 +349,10 @@ export class MemoryCoordinator {
 
   private handleExplicitForget(job: MemoryExtractionJob, requested: string): number {
     const matches = this.lifecycle.searchConfirmed({
+      conversationSpace: job.conversationSpace,
+      ...(job.secretOwnerCharacterId
+        ? { secretOwnerCharacterId: job.secretOwnerCharacterId }
+        : {}),
       realm: job.realm,
       ...(job.characterId ? { characterId: job.characterId } : {}),
       query: requested,
@@ -312,7 +364,14 @@ export class MemoryCoordinator {
         "MEMORY_FORGET_AMBIGUOUS",
       );
     }
-    if (matches[0]) this.lifecycle.forget(matches[0].id, `explicit_forget:${job.sourceMessageId}`);
+    if (matches[0]) {
+      this.lifecycle.forget(
+        matches[0].id,
+        `explicit_forget:${job.sourceMessageId}`,
+        job.conversationSpace,
+        job.secretOwnerCharacterId,
+      );
+    }
     return matches.length;
   }
 

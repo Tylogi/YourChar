@@ -30,6 +30,7 @@ import {
   PrivateInboxMutationError,
 } from "../domain/index.js";
 import type {
+  ConversationSpace,
   MessageRequest,
   ModelApiConfigPatch,
   ModelApiProfilePatch,
@@ -61,6 +62,11 @@ import type {
 import { RP_MEMORY_REALM, RP_MEMORY_SCOPE } from "../rp/index.js";
 import { TestRunRegistry, type ScriptedModelResponse } from "../testing/index.js";
 import { renderAppHtml } from "./ui.js";
+import {
+  assertLocalControlPlaneMutation,
+  attachLocalControlPlaneCookie,
+  LocalControlPlaneRequestError,
+} from "./local-control-plane.js";
 import type { AgentSessionEvent } from "@earendil-works/pi-coding-agent";
 import { UserProfileValidationError } from "../profile/service.js";
 import { profileManualSection } from "../profile/managed-memory.js";
@@ -111,6 +117,10 @@ import {
   MeetingPresetValidationError,
   type UpdateMeetingPresetInput,
 } from "../meeting-preset/index.js";
+import {
+  AgentSkillInstallerError,
+  type AgentSkillStageResult,
+} from "../modules/skill-installer.js";
 
 export type HttpServerOptions = {
   kernel?: CompanionKernel;
@@ -135,11 +145,18 @@ export function createHttpServer(options: HttpServerOptions = {}) {
       await route({ kernel, testRuns, request, response });
     } catch (error) {
       if (response.headersSent || response.writableEnded) {
-        console.error("RP Agent HTTP request failed after the response started", error);
+        console.error("YourChar HTTP request failed after the response started", error);
         if (!response.writableEnded) response.destroy(asError(error));
         return;
       }
-      if (error instanceof RequestBodyTooLargeError) {
+      if (error instanceof LocalControlPlaneRequestError) {
+        sendJson(response, error.status, { code: error.code, error: error.message });
+      } else if (error instanceof AgentSkillInstallerError) {
+        sendJson(response, agentSkillInstallerHttpStatus(error.code), {
+          code: error.code,
+          error: error.message,
+        });
+      } else if (error instanceof RequestBodyTooLargeError) {
         sendJson(response, 413, { code: "BODY_TOO_LARGE", error: error.message });
       } else if (error instanceof SyntaxError) {
         sendJson(response, 400, { code: "INVALID_JSON", error: error.message });
@@ -318,6 +335,9 @@ async function route(input: {
   if (!kernel) {
     return;
   }
+  if (url.searchParams.get("conversationSpace") === "secret") {
+    kernel.enterPrivateControlPlane();
+  }
 
   if (
     method === "GET" &&
@@ -370,7 +390,7 @@ async function route(input: {
 
   if (method === "GET" && pathname === "/api") {
     sendJson(input.response, 200, {
-      name: "RP Agent",
+      name: "YourChar",
       status: "ok",
       ui: "/ui",
       messageEndpoint: "POST /api/v1/sessions/{id}/messages",
@@ -398,13 +418,21 @@ async function route(input: {
   }
 
   if (method === "GET" && pathname === "/api/v1/sessions") {
-    const records = await kernel.listSessions();
-    const metadata = new Map(kernel.listConversationMetadata().map((entry) => [entry.id, entry]));
+    const conversationSpace = requestedConversationSpace(url);
+    const characterId = requestedConversationCharacterId(url, conversationSpace);
+    const records = await kernel.listSessions(conversationSpace, characterId);
+    const metadata = new Map(kernel.listConversationMetadata()
+      .filter((entry) =>
+        entry.conversationSpace === conversationSpace &&
+        (characterId === undefined || entry.characterId === characterId)
+      )
+      .map((entry) => [entry.id, entry]));
     const includeArchived = url.searchParams.get("includeArchived") === "1";
     sendJson(input.response, 200, {
       sessions: records.filter((record) => includeArchived || !metadata.get(record.id)?.archivedAt).map((record) => ({
         id: record.id,
         mode: metadata.get(record.id)?.mode,
+        conversationSpace: metadata.get(record.id)?.conversationSpace ?? "normal",
         characterId: metadata.get(record.id)?.characterId,
         canonicalDirect: metadata.get(record.id)?.canonicalDirect ?? false,
         title: metadata.get(record.id)?.title,
@@ -414,10 +442,12 @@ async function route(input: {
         lastReadAt: metadata.get(record.id)?.lastReadAt,
         lastTurnStatus: metadata.get(record.id)?.lastTurnStatus,
         lastTurnCanRetry: metadata.get(record.id)?.lastTurnCanRetry ?? false,
-        sleepState: metadata.get(record.id)?.sleepState ?? "awake",
-        sleepCheckpointAt: metadata.get(record.id)?.sleepCheckpointAt,
-        interactionPresence: kernel.interactionService.get(record.id)?.presence,
-        interactionLocation: kernel.interactionService.get(record.id)?.location,
+        ...(conversationSpace === "normal" ? {
+          sleepState: metadata.get(record.id)?.sleepState ?? "awake",
+          sleepCheckpointAt: metadata.get(record.id)?.sleepCheckpointAt,
+          interactionPresence: kernel.interactionService.get(record.id)?.presence,
+          interactionLocation: kernel.interactionService.get(record.id)?.location,
+        } : {}),
         messageCount: visibleConversationMessages(record.messages).length,
         preview: latestConversationPreview(record.messages),
         createdAt: record.createdAt,
@@ -428,7 +458,13 @@ async function route(input: {
   }
 
   if (method === "GET" && pathname === "/api/v1/conversation-unread") {
-    sendJson(input.response, 200, { conversations: kernel.listUnreadConversations() });
+    const conversationSpace = requestedConversationSpace(url);
+    sendJson(input.response, 200, {
+      conversations: kernel.listUnreadConversations(
+        conversationSpace,
+        requestedConversationCharacterId(url, conversationSpace),
+      ),
+    });
     return;
   }
 
@@ -436,6 +472,7 @@ async function route(input: {
     const body = asRecord(await readJson(input.request));
     const session = await kernel.openCanonicalPrivateConversation(
       requiredString(body.characterId, "characterId"),
+      requiredConversationSpace(body.conversationSpace ?? "normal"),
     );
     sendJson(input.response, 200, { session });
     return;
@@ -443,6 +480,8 @@ async function route(input: {
 
   if (method === "POST" && pathname === "/api/v1/sessions/batch") {
     const body = asRecord(await readJson(input.request));
+    const conversationSpace = requiredConversationSpace(body.conversationSpace ?? "normal");
+    const conversationCharacterId = requiredSecretConversationCharacterId(body, conversationSpace);
     const action = body.action;
     const rawSessionIds = body.sessionIds;
     if (action !== "archive" && action !== "delete") {
@@ -459,7 +498,10 @@ async function route(input: {
       throw new SessionBatchValidationError("sessionIds must not contain duplicates");
     }
     const metadata = new Map(kernel.listConversationMetadata().map((entry) => [entry.id, entry]));
-    const missing = sessionIds.filter((sessionId) => !metadata.has(sessionId));
+    const missing = sessionIds.filter((sessionId) =>
+      !metadata.has(sessionId) || metadata.get(sessionId)?.conversationSpace !== conversationSpace ||
+      (conversationCharacterId !== undefined && metadata.get(sessionId)?.characterId !== conversationCharacterId)
+    );
     if (missing.length) throw new ConversationNotFoundError(missing[0]);
 
     if (action === "archive") {
@@ -485,19 +527,29 @@ async function route(input: {
 
   if (method === "POST" && pathname === "/api/v1/conversations/batch") {
     const body = asRecord(await readJson(input.request));
+    const conversationSpace = requiredConversationSpace(body.conversationSpace ?? "normal");
+    const conversationCharacterId = requiredSecretConversationCharacterId(body, conversationSpace);
     const action = body.action;
     if (action !== "archive" && action !== "delete") {
       throw new SessionBatchValidationError("action must be archive or delete");
     }
     const sessionIds = requireBatchIds(body.sessionIds, "sessionIds");
     const groupIds = requireBatchIds(body.groupIds, "groupIds");
+    if (conversationSpace === "secret" && groupIds.length) {
+      throw new SessionBatchValidationError(
+        "secret conversation batches cannot include group chats",
+      );
+    }
     const total = sessionIds.length + groupIds.length;
     if (total < 1 || total > 100) {
       throw new SessionBatchValidationError("batch must contain between 1 and 100 conversations");
     }
     const metadata = new Map(kernel.listConversationMetadata().map((entry) => [entry.id, entry]));
     const groups = new Map(kernel.listGroupChats(true).map((entry) => [entry.id, entry]));
-    const missingSession = sessionIds.find((sessionId) => !metadata.has(sessionId));
+    const missingSession = sessionIds.find((sessionId) =>
+      !metadata.has(sessionId) || metadata.get(sessionId)?.conversationSpace !== conversationSpace ||
+      (conversationCharacterId !== undefined && metadata.get(sessionId)?.characterId !== conversationCharacterId)
+    );
     if (missingSession) throw new ConversationNotFoundError(missingSession);
     const missingGroup = groupIds.find((groupId) => !groups.has(groupId));
     if (missingGroup) throw new GroupChatNotFoundError(missingGroup);
@@ -532,39 +584,65 @@ async function route(input: {
 
   const archiveSessionMatch = pathname.match(/^\/api\/v1\/sessions\/([^/]+)\/archive$/);
   if (archiveSessionMatch && method === "POST") {
-    const session = kernel.archiveConversation(decodeURIComponent(archiveSessionMatch[1]));
+    const sessionId = decodeURIComponent(archiveSessionMatch[1]);
+    assertRequestedSessionConversationSpace(kernel, sessionId, url);
+    const session = kernel.archiveConversation(sessionId);
     sendJson(input.response, 200, { session });
     return;
   }
 
   const restoreSessionMatch = pathname.match(/^\/api\/v1\/sessions\/([^/]+)\/restore$/);
   if (restoreSessionMatch && method === "POST") {
-    const session = kernel.restoreConversation(decodeURIComponent(restoreSessionMatch[1]));
+    const sessionId = decodeURIComponent(restoreSessionMatch[1]);
+    assertRequestedSessionConversationSpace(kernel, sessionId, url);
+    const session = kernel.restoreConversation(sessionId);
     sendJson(input.response, 200, { session });
     return;
   }
 
   const readSessionMatch = pathname.match(/^\/api\/v1\/sessions\/([^/]+)\/read$/);
   if (readSessionMatch && method === "POST") {
-    sendJson(input.response, 200, kernel.markConversationRead(decodeURIComponent(readSessionMatch[1])));
+    const sessionId = decodeURIComponent(readSessionMatch[1]);
+    assertRequestedSessionConversationSpace(kernel, sessionId, url);
+    sendJson(input.response, 200, kernel.markConversationRead(sessionId));
     return;
   }
 
   const sessionMetadataMatch = pathname.match(/^\/api\/v1\/sessions\/([^/]+)$/);
   if (sessionMetadataMatch && method === "PATCH") {
     const body = asRecord(await readJson(input.request));
+    const sessionId = decodeURIComponent(sessionMetadataMatch[1]);
+    assertSessionConversationSpace(
+      kernel,
+      sessionId,
+      requiredConversationSpace(body.conversationSpace ?? "normal"),
+      requiredSecretConversationCharacterId(
+        body,
+        requiredConversationSpace(body.conversationSpace ?? "normal"),
+      ),
+    );
     const title = typeof body.title === "string" ? body.title : "";
-    const session = kernel.renameConversation(decodeURIComponent(sessionMetadataMatch[1]), title);
+    const session = kernel.renameConversation(sessionId, title);
     sendJson(input.response, 200, { session });
     return;
   }
   if (sessionMetadataMatch && method === "DELETE") {
     const body = asRecord(await readJson(input.request));
+    const sessionId = decodeURIComponent(sessionMetadataMatch[1]);
+    assertSessionConversationSpace(
+      kernel,
+      sessionId,
+      requiredConversationSpace(body.conversationSpace ?? "normal"),
+      requiredSecretConversationCharacterId(
+        body,
+        requiredConversationSpace(body.conversationSpace ?? "normal"),
+      ),
+    );
     const confirmation = typeof body.confirmation === "string" ? body.confirmation : "";
     sendJson(
       input.response,
       200,
-      await kernel.deleteConversation(decodeURIComponent(sessionMetadataMatch[1]), confirmation),
+      await kernel.deleteConversation(sessionId, confirmation),
     );
     return;
   }
@@ -572,6 +650,8 @@ async function route(input: {
   const interactionMatch = pathname.match(/^\/api\/v1\/sessions\/([^/]+)\/interaction$/);
   if (interactionMatch) {
     const sessionId = decodeURIComponent(interactionMatch[1]);
+    const conversationSpace = assertRequestedSessionConversationSpace(kernel, sessionId, url);
+    if (conversationSpace === "secret") throw new ConversationNotFoundError(sessionId);
     assertCharacterBoundSession(kernel, sessionId);
     if (method === "GET") {
       sendJson(input.response, 200, kernel.getConversationInteraction(sessionId));
@@ -595,6 +675,7 @@ async function route(input: {
   const contextBudgetMatch = pathname.match(/^\/api\/v1\/sessions\/([^/]+)\/context-budget$/);
   if (contextBudgetMatch && method === "GET") {
     const sessionId = decodeURIComponent(contextBudgetMatch[1]);
+    assertRequestedSessionConversationSpace(kernel, sessionId, url);
     assertCharacterBoundSession(kernel, sessionId);
     sendJson(input.response, 200, { budget: await kernel.getConversationContextBudget(sessionId) });
     return;
@@ -603,6 +684,7 @@ async function route(input: {
   const compactContextMatch = pathname.match(/^\/api\/v1\/sessions\/([^/]+)\/compact$/);
   if (compactContextMatch && method === "POST") {
     const sessionId = decodeURIComponent(compactContextMatch[1]);
+    assertRequestedSessionConversationSpace(kernel, sessionId, url);
     assertCharacterBoundSession(kernel, sessionId);
     sendJson(input.response, 200, { result: await kernel.compactConversationContext(sessionId) });
     return;
@@ -725,10 +807,12 @@ async function route(input: {
   }
 
   if (privateInboxMatch && method === "GET") {
+    const sessionId = decodeURIComponent(privateInboxMatch[1]);
+    assertRequestedSessionConversationSpace(kernel, sessionId, url);
     sendJson(
       input.response,
       200,
-      kernel.privateInboxSnapshot(decodeURIComponent(privateInboxMatch[1])),
+      kernel.privateInboxSnapshot(sessionId),
     );
     return;
   }
@@ -737,10 +821,12 @@ async function route(input: {
     /^\/api\/v1\/sessions\/([^/]+)\/inbox\/typing$/,
   );
   if (privateInboxTypingMatch && method === "POST") {
+    const sessionId = decodeURIComponent(privateInboxTypingMatch[1]);
+    assertRequestedSessionConversationSpace(kernel, sessionId, url);
     sendJson(
       input.response,
       200,
-      kernel.notePrivateInboxTyping(decodeURIComponent(privateInboxTypingMatch[1])),
+      kernel.notePrivateInboxTyping(sessionId),
     );
     return;
   }
@@ -750,6 +836,7 @@ async function route(input: {
   );
   if (privateInboxMessageMatch && method === "PATCH") {
     const sessionId = decodeURIComponent(privateInboxMessageMatch[1]);
+    assertRequestedSessionConversationSpace(kernel, sessionId, url);
     const body = asRecord(await readJson(input.request));
     const message = kernel.updateQueuedPrivateMessage(
       sessionId,
@@ -766,8 +853,10 @@ async function route(input: {
   }
 
   if (privateInboxMessageMatch && method === "DELETE") {
+    const sessionId = decodeURIComponent(privateInboxMessageMatch[1]);
+    assertRequestedSessionConversationSpace(kernel, sessionId, url);
     const message = kernel.retractQueuedPrivateMessage(
-      decodeURIComponent(privateInboxMessageMatch[1]),
+      sessionId,
       decodeURIComponent(privateInboxMessageMatch[2]),
     );
     sendJson(input.response, 200, { message });
@@ -779,6 +868,7 @@ async function route(input: {
   );
   if (privateInboxEventsMatch && method === "GET") {
     const sessionId = decodeURIComponent(privateInboxEventsMatch[1]);
+    assertRequestedSessionConversationSpace(kernel, sessionId, url);
     kernel.privateInboxSnapshot(sessionId);
     input.response.writeHead(200, {
       "content-type": "text/event-stream; charset=utf-8",
@@ -825,7 +915,9 @@ async function route(input: {
   }
 
   if (messageMatch && method === "GET") {
-    const messages = await kernel.getConversationTranscript(decodeURIComponent(messageMatch[1]));
+    const sessionId = decodeURIComponent(messageMatch[1]);
+    assertRequestedSessionConversationSpace(kernel, sessionId, url);
+    const messages = await kernel.getConversationTranscript(sessionId);
     sendJson(input.response, 200, visibleConversationMessages(messages));
     return;
   }
@@ -834,12 +926,15 @@ async function route(input: {
     pathname.match(/^\/api\/v1\/sessions\/([^/]+)\/character-collaborations$/);
   if (sessionCollaborationsMatch && method === "GET") {
     const sessionId = decodeURIComponent(sessionCollaborationsMatch[1]);
+    const conversationSpace = assertRequestedSessionConversationSpace(kernel, sessionId, url);
     assertCharacterBoundSession(kernel, sessionId);
     sendJson(input.response, 200, {
-      collaborations: kernel.listSessionCharacterCollaborations(
-        sessionId,
-        optionalPositiveInteger(url.searchParams.get("limit")) ?? 100,
-      ),
+      collaborations: conversationSpace === "secret"
+        ? []
+        : kernel.listSessionCharacterCollaborations(
+            sessionId,
+            optionalPositiveInteger(url.searchParams.get("limit")) ?? 100,
+          ),
     });
     return;
   }
@@ -847,6 +942,7 @@ async function route(input: {
   const reviseMessageMatch = pathname.match(/^\/api\/v1\/sessions\/([^/]+)\/messages\/([^/]+)\/(edit|retract)$/);
   if (reviseMessageMatch && method === "POST") {
     const sessionId = decodeURIComponent(reviseMessageMatch[1]);
+    assertRequestedSessionConversationSpace(kernel, sessionId, url);
     const entryId = decodeURIComponent(reviseMessageMatch[2]);
     if (reviseMessageMatch[3] === "edit") {
       const body = asRecord(await readJson(input.request));
@@ -905,8 +1001,10 @@ async function route(input: {
 
   const cancelMatch = pathname.match(/^\/api\/v1\/sessions\/([^/]+)\/messages\/cancel$/);
   if (cancelMatch && method === "POST") {
+    const sessionId = decodeURIComponent(cancelMatch[1]);
+    assertRequestedSessionConversationSpace(kernel, sessionId, url);
     sendJson(input.response, 200, {
-      cancelled: await kernel.cancelMessage(decodeURIComponent(cancelMatch[1])),
+      cancelled: await kernel.cancelMessage(sessionId),
     });
     return;
   }
@@ -914,6 +1012,7 @@ async function route(input: {
   const retryMatch = pathname.match(/^\/api\/v1\/sessions\/([^/]+)\/messages\/retry$/);
   if (retryMatch && method === "POST") {
     const sessionId = decodeURIComponent(retryMatch[1]);
+    assertRequestedSessionConversationSpace(kernel, sessionId, url);
     assertCharacterBoundSession(kernel, sessionId);
     sendJson(input.response, 200, await kernel.retryLastMessage(sessionId));
     return;
@@ -1024,6 +1123,44 @@ async function route(input: {
     return;
   }
 
+  if (pathname === "/api/v1/agent-skills/install/preview" && method === "POST") {
+    assertLocalControlPlaneMutation(input.request);
+    const body = asRecord(await readJson(input.request));
+    const stage = await kernel.stageAgentSkillInstall({
+      sourceUrl: requiredString(body.sourceUrl, "sourceUrl"),
+      ...(optionalString(body.packagePath) ? { packagePath: optionalString(body.packagePath) } : {}),
+      ...(optionalString(body.expectedSha256)
+        ? { expectedSha256: optionalString(body.expectedSha256) }
+        : {}),
+    });
+    sendJson(input.response, 201, { stage: agentSkillStageView(stage) });
+    return;
+  }
+
+  if (pathname === "/api/v1/agent-skills/install/confirm" && method === "POST") {
+    assertLocalControlPlaneMutation(input.request);
+    const body = asRecord(await readJson(input.request));
+    const installed = await kernel.confirmAgentSkillInstall({
+      stageId: requiredString(body.stageId, "stageId"),
+      digest: requiredString(body.sha256, "sha256"),
+      enabledSpaces: requiredConversationSpaces(body.enabledSpaces),
+    });
+    sendJson(input.response, 201, { installed });
+    return;
+  }
+
+  const skillInstallStageMatch = pathname.match(
+    /^\/api\/v1\/agent-skills\/install\/stages\/([^/]+)$/,
+  );
+  if (skillInstallStageMatch && method === "DELETE") {
+    assertLocalControlPlaneMutation(input.request);
+    const stageId = requiredString(decodeURIComponent(skillInstallStageMatch[1]), "stageId");
+    sendJson(input.response, 200, {
+      cancelled: kernel.cancelAgentSkillInstall(stageId),
+    });
+    return;
+  }
+
   if (pathname === "/api/v1/agent-permissions") {
     if (method === "GET") {
       sendJson(input.response, 200, { permissions: kernel.getAgentPermissions() });
@@ -1052,10 +1189,107 @@ async function route(input: {
 
   const moduleMatch = pathname.match(/^\/api\/v1\/agent-modules\/([^/]+)$/);
   if (moduleMatch && method === "GET") {
+    const conversationSpace = requestedConversationSpace(url);
+    requestedConversationCharacterId(url, conversationSpace);
     sendJson(input.response, 200, {
-      detail: kernel.getAgentModuleDetail(decodeURIComponent(moduleMatch[1])),
+      detail: kernel.getAgentModuleDetail(
+        decodeURIComponent(moduleMatch[1]),
+        conversationSpace,
+      ),
     });
     return;
+  }
+
+  const sessionWorkspaceUploadMatch = pathname.match(
+    /^\/api\/v1\/sessions\/([^/]+)\/workspace\/files\/upload$/,
+  );
+  if (sessionWorkspaceUploadMatch && method === "POST") {
+    const sessionId = decodeURIComponent(sessionWorkspaceUploadMatch[1]);
+    assertSessionWorkspaceScope(kernel, sessionId, url);
+    const name = requiredString(url.searchParams.get("name"), "name");
+    const directory = optionalString(url.searchParams.get("directory")) ?? "uploads";
+    const bytes = await readBinary(input.request, MAX_WORKSPACE_UPLOAD_BYTES);
+    sendJson(input.response, 201, {
+      entry: kernel.uploadSessionWorkspaceFile(sessionId, { directory, name, bytes }),
+    });
+    return;
+  }
+
+  const sessionWorkspacePreviewMatch = pathname.match(
+    /^\/api\/v1\/sessions\/([^/]+)\/workspace\/files\/preview$/,
+  );
+  if (sessionWorkspacePreviewMatch && method === "GET") {
+    const sessionId = decodeURIComponent(sessionWorkspacePreviewMatch[1]);
+    const conversationSpace = assertSessionWorkspaceScope(kernel, sessionId, url);
+    const secretOwnerCharacterId = requestedConversationCharacterId(url, conversationSpace);
+    const path = requiredString(url.searchParams.get("path"), "path");
+    const preview = kernel.previewSessionWorkspaceFile(sessionId, path);
+    sendJson(input.response, 200, {
+      preview: preview.kind === "image" || preview.kind === "pdf"
+        ? {
+            ...preview,
+            url: `/api/v1/sessions/${encodeURIComponent(sessionId)}/workspace/files/content` +
+              `?path=${encodeURIComponent(path)}&disposition=inline` +
+              `&conversationSpace=${conversationSpace}` +
+              (secretOwnerCharacterId
+                ? `&characterId=${encodeURIComponent(secretOwnerCharacterId)}`
+                : ""),
+          }
+        : preview,
+    });
+    return;
+  }
+
+  const sessionWorkspaceContentMatch = pathname.match(
+    /^\/api\/v1\/sessions\/([^/]+)\/workspace\/files\/content$/,
+  );
+  if (sessionWorkspaceContentMatch && method === "GET") {
+    const sessionId = decodeURIComponent(sessionWorkspaceContentMatch[1]);
+    assertSessionWorkspaceScope(kernel, sessionId, url);
+    const path = requiredString(url.searchParams.get("path"), "path");
+    const disposition = url.searchParams.get("disposition") === "inline" ? "inline" : "attachment";
+    await sendWorkspaceFile(
+      input.response,
+      kernel.getSessionWorkspaceFileAsset(sessionId, path, disposition),
+    );
+    return;
+  }
+
+  const sessionWorkspaceFilesMatch = pathname.match(
+    /^\/api\/v1\/sessions\/([^/]+)\/workspace\/files$/,
+  );
+  if (sessionWorkspaceFilesMatch) {
+    const sessionId = decodeURIComponent(sessionWorkspaceFilesMatch[1]);
+    assertSessionWorkspaceScope(kernel, sessionId, url);
+    if (method === "GET") {
+      sendJson(
+        input.response,
+        200,
+        kernel.listSessionWorkspaceFiles(sessionId, optionalString(url.searchParams.get("path"))),
+      );
+      return;
+    }
+    if (method === "PATCH") {
+      const body = asRecord(await readJson(input.request));
+      sendJson(input.response, 200, {
+        entry: kernel.moveSessionWorkspaceFile(
+          sessionId,
+          requiredString(body.from, "from"),
+          requiredString(body.to, "to"),
+        ),
+      });
+      return;
+    }
+    if (method === "DELETE") {
+      const body = asRecord(await readJson(input.request));
+      sendJson(input.response, 200, {
+        deleted: kernel.deleteSessionWorkspaceFile(
+          sessionId,
+          requiredString(body.path, "path"),
+        ),
+      });
+      return;
+    }
   }
 
   if (pathname === "/api/v1/workspace/files/upload" && method === "POST") {
@@ -1110,12 +1344,22 @@ async function route(input: {
     }
   }
   if (moduleMatch && method === "PATCH") {
+    const moduleId = decodeURIComponent(moduleMatch[1]);
+    const targetModule = kernel.listAgentModules().find((module) => module.id === moduleId);
+    if (targetModule?.type === "skill") {
+      assertLocalControlPlaneMutation(input.request);
+    }
     const body = asRecord(await readJson(input.request));
     sendJson(input.response, 200, {
-      module: kernel.setAgentModuleEnabled(
-        decodeURIComponent(moduleMatch[1]),
-        requiredBoolean(body.enabled, "enabled"),
-      ),
+      module: body.enabledSpaces === undefined
+        ? kernel.setAgentModuleEnabled(
+            moduleId,
+            requiredBoolean(body.enabled, "enabled"),
+          )
+        : kernel.setAgentSkillEnabledSpaces(
+            moduleId,
+            requiredConversationSpaces(body.enabledSpaces),
+          ),
     });
     return;
   }
@@ -1207,7 +1451,14 @@ async function route(input: {
   }
 
   if (pathname === "/api/v1/memory-coordinator/status" && method === "GET") {
-    sendJson(input.response, 200, { coordinator: kernel.getMemoryCoordinatorStatus() });
+    const conversationSpace = requestedConversationSpace(url);
+    const secretOwnerCharacterId = requestedConversationCharacterId(url, conversationSpace);
+    sendJson(input.response, 200, {
+      coordinator: kernel.getMemoryCoordinatorStatus(
+        conversationSpace,
+        secretOwnerCharacterId,
+      ),
+    });
     return;
   }
 
@@ -1222,11 +1473,20 @@ async function route(input: {
   }
 
   if (pathname === "/api/v1/memory-coordinator/memories" && method === "GET") {
-    const stats = new Map(kernel.memoryRetrievalStats().map((entry) => [entry.memoryId, entry]));
+    const conversationSpace = requestedConversationSpace(url);
+    const secretOwnerCharacterId = requestedConversationCharacterId(url, conversationSpace);
+    const stats = new Map(kernel.memoryRetrievalStats(
+      conversationSpace,
+      secretOwnerCharacterId,
+    ).map((entry) => [entry.memoryId, entry]));
     sendJson(input.response, 200, {
       memories: kernel.listMemories({
+        conversationSpace,
+        ...(secretOwnerCharacterId ? { secretOwnerCharacterId } : {}),
         realm: optionalMemoryRealm(url.searchParams.get("realm")),
-        characterId: optionalString(url.searchParams.get("characterId")),
+        ...(conversationSpace === "normal"
+          ? { characterId: optionalString(url.searchParams.get("characterId")) }
+          : {}),
         limit: optionalPositiveInteger(url.searchParams.get("limit")) ?? 100,
       }).map((memory) => ({
         ...memory,
@@ -1239,7 +1499,11 @@ async function route(input: {
   }
 
   if (pathname === "/api/v1/person-profiles" && method === "GET") {
-    sendJson(input.response, 200, { profiles: kernel.listPersonProfiles() });
+    const conversationSpace = requestedConversationSpace(url);
+    requestedConversationCharacterId(url, conversationSpace);
+    sendJson(input.response, 200, {
+      profiles: conversationSpace === "normal" ? kernel.listPersonProfiles() : [],
+    });
     return;
   }
 
@@ -1268,12 +1532,24 @@ async function route(input: {
     (pathname === "/api/v1/context-plan/preview" || pathname === "/api/v1/memory-retrieval/preview")
   ) {
     const mode = requiredMode(url.searchParams.get("mode"));
+    const sessionId = requiredString(url.searchParams.get("sessionId"), "sessionId");
+    const conversationSpace = requestedConversationSpace(url);
+    const metadata = kernel.listConversationMetadata().find((entry) => entry.id === sessionId);
+    if (metadata) {
+      assertRequestedSessionConversationSpace(kernel, sessionId, url);
+    } else if (conversationSpace === "secret") {
+      throw new ConversationNotFoundError(sessionId);
+    }
+    const requestedCharacterId = optionalString(url.searchParams.get("characterId"));
+    if (metadata?.characterId && requestedCharacterId && metadata.characterId !== requestedCharacterId) {
+      throw new ConversationNotFoundError(sessionId);
+    }
+    const characterId = metadata?.characterId ?? requestedCharacterId;
     const plan = kernel.previewContextPlan({
       mode,
-      sessionId: requiredString(url.searchParams.get("sessionId"), "sessionId"),
-      ...(optionalString(url.searchParams.get("characterId"))
-        ? { characterId: optionalString(url.searchParams.get("characterId")) }
-        : {}),
+      sessionId,
+      conversationSpace,
+      ...(characterId ? { characterId } : {}),
       query: url.searchParams.get("query") ?? "",
       timezone: optionalString(url.searchParams.get("timezone")) ?? "Asia/Shanghai",
       budgets: contextPlannerBudgets(url.searchParams),
@@ -1287,8 +1563,14 @@ async function route(input: {
 
   const memoryJobRetryMatch = pathname.match(/^\/api\/v1\/memory-coordinator\/jobs\/([^/]+)\/retry$/);
   if (memoryJobRetryMatch && method === "POST") {
+    const conversationSpace = requestedConversationSpace(url);
+    const secretOwnerCharacterId = requestedConversationCharacterId(url, conversationSpace);
     sendJson(input.response, 200, {
-      job: kernel.retryMemoryExtractionJob(decodeURIComponent(memoryJobRetryMatch[1])),
+      job: kernel.retryMemoryExtractionJob(
+        decodeURIComponent(memoryJobRetryMatch[1]),
+        conversationSpace,
+        secretOwnerCharacterId,
+      ),
     });
     return;
   }
@@ -1695,14 +1977,20 @@ async function route(input: {
   }
 
   if (pathname === "/api/v1/proactive-messages" && method === "GET") {
+    const sessionId = optionalString(url.searchParams.get("sessionId"));
+    const conversationSpace = requestedConversationSpace(url);
+    requestedConversationCharacterId(url, conversationSpace);
+    if (sessionId) assertRequestedSessionConversationSpace(kernel, sessionId, url);
     sendJson(input.response, 200, {
-      messages: kernel.listProactiveMessages({
-        characterId: optionalString(url.searchParams.get("characterId")),
-        sessionId: optionalString(url.searchParams.get("sessionId")),
-        status: optionalProactiveMessageStatus(url.searchParams.get("status")),
-        unreadOnly: url.searchParams.get("unreadOnly") === "1",
-        limit: optionalPositiveInteger(url.searchParams.get("limit")) ?? 100,
-      }),
+      messages: conversationSpace === "secret"
+        ? []
+        : kernel.listProactiveMessages({
+            characterId: optionalString(url.searchParams.get("characterId")),
+            sessionId,
+            status: optionalProactiveMessageStatus(url.searchParams.get("status")),
+            unreadOnly: url.searchParams.get("unreadOnly") === "1",
+            limit: optionalPositiveInteger(url.searchParams.get("limit")) ?? 100,
+          }),
     });
     return;
   }
@@ -1884,8 +2172,12 @@ async function route(input: {
   );
   if (characterFunctionInferMatch && method === "POST") {
     const characterId = decodeURIComponent(characterFunctionInferMatch[1]);
+    const conversationSpace = requestedCharacterWorkspaceSpace(url, characterId);
     sendJson(input.response, 200, {
-      functionProfile: await kernel.inferCharacterFunctionProfile(characterId),
+      functionProfile: await kernel.inferCharacterFunctionProfile(
+        characterId,
+        conversationSpace,
+      ),
     });
     return;
   }
@@ -1895,11 +2187,13 @@ async function route(input: {
   );
   if (characterFunctionAutomationMatch && method === "PATCH") {
     const characterId = decodeURIComponent(characterFunctionAutomationMatch[1]);
+    const conversationSpace = requestedCharacterWorkspaceSpace(url, characterId);
     const body = asRecord(await readJson(input.request));
     sendJson(input.response, 200, {
       functionProfile: await kernel.setCharacterFunctionAutomatic(
         characterId,
         requiredBoolean(body.automatic, "automatic"),
+        conversationSpace,
       ),
     });
     return;
@@ -1910,10 +2204,12 @@ async function route(input: {
   );
   if (characterSkillVersionsMatch && method === "GET") {
     const characterId = decodeURIComponent(characterSkillVersionsMatch[1]);
+    const conversationSpace = requestedCharacterWorkspaceSpace(url, characterId);
     sendJson(input.response, 200, {
       skillVersions: kernel.listCharacterSkillVersions(
         characterId,
         optionalPositiveInteger(url.searchParams.get("limit")) ?? 50,
+        conversationSpace,
       ),
     });
     return;
@@ -1928,9 +2224,10 @@ async function route(input: {
     if (!Number.isInteger(version) || version < 1) {
       throw new SyntaxError("skill version must be a positive integer");
     }
+    const conversationSpace = requestedCharacterWorkspaceSpace(url, characterId);
     sendJson(input.response, 200, {
-      activeSkill: kernel.rollbackCharacterSkill(characterId, version),
-      functionProfile: kernel.getCharacterFunctionProfile(characterId),
+      activeSkill: kernel.rollbackCharacterSkill(characterId, version, conversationSpace),
+      functionProfile: kernel.getCharacterFunctionProfile(characterId, conversationSpace),
     });
     return;
   }
@@ -1940,9 +2237,10 @@ async function route(input: {
   );
   if (characterFunctionMatch) {
     const characterId = decodeURIComponent(characterFunctionMatch[1]);
+    const conversationSpace = requestedCharacterWorkspaceSpace(url, characterId);
     if (method === "GET") {
       sendJson(input.response, 200, {
-        functionProfile: kernel.getCharacterFunctionProfile(characterId),
+        functionProfile: kernel.getCharacterFunctionProfile(characterId, conversationSpace),
       });
       return;
     }
@@ -1987,7 +2285,11 @@ async function route(input: {
         }),
       };
       sendJson(input.response, 200, {
-        functionProfile: kernel.updateCharacterFunctionProfile(characterId, update),
+        functionProfile: kernel.updateCharacterFunctionProfile(
+          characterId,
+          update,
+          conversationSpace,
+        ),
       });
       return;
     }
@@ -2159,6 +2461,8 @@ async function route(input: {
   const sceneMatch = pathname.match(/^\/api\/v1\/sessions\/([^/]+)\/scene$/);
   if (sceneMatch) {
     const sessionId = decodeURIComponent(sceneMatch[1]);
+    const conversationSpace = assertRequestedSessionConversationSpace(kernel, sessionId, url);
+    if (conversationSpace === "secret") throw new ConversationNotFoundError(sessionId);
     if (method === "GET") {
       sendJson(input.response, 200, {
         scene: kernel.getScene(sessionId, optionalString(url.searchParams.get("characterId"))),
@@ -2179,6 +2483,8 @@ async function route(input: {
   }
 
   if (pathname === "/api/v1/reality-memories" && method === "POST") {
+    const conversationSpace = requestedConversationSpace(url);
+    const secretOwnerCharacterId = requestedConversationCharacterId(url, conversationSpace);
     const body = asRecord(await readJson(input.request));
     if (body.scope !== undefined && body.scope !== "global") {
       throw new MemoryLifecycleError("reality memory requires scope=global", "REALITY_MEMORY_CONTRACT_INVALID");
@@ -2191,6 +2497,8 @@ async function route(input: {
     }
     const sourceMessageId = optionalString(body.sourceMessageId) ?? kernel.store.idGenerator.next("message");
     const memory = kernel.createControlPlaneMemory({
+      conversationSpace,
+      ...(secretOwnerCharacterId ? { secretOwnerCharacterId } : {}),
       realm: "reality",
       type: requiredRealityMemoryType(body.type),
       key: optionalString(body.key),
@@ -2207,11 +2515,17 @@ async function route(input: {
   }
 
   if (pathname === "/api/v1/memories") {
+    const conversationSpace = requestedConversationSpace(url);
+    const secretOwnerCharacterId = requestedConversationCharacterId(url, conversationSpace);
     if (method === "GET") {
       sendJson(input.response, 200, {
         memories: kernel.searchRpMemories({
+          conversationSpace,
+          ...(secretOwnerCharacterId ? { secretOwnerCharacterId } : {}),
           query: optionalString(url.searchParams.get("query")),
-          characterId: optionalString(url.searchParams.get("characterId")),
+          ...(conversationSpace === "normal"
+            ? { characterId: optionalString(url.searchParams.get("characterId")) }
+            : {}),
           realm: optionalMemoryRealm(url.searchParams.get("realm")),
           type: optionalMemoryType(url.searchParams.get("type")),
           validity: optionalMemoryValidity(url.searchParams.get("validity")),
@@ -2228,6 +2542,8 @@ async function route(input: {
       const idempotencyKey = Array.isArray(idempotencyHeader) ? idempotencyHeader[0] : idempotencyHeader;
       const result = kernel.writeRpMemory({
         ...(body as CreateMemoryInput),
+        conversationSpace,
+        ...(secretOwnerCharacterId ? { secretOwnerCharacterId } : {}),
         realm: RP_MEMORY_REALM,
         scope: RP_MEMORY_SCOPE,
         type: requiredRoleplayMemoryType(body.type),
@@ -2244,17 +2560,22 @@ async function route(input: {
 
   const memoryMatch = pathname.match(/^\/api\/v1\/memories\/([^/]+)$/);
   if (memoryMatch) {
+    const conversationSpace = requestedConversationSpace(url);
+    const secretOwnerCharacterId = requestedConversationCharacterId(url, conversationSpace);
     const id = decodeURIComponent(memoryMatch[1]);
     if (method === "PATCH") {
       const body = asRecord(await readJson(input.request));
       assertImmutableMemoryRealm(body);
-      const current = kernel.listMemories().find((memory) => memory.id === id);
+      const current = kernel.listMemories({
+        conversationSpace,
+        ...(secretOwnerCharacterId ? { secretOwnerCharacterId } : {}),
+      }).find((memory) => memory.id === id);
       if (current && current.realm !== "legacy") {
         const edit = memoryControlPlaneEdit(body, current.realm);
         const result = current.validity === "pending"
-          ? kernel.confirmMemory(id, edit)
+          ? kernel.confirmMemory(id, edit, conversationSpace, secretOwnerCharacterId)
           : current.validity === "active"
-            ? kernel.correctMemory(id, edit)
+            ? kernel.correctMemory(id, edit, conversationSpace, secretOwnerCharacterId)
             : (() => {
                 throw new MemoryLifecycleError(
                   `memory in ${current.validity} state is not editable`,
@@ -2269,14 +2590,19 @@ async function route(input: {
           ...(body as UpdateMemoryInput),
           type: body.type === undefined ? undefined : requiredMemoryType(body.type),
           tags: body.tags === undefined ? undefined : optionalStringArray(body.tags),
-        }),
+        }, conversationSpace, secretOwnerCharacterId),
       });
       return;
     }
     if (method === "DELETE") {
-      const current = kernel.listMemories().find((memory) => memory.id === id);
+      const current = kernel.listMemories({
+        conversationSpace,
+        ...(secretOwnerCharacterId ? { secretOwnerCharacterId } : {}),
+      }).find((memory) => memory.id === id);
       sendJson(input.response, 200, {
-        memory: current?.realm === "legacy" ? kernel.deleteRpMemory(id) : kernel.forgetMemory(id),
+        memory: current?.realm === "legacy"
+          ? kernel.deleteRpMemory(id, conversationSpace, secretOwnerCharacterId)
+          : kernel.forgetMemory(id, undefined, conversationSpace, secretOwnerCharacterId),
       });
       return;
     }
@@ -2284,26 +2610,67 @@ async function route(input: {
 
   const memoryActionMatch = pathname.match(/^\/api\/v1\/memories\/([^/]+)\/(confirm|correct|reject|archive|forget)$/);
   if (memoryActionMatch && method === "POST") {
+    const conversationSpace = requestedConversationSpace(url);
+    const secretOwnerCharacterId = requestedConversationCharacterId(url, conversationSpace);
     const id = decodeURIComponent(memoryActionMatch[1]);
     const action = memoryActionMatch[2];
     const body = asRecord(await readJson(input.request));
     if (action === "confirm") {
-      sendJson(input.response, 200, kernel.confirmMemory(id, memoryControlPlaneEdit(body)));
+      sendJson(input.response, 200, kernel.confirmMemory(
+        id,
+        memoryControlPlaneEdit(body),
+        conversationSpace,
+        secretOwnerCharacterId,
+      ));
     } else if (action === "correct") {
-      sendJson(input.response, 200, kernel.correctMemory(id, memoryControlPlaneEdit(body)));
+      sendJson(input.response, 200, kernel.correctMemory(
+        id,
+        memoryControlPlaneEdit(body),
+        conversationSpace,
+        secretOwnerCharacterId,
+      ));
     } else if (action === "reject") {
-      sendJson(input.response, 200, { memory: kernel.rejectMemory(id, optionalString(body.reason)) });
+      sendJson(input.response, 200, {
+        memory: kernel.rejectMemory(
+          id,
+          optionalString(body.reason),
+          conversationSpace,
+          secretOwnerCharacterId,
+        ),
+      });
     } else if (action === "archive") {
-      sendJson(input.response, 200, { memory: kernel.archiveMemory(id, optionalString(body.reason)) });
+      sendJson(input.response, 200, {
+        memory: kernel.archiveMemory(
+          id,
+          optionalString(body.reason),
+          conversationSpace,
+          secretOwnerCharacterId,
+        ),
+      });
     } else {
-      sendJson(input.response, 200, { memory: kernel.forgetMemory(id, optionalString(body.reason)) });
+      sendJson(input.response, 200, {
+        memory: kernel.forgetMemory(
+          id,
+          optionalString(body.reason),
+          conversationSpace,
+          secretOwnerCharacterId,
+        ),
+      });
     }
     return;
   }
 
   if (method === "GET" && pathname === "/api/debug/context-logs") {
     const limit = Number(url.searchParams.get("limit") ?? "20");
-    sendJson(input.response, 200, { logs: kernel.recentContextLogs(limit) });
+    const conversationSpace = requestedConversationSpace(url);
+    const secretOwnerCharacterId = requestedConversationCharacterId(url, conversationSpace);
+    sendJson(input.response, 200, {
+      logs: kernel.recentContextLogs(
+        limit,
+        conversationSpace,
+        secretOwnerCharacterId,
+      ),
+    });
     return;
   }
 
@@ -2318,15 +2685,30 @@ async function route(input: {
       return;
     }
     const scope = requestedScope as ModelContextTraceScope | null;
+    const conversationSpace = requestedConversationSpace(url);
+    const secretOwnerCharacterId = requestedConversationCharacterId(url, conversationSpace);
     sendJson(input.response, 200, {
-      traces: kernel.recentModelContextTraces(limit, scope ?? undefined),
+      traces: kernel.recentModelContextTraces(
+        limit,
+        scope ?? undefined,
+        conversationSpace,
+        secretOwnerCharacterId,
+      ),
     });
     return;
   }
 
   if (method === "GET" && pathname === "/api/debug/context-economics") {
     const limit = Number(url.searchParams.get("limit") ?? "50");
-    sendJson(input.response, 200, { economics: kernel.recentContextEconomics(limit) });
+    const conversationSpace = requestedConversationSpace(url);
+    const secretOwnerCharacterId = requestedConversationCharacterId(url, conversationSpace);
+    sendJson(input.response, 200, {
+      economics: kernel.recentContextEconomics(
+        limit,
+        conversationSpace,
+        secretOwnerCharacterId,
+      ),
+    });
     return;
   }
 
@@ -2446,12 +2828,18 @@ async function route(input: {
   }
 
   if (pathname === "/api/v1/export" && method === "GET") {
+    const conversationSpace = requestedConversationSpace(url);
+    const characterId = requestedConversationCharacterId(url, conversationSpace);
     input.response.writeHead(200, {
       "content-type": "application/json; charset=utf-8",
-      "content-disposition": "attachment; filename=rp-agent-export.json",
+      "content-disposition": "attachment; filename=yourchar-export.json",
       "cache-control": "no-store",
     });
-    input.response.end(JSON.stringify(await kernel.exportUserData(), null, 2));
+    input.response.end(JSON.stringify(
+      await kernel.exportUserData(conversationSpace, characterId),
+      null,
+      2,
+    ));
     return;
   }
 
@@ -2732,6 +3120,17 @@ function requireCharacterBoundMessage(
 ): MessageRequest {
   const body = asRecord(value);
   const metadata = kernel.listConversationMetadata().find((entry) => entry.id === sessionId);
+  const conversationSpace = requiredConversationSpace(body.conversationSpace ?? "normal");
+  const requestedCharacterId = optionalString(body.characterId);
+  const secretCharacterId = requiredSecretConversationCharacterId(body, conversationSpace);
+  if (
+    metadata && (
+      metadata.conversationSpace !== conversationSpace ||
+      (secretCharacterId !== undefined && metadata.characterId !== secretCharacterId)
+    )
+  ) {
+    throw new ConversationNotFoundError(sessionId);
+  }
   if (metadata?.archivedAt) throw new ConversationArchivedError(sessionId);
   const requestedMode = body.mode === undefined ? metadata?.mode ?? "sms" : body.mode;
   if (requestedMode !== "sms" && requestedMode !== "rp") {
@@ -2745,7 +3144,6 @@ function requireCharacterBoundMessage(
       `Session ${sessionId} is a legacy unbound session; create a new character-bound session`,
     );
   }
-  const requestedCharacterId = optionalString(body.characterId);
   if (metadata?.characterId && requestedCharacterId && metadata.characterId !== requestedCharacterId) {
     throw new SessionCharacterMismatchError(sessionId);
   }
@@ -2756,8 +3154,12 @@ function requireCharacterBoundMessage(
     );
   }
   kernel.getCharacter(characterId);
+  if (conversationSpace === "secret" && requestedMode !== "sms") {
+    throw new SyntaxError("secret conversation space is available only for SMS conversations");
+  }
   return {
     mode: requestedMode,
+    conversationSpace,
     text: requiredString(body.text, "text"),
     timezone: optionalString(body.timezone),
     characterId,
@@ -2795,6 +3197,77 @@ function assertCharacterBoundSession(kernel: CompanionKernel, sessionId: string)
       `Session ${sessionId} has no selected character; create a new character-bound session`,
     );
   }
+}
+
+function requestedConversationSpace(url: URL): ConversationSpace {
+  return requiredConversationSpace(url.searchParams.get("conversationSpace") ?? "normal");
+}
+
+function requestedConversationCharacterId(
+  url: URL,
+  conversationSpace: ConversationSpace,
+): string | undefined {
+  if (conversationSpace === "normal") return undefined;
+  const characterId = optionalString(url.searchParams.get("characterId"));
+  if (!characterId) throw new SyntaxError("characterId is required for secret conversation space");
+  return characterId;
+}
+
+function requestedCharacterWorkspaceSpace(
+  url: URL,
+  characterId: string,
+): ConversationSpace {
+  const conversationSpace = requestedConversationSpace(url);
+  const secretOwnerCharacterId = requestedConversationCharacterId(url, conversationSpace);
+  if (secretOwnerCharacterId && secretOwnerCharacterId !== characterId) {
+    throw new ConversationNotFoundError(characterId);
+  }
+  return conversationSpace;
+}
+
+function assertSessionConversationSpace(
+  kernel: CompanionKernel,
+  sessionId: string,
+  conversationSpace: ConversationSpace,
+  characterId?: string,
+): void {
+  const metadata = kernel.listConversationMetadata().find((entry) => entry.id === sessionId);
+  if (
+    !metadata || metadata.conversationSpace !== conversationSpace ||
+    (characterId !== undefined && metadata.characterId !== characterId)
+  ) {
+    throw new ConversationNotFoundError(sessionId);
+  }
+}
+
+function assertRequestedSessionConversationSpace(
+  kernel: CompanionKernel,
+  sessionId: string,
+  url: URL,
+): ConversationSpace {
+  const conversationSpace = requestedConversationSpace(url);
+  assertSessionConversationSpace(
+    kernel,
+    sessionId,
+    conversationSpace,
+    requestedConversationCharacterId(url, conversationSpace),
+  );
+  return conversationSpace;
+}
+
+function assertSessionWorkspaceScope(
+  kernel: CompanionKernel,
+  sessionId: string,
+  url: URL,
+): ConversationSpace {
+  const conversationSpace = assertRequestedSessionConversationSpace(kernel, sessionId, url);
+  const metadata = kernel.listConversationMetadata().find((entry) => entry.id === sessionId);
+  if (conversationSpace === "secret" && !metadata?.characterId) {
+    throw new CharacterBindingRequiredError(
+      `Session ${sessionId} has no selected character; secret Workspace is unavailable`,
+    );
+  }
+  return conversationSpace;
 }
 
 function asRecord(value: unknown): Record<string, unknown> {
@@ -2898,6 +3371,30 @@ function requiredMeetingPresetPromptPatches(
 function requiredMode(value: unknown): "sms" | "rp" {
   if (value === "sms" || value === "rp") return value;
   throw new SyntaxError("mode must be sms or rp");
+}
+
+function requiredConversationSpace(value: unknown): "normal" | "secret" {
+  if (value === "normal" || value === "secret") return value;
+  throw new SyntaxError("conversationSpace must be normal or secret");
+}
+
+function requiredSecretConversationCharacterId(
+  body: Record<string, unknown>,
+  conversationSpace: ConversationSpace,
+): string | undefined {
+  if (conversationSpace === "normal") return undefined;
+  const characterId = optionalString(body.characterId);
+  if (!characterId) throw new SyntaxError("characterId is required for secret conversation space");
+  return characterId;
+}
+
+function requiredConversationSpaces(value: unknown): Array<"normal" | "secret"> {
+  if (!Array.isArray(value)) throw new SyntaxError("enabledSpaces must be an array");
+  const spaces = value.map(requiredConversationSpace);
+  if (new Set(spaces).size !== spaces.length) {
+    throw new SyntaxError("enabledSpaces must not contain duplicates");
+  }
+  return spaces;
 }
 
 function requiredPersonVisibility(value: unknown): "global" | "selected_characters" {
@@ -3170,6 +3667,72 @@ function workspaceFileHttpStatus(code: WorkspaceFileError["code"]): number {
   return 400;
 }
 
+function agentSkillInstallerHttpStatus(code: string): number {
+  if (code === "STAGE_NOT_FOUND") return 404;
+  if (
+    code === "STAGE_EXPIRED" ||
+    code === "STAGE_DIGEST_MISMATCH" ||
+    code === "STAGE_CHANGED" ||
+    code === "DIGEST_MISMATCH" ||
+    code === "SKILL_EXISTS" ||
+    code === "SKILL_NAME_CONFLICT" ||
+    code === "SKILL_SOURCE_MISMATCH"
+  ) return 409;
+  if (code === "REQUEST_ABORTED" || code === "REQUEST_TIMEOUT") return 408;
+  if (
+    code === "DOWNLOAD_TOO_LARGE" ||
+    code === "ARCHIVE_BOMB" ||
+    code === "ARCHIVE_TOO_MANY_FILES" ||
+    code === "SKILL_TOO_LARGE"
+  ) return 413;
+  if (code === "ARCHIVE_FORMAT" || code === "CONTENT_TYPE_INVALID") return 415;
+  if (
+    code === "DNS_EMPTY" ||
+    code === "DNS_FAILED" ||
+    code === "DNS_INVALID" ||
+    code === "GITHUB_METADATA_INVALID" ||
+    code === "HTTP_ERROR" ||
+    code === "INVALID_REDIRECT" ||
+    code === "REDIRECT_LOOP" ||
+    code === "REQUEST_FAILED" ||
+    code === "TOO_MANY_REDIRECTS"
+  ) return 502;
+  if (code === "INSTALLER_UNAVAILABLE") return 503;
+  if (
+    code === "INVALID_INSTALL_RECEIPT" ||
+    code === "INVALID_CLOCK" ||
+    code === "PUBLISH_FAILED" ||
+    code === "ROLLBACK_CHANGED" ||
+    code === "SKILL_NAME_CHECK_FAILED" ||
+    code === "STAGE_WRITE_FAILED" ||
+    code === "UNSAFE_REMOVE" ||
+    code === "UNSAFE_STATE_DIRECTORY"
+  ) return 500;
+  return 422;
+}
+
+function agentSkillStageView(stage: AgentSkillStageResult) {
+  const packageName = stage.source.packagePath
+    ? stage.source.packagePath.split("/").filter(Boolean).at(-1) ?? stage.metadata.name
+    : stage.metadata.name;
+  return {
+    id: stage.stageId,
+    sourceUrl: stage.source.requestedUrl,
+    sourceHost: new URL(stage.source.requestedUrl).hostname.toLowerCase(),
+    ...(stage.source.requestedRef ? { resolvedRef: stage.source.requestedRef } : {}),
+    ...(stage.source.resolvedCommit ? { resolvedCommit: stage.source.resolvedCommit } : {}),
+    packageName,
+    skillName: stage.metadata.name,
+    description: stage.metadata.description,
+    sha256: stage.digest,
+    archiveSha256: stage.archiveSha256,
+    files: stage.manifest,
+    totalBytes: stage.metadata.unpackedBytes,
+    expiresAt: stage.expiresAt,
+    skillMarkdown: stage.skillMarkdown,
+  };
+}
+
 function avatarUrl(pathname: string, avatar: AvatarAsset | undefined): string | undefined {
   return avatar ? `${pathname}?v=${encodeURIComponent(avatar.updatedAt)}` : undefined;
 }
@@ -3185,6 +3748,7 @@ function withCharacterAvatar(kernel: CompanionKernel, character: CharacterProfil
 }
 
 function sendHtml(response: ServerResponse, statusCode: number, html: string): void {
+  attachLocalControlPlaneCookie(response);
   response.writeHead(statusCode, {
     "content-type": "text/html; charset=utf-8",
     "cache-control": "no-store",

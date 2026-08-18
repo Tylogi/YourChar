@@ -58,12 +58,33 @@ test("SIGTERM releases the service writer lease for an immediate process restart
   }
 });
 
-function spawnService(stateDir: string, port: number): ChildProcessWithoutNullStreams {
+test("service entry point refuses a non-loopback listener", async () => {
+  const stateDir = mkdtempSync(join(tmpdir(), "rp-agent-service-bind-"));
+  const port = await reservePort();
+  const child = spawnService(stateDir, port, "0.0.0.0");
+  const output: string[] = [];
+  child.stdout.on("data", (chunk) => output.push(String(chunk)));
+  child.stderr.on("data", (chunk) => output.push(String(chunk)));
+  try {
+    const result = await waitForExit(child, 8_000);
+    assert.notEqual(result.code, 0);
+    assert.match(output.join(""), /may only bind to a loopback host/);
+  } finally {
+    await forceStop(child);
+    rmSync(stateDir, { recursive: true, force: true });
+  }
+});
+
+function spawnService(
+  stateDir: string,
+  port: number,
+  host = "127.0.0.1",
+): ChildProcessWithoutNullStreams {
   return spawn(process.execPath, ["--disable-warning=ExperimentalWarning", "dist/src/server.js"], {
     cwd: process.cwd(),
     env: {
       ...process.env,
-      HOST: "127.0.0.1",
+      HOST: host,
       PORT: String(port),
       RP_AGENT_STATE_DIR: stateDir,
       RP_AGENT_TEST_MODE: "0",

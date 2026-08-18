@@ -114,7 +114,7 @@ export class MeetingPresetService {
       promptPatches.delete(prompt.id);
       if (prompt.marker && item.content !== undefined && item.content !== prompt.content) {
         throw new MeetingPresetValidationError(
-          `marker prompt content is managed by RP Agent: ${prompt.identifier}`,
+          `marker prompt content is managed by YourChar: ${prompt.identifier}`,
         );
       }
       return {
@@ -280,7 +280,7 @@ export class MeetingPresetService {
       if (!content.trim()) continue;
       arranged.push({ role: prompt.role, content });
     }
-    // The current user turn is a non-negotiable part of an RP Agent request.
+    // The current user turn is a non-negotiable part of a YourChar request.
     // A malformed preset may disable or omit the marker, but cannot erase it.
     if (!historyInserted) arranged.push(...history);
     return {

@@ -101,7 +101,7 @@ export class OkfService {
     const bytes = zipSync(files, { level: 6, mtime: input.exportedAt });
     return {
       bytes,
-      filename: `rp-agent-memory-okf-${compactTimestamp(input.exportedAt)}.zip`,
+      filename: `yourchar-memory-okf-${compactTimestamp(input.exportedAt)}.zip`,
       conceptCount: documents.length,
     };
   }
@@ -121,7 +121,7 @@ export class OkfService {
       throw new OkfBundleError("OKF bundle has conformance errors; preview and fix it before staging", "OKF_NOT_CONFORMANT");
     }
     if (!parsed.ready.length) {
-      throw new OkfBundleError("OKF bundle contains no concepts that map to RP Agent memory types", "OKF_NO_IMPORTABLE_CONCEPTS");
+      throw new OkfBundleError("OKF bundle contains no concepts that map to YourChar memory types", "OKF_NO_IMPORTABLE_CONCEPTS");
     }
     const staged = parsed.ready.map((concept) => {
       const conceptHash = sha256(`${parsed.preview.archiveHash}\0${concept.path}\0${concept.mappedRealm}\0${concept.mappedCharacterId ?? ""}`);

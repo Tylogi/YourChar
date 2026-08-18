@@ -1,5 +1,5 @@
 import type { AppDatabase } from "../storage/database.js";
-import type { ContextLogEntry, Mode } from "../domain/types.js";
+import type { ContextLogEntry, ConversationSpace, Mode } from "../domain/types.js";
 import type {
   MemoryExtractionJob,
   MemoryExtractionJobStatus,
@@ -15,14 +15,16 @@ export class MemoryCoordinatorRepository {
     this.database.connection.prepare(`
       INSERT INTO memory_extraction_jobs(
         id, idempotency_key, source_context_log_id, session_id, source_message_id,
-        mode, realm, character_id, trigger_kind, trigger_reason, status, attempts,
+        mode, conversation_space, secret_owner_character_id,
+        realm, character_id, trigger_kind, trigger_reason, status, attempts,
         max_attempts, input_token_estimate, duration_ms, result_count, last_error,
         available_at, created_at, updated_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT(idempotency_key) DO NOTHING
     `).run(
       job.id, job.idempotencyKey, job.sourceContextLogId, job.sessionId, job.sourceMessageId,
-      job.mode, job.realm, job.characterId ?? null, job.triggerKind, job.triggerReason,
+      job.mode, job.conversationSpace, job.secretOwnerCharacterId ?? null,
+      job.realm, job.characterId ?? null, job.triggerKind, job.triggerReason,
       job.status, job.attempts, job.maxAttempts, job.inputTokenEstimate,
       job.durationMs ?? null, job.resultCount, job.lastError ?? null, job.availableAt,
       job.createdAt, job.updatedAt,
@@ -44,11 +46,22 @@ export class MemoryCoordinatorRepository {
     return row ? mapJob(row) : undefined;
   }
 
-  listRecent(limit = 20): MemoryExtractionJob[] {
+  listRecent(
+    limit = 20,
+    conversationSpace: ConversationSpace = "normal",
+    secretOwnerCharacterId?: string,
+  ): MemoryExtractionJob[] {
+    assertSpace(conversationSpace, secretOwnerCharacterId);
     return (this.database.connection.prepare(`
       SELECT * FROM memory_extraction_jobs
+      WHERE conversation_space = ?
+        AND COALESCE(secret_owner_character_id, '') = COALESCE(?, '')
       ORDER BY updated_at DESC, id DESC LIMIT ?
-    `).all(Math.min(Math.max(limit, 1), 100)) as Row[]).map(mapJob);
+    `).all(
+      conversationSpace,
+      secretOwnerCharacterId ?? null,
+      Math.min(Math.max(limit, 1), 100),
+    ) as Row[]).map(mapJob);
   }
 
   listRunnable(now: string, limit = 10): MemoryExtractionJob[] {
@@ -136,9 +149,18 @@ export class MemoryCoordinatorRepository {
     `).run(now, now, ownerId).changes);
   }
 
-  retry(id: string, now: string): MemoryExtractionJob {
+  retry(
+    id: string,
+    now: string,
+    conversationSpace: ConversationSpace = "normal",
+    secretOwnerCharacterId?: string,
+  ): MemoryExtractionJob {
+    assertSpace(conversationSpace, secretOwnerCharacterId);
     const job = this.getJob(id);
-    if (!job) throw new Error(`memory extraction job not found: ${id}`);
+    if (
+      !job || job.conversationSpace !== conversationSpace ||
+      job.secretOwnerCharacterId !== secretOwnerCharacterId
+    ) throw new Error(`memory extraction job not found: ${id}`);
     if (job.status !== "failed") throw new Error("only failed memory extraction jobs can be retried");
     if (job.attempts >= job.maxAttempts) throw new Error("memory extraction retry limit reached");
     this.database.connection.prepare(`
@@ -158,6 +180,10 @@ export class MemoryCoordinatorRepository {
       id: String(row.id),
       sessionId: String(row.session_id),
       mode: row.mode as Mode,
+      conversationSpace: row.conversation_space === "secret" ? "secret" : "normal",
+      ...(typeof row.secret_owner_character_id === "string" && row.secret_owner_character_id
+        ? { secretOwnerCharacterId: row.secret_owner_character_id }
+        : {}),
       requestText: String(row.request_text),
       systemPrompt: String(row.system_prompt_excerpt),
       messageCountBefore: Number(row.message_count_before),
@@ -171,20 +197,45 @@ export class MemoryCoordinatorRepository {
     };
   }
 
-  pendingCount(): number {
+  pendingCount(
+    conversationSpace: ConversationSpace = "normal",
+    secretOwnerCharacterId?: string,
+  ): number {
+    assertSpace(conversationSpace, secretOwnerCharacterId);
     const row = this.database.connection.prepare(`
-      SELECT COUNT(*) AS count FROM memory_extraction_jobs WHERE status IN ('pending', 'running')
-    `).get() as { count: number };
+      SELECT COUNT(*) AS count FROM memory_extraction_jobs
+      WHERE status IN ('pending', 'running') AND conversation_space = ?
+        AND COALESCE(secret_owner_character_id, '') = COALESCE(?, '')
+    `).get(conversationSpace, secretOwnerCharacterId ?? null) as { count: number };
     return Number(row.count);
   }
 
-  estimatedTokensSince(since: string): number {
+  estimatedTokensSince(
+    since: string,
+    conversationSpace: ConversationSpace = "normal",
+    secretOwnerCharacterId?: string,
+  ): number {
+    assertSpace(conversationSpace, secretOwnerCharacterId);
     const row = this.database.connection.prepare(`
       SELECT COALESCE(SUM(input_token_estimate), 0) AS total
       FROM memory_extraction_jobs
       WHERE updated_at >= ? AND status IN ('running', 'completed', 'failed')
-    `).get(since) as { total: number };
+        AND conversation_space = ?
+        AND COALESCE(secret_owner_character_id, '') = COALESCE(?, '')
+    `).get(since, conversationSpace, secretOwnerCharacterId ?? null) as { total: number };
     return Number(row.total);
+  }
+}
+
+function assertSpace(
+  conversationSpace: ConversationSpace,
+  secretOwnerCharacterId?: string,
+): void {
+  if (conversationSpace === "secret" && !secretOwnerCharacterId) {
+    throw new Error("secret memory scope requires a characterId");
+  }
+  if (conversationSpace === "normal" && secretOwnerCharacterId) {
+    throw new Error("normal memory scope cannot include a secret characterId");
   }
 }
 
@@ -196,6 +247,10 @@ function mapJob(row: Row): MemoryExtractionJob {
     sessionId: String(row.session_id),
     sourceMessageId: String(row.source_message_id),
     mode: row.mode as Mode,
+    conversationSpace: row.conversation_space === "secret" ? "secret" : "normal",
+    ...(typeof row.secret_owner_character_id === "string" && row.secret_owner_character_id
+      ? { secretOwnerCharacterId: row.secret_owner_character_id }
+      : {}),
     realm: row.realm as MemoryTargetRealm,
     ...(typeof row.character_id === "string" && row.character_id ? { characterId: row.character_id } : {}),
     triggerKind: row.trigger_kind as MemoryExtractionJob["triggerKind"],

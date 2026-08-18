@@ -418,7 +418,7 @@ test("Coordinator claims are owner-leased, fenced on completion, and only expire
   }
 });
 
-test("backup v3 verify/dry-run and staged restore reject corruption without touching target", () => {
+test("backup v3 preserves Vault v4 secret memories and staged restore rejects corruption without touching target", () => {
   const root = mkdtempSync(join(tmpdir(), "rp-agent-r5-backup-"));
   const stateDir = join(root, "state");
   const backupDir = join(root, "backup");
@@ -428,6 +428,17 @@ test("backup v3 verify/dry-run and staged restore reject corruption without touc
   try {
     kernel = createKernel(stateDir, "backup");
     kernel.updateUserProfile("# 用户画像\n\n- R5 backup source");
+    const secretOwner = kernel.createCharacter({ name: "R5 Secret Backup Owner" });
+    const secretMemory = kernel.memoryLifecycle.captureAuthorized({
+      conversationSpace: "secret",
+      secretOwnerCharacterId: secretOwner.id,
+      realm: "reality",
+      type: "user_fact",
+      content: "R5_SECRET_BACKUP_SENTINEL",
+      sourceSessionId: "r5-secret-backup",
+      sourceMessageId: "r5-secret-backup-message",
+      idempotencyKey: "r5-secret-backup",
+    });
     kernel.dispose();
     kernel = undefined;
     execFileSync(process.execPath, ["scripts/backup-state.mjs", stateDir, backupDir], { cwd: process.cwd() });
@@ -437,9 +448,13 @@ test("backup v3 verify/dry-run and staged restore reject corruption without touc
     sourceAfterBackup.dispose();
     const manifest = JSON.parse(readFileSync(join(backupDir, "backup-manifest.json"), "utf8"));
     assert.equal(manifest.schemaVersion, 3);
+    assert.equal(manifest.database.schemaVersion, 38);
     assert.equal(manifest.database.integrityCheck, "ok");
     assert.equal(manifest.vault.projectionConsistent, true);
     assert.ok(manifest.files.some((entry: { path: string }) => entry.path === "memory-vault/reality/user-profile.md"));
+    const secretVaultPath = `memory-vault/secret/characters/${secretOwner.id}/memories/${secretMemory.id}.md`;
+    assert.ok(manifest.files.some((entry: { path: string }) => entry.path === secretVaultPath));
+    assert.match(readFileSync(join(backupDir, secretVaultPath), "utf8"), /schemaVersion: 4[\s\S]*conversationSpace: secret/);
     const verify = JSON.parse(execFileSync(process.execPath, ["scripts/restore-state.mjs", backupDir, restoredDir, "--verify"], { cwd: process.cwd(), encoding: "utf8" }));
     const dryRun = JSON.parse(execFileSync(process.execPath, ["scripts/restore-state.mjs", backupDir, restoredDir, "--dry-run"], { cwd: process.cwd(), encoding: "utf8" }));
     assert.equal(verify.valid, true);
@@ -447,6 +462,19 @@ test("backup v3 verify/dry-run and staged restore reject corruption without touc
     execFileSync(process.execPath, ["scripts/restore-state.mjs", backupDir, restoredDir], { cwd: process.cwd() });
     const restored = createKernel(restoredDir, "backup-restored");
     assert.match(restored.getUserProfile().markdown, /R5 backup source/);
+    assert.deepEqual(restored.memoryLifecycle.list({
+      query: "R5_SECRET_BACKUP_SENTINEL",
+      realm: "reality",
+      validity: "active",
+      conversationSpace: "secret",
+      secretOwnerCharacterId: secretOwner.id,
+    }).map((entry) => entry.id), [secretMemory.id]);
+    assert.equal(restored.memoryLifecycle.list({
+      query: "R5_SECRET_BACKUP_SENTINEL",
+      realm: "reality",
+      validity: "active",
+      conversationSpace: "normal",
+    }).length, 0);
     assert.equal(restored.getMemoryVaultHealth().projectionConsistent, true);
     restored.dispose();
 
@@ -515,6 +543,7 @@ function extractionJob(): MemoryExtractionJob {
     sessionId: "session-r5-lease",
     sourceMessageId: "message-r5-lease",
     mode: "sms",
+    conversationSpace: "normal",
     realm: "reality",
     triggerKind: "durable_signal",
     triggerReason: "durable_signal_detected",

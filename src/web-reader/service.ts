@@ -50,7 +50,7 @@ export class WebReaderService {
           dispatcher,
           headers: {
             accept: "text/html,application/xhtml+xml,text/plain,application/json;q=0.8",
-            "user-agent": "RP-Agent-WebReader/1.0 (+read-only; no-script)",
+            "user-agent": "YourChar-WebReader/1.0 (+read-only; no-script)",
           },
           signal: combinedSignal(signal),
         });

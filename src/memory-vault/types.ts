@@ -1,4 +1,6 @@
-export const MEMORY_VAULT_SCHEMA_VERSION = 3 as const;
+import type { ConversationSpace } from "../domain/types.js";
+
+export const MEMORY_VAULT_SCHEMA_VERSION = 4 as const;
 
 export type VaultDocumentKind = "user_profile" | "person_profile" | "character_soul" | "scene" | "memory";
 export type VaultRealm = "reality" | "roleplay" | "legacy";
@@ -37,6 +39,8 @@ export type VaultFrontmatter = {
   kind: VaultDocumentKind;
   realm: VaultRealm;
   scope: VaultScope;
+  conversationSpace: ConversationSpace;
+  secretOwnerCharacterId: string | null;
   type: VaultMemoryType | null;
   characterId: string | null;
   sessionId: string | null;
@@ -121,7 +125,8 @@ export type VaultCas = {
 export type VaultDocumentSummary = Pick<
   VaultFrontmatter,
   "id" | "kind" | "realm" | "scope" | "type" | "characterId" | "sessionId" |
-  "validity" | "confirmed" | "revision" | "updatedAt" | "contentHash" | "quarantineReasons"
+  "conversationSpace" | "secretOwnerCharacterId" | "validity" | "confirmed" | "revision" |
+  "updatedAt" | "contentHash" | "quarantineReasons"
 > & {
   title: string;
   path: string;
@@ -186,6 +191,8 @@ export type LegacyVaultSnapshot = {
   }>;
   memories: Array<{
     id: string;
+    conversationSpace?: ConversationSpace;
+    secretOwnerCharacterId?: string;
     realm: "reality" | "roleplay" | "legacy";
     scope: "global" | "character" | "quarantine";
     type: VaultMemoryType;

@@ -88,8 +88,13 @@ export class AgentPermissionCatalog {
     return this.get();
   }
 
-  contextStatus(context?: { mode?: "sms" | "rp"; characterId?: string }): string {
+  contextStatus(context?: {
+    mode?: "sms" | "rp";
+    characterId?: string;
+    conversationSpace?: "normal" | "secret";
+  }): string {
     const permissions = this.get();
+    const secret = context?.conversationSpace === "secret";
     const workspace = permissions.workspaceAccess === "off"
       ? "Workspace file access is disabled."
       : permissions.workspaceAccess === "read_only"
@@ -98,10 +103,14 @@ export class AgentPermissionCatalog {
     const shell = permissions.shellEnabled
       ? `Sandboxed shell execution is enabled; network is ${permissions.networkEnabled ? "enabled" : "disabled"}.`
       : "Sandboxed shell execution is disabled.";
-    const profileWrite = permissions.userProfileWriteEnabled
+    const profileWrite = secret
+      ? "User Profile MCP is unavailable in secret conversation space."
+      : permissions.userProfileWriteEnabled
       ? "User Profile MCP writing is authorized when that module is enabled."
       : "User Profile MCP writing is disabled; profile context may still be readable."
-    const soulWrite = characterSoulStatus(permissions.characterSoulWriteEnabled, context);
+    const soulWrite = secret
+      ? "Character SOUL.md writing is unavailable in secret conversation space."
+      : characterSoulStatus(permissions.characterSoulWriteEnabled, context);
     const realityMemoryWrite = permissions.realityMemoryWriteEnabled
       ? "Reality memory proposals are authorized. The trusted background Coordinator may auto-capture low-risk facts backed by an exact user quote; sensitive facts remain pending. Confirmation and deletion otherwise remain control-plane only."
       : "Reality memory Agent proposals and automatic daily-fact capture are disabled."
@@ -124,7 +133,11 @@ export class AgentPermissionCatalog {
 
 function characterSoulStatus(
   enabled: boolean,
-  context?: { mode?: "sms" | "rp"; characterId?: string },
+  context?: {
+    mode?: "sms" | "rp";
+    characterId?: string;
+    conversationSpace?: "normal" | "secret";
+  },
 ): string {
   if (!enabled) return "Character SOUL.md writing is disabled.";
   if (context?.characterId) {

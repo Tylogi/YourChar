@@ -1,4 +1,5 @@
 import type { AppDatabase } from "../storage/database.js";
+import type { ConversationSpace } from "../domain/types.js";
 import type {
   CharacterCapability,
   CharacterCapabilityEvidence,
@@ -231,63 +232,79 @@ export class CharacterCapabilityRepository {
     });
   }
 
-  getActiveSkill(characterId: string): CharacterSkillVersion | undefined {
+  getActiveSkill(
+    characterId: string,
+    conversationSpace: ConversationSpace = "normal",
+  ): CharacterSkillVersion | undefined {
     const row = this.database.connection.prepare(`
       SELECT * FROM character_skill_versions
-      WHERE character_id = ? AND status = 'active'
+      WHERE character_id = ? AND conversation_space = ? AND status = 'active'
       LIMIT 1
-    `).get(characterId) as Row | undefined;
+    `).get(characterId, conversationSpace) as Row | undefined;
     return row ? mapSkillVersion(row) : undefined;
   }
 
   findSkillBySourceTask(
     characterId: string,
     sourceTaskId: string,
+    conversationSpace: ConversationSpace = "normal",
   ): CharacterSkillVersion | undefined {
     const row = this.database.connection.prepare(`
       SELECT * FROM character_skill_versions
-      WHERE character_id = ? AND source_task_id = ?
+      WHERE character_id = ? AND conversation_space = ? AND source_task_id = ?
       LIMIT 1
-    `).get(characterId, sourceTaskId) as Row | undefined;
+    `).get(characterId, conversationSpace, sourceTaskId) as Row | undefined;
     return row ? mapSkillVersion(row) : undefined;
   }
 
-  listSkillVersions(characterId: string, limit = 50): CharacterSkillVersion[] {
+  listSkillVersions(
+    characterId: string,
+    limit = 50,
+    conversationSpace: ConversationSpace = "normal",
+  ): CharacterSkillVersion[] {
     const bounded = Math.max(1, Math.min(Math.floor(limit), 200));
     return (this.database.connection.prepare(`
       SELECT * FROM character_skill_versions
-      WHERE character_id = ?
+      WHERE character_id = ? AND conversation_space = ?
       ORDER BY version DESC
       LIMIT ?
-    `).all(characterId, bounded) as Row[]).map(mapSkillVersion);
+    `).all(characterId, conversationSpace, bounded) as Row[]).map(mapSkillVersion);
   }
 
-  nextSkillVersion(characterId: string): number {
+  nextSkillVersion(
+    characterId: string,
+    conversationSpace: ConversationSpace = "normal",
+  ): number {
     const row = this.database.connection.prepare(`
       SELECT COALESCE(MAX(version), 0) + 1 AS version
       FROM character_skill_versions
-      WHERE character_id = ?
-    `).get(characterId) as Row;
+      WHERE character_id = ? AND conversation_space = ?
+    `).get(characterId, conversationSpace) as Row;
     return Number(row.version ?? 1);
   }
 
-  supersedeActiveSkill(characterId: string, supersededAt: string): void {
+  supersedeActiveSkill(
+    characterId: string,
+    supersededAt: string,
+    conversationSpace: ConversationSpace = "normal",
+  ): void {
     this.database.connection.prepare(`
       UPDATE character_skill_versions
       SET status = 'superseded', superseded_at = ?
-      WHERE character_id = ? AND status = 'active'
-    `).run(supersededAt, characterId);
+      WHERE character_id = ? AND conversation_space = ? AND status = 'active'
+    `).run(supersededAt, characterId, conversationSpace);
   }
 
   insertSkillVersion(skill: CharacterSkillVersion): CharacterSkillVersion {
     this.database.connection.prepare(`
       INSERT INTO character_skill_versions(
-        id, character_id, version, status, markdown, change_summary, source,
+        id, character_id, conversation_space, version, status, markdown, change_summary, source,
         source_task_id, content_hash, created_at, activated_at, superseded_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       skill.id,
       skill.characterId,
+      skill.conversationSpace,
       skill.version,
       skill.status,
       skill.markdown,
@@ -299,16 +316,21 @@ export class CharacterCapabilityRepository {
       skill.activatedAt ?? null,
       skill.supersededAt ?? null,
     );
-    return this.listSkillVersions(skill.characterId, 200)
+    return this.listSkillVersions(skill.characterId, 200, skill.conversationSpace)
       .find((entry) => entry.id === skill.id)!;
   }
 
-  activateSkillVersion(characterId: string, id: string, activatedAt: string): void {
+  activateSkillVersion(
+    characterId: string,
+    id: string,
+    activatedAt: string,
+    conversationSpace: ConversationSpace = "normal",
+  ): void {
     this.database.connection.prepare(`
       UPDATE character_skill_versions
       SET status = 'active', activated_at = ?, superseded_at = NULL
-      WHERE character_id = ? AND id = ?
-    `).run(activatedAt, characterId, id);
+      WHERE character_id = ? AND conversation_space = ? AND id = ?
+    `).run(activatedAt, characterId, conversationSpace, id);
   }
 }
 
@@ -371,6 +393,7 @@ function mapSkillVersion(row: Row): CharacterSkillVersion {
   return {
     id: String(row.id),
     characterId: String(row.character_id),
+    conversationSpace: row.conversation_space === "secret" ? "secret" : "normal",
     version: Number(row.version),
     status: String(row.status) as CharacterSkillVersion["status"],
     markdown: String(row.markdown ?? ""),

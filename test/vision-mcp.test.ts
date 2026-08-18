@@ -15,7 +15,9 @@ const tinyPng = Buffer.from(
 test("Vision service restricts image paths, validates signatures, masks credentials, and caches analyses", async () => {
   const root = mkdtempSync(join(tmpdir(), "rp-agent-vision-service-"));
   const workspaceFiles = new WorkspaceFileService(join(root, "workspace"));
+  const secretWorkspaceFiles = new WorkspaceFileService(join(root, "workspace-secret", "character"));
   const image = workspaceFiles.upload({ directory: "uploads", name: "pixel.png", bytes: tinyPng });
+  const secretImage = secretWorkspaceFiles.upload({ directory: "uploads", name: "pixel.png", bytes: tinyPng });
   const invalid = workspaceFiles.upload({ directory: "uploads", name: "fake.png", bytes: Buffer.from("not an image") });
   writeFileSync(join(workspaceFiles.rootDir, "outside.png"), tinyPng);
   const requests: Array<{ url: string; authorization: string }> = [];
@@ -55,12 +57,32 @@ test("Vision service restricts image paths, validates signatures, masks credenti
     assert.match(readFileSync(join(root, "vision.json"), "utf8"), /vision-secret-key/);
     assert.deepEqual(await service.discoverModels(), ["vision-a", "vision-b"]);
 
-    const first = await service.analyzePath({ path: image.path, question: "What is visible?" });
-    const second = await service.analyzePath({ path: image.path, question: "What is visible?" });
+    const first = await service.analyzePath(
+      { path: image.path, question: "What is visible?" },
+      undefined,
+      { workspaceFiles, cacheNamespace: "workspace:normal" },
+    );
+    const second = await service.analyzePath(
+      { path: image.path, question: "What is visible?" },
+      undefined,
+      { workspaceFiles, cacheNamespace: "workspace:normal" },
+    );
+    const secretFirst = await service.analyzePath(
+      { path: secretImage.path, question: "What is visible?" },
+      undefined,
+      { workspaceFiles: secretWorkspaceFiles, cacheNamespace: "workspace:secret:character" },
+    );
+    const secretSecond = await service.analyzePath(
+      { path: secretImage.path, question: "What is visible?" },
+      undefined,
+      { workspaceFiles: secretWorkspaceFiles, cacheNamespace: "workspace:secret:character" },
+    );
     assert.equal(first.summary, "A single bright pixel.");
     assert.equal(first.cached, false);
     assert.equal(second.cached, true);
-    assert.equal(requests.filter((entry) => entry.url.endsWith("/chat/completions")).length, 1);
+    assert.equal(secretFirst.cached, false);
+    assert.equal(secretSecond.cached, true);
+    assert.equal(requests.filter((entry) => entry.url.endsWith("/chat/completions")).length, 2);
     assert.ok(requests.every((entry) => entry.authorization === "Bearer vision-secret-key"));
 
     await assert.rejects(

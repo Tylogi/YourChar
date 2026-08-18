@@ -2,7 +2,7 @@ import { defineTool, type ToolDefinition } from "@earendil-works/pi-coding-agent
 import { Type } from "typebox";
 import type { RpService } from "../rp/service.js";
 import type { CompanionStore } from "./store.js";
-import type { ActionRecord, Mode } from "./types.js";
+import type { ActionRecord, ConversationSpace, Mode } from "./types.js";
 import type { ContextPlan } from "../context/types.js";
 
 type RuntimeState = {
@@ -10,6 +10,7 @@ type RuntimeState = {
   rpService: RpService;
   sessionId: string;
   mode: Mode;
+  conversationSpace: ConversationSpace;
   characterId?: string;
   actions: ActionRecord[];
   stableContextPrompt: string;

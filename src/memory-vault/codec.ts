@@ -28,10 +28,15 @@ const v2FrontmatterKeys = [
   "confidence", "idempotencyKey", "scene",
 ] as const;
 
-const frontmatterKeys = [
+const v3FrontmatterKeys = [
   ...v2FrontmatterKeys,
   "personKey", "displayName", "aliases", "relationship", "visibility",
   "visibleToCharacterIds", "sourceMemoryIds", "personConfidence",
+] as const;
+
+const frontmatterKeys = [
+  ...v3FrontmatterKeys,
+  "conversationSpace", "secretOwnerCharacterId",
 ] as const;
 
 export function parseVaultMarkdown(source: string, relativePath: string): VaultDocument {
@@ -103,7 +108,7 @@ function validateFrontmatter(value: unknown, path: string): VaultFrontmatter {
   const record = object(value, path, "frontmatter must be a mapping");
   const sourceSchemaVersion = oneOfNumber(
     record.schemaVersion,
-    [1, 2, MEMORY_VAULT_SCHEMA_VERSION],
+    [1, 2, 3, MEMORY_VAULT_SCHEMA_VERSION],
     path,
     "schemaVersion",
   );
@@ -112,7 +117,9 @@ function validateFrontmatter(value: unknown, path: string): VaultFrontmatter {
     ? v1FrontmatterKeys
     : sourceSchemaVersion === 2
       ? v2FrontmatterKeys
-      : frontmatterKeys;
+      : sourceSchemaVersion === 3
+        ? v3FrontmatterKeys
+        : frontmatterKeys;
   const expected = [...sourceKeys].sort();
   if (keys.length !== expected.length || keys.some((key, index) => key !== expected[index])) {
     invalid(path, `frontmatter keys must be exactly: ${sourceKeys.join(", ")}`);
@@ -123,6 +130,12 @@ function validateFrontmatter(value: unknown, path: string): VaultFrontmatter {
     kind: oneOf(record.kind, ["user_profile", "person_profile", "character_soul", "scene", "memory"], path, "kind"),
     realm: oneOf(record.realm, ["reality", "roleplay", "legacy"], path, "realm"),
     scope: oneOf(record.scope, ["global", "character", "session", "quarantine"], path, "scope"),
+    conversationSpace: sourceSchemaVersion < 4
+      ? "normal"
+      : oneOf(record.conversationSpace, ["normal", "secret"], path, "conversationSpace"),
+    secretOwnerCharacterId: sourceSchemaVersion < 4
+      ? null
+      : nullableIdentifier(record.secretOwnerCharacterId, path, "secretOwnerCharacterId"),
     type: nullableOneOf(record.type, ["user_fact", "preference", "goal", "person", "project", "relationship_event", "world_fact", "plot_event", "boundary"], path, "type"),
     characterId: nullableIdentifier(record.characterId, path, "characterId"),
     sessionId: nullableIdentifier(record.sessionId, path, "sessionId"),
@@ -180,7 +193,16 @@ function validateFrontmatter(value: unknown, path: string): VaultFrontmatter {
   return metadata;
 }
 
-function validateKindContract(metadata: VaultFrontmatter, path: string, sourceSchemaVersion: 1 | 2 | 3): void {
+function validateKindContract(
+  metadata: VaultFrontmatter,
+  path: string,
+  sourceSchemaVersion: 1 | 2 | 3 | 4,
+): void {
+  if (metadata.kind !== "memory" && (
+    metadata.conversationSpace !== "normal" || metadata.secretOwnerCharacterId !== null
+  )) {
+    invalid(path, `${metadata.kind} is shared/normal and cannot use secret conversation space`);
+  }
   if (metadata.kind === "user_profile") {
     if (metadata.id !== "user-profile" || metadata.realm !== "reality" || metadata.scope !== "global") {
       invalid(path, "user_profile must use id=user-profile, realm=reality, scope=global");
@@ -222,6 +244,14 @@ function validateKindContract(metadata: VaultFrontmatter, path: string, sourceSc
       invalid(path, "scene contains memory-only frontmatter");
     }
   } else {
+    if (
+      (metadata.conversationSpace === "normal" && metadata.secretOwnerCharacterId !== null) ||
+      (metadata.conversationSpace === "secret" && !metadata.secretOwnerCharacterId) ||
+      (metadata.conversationSpace === "secret" && metadata.realm === "roleplay" &&
+        metadata.characterId !== metadata.secretOwnerCharacterId)
+    ) {
+      invalid(path, "memory conversation space and secretOwnerCharacterId do not match");
+    }
     if (!metadata.type || !metadata.validity || metadata.confirmed === null ||
         metadata.salience === null || metadata.confidence === null || metadata.scene ||
         hasPersonProfileFields(metadata)) {

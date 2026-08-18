@@ -1,5 +1,6 @@
 import type { Clock } from "../app/clock.js";
 import type { IdGenerator } from "../app/id-generator.js";
+import type { ConversationSpace } from "../domain/types.js";
 import type { AgentModule } from "../modules/types.js";
 import type { RpService } from "../rp/service.js";
 import type { WorldConversationService } from "../world/conversation-service.js";
@@ -158,12 +159,19 @@ export class CharacterCapabilityService {
     });
   }
 
-  getSnapshot(characterId: string): CharacterFunctionSnapshot {
+  getSnapshot(
+    characterId: string,
+    conversationSpace: ConversationSpace = "normal",
+  ): CharacterFunctionSnapshot {
     const character = this.rpService.getCharacter(characterId);
     const profile = this.ensureProfile(characterId);
     const capabilities = this.repository.listCapabilities(characterId);
-    const evidence = this.repository.summarizeEvidence(characterId);
-    const activeSkill = this.repository.getActiveSkill(characterId);
+    const evidence = conversationSpace === "normal"
+      ? this.repository.summarizeEvidence(characterId)
+      : [];
+    const activeSkill = conversationSpace === "secret"
+      ? this.ensureStarterSkill(characterId, "bootstrap", conversationSpace)
+      : this.repository.getActiveSkill(characterId, conversationSpace);
     const evolution = capabilities.map((capability) =>
       capabilityEvolution(
         capability,
@@ -181,7 +189,9 @@ export class CharacterCapabilityService {
         id: module.id,
         name: module.name,
         type: module.type,
-        enabled: module.enabled,
+        enabled: module.type === "skill"
+          ? Boolean(module.enabledSpaces?.includes(conversationSpace))
+          : module.enabled,
         estimatedTokens: module.estimatedTokens,
       })),
       evidence,
@@ -192,7 +202,10 @@ export class CharacterCapabilityService {
         profile.sourceSoulHash !== characterSoulHash(character.name, character.soulMarkdown),
       ),
     };
-    if (!profile.manualLocked && profile.inferenceStatus === "uninitialized") {
+    if (
+      conversationSpace === "normal" &&
+      !profile.manualLocked && profile.inferenceStatus === "uninitialized"
+    ) {
       this.scheduleInference(characterId, "snapshot");
     }
     return snapshot;
@@ -201,7 +214,13 @@ export class CharacterCapabilityService {
   updateProfile(
     characterId: string,
     update: CharacterFunctionProfileUpdate,
+    conversationSpace: ConversationSpace = "normal",
   ): CharacterFunctionSnapshot {
+    if (conversationSpace === "secret") {
+      throw new CharacterCapabilityValidationError(
+        "character function profile and capabilities are shared role attributes and can only be edited in normal mode",
+      );
+    }
     const character = this.rpService.getCharacter(characterId);
     const current = this.ensureProfile(characterId);
     const now = this.clock.now().toISOString();
@@ -275,14 +294,20 @@ export class CharacterCapabilityService {
       this.repository.upsertProfile(profile);
       this.repository.replaceCapabilities(characterId, capabilities);
     });
-    this.ensureStarterSkill(characterId, "manual");
-    return this.getSnapshot(characterId);
+    this.ensureStarterSkill(characterId, "manual", conversationSpace);
+    return this.getSnapshot(characterId, conversationSpace);
   }
 
   async setAutomaticManagement(
     characterId: string,
     automatic: boolean,
+    conversationSpace: ConversationSpace = "normal",
   ): Promise<CharacterFunctionSnapshot> {
+    if (conversationSpace === "secret") {
+      throw new CharacterCapabilityValidationError(
+        "character function automation is a shared role attribute and can only be changed in normal mode",
+      );
+    }
     const current = this.ensureProfile(characterId);
     const now = this.clock.now().toISOString();
     this.repository.upsertProfile({
@@ -297,9 +322,13 @@ export class CharacterCapabilityService {
         characterId,
         automatic: false,
       });
-      return this.getSnapshot(characterId);
+      return this.getSnapshot(characterId, conversationSpace);
     }
-    return this.requestInference(characterId, { reason: "automation_enabled", force: true });
+    return this.requestInference(characterId, {
+      reason: "automation_enabled",
+      force: true,
+      conversationSpace,
+    });
   }
 
   notifyCharacterChanged(characterId: string): void {
@@ -327,14 +356,25 @@ export class CharacterCapabilityService {
 
   requestInference(
     characterId: string,
-    input: { reason: string; force?: boolean },
+    input: {
+      reason: string;
+      force?: boolean;
+      conversationSpace?: ConversationSpace;
+    },
   ): Promise<CharacterFunctionSnapshot> {
     if (this.disposed) {
       return Promise.reject(new CharacterFunctionInferenceUnavailableError(
         "character function inference service is disposed",
       ));
     }
-    const existing = this.inferenceJobs.get(characterId);
+    const conversationSpace = input.conversationSpace ?? "normal";
+    if (conversationSpace === "secret") {
+      return Promise.reject(new CharacterCapabilityValidationError(
+        "character function inference updates shared role attributes and is unavailable in secret mode",
+      ));
+    }
+    const jobKey = `${conversationSpace}:${characterId}`;
+    const existing = this.inferenceJobs.get(jobKey);
     if (existing) return existing;
     if (!this.options.inferer || !this.options.modelAvailable(characterId)) {
       return Promise.reject(new CharacterFunctionInferenceUnavailableError(
@@ -343,27 +383,40 @@ export class CharacterCapabilityService {
     }
     const profile = this.ensureProfile(characterId);
     if (profile.manualLocked && !input.force) {
-      return Promise.resolve(this.getSnapshot(characterId));
+      return Promise.resolve(this.getSnapshot(characterId, conversationSpace));
     }
     const job = this.inferenceTail
       .catch(() => undefined)
-      .then(() => this.performInference(characterId, input.reason, Boolean(input.force)));
+      .then(() => this.performInference(
+        characterId,
+        input.reason,
+        Boolean(input.force),
+        conversationSpace,
+      ));
     this.inferenceTail = job.catch(() => undefined);
-    this.inferenceJobs.set(characterId, job);
+    this.inferenceJobs.set(jobKey, job);
     void job.finally(() => {
-      if (this.inferenceJobs.get(characterId) === job) this.inferenceJobs.delete(characterId);
+      if (this.inferenceJobs.get(jobKey) === job) this.inferenceJobs.delete(jobKey);
     }).catch(() => undefined);
     return job;
   }
 
-  listSkillVersions(characterId: string, limit?: number): CharacterSkillVersion[] {
+  listSkillVersions(
+    characterId: string,
+    limit?: number,
+    conversationSpace: ConversationSpace = "normal",
+  ): CharacterSkillVersion[] {
     this.rpService.getCharacter(characterId);
-    return this.repository.listSkillVersions(characterId, limit);
+    return this.repository.listSkillVersions(characterId, limit, conversationSpace);
   }
 
-  rollbackSkill(characterId: string, version: number): CharacterSkillVersion {
+  rollbackSkill(
+    characterId: string,
+    version: number,
+    conversationSpace: ConversationSpace = "normal",
+  ): CharacterSkillVersion {
     this.rpService.getCharacter(characterId);
-    const target = this.repository.listSkillVersions(characterId, 200)
+    const target = this.repository.listSkillVersions(characterId, 200, conversationSpace)
       .find((entry) => entry.version === version);
     if (!target || target.status === "rejected") {
       throw new CharacterCapabilityValidationError(
@@ -373,14 +426,15 @@ export class CharacterCapabilityService {
     if (target.status === "active") return target;
     const now = this.clock.now().toISOString();
     this.repository.transaction(() => {
-      this.repository.supersedeActiveSkill(characterId, now);
-      this.repository.activateSkillVersion(characterId, target.id, now);
+      this.repository.supersedeActiveSkill(characterId, now, conversationSpace);
+      this.repository.activateSkillVersion(characterId, target.id, now, conversationSpace);
     });
     this.options.onAction?.("character_skill_rollback", "completed", {
       characterId,
+      conversationSpace,
       version,
     });
-    return this.repository.getActiveSkill(characterId)!;
+    return this.repository.getActiveSkill(characterId, conversationSpace)!;
   }
 
   getPublicSummary(characterId: string): PublicCharacterFunctionSummary {
@@ -434,8 +488,11 @@ export class CharacterCapabilityService {
     };
   }
 
-  getTaskSkill(characterId: string): CharacterTaskSkill | undefined {
-    const skill = this.repository.getActiveSkill(characterId);
+  getTaskSkill(
+    characterId: string,
+    conversationSpace: ConversationSpace = "normal",
+  ): CharacterTaskSkill | undefined {
+    const skill = this.repository.getActiveSkill(characterId, conversationSpace);
     return skill ? { version: skill.version, markdown: skill.markdown } : undefined;
   }
 
@@ -561,7 +618,11 @@ export class CharacterCapabilityService {
     )].sort();
   }
 
-  private scheduleInference(characterId: string, reason: string): void {
+  private scheduleInference(
+    characterId: string,
+    reason: string,
+    conversationSpace: ConversationSpace = "normal",
+  ): void {
     const profile = this.ensureProfile(characterId);
     if (
       this.disposed ||
@@ -570,18 +631,19 @@ export class CharacterCapabilityService {
       !this.options.inferer ||
       !this.options.modelAvailable(characterId)
     ) return;
-    void this.requestInference(characterId, { reason }).catch(() => undefined);
+    void this.requestInference(characterId, { reason, conversationSpace }).catch(() => undefined);
   }
 
   private async performInference(
     characterId: string,
     reason: string,
     force: boolean,
+    conversationSpace: ConversationSpace,
   ): Promise<CharacterFunctionSnapshot> {
     const character = this.rpService.getCharacter(characterId);
     const startHash = characterSoulHash(character.name, character.soulMarkdown);
     const current = this.ensureProfile(characterId);
-    if (current.manualLocked && !force) return this.getSnapshot(characterId);
+    if (current.manualLocked && !force) return this.getSnapshot(characterId, conversationSpace);
     const startedAt = this.clock.now().toISOString();
     this.repository.upsertProfile({
       ...current,
@@ -596,6 +658,7 @@ export class CharacterCapabilityService {
     try {
       const raw = await this.options.inferer!({
         characterId,
+        conversationSpace,
         characterName: character.name,
         soulMarkdown: character.soulMarkdown,
         catalog: characterCapabilityCatalog,
@@ -616,9 +679,13 @@ export class CharacterCapabilityService {
           updatedAt: this.clock.now().toISOString(),
         });
         if (!latestProfile.manualLocked) {
-          queueMicrotask(() => this.scheduleInference(characterId, "stale_retry"));
+          queueMicrotask(() => this.scheduleInference(
+            characterId,
+            "stale_retry",
+            conversationSpace,
+          ));
         }
-        return this.getSnapshot(characterId);
+        return this.getSnapshot(characterId, conversationSpace);
       }
       const now = this.clock.now().toISOString();
       const knownModules = new Set(this.options.listModules().map((module) => module.id));
@@ -657,7 +724,7 @@ export class CharacterCapabilityService {
         });
         this.repository.replaceCapabilities(characterId, capabilities);
       });
-      const activeSkill = this.repository.getActiveSkill(characterId);
+      const activeSkill = this.repository.getActiveSkill(characterId, conversationSpace);
       if (
         !activeSkill ||
         activeSkill.source === "bootstrap" ||
@@ -665,6 +732,7 @@ export class CharacterCapabilityService {
       ) {
         this.activateSkillVersion({
           characterId,
+          conversationSpace,
           markdown: inferred.skillMarkdown,
           changeSummary: activeSkill ? "根据更新后的人设重建初始工作方法" : "根据人设生成初始工作方法",
           source: "bootstrap",
@@ -672,11 +740,12 @@ export class CharacterCapabilityService {
       }
       this.options.onAction?.("character_function_inference", "completed", {
         characterId,
+        conversationSpace,
         reason,
         capabilityIds: capabilities.map((entry) => entry.capabilityId),
-        skillVersion: this.repository.getActiveSkill(characterId)?.version,
+        skillVersion: this.repository.getActiveSkill(characterId, conversationSpace)?.version,
       });
-      return this.getSnapshot(characterId);
+      return this.getSnapshot(characterId, conversationSpace);
     } catch (error) {
       if (!this.disposed && !controller.signal.aborted) {
         const profile = this.ensureProfile(characterId);
@@ -688,6 +757,7 @@ export class CharacterCapabilityService {
         });
         this.options.onAction?.("character_function_inference", "failed", {
           characterId,
+          conversationSpace,
           reason,
           error: errorText(error),
         });
@@ -701,8 +771,9 @@ export class CharacterCapabilityService {
   private ensureStarterSkill(
     characterId: string,
     source: "manual" | "bootstrap",
+    conversationSpace: ConversationSpace = "normal",
   ): CharacterSkillVersion {
-    const active = this.repository.getActiveSkill(characterId);
+    const active = this.repository.getActiveSkill(characterId, conversationSpace);
     if (active) return active;
     const character = this.rpService.getCharacter(characterId);
     const profile = this.ensureProfile(characterId);
@@ -724,6 +795,7 @@ export class CharacterCapabilityService {
     ].join("\n");
     return this.activateSkillVersion({
       characterId,
+      conversationSpace,
       markdown,
       changeSummary: source === "manual" ? "根据手动职能生成初始工作方法" : "生成初始工作方法",
       source,
@@ -821,30 +893,34 @@ export class CharacterCapabilityService {
 
   private activateSkillVersion(input: {
     characterId: string;
+    conversationSpace?: ConversationSpace;
     markdown: string;
     changeSummary: string;
     source: CharacterSkillVersion["source"];
     sourceTaskId?: string;
   }): CharacterSkillVersion {
+    const conversationSpace = input.conversationSpace ?? "normal";
     const markdown = validateCharacterSkillMarkdown(input.markdown);
     const contentHash = characterSkillContentHash(markdown);
-    const active = this.repository.getActiveSkill(input.characterId);
+    const active = this.repository.getActiveSkill(input.characterId, conversationSpace);
     if (active?.contentHash === contentHash) return active;
     if (input.sourceTaskId) {
       const existing = this.repository.findSkillBySourceTask(
         input.characterId,
         input.sourceTaskId,
+        conversationSpace,
       );
       if (existing) return existing;
     }
     const now = this.clock.now().toISOString();
     let created: CharacterSkillVersion | undefined;
     this.repository.transaction(() => {
-      this.repository.supersedeActiveSkill(input.characterId, now);
+      this.repository.supersedeActiveSkill(input.characterId, now, conversationSpace);
       created = this.repository.insertSkillVersion({
         id: this.idGenerator.next("character-skill-version"),
         characterId: input.characterId,
-        version: this.repository.nextSkillVersion(input.characterId),
+        conversationSpace,
+        version: this.repository.nextSkillVersion(input.characterId, conversationSpace),
         status: "active",
         markdown,
         changeSummary: boundedText(input.changeSummary, 300),

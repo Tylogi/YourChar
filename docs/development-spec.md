@@ -1,4 +1,4 @@
-# RP Agent Product and Development Specification
+# YourChar Product and Development Specification
 
 Long-conversation lifecycle and compaction behavior are specified in
 [`conversation-sleep-lifecycle.md`](./conversation-sleep-lifecycle.md).
@@ -104,7 +104,7 @@ results and their matching historical tool-call blocks are removed together;
 large historical call arguments are represented by bounded previews. Management shows
 tokenizer-dependent estimates for MCP schemas and Skill index/full-content cost.
 
-This document is the source of truth for evolving RP Agent from the current
+This document is the source of truth for evolving YourChar from the current
 prototype into a reliable daily scheduling and role-playing application. When
 implementation and this document disagree, either update the implementation or
 update this document in the same change with an explicit rationale.
@@ -201,7 +201,7 @@ runtime is `@earendil-works/pi-coding-agent` at the same pinned version as
   extension hooks.
 - Use Pi `SessionManager` for transcript persistence, resume, and compaction.
 - Use Pi streaming, cancellation, retry, and lifecycle events rather than
-  recreating those mechanisms in RP Agent.
+  recreating those mechanisms in YourChar.
 - Do not edit the repository under `agent_references/pi`. Pin a released package
   version or an explicit upstream commit.
 

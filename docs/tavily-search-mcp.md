@@ -2,7 +2,7 @@
 
 ## Scope
 
-RP Agent exposes live web search through a local built-in MCP module. The module
+YourChar exposes live web search through a local built-in MCP module. The module
 wraps Tavily's official REST API instead of giving the model a remote MCP URL
 containing credentials. The Agent only receives the `tavily_search` tool and
 never receives the Tavily API Key.

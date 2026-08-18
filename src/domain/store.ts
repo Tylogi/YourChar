@@ -1,5 +1,6 @@
 import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
+import { AsyncLocalStorage } from "node:async_hooks";
 import type { Clock } from "../app/clock.js";
 import { SystemClock } from "../app/clock.js";
 import type { IdGenerator } from "../app/id-generator.js";
@@ -57,6 +58,10 @@ export class CompanionStore {
   private modelApiDocument: StoredModelApiDocument;
   private observability?: ObservabilitySink;
   private readonly traceArchive: TraceArchive;
+  private readonly actionScope = new AsyncLocalStorage<{
+    conversationSpace: ActionRecord["conversationSpace"];
+    secretOwnerCharacterId?: string;
+  }>();
   private modelRequestCount = 0;
 
   constructor(options: CompanionStoreOptions = {}) {
@@ -73,11 +78,36 @@ export class CompanionStore {
     }
   }
 
-  addAction(actionType: string, status: ActionRecord["status"], payload: Record<string, unknown>): ActionRecord {
+  withActionScope<T>(
+    scope: {
+      conversationSpace: ActionRecord["conversationSpace"];
+      secretOwnerCharacterId?: string;
+    },
+    operation: () => T,
+  ): T {
+    assertActionScope(scope.conversationSpace, scope.secretOwnerCharacterId);
+    return this.actionScope.run(scope, operation);
+  }
+
+  addAction(
+    actionType: string,
+    status: ActionRecord["status"],
+    payload: Record<string, unknown>,
+    explicitScope?: {
+      conversationSpace: ActionRecord["conversationSpace"];
+      secretOwnerCharacterId?: string;
+    },
+  ): ActionRecord {
+    const scope = explicitScope ?? this.actionScope.getStore() ?? { conversationSpace: "normal" as const };
+    assertActionScope(scope.conversationSpace, scope.secretOwnerCharacterId);
     const action: ActionRecord = {
       id: this.idGenerator.next("action"),
       actionType,
       status,
+      conversationSpace: scope.conversationSpace,
+      ...(scope.secretOwnerCharacterId
+        ? { secretOwnerCharacterId: scope.secretOwnerCharacterId }
+        : {}),
       payload,
       createdAt: this.clock.now().toISOString(),
     };
@@ -86,9 +116,17 @@ export class CompanionStore {
     return action;
   }
 
-  addContextLog(entry: Omit<ContextLogEntry, "id" | "createdAt">): ContextLogEntry {
+  addContextLog(
+    entry: Omit<
+      ContextLogEntry,
+      "id" | "createdAt" | "conversationSpace" | "secretOwnerCharacterId"
+    > & Pick<ContextLogEntry, "secretOwnerCharacterId"> & {
+      conversationSpace?: ContextLogEntry["conversationSpace"];
+    },
+  ): ContextLogEntry {
     const log: ContextLogEntry = {
       ...entry,
+      conversationSpace: entry.conversationSpace ?? "normal",
       id: this.idGenerator.next("context-log"),
       createdAt: this.clock.now().toISOString(),
     };
@@ -104,24 +142,43 @@ export class CompanionStore {
     this.observability?.recordContextLog(log);
   }
 
-  recentContextLogs(limit = 20): ContextLogEntry[] {
+  recentContextLogs(
+    limit = 20,
+    conversationSpace: ContextLogEntry["conversationSpace"] = "normal",
+    secretOwnerCharacterId?: string,
+  ): ContextLogEntry[] {
     const bounded = Math.max(1, Math.min(limit, 100));
-    return this.contextLogs.length ? this.contextLogs.slice(0, bounded) : this.observability?.recentContextLogs(bounded) ?? [];
+    return this.contextLogs.length
+      ? this.contextLogs.filter((entry) =>
+          entry.conversationSpace === conversationSpace &&
+          entry.secretOwnerCharacterId === secretOwnerCharacterId
+        ).slice(0, bounded)
+      : this.observability?.recentContextLogs(
+          bounded,
+          conversationSpace,
+          secretOwnerCharacterId,
+        ) ?? [];
   }
 
   latestContextLog(sessionId: string): ContextLogEntry | undefined {
     return this.contextLogs.find((entry) => entry.sessionId === sessionId) ??
-      this.observability?.recentContextLogs(100).find((entry) => entry.sessionId === sessionId);
+      this.observability?.recentContextLogsAcrossSpaces(100).find((entry) => entry.sessionId === sessionId);
   }
 
   addModelContextTrace(
-    entry: Omit<ModelContextTrace, "id" | "createdAt" | "payload" | "scope"> & {
+    entry: Omit<
+      ModelContextTrace,
+      "id" | "createdAt" | "payload" | "scope" | "conversationSpace" |
+        "secretOwnerCharacterId"
+    > & Pick<ModelContextTrace, "secretOwnerCharacterId"> & {
+      conversationSpace?: ModelContextTrace["conversationSpace"];
       payload: Record<string, unknown>;
     },
   ): ModelContextTrace {
     this.modelRequestCount += 1;
     const trace: ModelContextTrace = {
       ...entry,
+      conversationSpace: entry.conversationSpace ?? "normal",
       scope: modelContextTraceScope(entry.turnKind),
       payload: sanitizeTracePayload(entry.payload),
       id: this.idGenerator.next("model-trace"),
@@ -129,7 +186,7 @@ export class CompanionStore {
     };
     this.modelContextTraces.unshift(trace);
     trimModelContextTraceScope(this.modelContextTraces, trace.scope, 10);
-    this.traceArchive.append(trace);
+    if (trace.conversationSpace === "normal") this.traceArchive.append(trace);
     this.observability?.recordModelContextTrace(trace);
     return trace;
   }
@@ -137,12 +194,23 @@ export class CompanionStore {
   recentModelContextTraces(
     limit = 10,
     scope?: ModelContextTraceScope,
+    conversationSpace: ModelContextTrace["conversationSpace"] = "normal",
+    secretOwnerCharacterId?: string,
   ): ModelContextTrace[] {
     const requested = Number.isFinite(limit) ? limit : 10;
     const bounded = Math.max(1, Math.min(requested, scope ? 10 : 20));
-    const traces = this.observability?.recentModelContextTraces(bounded, scope) ??
+    const traces = this.observability?.recentModelContextTraces(
+      bounded,
+      scope,
+      conversationSpace,
+      secretOwnerCharacterId,
+    ) ??
       this.modelContextTraces
-        .filter((trace) => !scope || trace.scope === scope)
+        .filter((trace) =>
+          (!scope || trace.scope === scope) &&
+          trace.conversationSpace === conversationSpace &&
+          trace.secretOwnerCharacterId === secretOwnerCharacterId
+        )
         .slice(0, bounded);
     return traces.map((trace) => ({
       ...trace,
@@ -297,6 +365,18 @@ export class CompanionStore {
       mode: 0o600,
     });
     chmodSync(this.modelApiConfigPath, 0o600);
+  }
+}
+
+function assertActionScope(
+  conversationSpace: ActionRecord["conversationSpace"],
+  secretOwnerCharacterId?: string,
+): void {
+  if (conversationSpace === "secret" && !secretOwnerCharacterId) {
+    throw new Error("secret action scope requires a characterId");
+  }
+  if (conversationSpace === "normal" && secretOwnerCharacterId) {
+    throw new Error("normal action scope cannot include a secret characterId");
   }
 }
 

@@ -6,6 +6,7 @@ import type { ActionRecord } from "../domain/types.js";
 import { connectMcpServerToPi, type McpPiBridge } from "./pi-adapter.js";
 
 export const subagentMcpToolNames = ["delegate_task"] as const;
+const subagentBridgeTimeoutMs = 100_000;
 
 export const subagentRoles = ["worker", "researcher", "planner", "reviewer"] as const;
 export type SubagentRole = typeof subagentRoles[number];
@@ -104,6 +105,11 @@ export async function createSubagentMcpBridge(context: SubagentMcpContext): Prom
   return connectMcpServerToPi(
     createSubagentMcpServer(context),
     `rp-agent-subagent-pi-${context.sessionId}`,
-    { executionMode: "parallel" },
+    {
+      executionMode: "parallel",
+      // The child runtime has its own 90-second limit. Keep the MCP envelope
+      // slightly wider so the runtime reports the authoritative timeout.
+      requestTimeoutMs: subagentBridgeTimeoutMs,
+    },
   );
 }

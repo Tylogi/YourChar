@@ -46,6 +46,11 @@ export type VisionServiceOptions = {
   fetch?: VisionFetch;
 };
 
+export type VisionWorkspaceContext = {
+  workspaceFiles: WorkspaceFileService;
+  cacheNamespace: string;
+};
+
 export class VisionService {
   private readonly configPath?: string;
   private readonly cacheDir?: string;
@@ -150,15 +155,20 @@ export class VisionService {
     };
   }
 
-  async analyzePath(input: VisionAnalysisInput, signal?: AbortSignal): Promise<VisionAnalysis> {
+  async analyzePath(
+    input: VisionAnalysisInput,
+    signal?: AbortSignal,
+    workspace?: VisionWorkspaceContext,
+  ): Promise<VisionAnalysis> {
     this.assertAvailable();
-    const image = this.options.workspaceFiles.visionImage(input.path);
+    const image = (workspace?.workspaceFiles ?? this.options.workspaceFiles).visionImage(input.path);
     const question = normalizeQuestion(input.question);
     const detail = requireDetail(input.detail ?? this.config.detail);
     const features = normalizeFeatures(input.features);
     const imageSha256 = createHash("sha256").update(image.bytes).digest("hex");
     const cacheKey = createHash("sha256").update(JSON.stringify({
       promptVersion,
+      cacheNamespace: workspace?.cacheNamespace ?? "workspace:default",
       imageSha256,
       model: this.config.model,
       question,
