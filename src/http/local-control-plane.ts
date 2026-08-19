@@ -27,10 +27,14 @@ export class LocalControlPlaneRequestError extends Error {
  * Give the same-origin browser UI a process-lifetime control-plane capability.
  * The HttpOnly cookie keeps the capability out of page source and JavaScript.
  */
-export function attachLocalControlPlaneCookie(response: ServerResponse): void {
+export function attachLocalControlPlaneCookie(
+  request: IncomingMessage,
+  response: ServerResponse,
+): void {
+  const secure = isAuthenticatedLazycatIngressEnvelope(request) ? "; Secure" : "";
   response.setHeader(
     "set-cookie",
-    `${controlCookieName}=${controlToken}; HttpOnly; SameSite=Strict; Path=/`,
+    `${controlCookieName}=${controlToken}; HttpOnly; SameSite=Strict; Path=/${secure}`,
   );
 }
 
@@ -48,13 +52,6 @@ export function assertLocalControlPlaneMutation(request: IncomingMessage): void 
   }
   const expectedOrigin = requestOrigin(request);
   const suppliedOrigin = singleHeader(request, "origin");
-  if (suppliedOrigin !== expectedOrigin) {
-    throw rejected(
-      "LOCAL_CONTROL_ORIGIN_REJECTED",
-      "a same-origin browser request is required",
-    );
-  }
-
   const contentType = singleHeader(request, "content-type");
   if (!isJsonContentType(contentType)) {
     throw new LocalControlPlaneRequestError(
@@ -66,6 +63,7 @@ export function assertLocalControlPlaneMutation(request: IncomingMessage): void 
 
   const fetchSite = singleHeader(request, "sec-fetch-site");
   const fetchMode = singleHeader(request, "sec-fetch-mode");
+  const fetchDest = singleHeader(request, "sec-fetch-dest");
   if (
     (fetchSite !== undefined && fetchSite.toLowerCase() !== "same-origin") ||
     fetchMode?.toLowerCase() === "no-cors"
@@ -83,6 +81,47 @@ export function assertLocalControlPlaneMutation(request: IncomingMessage): void 
       "the local control-plane capability is missing or invalid",
     );
   }
+
+  if (
+    suppliedOrigin !== expectedOrigin &&
+    !isAuthenticatedLazycatUiRequest(request, suppliedOrigin, fetchSite, fetchMode, fetchDest)
+  ) {
+    throw rejected(
+      "LOCAL_CONTROL_ORIGIN_REJECTED",
+      "a same-origin browser request is required",
+    );
+  }
+}
+
+/**
+ * Lazycat's authenticated ingress terminates HTTPS and rewrites Host to the
+ * private loopback listener. Trust that narrowly identified ingress envelope,
+ * not arbitrary Forwarded/X-Forwarded-Host values or an origin reported by
+ * page JavaScript. The ingress must keep the app behind its login boundary and
+ * overwrite these identity headers before forwarding the request.
+ */
+function isAuthenticatedLazycatUiRequest(
+  request: IncomingMessage,
+  suppliedOrigin: string | undefined,
+  fetchSite: string | undefined,
+  fetchMode: string | undefined,
+  fetchDest: string | undefined,
+): boolean {
+  return Boolean(
+    isAuthenticatedLazycatIngressEnvelope(request) &&
+    suppliedOrigin !== undefined &&
+    canonicalHttpsOrigin(suppliedOrigin) === suppliedOrigin &&
+    fetchSite?.toLowerCase() === "same-origin" &&
+    (fetchMode?.toLowerCase() === "cors" || fetchMode?.toLowerCase() === "same-origin") &&
+    fetchDest?.toLowerCase() === "empty"
+  );
+}
+
+function isAuthenticatedLazycatIngressEnvelope(request: IncomingMessage): boolean {
+  return isLoopbackAddress(normalizedLocalAddress(request.socket.remoteAddress)) &&
+    singleHeader(request, "x-forwarded-by") === "lzc-ingress" &&
+    singleHeader(request, "x-forwarded-proto") === "https" &&
+    isSafeLazycatUserId(singleHeader(request, "x-hc-user-id"));
 }
 
 function requestOrigin(request: IncomingMessage): string {
@@ -147,6 +186,32 @@ function normalizedLocalAddress(value: string | undefined): string | undefined {
   if (!value) return undefined;
   const mappedIpv4 = /^::ffff:(\d{1,3}(?:\.\d{1,3}){3})$/iu.exec(value);
   return mappedIpv4?.[1] ?? value.toLowerCase();
+}
+
+function isLoopbackAddress(value: string | undefined): boolean {
+  if (value === "::1") return true;
+  return value !== undefined && /^127(?:\.\d{1,3}){3}$/u.test(value) &&
+    value.split(".").every((entry) => Number(entry) <= 255);
+}
+
+function canonicalHttpsOrigin(value: string): string | undefined {
+  let parsed: URL;
+  try {
+    parsed = new URL(value);
+  } catch {
+    return undefined;
+  }
+  if (
+    parsed.protocol !== "https:" ||
+    parsed.username || parsed.password || parsed.pathname !== "/" ||
+    parsed.search || parsed.hash
+  ) return undefined;
+  return parsed.origin;
+}
+
+function isSafeLazycatUserId(value: string | undefined): boolean {
+  return value !== undefined && value.length >= 1 && value.length <= 256 &&
+    !/[\u0000-\u0020\u007f,]/u.test(value);
 }
 
 function isJsonContentType(value: string | undefined): boolean {

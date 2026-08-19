@@ -156,10 +156,12 @@ An over-limit profile returns HTTP 400 with code `USER_PROFILE_INVALID`. Export
 includes the profile document. Complete data deletion removes the Markdown file.
 
 Installer mutations and Skill enabled-space changes require same-origin JSON
-from the loopback UI plus a per-process, unguessable HttpOnly cookie. Host and
-Origin must match the actual loopback socket, so a hostile web page or
-DNS-rebinding hostname cannot trigger a download, persistent install, or
-private-to-normal enablement change. The token is never placed in HTML, model
+from the loopback UI plus a per-process, unguessable HttpOnly cookie. Direct
+requests must match the actual loopback socket. The authenticated Lazycat
+ingress is also supported when it rewrites Host to that socket and supplies its
+fixed HTTPS, ingress, and signed-in-user headers; this is not a generic reverse
+proxy trust mode. Keep the app behind Lazycat login and do not expose `/api/*`
+through an unauthenticated proxy. The token is never placed in HTML, model
 context, Workspace, or shell environment.
 
 Workspace and protected-document capability details are specified in

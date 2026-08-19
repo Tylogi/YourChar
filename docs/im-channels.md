@@ -103,4 +103,6 @@ DELETE /api/v1/im/bindings/{feishu|wechat}
 
 角色路由 PATCH body 为 `{ "characterId": "..." }`；传 `null` 会停止该通道接收新消息。
 所有 POST/PATCH/DELETE 都受本地 control-plane 的精确 Host、same-origin、JSON Content-Type
-和 HttpOnly capability cookie 保护。二维码状态 GET 不返回平台密钥。
+和 HttpOnly capability cookie 保护。通过 Lazycat 使用时，只信任其已登录 ingress 注入的
+固定 HTTPS/ingress/user headers；这不是通用反向代理支持，不能把 `/api/*` 暴露到未认证代理。
+二维码状态 GET 不返回平台密钥。

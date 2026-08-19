@@ -407,7 +407,7 @@ async function route(input: {
     method === "GET" &&
     (pathname === "/" || pathname === "/ui" || pathname === "/ui/index.html" || pathname === "/index.html")
   ) {
-    sendHtml(input.response, 200, renderAppHtml());
+    sendHtml(input.request, input.response, 200, renderAppHtml());
     return;
   }
 
@@ -3111,7 +3111,7 @@ async function route(input: {
   }
 
   if (method === "GET" && !pathname.startsWith("/api/")) {
-    sendHtml(input.response, 200, renderAppHtml());
+    sendHtml(input.request, input.response, 200, renderAppHtml());
     return;
   }
 
@@ -4132,8 +4132,13 @@ function withCharacterAvatar(kernel: CompanionKernel, character: CharacterProfil
   };
 }
 
-function sendHtml(response: ServerResponse, statusCode: number, html: string): void {
-  attachLocalControlPlaneCookie(response);
+function sendHtml(
+  request: IncomingMessage,
+  response: ServerResponse,
+  statusCode: number,
+  html: string,
+): void {
+  attachLocalControlPlaneCookie(request, response);
   response.writeHead(statusCode, {
     "content-type": "text/html; charset=utf-8",
     "cache-control": "no-store",
