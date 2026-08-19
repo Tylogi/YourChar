@@ -1,7 +1,17 @@
 import assert from "node:assert/strict";
-import { existsSync, mkdtempSync, readdirSync, rmSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  readdirSync,
+  renameSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { basename, dirname, join } from "node:path";
 import test from "node:test";
 import {
   CompanionKernel,
@@ -9,7 +19,8 @@ import {
   RP_MEMORY_SCOPE,
   type MessageResponse,
 } from "../src/domain/index.js";
-import { SessionModeMismatchError } from "../src/pi/index.js";
+import { createHttpServer } from "../src/http/router.js";
+import { PiSessionIntegrityError, SessionModeMismatchError } from "../src/pi/index.js";
 import { ScriptedModelController } from "../src/testing/runtime.js";
 
 test("Pi AgentSession transcript persists and resumes after kernel restart", async () => {
@@ -37,6 +48,175 @@ test("Pi AgentSession transcript persists and resumes after kernel restart", asy
     second.dispose();
   } finally {
     rmSync(stateDir, { recursive: true, force: true });
+  }
+});
+
+test("a state-directory rename rebases the Pi session file without losing transcript messages", async () => {
+  const root = mkdtempSync(join(tmpdir(), "yourchar-pi-session-rebase-"));
+  const legacyStateDir = join(root, ".rp-agent");
+  const currentStateDir = join(root, ".yourchar");
+  const model = new ScriptedModelController("pi-session-rebase");
+  let first: CompanionKernel | undefined;
+  let second: CompanionKernel | undefined;
+  let server: ReturnType<typeof createHttpServer> | undefined;
+  try {
+    first = createPersistentScriptedKernel(legacyStateDir, model);
+    model.enqueue([{ kind: "assistant_text", text: "改名后这段聊天仍然存在。" }]);
+    await first.sendMessage("rebased-session", { mode: "sms", text: "请记住这段聊天" });
+    const transcriptBefore = await first.getConversationTranscript("rebased-session");
+    const messageCountBefore = (await first.getSession("rebased-session")).messages.length;
+    const archived = first.archiveConversation("rebased-session");
+    assert.ok(archived.archivedAt);
+    const originalMetadata = first.listConversationMetadata().find((entry) =>
+      entry.id === "rebased-session"
+    );
+    assert.ok(originalMetadata?.piSessionFile);
+    assert.ok(originalMetadata.piSessionId);
+    const fileName = basename(originalMetadata.piSessionFile);
+    first.dispose();
+    first = undefined;
+
+    renameSync(legacyStateDir, currentStateDir);
+    const expectedSessionFile = join(currentStateDir, "pi-sessions", fileName);
+    second = createPersistentScriptedKernel(currentStateDir, model, false);
+
+    const persisted = readConversationIndex(join(currentStateDir, "conversations.json"));
+    assert.equal(
+      persisted.conversations.find((entry) => entry.id === "rebased-session")?.piSessionFile,
+      expectedSessionFile,
+    );
+    const transcriptAfter = await second.getConversationTranscript("rebased-session");
+    const messageCountAfter = (await second.getSession("rebased-session")).messages.length;
+    const includeArchivedRecords = await second.listSessions();
+    server = createHttpServer({ kernel: second });
+    await new Promise<void>((resolve) => server!.listen(0, "127.0.0.1", resolve));
+    const address = server.address();
+    assert.ok(address && typeof address === "object");
+    const baseUrl = `http://127.0.0.1:${address.port}`;
+    const listedResponse = await fetch(`${baseUrl}/api/v1/sessions?includeArchived=1`);
+    assert.equal(listedResponse.status, 200);
+    const listedBody = await listedResponse.json() as {
+      sessions: Array<{ id: string; messageCount: number; archivedAt?: string }>;
+    };
+    const listedArchived = listedBody.sessions.find((entry) => entry.id === "rebased-session");
+    const transcriptResponse = await fetch(`${baseUrl}/api/v1/sessions/rebased-session/messages`);
+    assert.equal(transcriptResponse.status, 200);
+    const transcriptBody = await transcriptResponse.json() as unknown[];
+    assert.deepEqual(
+      JSON.parse(JSON.stringify(transcriptAfter)),
+      JSON.parse(JSON.stringify(transcriptBefore)),
+    );
+    assert.equal(messageCountAfter, messageCountBefore);
+    assert.equal(
+      includeArchivedRecords.find((record) => record.id === "rebased-session")?.messages.length,
+      messageCountBefore,
+    );
+    assert.equal(listedArchived?.messageCount, transcriptBefore.length);
+    assert.equal(listedArchived?.archivedAt, archived.archivedAt);
+    assert.equal(transcriptBody.length, transcriptBefore.length);
+    assert.equal(
+      second.listConversationMetadata().find((entry) => entry.id === "rebased-session")?.archivedAt,
+      archived.archivedAt,
+    );
+  } finally {
+    if (server) {
+      await new Promise<void>((resolve, reject) => {
+        server!.close((error) => error ? reject(error) : resolve());
+      });
+    }
+    first?.dispose();
+    second?.dispose();
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("an empty persisted Pi session materializes its header and survives restart", async () => {
+  const stateDir = mkdtempSync(join(tmpdir(), "yourchar-empty-pi-session-"));
+  let first: CompanionKernel | undefined;
+  let second: CompanionKernel | undefined;
+  try {
+    first = new CompanionKernel({ stateDir });
+    await first.sessionRuntime.getOrCreate("empty-persisted-session", "sms");
+    const sessionFile = first.listConversationMetadata().find((entry) =>
+      entry.id === "empty-persisted-session"
+    )?.piSessionFile;
+    assert.ok(sessionFile && existsSync(sessionFile));
+    assert.equal(JSON.parse(readFileSync(sessionFile, "utf8").split("\n")[0]).type, "session");
+    first.dispose();
+    first = undefined;
+
+    second = new CompanionKernel({ stateDir });
+    assert.deepEqual((await second.getSession("empty-persisted-session")).messages, []);
+  } finally {
+    first?.dispose();
+    second?.dispose();
+    rmSync(stateDir, { recursive: true, force: true });
+  }
+});
+
+test("unrecoverable Pi session bindings remain unchanged and fail closed", async (context) => {
+  const cases: Array<{
+    name: string;
+    mutate: (fixture: RenamedPiSessionFixture) => void;
+  }> = [
+    {
+      name: "missing current candidate",
+      mutate: (fixture) => {
+        mkdirSync(dirname(fixture.legacySessionFile), { recursive: true });
+        renameSync(fixture.currentSessionFile, fixture.legacySessionFile);
+      },
+    },
+    {
+      name: "header id mismatch",
+      mutate: (fixture) => {
+        const lines = readFileSync(fixture.currentSessionFile, "utf8").split("\n");
+        const header = JSON.parse(lines[0]) as Record<string, unknown>;
+        lines[0] = JSON.stringify({ ...header, id: `${fixture.piSessionId}-wrong` });
+        writeFileSync(fixture.currentSessionFile, lines.join("\n"), "utf8");
+      },
+    },
+    {
+      name: "session file symlink",
+      mutate: (fixture) => {
+        const outsideFile = join(fixture.root, `outside-${basename(fixture.currentSessionFile)}`);
+        renameSync(fixture.currentSessionFile, outsideFile);
+        symlinkSync(outsideFile, fixture.currentSessionFile);
+      },
+    },
+    {
+      name: "session directory symlink",
+      mutate: (fixture) => {
+        const sessionDir = dirname(fixture.currentSessionFile);
+        const outsideDir = join(fixture.root, "outside-pi-sessions");
+        renameSync(sessionDir, outsideDir);
+        symlinkSync(outsideDir, sessionDir, "dir");
+      },
+    },
+  ];
+
+  for (const scenario of cases) {
+    await context.test(scenario.name, async () => {
+      const fixture = await createRenamedPiSessionFixture(scenario.name.replace(/\s+/g, "-"));
+      let kernel: CompanionKernel | undefined;
+      try {
+        scenario.mutate(fixture);
+        const indexBefore = readFileSync(fixture.indexPath, "utf8");
+        const filesBefore = readdirSync(dirname(fixture.currentSessionFile)).sort();
+        kernel = new CompanionKernel({ stateDir: fixture.currentStateDir });
+        assert.equal(readFileSync(fixture.indexPath, "utf8"), indexBefore);
+
+        await assert.rejects(kernel.getSession(fixture.conversationId), PiSessionIntegrityError);
+        await assert.rejects(
+          kernel.sendMessage(fixture.conversationId, { mode: "sms", text: "不得另建空会话" }),
+          PiSessionIntegrityError,
+        );
+        assert.equal(readFileSync(fixture.indexPath, "utf8"), indexBefore);
+        assert.deepEqual(readdirSync(dirname(fixture.currentSessionFile)).sort(), filesBefore);
+      } finally {
+        kernel?.dispose();
+        rmSync(fixture.root, { recursive: true, force: true });
+      }
+    });
   }
 });
 
@@ -206,4 +386,60 @@ function createPersistentScriptedKernel(
     });
   }
   return kernel;
+}
+
+type ConversationIndexFixture = {
+  version: number;
+  conversations: Array<{
+    id: string;
+    piSessionId?: string;
+    piSessionFile?: string;
+  }>;
+};
+
+type RenamedPiSessionFixture = {
+  root: string;
+  currentStateDir: string;
+  indexPath: string;
+  conversationId: string;
+  piSessionId: string;
+  legacySessionFile: string;
+  currentSessionFile: string;
+};
+
+function readConversationIndex(path: string): ConversationIndexFixture {
+  return JSON.parse(readFileSync(path, "utf8")) as ConversationIndexFixture;
+}
+
+async function createRenamedPiSessionFixture(seed: string): Promise<RenamedPiSessionFixture> {
+  const root = mkdtempSync(join(tmpdir(), `yourchar-invalid-pi-${seed}-`));
+  const legacyStateDir = join(root, ".rp-agent");
+  const currentStateDir = join(root, ".yourchar");
+  const conversationId = `invalid-pi-${seed}`;
+  const model = new ScriptedModelController(`invalid-pi-${seed}`);
+  const kernel = createPersistentScriptedKernel(legacyStateDir, model);
+  try {
+    model.enqueue([{ kind: "assistant_text", text: "这段记录只用于完整性测试。" }]);
+    await kernel.sendMessage(conversationId, { mode: "sms", text: "原始聊天记录" });
+    const metadata = kernel.listConversationMetadata().find((entry) => entry.id === conversationId);
+    assert.ok(metadata?.piSessionFile);
+    assert.ok(metadata.piSessionId);
+    const legacySessionFile = metadata.piSessionFile;
+    const fileName = basename(legacySessionFile);
+    kernel.dispose();
+    renameSync(legacyStateDir, currentStateDir);
+    return {
+      root,
+      currentStateDir,
+      indexPath: join(currentStateDir, "conversations.json"),
+      conversationId,
+      piSessionId: metadata.piSessionId,
+      legacySessionFile,
+      currentSessionFile: join(currentStateDir, "pi-sessions", fileName),
+    };
+  } catch (error) {
+    kernel.dispose();
+    rmSync(root, { recursive: true, force: true });
+    throw error;
+  }
 }

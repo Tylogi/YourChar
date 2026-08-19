@@ -1,5 +1,17 @@
-import { chmodSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-import { isAbsolute, join, relative, resolve } from "node:path";
+import {
+  chmodSync,
+  closeSync,
+  constants,
+  existsSync,
+  fstatSync,
+  mkdirSync,
+  openSync,
+  readFileSync,
+  readSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
+import { basename, isAbsolute, join, resolve } from "node:path";
 import type { AgentMessage } from "@earendil-works/pi-agent-core";
 import {
   AuthStorage,
@@ -113,6 +125,7 @@ const currentToolResultContextCharacters = 48_000;
 const maxCurrentToolResultCharacters = 32_000;
 const historicalToolCallArgumentCharacters = 1_200;
 const currentToolCallArgumentCharacters = 8_000;
+const maxPiSessionHeaderBytes = 64 * 1_024;
 
 export type ConversationMetadata = {
   id: string;
@@ -291,6 +304,15 @@ export class ConversationCompactionUnavailableError extends Error {
   constructor(message: string) {
     super(message);
     this.name = "ConversationCompactionUnavailableError";
+  }
+}
+
+export class PiSessionIntegrityError extends Error {
+  readonly code = "PI_SESSION_INTEGRITY_ERROR";
+
+  constructor(sessionId: string) {
+    super(`Conversation ${sessionId} has an unavailable or unsafe persisted Pi session binding`);
+    this.name = "PiSessionIntegrityError";
   }
 }
 
@@ -993,6 +1015,7 @@ export class PiSessionRuntime {
   async deleteConversation(sessionId: string, confirmation: string): Promise<ConversationMetadata> {
     this.assertConversationDeletable(sessionId, confirmation);
     const metadata = this.requireMetadata(sessionId);
+    const sessionFile = this.currentPiSessionFile(metadata);
     const handle = this.handles.get(metadata.id);
     if (handle) {
       handle.session.dispose();
@@ -1000,9 +1023,7 @@ export class PiSessionRuntime {
       this.handles.delete(metadata.id);
     }
     this.detachedMessages.delete(metadata.id);
-    if (metadata.piSessionFile && this.piSessionDir && isPathInside(this.piSessionDir, metadata.piSessionFile)) {
-      rmSync(metadata.piSessionFile, { force: true });
-    }
+    if (sessionFile) rmSync(sessionFile, { force: true });
     this.metadata.delete(metadata.id);
     this.persistConversationIndex();
     return { ...metadata };
@@ -1327,7 +1348,7 @@ export class PiSessionRuntime {
       authStorage,
       modelRegistry,
     });
-    let session: AgentSession;
+    let session: AgentSession | undefined;
     try {
       ({ session } = await createAgentSession({
         cwd: workspace.dir,
@@ -1343,10 +1364,15 @@ export class PiSessionRuntime {
         tools: customTools.map((tool) => tool.name),
         customTools,
       }));
+      if (metadata.piSessionFile === undefined && metadata.piSessionId === undefined) {
+        this.rewritePersistedSession(sessionManager);
+      }
     } catch (error) {
+      session?.dispose();
       await Promise.all(mcpBridges.map((bridge) => bridge.close()));
       throw error;
     }
+    if (!session) throw new Error("Pi AgentSession creation did not return a session");
 
     metadata.piSessionId = session.sessionId;
     metadata.piSessionFile = session.sessionFile;
@@ -1599,10 +1625,13 @@ export class PiSessionRuntime {
     if (!this.piSessionDir) {
       return SessionManager.inMemory(workspaceDir);
     }
-    mkdirSync(this.piSessionDir, { recursive: true });
-    if (metadata.piSessionFile && existsSync(metadata.piSessionFile)) {
-      return SessionManager.open(metadata.piSessionFile, this.piSessionDir, workspaceDir);
+    if (metadata.piSessionFile !== undefined || metadata.piSessionId !== undefined) {
+      const sessionFile = this.currentPiSessionFile(metadata);
+      if (!sessionFile) throw new PiSessionIntegrityError(metadata.id);
+      return SessionManager.open(sessionFile, this.piSessionDir, workspaceDir);
     }
+    mkdirSync(this.piSessionDir, { recursive: true });
+    if (!isRealDirectory(this.piSessionDir)) throw new PiSessionIntegrityError(metadata.id);
     return SessionManager.create(workspaceDir, this.piSessionDir);
   }
 
@@ -2296,33 +2325,67 @@ export class PiSessionRuntime {
     if (!this.conversationIndexPath || !existsSync(this.conversationIndexPath)) {
       return;
     }
+    let parsed: unknown;
     try {
-      const parsed = JSON.parse(readFileSync(this.conversationIndexPath, "utf8")) as unknown;
-      if (!isRecord(parsed) || parsed.version !== 1 || !Array.isArray(parsed.conversations)) {
-        return;
-      }
-      let changed = false;
-      for (const entry of parsed.conversations) {
-        const normalized = normalizeMetadata(entry);
-        if (!normalized) continue;
-        if (normalized.mode === "rp") {
-          this.purgeRetiredRoleplayConversation(normalized);
-          changed = true;
-          continue;
-        }
-        this.metadata.set(normalized.id, normalized);
-      }
-      if (this.migrateLegacyDirectConversations()) changed = true;
-      if (changed) this.persistConversationIndex();
+      parsed = JSON.parse(readFileSync(this.conversationIndexPath, "utf8")) as unknown;
     } catch {
       // A corrupt index is ignored; existing Pi JSONL files remain untouched.
+      return;
     }
+    if (!isRecord(parsed) || parsed.version !== 1 || !Array.isArray(parsed.conversations)) {
+      return;
+    }
+    let changed = false;
+    for (const entry of parsed.conversations) {
+      const normalized = normalizeMetadata(entry);
+      if (!normalized) continue;
+      if (this.rebasePiSessionFile(normalized)) changed = true;
+      if (normalized.mode === "rp") {
+        this.purgeRetiredRoleplayConversation(normalized);
+        changed = true;
+        continue;
+      }
+      this.metadata.set(normalized.id, normalized);
+    }
+    if (this.migrateLegacyDirectConversations()) changed = true;
+    if (changed) this.persistConversationIndex();
+  }
+
+  private rebasePiSessionFile(metadata: ConversationMetadata): boolean {
+    if (metadata.piSessionFile === undefined || !this.piSessionDir) return false;
+    const previousPath = metadata.piSessionFile;
+    const fileName = basename(previousPath);
+    const piSessionId = metadata.piSessionId;
+    if (
+      isAbsolute(previousPath) &&
+      piSessionId !== undefined &&
+      isSafePiSessionFileName(fileName, piSessionId)
+    ) {
+      const candidate = matchingPiSessionFile(this.piSessionDir, fileName, piSessionId);
+      if (candidate) {
+        if (previousPath === candidate) return false;
+        metadata.piSessionFile = candidate;
+        return true;
+      }
+    }
+    return false;
+  }
+
+  private currentPiSessionFile(metadata: ConversationMetadata): string | undefined {
+    if (!this.piSessionDir || metadata.piSessionFile === undefined || metadata.piSessionId === undefined) {
+      return undefined;
+    }
+    const fileName = basename(metadata.piSessionFile);
+    if (!isAbsolute(metadata.piSessionFile) || !isSafePiSessionFileName(fileName, metadata.piSessionId)) {
+      return undefined;
+    }
+    const candidate = matchingPiSessionFile(this.piSessionDir, fileName, metadata.piSessionId);
+    return candidate === metadata.piSessionFile ? candidate : undefined;
   }
 
   private purgeRetiredRoleplayConversation(metadata: ConversationMetadata): void {
-    if (metadata.piSessionFile && this.piSessionDir && isPathInside(this.piSessionDir, metadata.piSessionFile)) {
-      rmSync(metadata.piSessionFile, { force: true });
-    }
+    const sessionFile = this.currentPiSessionFile(metadata);
+    if (sessionFile) rmSync(sessionFile, { force: true });
     this.rpService.deleteSessionData(metadata.id);
     const database = this.rpService.repository.database.connection;
     database.prepare("DELETE FROM memory_extraction_jobs WHERE session_id = ?").run(metadata.id);
@@ -2947,9 +3010,62 @@ function normalizeTurnStatus(value: unknown): TurnStatus | undefined {
     : undefined;
 }
 
-function isPathInside(parent: string, candidate: string): boolean {
-  const nested = relative(resolve(parent), resolve(candidate));
-  return Boolean(nested) && !nested.startsWith("..") && !isAbsolute(nested);
+function matchingPiSessionFile(
+  sessionDir: string,
+  fileName: string,
+  sessionId: string,
+): string | undefined {
+  if (!isRealDirectory(sessionDir)) return undefined;
+  const candidate = join(sessionDir, fileName);
+  return piSessionHeaderMatches(candidate, sessionId) ? candidate : undefined;
+}
+
+function isRealDirectory(path: string): boolean {
+  let descriptor: number | undefined;
+  try {
+    descriptor = openSync(
+      path,
+      constants.O_RDONLY | constants.O_DIRECTORY | constants.O_NOFOLLOW,
+    );
+    return fstatSync(descriptor).isDirectory();
+  } catch {
+    return false;
+  } finally {
+    if (descriptor !== undefined) closeSync(descriptor);
+  }
+}
+
+function isSafePiSessionFileName(fileName: string, sessionId: string): boolean {
+  if (fileName.length > 255 || basename(fileName) !== fileName) return false;
+  if (!/^[A-Za-z0-9](?:[A-Za-z0-9._-]*[A-Za-z0-9])?$/.test(sessionId)) return false;
+  const suffix = `_${sessionId}.jsonl`;
+  return fileName.length > suffix.length &&
+    fileName.endsWith(suffix) &&
+    /^[A-Za-z0-9][A-Za-z0-9._-]*\.jsonl$/.test(fileName);
+}
+
+function piSessionHeaderMatches(filePath: string, sessionId: string): boolean {
+  let descriptor: number | undefined;
+  try {
+    descriptor = openSync(
+      filePath,
+      constants.O_RDONLY | constants.O_NONBLOCK | constants.O_NOFOLLOW,
+    );
+    const stats = fstatSync(descriptor);
+    if (!stats.isFile()) return false;
+    const buffer = Buffer.alloc(Math.min(maxPiSessionHeaderBytes, Math.max(1, stats.size)));
+    const bytesRead = readSync(descriptor, buffer, 0, buffer.length, 0);
+    const contents = buffer.toString("utf8", 0, bytesRead);
+    const lineEnd = contents.indexOf("\n");
+    if (lineEnd < 0 && stats.size > bytesRead) return false;
+    const firstLine = (lineEnd < 0 ? contents : contents.slice(0, lineEnd)).replace(/\r$/, "");
+    const header = JSON.parse(firstLine) as unknown;
+    return isRecord(header) && header.type === "session" && header.id === sessionId;
+  } catch {
+    return false;
+  } finally {
+    if (descriptor !== undefined) closeSync(descriptor);
+  }
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
