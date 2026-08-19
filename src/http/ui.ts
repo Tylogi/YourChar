@@ -5403,6 +5403,21 @@ export function renderAppHtml(): string {
                 <input id="apiTemperature" type="number" step="0.1" min="0" max="2" placeholder="可选" />
               </div>
               <div class="settings-field">
+                <label for="apiReasoningEffort">CoT 强度</label>
+                <select id="apiReasoningEffort">
+                  <option value="">自动（推荐）</option>
+                  <option value="none">关闭</option>
+                  <option value="minimal">最低</option>
+                  <option value="low">低</option>
+                  <option value="medium">中</option>
+                  <option value="high">高</option>
+                  <option value="xhigh">极高</option>
+                  <option value="max">最大（max）</option>
+                  <option value="ultra">超强（ultra）</option>
+                </select>
+                <span class="muted">仅支持 reasoning_effort 的兼容 API 生效；不支持时可能返回参数错误。</span>
+              </div>
+              <div class="settings-field">
                 <label for="apiMaxTokens">Max Tokens</label>
                 <input id="apiMaxTokens" type="number" min="1" step="1" placeholder="可选" />
               </div>
@@ -6546,6 +6561,7 @@ export function renderAppHtml(): string {
       apiModelCustom: document.getElementById("apiModelCustom"),
       apiKey: document.getElementById("apiKey"),
       apiTemperature: document.getElementById("apiTemperature"),
+      apiReasoningEffort: document.getElementById("apiReasoningEffort"),
       apiMaxTokens: document.getElementById("apiMaxTokens"),
       apiContextWindowTokens: document.getElementById("apiContextWindowTokens"),
       saveApiSettingsBtn: document.getElementById("saveApiSettingsBtn"),
@@ -17677,6 +17693,7 @@ export function renderAppHtml(): string {
         renderModelOptions(config.model || "");
         nodes.apiKey.value = "";
         nodes.apiTemperature.value = config.temperature ?? "";
+        nodes.apiReasoningEffort.value = config.reasoningEffort || "";
         nodes.apiMaxTokens.value = config.maxTokens ?? "";
         nodes.apiContextWindowTokens.value = config.contextWindowTokens ?? "";
         nodes.apiSettingsState.textContent = (config.isDefault ? "系统默认 · " : "") +
@@ -18334,6 +18351,7 @@ export function renderAppHtml(): string {
         baseUrl: nodes.apiBaseUrl.value.trim(),
         model: selectedModelName(),
         temperature: optionalNumber(nodes.apiTemperature.value),
+        reasoningEffort: nodes.apiReasoningEffort.value || null,
         maxTokens: optionalInteger(nodes.apiMaxTokens.value),
         contextWindowTokens: optionalInteger(nodes.apiContextWindowTokens.value)
       };

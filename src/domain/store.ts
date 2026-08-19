@@ -12,6 +12,7 @@ import {
 import type { ObservabilitySink } from "../storage/observability.js";
 import { TraceArchive } from "../storage/trace-archive.js";
 import { modelContextTraceScope } from "./types.js";
+import { isModelReasoningEffort } from "../model/reasoning-effort.js";
 import type {
   ActionRecord,
   ContextLogEntry,
@@ -50,6 +51,15 @@ const defaultModelApiConfig: StoredModelApiConfig = {
 };
 
 const defaultModelProfileId = "default";
+
+export class ModelApiConfigValidationError extends Error {
+  readonly code = "MODEL_API_CONFIG_INVALID";
+
+  constructor(message: string) {
+    super(message);
+    this.name = "ModelApiConfigValidationError";
+  }
+}
 
 export class CompanionStore {
   readonly stateDir?: string;
@@ -447,6 +457,9 @@ function normalizeStoredModelApiConfig(value: unknown): StoredModelApiConfig {
   if (typeof input.contextWindowTokens === "number") {
     config.contextWindowTokens = boundedContextWindow(input.contextWindowTokens);
   }
+  if (isModelReasoningEffort(input.reasoningEffort)) {
+    config.reasoningEffort = input.reasoningEffort;
+  }
   return config;
 }
 
@@ -496,6 +509,15 @@ function applyModelProfilePatch(
   patch: ModelApiProfilePatch,
   updatedAt: string,
 ): void {
+  if (
+    patch.reasoningEffort !== undefined &&
+    patch.reasoningEffort !== null &&
+    !isModelReasoningEffort(patch.reasoningEffort)
+  ) {
+    throw new ModelApiConfigValidationError(
+      "reasoningEffort must be none, minimal, low, medium, high, xhigh, max, ultra, or null",
+    );
+  }
   if (patch.name !== undefined) profile.name = requiredProfileName(patch.name);
   if (typeof patch.enabled === "boolean") profile.enabled = patch.enabled;
   if (typeof patch.baseUrl === "string") profile.baseUrl = patch.baseUrl.trim();
@@ -525,6 +547,10 @@ function applyModelProfilePatch(
   if (patch.contextWindowTokens === null) delete profile.contextWindowTokens;
   else if (typeof patch.contextWindowTokens === "number") {
     profile.contextWindowTokens = boundedContextWindow(patch.contextWindowTokens);
+  }
+  if (patch.reasoningEffort === null) delete profile.reasoningEffort;
+  else if (isModelReasoningEffort(patch.reasoningEffort)) {
+    profile.reasoningEffort = patch.reasoningEffort;
   }
   profile.updatedAt = updatedAt;
 }

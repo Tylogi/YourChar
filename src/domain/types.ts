@@ -1,5 +1,8 @@
 import type { AgentMessage } from "@earendil-works/pi-agent-core";
 import type { AgentSessionEvent } from "@earendil-works/pi-coding-agent";
+import type { ModelReasoningEffort } from "../model/reasoning-effort.js";
+
+export type { ModelReasoningEffort } from "../model/reasoning-effort.js";
 
 export type Mode = "sms" | "rp";
 export type ConversationSpace = "normal" | "secret";
@@ -65,6 +68,7 @@ export type ModelApiConfig = {
   temperature?: number;
   maxTokens?: number;
   contextWindowTokens?: number;
+  reasoningEffort?: ModelReasoningEffort;
   updatedAt?: string;
 };
 
@@ -78,6 +82,7 @@ export type ModelApiConfigPatch = {
   temperature?: number | null;
   maxTokens?: number | null;
   contextWindowTokens?: number | null;
+  reasoningEffort?: ModelReasoningEffort | null;
 };
 
 export type ModelApiProfile = ModelApiConfig & {

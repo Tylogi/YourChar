@@ -75,6 +75,19 @@ test("server serves chat UI and debug model traces", async () => {
     assert.match(html, /controlPlaneFetch\("\/api\/v1\/data", \{/);
     assert.match(html, /id="apiModel"/);
     assert.match(html, /id="apiContextWindowTokens"/);
+    assert.match(html, /id="apiReasoningEffort"/);
+    assert.match(html, /<option value="">自动（推荐）<\/option>/);
+    assert.match(html, /<option value="none">关闭<\/option>/);
+    assert.match(html, /<option value="minimal">最低<\/option>/);
+    assert.match(html, /<option value="low">低<\/option>/);
+    assert.match(html, /<option value="medium">中<\/option>/);
+    assert.match(html, /<option value="high">高<\/option>/);
+    assert.match(html, /<option value="xhigh">极高<\/option>/);
+    assert.match(html, /<option value="max">最大（max）<\/option>/);
+    assert.match(html, /<option value="ultra">超强（ultra）<\/option>/);
+    assert.match(html, /仅支持 reasoning_effort 的兼容 API 生效；不支持时可能返回参数错误/);
+    assert.match(html, /nodes\.apiReasoningEffort\.value = config\.reasoningEffort \|\| ""/);
+    assert.match(html, /reasoningEffort: nodes\.apiReasoningEffort\.value \|\| null/);
     assert.match(html, /id="systemPromptCustom"/);
     assert.match(html, /id="systemPromptSettingsViewBtn"/);
     assert.match(html, /id="meetingPresetSettingsViewBtn"/);
@@ -528,6 +541,7 @@ test("server serves chat UI and debug model traces", async () => {
         visionInputEnabled: true,
         apiKey: "client-secret",
         temperature: 0.7,
+        reasoningEffort: "high",
         maxTokens: 2048,
       }),
     });
@@ -535,6 +549,7 @@ test("server serves chat UI and debug model traces", async () => {
     const savedBody = await savedSettings.json();
     assert.equal(savedBody.apiKeySet, true);
     assert.equal(savedBody.visionInputEnabled, true);
+    assert.equal(savedBody.reasoningEffort, "high");
     assert.equal(savedBody.apiKeyMasked, "clie...cret");
     assert.equal(JSON.stringify(savedBody).includes("client-secret"), false);
 
@@ -542,6 +557,7 @@ test("server serves chat UI and debug model traces", async () => {
     assert.equal(fetchedSettings.status, 200);
     const fetchedBody = await fetchedSettings.json();
     assert.equal(fetchedBody.model, "local-model");
+    assert.equal(fetchedBody.reasoningEffort, "high");
     assert.equal(JSON.stringify(fetchedBody).includes("client-secret"), false);
 
     const savedVisionSettings = await fetch(`${baseUrl}/api/settings/vision`, {

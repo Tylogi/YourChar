@@ -1,3 +1,8 @@
+import {
+  isMlxThinkingModel,
+  type ModelReasoningEffort,
+} from "./reasoning-effort.js";
+
 export type BackgroundThinkingScenario =
   | "group_gate"
   | "memory_extraction"
@@ -20,6 +25,7 @@ export type BackgroundThinkingPolicy = {
 
 type ModelIdentity = {
   model: string;
+  reasoningEffort?: ModelReasoningEffort;
 };
 
 export const minimumInteractiveThinkingCharacters = 16;
@@ -28,13 +34,13 @@ export const maxInteractiveThinkingRetries = 2;
 export function interactiveThinkingTemplateKwargs(
   config: ModelIdentity,
 ): Record<string, boolean> | undefined {
-  return supportsMlxThinkingControl(config.model)
-    ? { enable_thinking: true, preserve_thinking: true }
+  return isMlxThinkingModel(config.model)
+    ? { enable_thinking: config.reasoningEffort !== "none", preserve_thinking: true }
     : undefined;
 }
 
 export function requiresInteractiveThinking(config: ModelIdentity): boolean {
-  return supportsMlxThinkingControl(config.model);
+  return isMlxThinkingModel(config.model) && config.reasoningEffort !== "none";
 }
 
 const budgets: Record<BackgroundThinkingScenario, { thinkingOff: number; fallback: number }> = {
@@ -55,7 +61,7 @@ export function backgroundThinkingPolicy(
   config: ModelIdentity,
   scenario: BackgroundThinkingScenario,
 ): BackgroundThinkingPolicy {
-  const enforced = supportsMlxThinkingControl(config.model);
+  const enforced = isMlxThinkingModel(config.model);
   return {
     requested: "off",
     enforced,
@@ -71,7 +77,7 @@ export function applyBackgroundThinkingPolicy(
 ): unknown {
   if (!payload || typeof payload !== "object" || Array.isArray(payload)) return payload;
   const policy = backgroundThinkingPolicy(config, scenario);
-  const current = payload as Record<string, unknown>;
+  const { reasoning_effort: _reasoningEffort, ...current } = payload as Record<string, unknown>;
   const next: Record<string, unknown> = {
     ...current,
     max_tokens: policy.maxTokens,
@@ -91,8 +97,4 @@ export function applyBackgroundThinkingPolicy(
       preserve_thinking: true,
     },
   };
-}
-
-function supportsMlxThinkingControl(model: string): boolean {
-  return /(?:^|[-_ ])mlx(?:$|[-_ ])/iu.test(model);
 }

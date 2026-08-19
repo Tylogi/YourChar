@@ -94,6 +94,10 @@ import {
   measuredContextInputTokens,
   normalizeActualProviderUsage,
 } from "../context/provider-usage.js";
+import {
+  applyConfiguredReasoningEffort,
+  type ModelReasoningEffort,
+} from "../model/reasoning-effort.js";
 import { memoryContextVersion } from "../context/memory-version.js";
 import { estimateTokens, roundMetric, stableHash } from "../context/tokens.js";
 import type { ContextBudgetSnapshot, ContextEconomicsPlan, ContextPlan } from "../context/types.js";
@@ -199,6 +203,7 @@ export type ProviderPayloadOptions = {
   model?: string;
   chatTemplateKwargs?: Record<string, string | number | boolean | null>;
   requireThinking?: boolean;
+  reasoningEffort?: ModelReasoningEffort;
 };
 
 export type PiSessionRuntimeOptions = {
@@ -1512,6 +1517,16 @@ export class PiSessionRuntime {
           const payload = { ...event.payload };
           if (typeof payloadOptions.temperature === "number") payload.temperature = payloadOptions.temperature;
           payload.max_tokens = Math.min(payloadOptions.maxTokens ?? 2_000, 4_000);
+          const configuredPayload = applyConfiguredReasoningEffort(payload, {
+            model: payloadOptions.model,
+            reasoningEffort: payloadOptions.reasoningEffort,
+          }) as Record<string, unknown>;
+          if (payloadOptions.chatTemplateKwargs) {
+            configuredPayload.chat_template_kwargs = {
+              ...(isRecord(configuredPayload.chat_template_kwargs) ? configuredPayload.chat_template_kwargs : {}),
+              ...payloadOptions.chatTemplateKwargs,
+            };
+          }
           this.store.addModelContextTrace({
             sessionId: childSessionId,
             mode: input.mode,
@@ -1521,9 +1536,9 @@ export class PiSessionRuntime {
               : {}),
             turnKind: "subagent",
             requestText: input.request.task,
-            payload,
+            payload: configuredPayload,
           });
-          return payload;
+          return configuredPayload;
         });
       };
       const resourceLoader = new DefaultResourceLoader({
@@ -1850,6 +1865,13 @@ export class PiSessionRuntime {
           if (typeof options.maxTokens === "number") {
             payload.max_tokens = options.maxTokens;
           }
+          payload = applyConfiguredReasoningEffort(
+            payload,
+            {
+              model: options.model,
+              reasoningEffort: options.reasoningEffort,
+            },
+          ) as Record<string, unknown>;
           if (options.chatTemplateKwargs) {
             payload.chat_template_kwargs = {
               ...(isRecord(payload.chat_template_kwargs) ? payload.chat_template_kwargs : {}),

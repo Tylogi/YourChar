@@ -29,6 +29,7 @@ import {
   CharacterTaskRoutingError,
   InteractionValidationError,
   PrivateInboxMutationError,
+  ModelApiConfigValidationError,
 } from "../domain/index.js";
 import type {
   ConversationSpace,
@@ -280,6 +281,8 @@ export function createHttpServer(options: HttpServerOptions = {}) {
         sendJson(response, 422, { code: error.code, error: error.message });
       } else if (error instanceof AgentPermissionValidationError) {
         sendJson(response, 400, { code: "AGENT_PERMISSION_INVALID", error: error.message });
+      } else if (error instanceof ModelApiConfigValidationError) {
+        sendJson(response, 400, { code: error.code, error: error.message });
       } else if (error instanceof WorkspaceFileError) {
         sendJson(response, workspaceFileHttpStatus(error.code), { code: error.code, error: error.message });
       } else if (error instanceof TavilyConfigurationError) {

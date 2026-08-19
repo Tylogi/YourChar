@@ -19,6 +19,7 @@ test("private Pi session delegates to an isolated read-only subagent and resumes
       bytes: Buffer.from("workspace evidence: pine-17\n", "utf8"),
     });
     runtime.kernel.setAgentModuleEnabled("mcp:subagent", true);
+    runtime.kernel.patchModelApiConfig({ reasoningEffort: "xhigh" });
     runtime.model.enqueue([
       {
         kind: "tool_call",
@@ -81,6 +82,47 @@ test("private Pi session delegates to an isolated read-only subagent and resumes
     assert.ok(traces.some((trace) =>
       trace.turnKind === "subagent" && trace.sessionId.startsWith("subagent:subagent-private-session:")),
     JSON.stringify(traces.map((trace) => [trace.turnKind, trace.sessionId])));
+    const subagentTrace = traces.find((trace) =>
+      trace.turnKind === "subagent" && trace.sessionId.startsWith("subagent:subagent-private-session:")
+    );
+    assert.equal(subagentTrace?.payload.reasoning_effort, "xhigh");
+  } finally {
+    runtime.dispose();
+  }
+});
+
+test("MLX reasoning none disables thinking for delegated subagents without a top-level effort", async () => {
+  const runtime = createTestRuntime({ seed: "subagent-mlx-none" });
+  try {
+    runtime.kernel.setAgentModuleEnabled("mcp:subagent", true);
+    runtime.kernel.patchModelApiConfig({
+      model: "scripted-MLX-model",
+      reasoningEffort: "none",
+    });
+    runtime.model.enqueue([
+      {
+        kind: "tool_call",
+        name: "delegate_task",
+        arguments: { role: "reviewer", task: "Return a short independent check." },
+      },
+      { kind: "assistant_text", text: "Independent check complete." },
+      { kind: "assistant_text", text: "独立检查已完成。" },
+    ]);
+
+    const response = await runtime.kernel.sendMessage("subagent-mlx-none", {
+      mode: "sms",
+      text: "请委托一次独立检查。",
+    });
+    assert.equal(response.status, "completed");
+    const trace = runtime.kernel.recentModelContextTraces(10).find((entry) =>
+      entry.turnKind === "subagent" && entry.sessionId.startsWith("subagent:subagent-mlx-none:")
+    );
+    assert.ok(trace);
+    assert.equal("reasoning_effort" in trace.payload, false);
+    assert.deepEqual(trace.payload.chat_template_kwargs, {
+      enable_thinking: false,
+      preserve_thinking: true,
+    });
   } finally {
     runtime.dispose();
   }

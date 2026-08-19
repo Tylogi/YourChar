@@ -154,6 +154,7 @@ import {
   createOpenAiCompatibleModel,
   normalizeOpenAiCompatibleBaseUrl,
 } from "../model/openai-compatible.js";
+import { applyConfiguredReasoningEffort } from "../model/reasoning-effort.js";
 import {
   RelationshipRepository,
   RelationshipService,
@@ -815,6 +816,7 @@ export class CompanionKernel {
             model: config.model,
             chatTemplateKwargs: interactiveThinkingTemplateKwargs(config),
             requireThinking: requiresInteractiveThinking(config),
+            reasoningEffort: config.reasoningEffort,
           };
         },
         providerPayloadTransform: (input) => {
@@ -2096,13 +2098,13 @@ export class CompanionKernel {
     const response = await fetch(`${normalizeOpenAiCompatibleBaseUrl(config.baseUrl)}/chat/completions`, {
       method: "POST",
       headers: modelHeaders(config.apiKey),
-      body: JSON.stringify({
+      body: JSON.stringify(interactiveTracePayload(config, {
         model: config.model,
         messages: [{ role: "user", content: "Reply with OK." }],
         max_tokens: 8,
         temperature: 0,
         stream: false,
-      }),
+      })),
       signal: AbortSignal.timeout(10_000),
     });
     const text = await response.text();
@@ -5285,13 +5287,13 @@ export class CompanionKernel {
             mode: group.mode,
             turnKind: "group_reply",
             requestText: text,
-            payload: groupTracePayload(
+            payload: interactiveTracePayload(binding.config, groupTracePayload(
               binding.config,
               replySystem,
               replyInput,
               maxTokens,
               binding.config.temperature,
-            ),
+            )),
           });
           modelCalls += 1;
           const replyMessage = await completeSimple(createOpenAiCompatibleModel(binding.config), {
@@ -5303,6 +5305,7 @@ export class CompanionKernel {
             maxTokens,
             sessionId: `group-reply:${started.turn.id}:${characterId}:${characterMessageCount}`,
             signal: groupCallSignal(signal),
+            onPayload: (payload: unknown) => interactiveTracePayload(binding.config, payload),
           });
           if (replyMessage.stopReason === "error" || replyMessage.stopReason === "aborted") {
             throw new Error(replyMessage.errorMessage || `reply stopped: ${replyMessage.stopReason}`);
@@ -7409,7 +7412,7 @@ function applyMeetingPresetProviderOverrides(
 
 function interactiveTracePayload(config: RawModelApiConfig, payload: unknown): Record<string, unknown> {
   if (!payload || typeof payload !== "object" || Array.isArray(payload)) return {};
-  const current = payload as Record<string, unknown>;
+  const current = applyConfiguredReasoningEffort(payload, config) as Record<string, unknown>;
   const templateKwargs = interactiveThinkingTemplateKwargs(config);
   if (!templateKwargs) return current;
   const existing = current.chat_template_kwargs

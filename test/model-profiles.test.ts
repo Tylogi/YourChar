@@ -15,6 +15,7 @@ test("legacy singleton model settings migrate to a default profile", () => {
       provider: "openai_compatible",
       baseUrl: "https://models.invalid/v1",
       model: "legacy-model",
+      reasoningEffort: "minimal",
       visionInputEnabled: false,
       apiKey: "legacy-secret",
       apiKeySet: true,
@@ -27,6 +28,7 @@ test("legacy singleton model settings migrate to a default profile", () => {
     assert.equal(profiles.profiles.length, 1);
     assert.equal(profiles.profiles[0].name, "默认模型");
     assert.equal(profiles.profiles[0].model, "legacy-model");
+    assert.equal(profiles.profiles[0].reasoningEffort, "minimal");
     assert.equal(profiles.profiles[0].apiKeyMasked, "lega...cret");
     assert.equal(JSON.stringify(profiles).includes("legacy-secret"), false);
     const migrated = JSON.parse(readFileSync(join(stateDir, "model-api.json"), "utf8")) as { version?: number };
@@ -39,12 +41,17 @@ test("legacy singleton model settings migrate to a default profile", () => {
 test("characters use their bound model profile and fall back after deletion", async () => {
   const stateDir = mkdtempSync(join(tmpdir(), "rp-agent-model-routing-"));
   const requestedModels: string[] = [];
+  const requestedReasoningEfforts: Array<string | undefined> = [];
   const modelServer = createServer(async (request, response) => {
     const chunks: Buffer[] = [];
     for await (const chunk of request) chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
-    const body = JSON.parse(Buffer.concat(chunks).toString("utf8")) as { model?: string };
+    const body = JSON.parse(Buffer.concat(chunks).toString("utf8")) as {
+      model?: string;
+      reasoning_effort?: string;
+    };
     const model = body.model ?? "unknown";
     requestedModels.push(model);
+    requestedReasoningEfforts.push(body.reasoning_effort);
     writeChatCompletionStream(response, model);
   });
   await new Promise<void>((resolve) => modelServer.listen(0, "127.0.0.1", resolve));
@@ -66,6 +73,7 @@ test("characters use their bound model profile and fall back after deletion", as
       enabled: true,
       baseUrl,
       model: "character-model",
+      reasoningEffort: "max",
     });
     const inherited = kernel.createCharacter({ name: "默认角色" });
     const bound = kernel.createCharacter({ name: "专属角色", modelProfileId: special.id });
@@ -89,6 +97,7 @@ test("characters use their bound model profile and fall back after deletion", as
       text: "再次你好",
     })).reply, "default-model");
     assert.deepEqual(requestedModels, ["default-model", "character-model", "default-model"]);
+    assert.deepEqual(requestedReasoningEfforts, [undefined, "max", undefined]);
   } finally {
     kernel?.dispose();
     await new Promise<void>((resolve, reject) => modelServer.close((error) => error ? reject(error) : resolve()));

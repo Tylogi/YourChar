@@ -4,7 +4,11 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
-import { CompanionKernel } from "../src/domain/index.js";
+import {
+  CompanionKernel,
+  ModelApiConfigValidationError,
+} from "../src/domain/index.js";
+import { createHttpServer } from "../src/http/router.js";
 
 test("model API settings persist and drive OpenAI-compatible chat", async () => {
   const stateDir = mkdtempSync(join(tmpdir(), "rp-agent-state-"));
@@ -38,6 +42,7 @@ test("model API settings persist and drive OpenAI-compatible chat", async () => 
       apiKey: "secret-key",
       temperature: 0.2,
       maxTokens: 64,
+      reasoningEffort: "high",
     });
     assert.equal(JSON.stringify(saved).includes("secret-key"), false);
     kernel.dispose();
@@ -49,6 +54,7 @@ test("model API settings persist and drive OpenAI-compatible chat", async () => 
     assert.equal(reloaded.model, "fake-model");
     assert.equal(reloaded.visionInputEnabled, true);
     assert.equal(reloaded.apiKeySet, true);
+    assert.equal(reloaded.reasoningEffort, "high");
     assert.equal(JSON.stringify(reloaded).includes("secret-key"), false);
 
     reloadedKernel.setAgentModuleEnabled("mcp:vision", true);
@@ -71,6 +77,7 @@ test("model API settings persist and drive OpenAI-compatible chat", async () => 
     assert.equal(capturedBody?.model, "fake-model");
     assert.equal(capturedBody?.stream, true);
     assert.equal(capturedBody?.max_tokens, 64);
+    assert.equal(capturedBody?.reasoning_effort, "high");
     assert.match(JSON.stringify(capturedBody), /data:image\/png;base64/);
     assert.equal(JSON.stringify(capturedBody).includes("hidden reasoning"), false);
     reloadedKernel.dispose();
@@ -82,6 +89,61 @@ test("model API settings persist and drive OpenAI-compatible chat", async () => 
       modelServer.close((error) => (error ? reject(error) : resolve()));
     });
     rmSync(stateDir, { recursive: true, force: true });
+  }
+});
+
+test("model API reasoning effort validates, exposes safe values, and can return to provider defaults", async () => {
+  const kernel = new CompanionKernel({
+    stateDir: false,
+    startScheduler: false,
+    characterFunctionInferer: false,
+    characterSkillReflector: false,
+  });
+  const server = createHttpServer({ kernel });
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  try {
+    const address = server.address();
+    assert.ok(address && typeof address === "object");
+    const baseUrl = `http://127.0.0.1:${address.port}`;
+
+    for (const reasoningEffort of ["none", "minimal", "low", "medium", "high", "xhigh", "max", "ultra"] as const) {
+      const response = await fetch(`${baseUrl}/api/settings/model-api`, {
+        method: "PATCH",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ reasoningEffort }),
+      });
+      assert.equal(response.status, 200);
+      assert.equal(((await response.json()) as { reasoningEffort?: string }).reasoningEffort, reasoningEffort);
+    }
+
+    const cleared = await fetch(`${baseUrl}/api/settings/model-api`, {
+      method: "PATCH",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ reasoningEffort: null }),
+    });
+    assert.equal(cleared.status, 200);
+    assert.equal("reasoningEffort" in (await cleared.json() as object), false);
+
+    const rejected = await fetch(`${baseUrl}/api/settings/model-api`, {
+      method: "PATCH",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ reasoningEffort: "extreme" }),
+    });
+    assert.equal(rejected.status, 400);
+    assert.deepEqual(await rejected.json(), {
+      code: "MODEL_API_CONFIG_INVALID",
+      error: "reasoningEffort must be none, minimal, low, medium, high, xhigh, max, ultra, or null",
+    });
+    assert.equal(kernel.getModelApiConfig().reasoningEffort, undefined);
+    assert.throws(
+      () => kernel.patchModelApiConfig({ reasoningEffort: "extreme" as never }),
+      ModelApiConfigValidationError,
+    );
+  } finally {
+    await new Promise<void>((resolve, reject) => {
+      server.close((error) => error ? reject(error) : resolve());
+    });
+    kernel.dispose();
   }
 });
 
@@ -114,6 +176,62 @@ test("model API accepts a full chat completions endpoint as base URL", async () 
   } finally {
     await new Promise<void>((resolve, reject) => {
       modelServer.close((error) => (error ? reject(error) : resolve()));
+    });
+  }
+});
+
+test("MLX reasoning none disables template thinking without an unsupported top-level effort", async () => {
+  const capturedBodies: Array<Record<string, unknown>> = [];
+  const modelServer = createServer(async (request, response) => {
+    const chunks: Buffer[] = [];
+    for await (const chunk of request) {
+      chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+    }
+    capturedBodies.push(JSON.parse(Buffer.concat(chunks).toString("utf8")) as Record<string, unknown>);
+    writeChatCompletionStream(response, "关闭思考后的可见回复");
+  });
+  await new Promise<void>((resolve) => modelServer.listen(0, "127.0.0.1", resolve));
+
+  const address = modelServer.address();
+  assert.ok(address && typeof address === "object");
+  const kernel = new CompanionKernel({
+    stateDir: false,
+    startScheduler: false,
+    startWorldCoordinator: false,
+    startPrivateInboxCoordinator: false,
+    memoryExtractor: async () => ({ candidates: [] }),
+    characterFunctionInferer: false,
+    characterSkillReflector: false,
+  });
+  try {
+    kernel.patchModelApiConfig({
+      enabled: true,
+      baseUrl: `http://127.0.0.1:${address.port}/v1`,
+      model: "fake-MLX-model",
+      reasoningEffort: "none",
+    });
+    const response = await kernel.sendMessage("mlx-reasoning-none", {
+      mode: "sms",
+      text: "hello",
+    });
+    assert.equal(response.reply, "关闭思考后的可见回复");
+    assert.equal(capturedBodies.length, 1, "reasoning none must not trigger the MLX missing-thinking retry");
+    assert.equal("reasoning_effort" in capturedBodies[0], false);
+    assert.deepEqual(capturedBodies[0].chat_template_kwargs, {
+      enable_thinking: false,
+      preserve_thinking: true,
+    });
+    assert.equal((await kernel.testModelConnection()).ok, true);
+    assert.equal(capturedBodies.length, 2);
+    assert.equal("reasoning_effort" in capturedBodies[1], false);
+    assert.deepEqual(capturedBodies[1].chat_template_kwargs, {
+      enable_thinking: false,
+      preserve_thinking: true,
+    });
+  } finally {
+    kernel.dispose();
+    await new Promise<void>((resolve, reject) => {
+      modelServer.close((error) => error ? reject(error) : resolve());
     });
   }
 });
