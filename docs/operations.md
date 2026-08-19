@@ -57,7 +57,8 @@ The backup script uses SQLite's online backup API and copies Pi transcripts,
 conversation metadata, the complete Memory Vault, its projection/migration
 state, the R1 profile/SOUL compatibility mirrors, Pi agent state, and both the
 normal Workspace and per-character secret Workspaces, plus packages installed
-under `<stateDir>/skills`. Vault Markdown is copied byte-for-byte, preserving
+under `<stateDir>/skills` and the bundled Channel Runtime state under
+`<stateDir>/im-runtime`. Vault Markdown is copied byte-for-byte, preserving
 its frontmatter revisions and hashes. Backup schema v3 records every payload file's
 SHA-256 and size, SQLite schema and `integrity_check`, Vault hashes, and
 Vault-to-SQLite projection consistency. The destination is staged, fully
@@ -69,14 +70,18 @@ An explicit source and destination may be supplied:
 node --disable-warning=ExperimentalWarning scripts/backup-state.mjs .rp-agent /secure/path/yourchar-backup
 ```
 
-Backups have directory mode `0700`. They may include `model-api.json` and
-`tavily.json`, both of which can contain API keys, so backup storage must be
+Backups have directory mode `0700`. They may include `model-api.json`,
+`tavily.json`, and `im-runtime/credentials.json`, all of which can contain API
+keys, platform tokens, refresh credentials, or App Secrets, so backup storage must be
 treated as secret. The backup manifest records credential-file presence without
-copying either Key into the manifest.
+copying any Key or token into the manifest. IM credentials are indicated by
+`containsImCredentials` and `credentials.imRuntimeCredentialsPresent`;
+`containsImRuntime` also records a credential-free spool directory.
 `tavily.json` may also contain an authenticated proxy URL and must be protected
 even when no Tavily Key is present. Backups are not encrypted by YourChar and
 contain private-mode transcripts, memories, Workspace files, and private-only
-Skill bodies; store or encrypt the backup accordingly.
+Skill bodies. `im-runtime/spool.json` can additionally contain pending external
+message text and delivery receipts; store or encrypt the backup accordingly.
 
 ## Restore
 
@@ -104,6 +109,19 @@ The restore script refuses to overwrite an existing state directory without
 restored Vault, rebuilds SQLite/FTS, aligns profile/SOUL mirrors, and removes
 stale resident-memory versions before provider use. Keep the original backup
 until sessions, schedules, characters, and memories have been checked.
+
+After restoring a backup that contains `im-runtime`, verify both platform
+bindings and their selected character routes in **Settings → IM Channels** before
+allowing the service to run unattended. Bindings and credentials are restored and
+can reconnect the same platform accounts, but queued messages are deliberately
+quarantined: after the staging copy has passed full validation, restore marks all
+SQLite IM outbox rows in `pending` or `failed` state as `abandoned`, clears their
+delivery leases, and removes the restored `im-runtime/spool.json`. Old inbound or
+outbound messages are therefore never replayed automatically. Delivered records
+remain as audit history. If the restored host should not contact the old accounts,
+start it without network access, open the original installation to unlink those
+accounts, or remove the restored IM credentials only as part of an intentional
+credential-reset procedure.
 
 ## Vault recovery
 

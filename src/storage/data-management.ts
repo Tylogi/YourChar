@@ -43,6 +43,15 @@ export class DataManagementRepository {
   deleteAllUserData(): void {
     this.database.transaction(() => {
       this.database.connection.exec(`
+        DELETE FROM im_outbox;
+        DELETE FROM im_inbound_events;
+        DELETE FROM im_binding_sessions;
+        DELETE FROM im_bindings;
+        DELETE FROM im_character_routes;
+        UPDATE im_runtime_settings
+        SET wechat_typing_enabled = 1,
+            updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+        WHERE singleton = 1;
         DELETE FROM notification_outbox;
         DELETE FROM reminder_occurrences;
         DELETE FROM proactive_messages;

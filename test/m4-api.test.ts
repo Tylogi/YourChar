@@ -57,6 +57,15 @@ test("readiness, model diagnostics, export, and confirmed deletion form a closed
     const address = app.address();
     assert.ok(address && typeof address === "object");
     const baseUrl = `http://127.0.0.1:${address.port}`;
+    const bootstrap = await fetch(`${baseUrl}/`);
+    const controlCookie = bootstrap.headers.get("set-cookie")?.split(";", 1)[0];
+    assert.ok(controlCookie);
+    const controlHeaders = {
+      "content-type": "application/json",
+      cookie: controlCookie,
+      origin: baseUrl,
+      "sec-fetch-site": "same-origin",
+    };
 
     const readiness = await (await fetch(`${baseUrl}/api/v1/readiness`)).json() as { status: string; database: string };
     assert.deepEqual({ status: readiness.status, database: readiness.database }, { status: "ready", database: "ok" });
@@ -103,13 +112,13 @@ test("readiness, model diagnostics, export, and confirmed deletion form a closed
 
     const rejected = await fetch(`${baseUrl}/api/v1/data`, {
       method: "DELETE",
-      headers: { "content-type": "application/json" },
+      headers: controlHeaders,
       body: JSON.stringify({ confirm: "no" }),
     });
     assert.equal(rejected.status, 400);
     const deleted = await fetch(`${baseUrl}/api/v1/data`, {
       method: "DELETE",
-      headers: { "content-type": "application/json" },
+      headers: controlHeaders,
       body: JSON.stringify({ confirm: "DELETE_ALL_DATA" }),
     });
     assert.deepEqual(await deleted.json(), { deleted: true });

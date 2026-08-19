@@ -352,7 +352,7 @@ test("promoted schedule insight enters a later SMS context and is included in ex
     assert.equal(exported.userInsights.observationCount, 1);
     assert.equal(exported.userInsights.promotedCount, 1);
 
-    runtime.kernel.deleteAllUserData();
+    await runtime.kernel.deleteAllUserData();
     assert.equal(runtime.kernel.getUserInsightStatus().observationCount, 0);
     assert.equal(runtime.kernel.listMemories({ realm: "reality" }).length, 0);
   } finally {

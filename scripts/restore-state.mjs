@@ -4,7 +4,10 @@ import {
   renameSync, rmSync,
 } from "node:fs";
 import { dirname, join, resolve } from "node:path";
+import { DatabaseSync } from "node:sqlite";
 import { assertWriterInactive, validateBackupDirectory } from "./backup-contract.mjs";
+
+const RESTORE_IM_QUARANTINE_REASON = "restored backup: pending IM delivery quarantined";
 
 const positional = process.argv.slice(2).filter((argument) => !argument.startsWith("--"));
 const backupDir = resolve(positional[0] ?? "");
@@ -50,6 +53,7 @@ try {
   }
   cpSync(manifestPath, join(staging, "backup-manifest.json"));
   validateBackupDirectory(staging, manifest);
+  quarantineRestoredImDelivery(staging);
 
   let movedPrevious = false;
   try {
@@ -77,4 +81,34 @@ try {
 function fsyncDirectory(directory) {
   const descriptor = openSync(directory, "r");
   try { fsyncSync(descriptor); } finally { closeSync(descriptor); }
+}
+
+function quarantineRestoredImDelivery(stagingDir) {
+  const databasePath = join(stagingDir, "rp-agent.sqlite");
+  if (existsSync(databasePath)) {
+    const database = new DatabaseSync(databasePath);
+    try {
+      const outboxTable = database.prepare(
+        "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'im_outbox'",
+      ).get();
+      if (outboxTable) {
+        database.exec("BEGIN IMMEDIATE");
+        try {
+          database.prepare(`
+            UPDATE im_outbox
+            SET status = 'abandoned', lease_token = NULL, lease_expires_at = NULL,
+                last_error = ?, updated_at = ?
+            WHERE status IN ('pending', 'failed')
+          `).run(RESTORE_IM_QUARANTINE_REASON, new Date().toISOString());
+          database.exec("COMMIT");
+        } catch (error) {
+          database.exec("ROLLBACK");
+          throw error;
+        }
+      }
+    } finally {
+      database.close();
+    }
+  }
+  rmSync(join(stagingDir, "im-runtime", "spool.json"), { force: true });
 }

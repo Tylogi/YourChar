@@ -23,7 +23,7 @@ try {
     "conversations.json", "pi-sessions", "pi-agent", "model-api.json", "tavily.json", "vision.json",
     "user-profile.md", "characters", "memory-vault", "memory-vault-state.json",
     "memory-vault-migration.json", "memory-vault-journal", "memory-vault-recovery.json", "workspace",
-    "workspace-secret", "skills",
+    "workspace-secret", "skills", "im-runtime",
     "avatars", "system-prompts", "trace-archive.json", "trace-archive",
   ]) {
     const source = join(stateDir, name);
@@ -59,10 +59,13 @@ try {
       modelConfigPresent: existsSync(join(staging, "model-api.json")),
       tavilyConfigPresent: existsSync(join(staging, "tavily.json")),
       visionConfigPresent: existsSync(join(staging, "vision.json")),
+      imRuntimeCredentialsPresent: existsSync(join(staging, "im-runtime", "credentials.json")),
     },
     containsModelCredentials: existsSync(join(staging, "model-api.json")),
     containsTavilyCredentials: existsSync(join(staging, "tavily.json")),
     containsVisionCredentials: existsSync(join(staging, "vision.json")),
+    containsImCredentials: existsSync(join(staging, "im-runtime", "credentials.json")),
+    containsImRuntime: files.some((file) => file.path.startsWith("im-runtime/")),
     containsMemoryVault: vault.present,
     containsSecretWorkspace: files.some((file) => file.path.startsWith("workspace-secret/")),
     containsInstalledSkills: files.some((file) => file.path.startsWith("skills/")),

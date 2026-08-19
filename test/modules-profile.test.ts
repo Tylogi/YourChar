@@ -441,7 +441,7 @@ test("module settings and user-profile Markdown persist across restarts", async 
     assert.equal(second.listAgentModules().find((entry) => entry.name === "roleplay-continuity")?.enabled, true);
     assert.equal(second.getUserProfile().markdown, markdown);
     assert.equal(second.getUserProfile().characterCount, [...markdown].length);
-    second.deleteAllUserData();
+    await second.deleteAllUserData();
     assert.equal(existsSync(profilePath), false);
     second.dispose();
   } finally {

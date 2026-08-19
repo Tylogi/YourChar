@@ -2340,7 +2340,8 @@ export function renderAppHtml(): string {
       main { grid-template-columns: 1fr; }
       .composer { grid-template-columns: 1fr; }
       .primary { width: 100%; }
-      .settings-grid { grid-template-columns: 1fr; }
+      .settings-grid,
+      .im-channel-grid { grid-template-columns: 1fr; }
       .model-profile-bar { grid-template-columns: minmax(0, 1fr) repeat(3, auto); }
       .schedule-form { grid-template-columns: 1fr; }
       .schedule-form > label { grid-column: auto; }
@@ -3394,6 +3395,103 @@ export function renderAppHtml(): string {
       display: inline-flex;
       align-items: center;
     }
+    .im-privacy-banner {
+      margin: 0 0 16px;
+      padding: 12px 14px;
+      border: 1px solid #e7d39a;
+      border-radius: 7px;
+      color: #70510c;
+      background: #fff9e8;
+      font-size: 12px;
+      line-height: 1.6;
+    }
+    .im-gateway-state {
+      margin-bottom: 14px;
+      padding: 10px 12px;
+      border: 1px solid var(--line);
+      border-radius: 7px;
+      color: var(--muted);
+      background: #fafafa;
+      font-size: 12px;
+      line-height: 1.5;
+    }
+    .im-gateway-state.ready { color: #176b45; border-color: #b9ddc9; background: #f0faf4; }
+    .im-gateway-state.unavailable { color: #8a620a; border-color: #ead8a5; background: #fff9e9; }
+    .im-channel-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; }
+    .im-channel-card {
+      min-width: 0;
+      padding: 15px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: #fff;
+      display: grid;
+      gap: 11px;
+    }
+    .im-channel-card.connected { border-color: #acd7be; box-shadow: inset 0 0 0 1px rgba(23, 107, 69, 0.05); }
+    .im-channel-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 10px; }
+    .im-channel-title { min-width: 0; display: flex; align-items: center; gap: 9px; }
+    .im-channel-mark {
+      width: 34px;
+      height: 34px;
+      flex: 0 0 34px;
+      display: grid;
+      place-items: center;
+      border-radius: 9px;
+      color: #fff;
+      font-size: 12px;
+      font-weight: 750;
+    }
+    .im-channel-mark.wechat { background: #07c160; }
+    .im-channel-mark.feishu { background: linear-gradient(145deg, #3370ff, #7b67ee); }
+    .im-channel-title h4 { margin: 0 0 2px; font-size: 14px; }
+    .im-channel-title small { color: var(--muted); font-size: 10px; }
+    .im-channel-status {
+      flex: 0 0 auto;
+      padding: 3px 7px;
+      border-radius: 99px;
+      color: #6f5a19;
+      background: #fff1c9;
+      font-size: 10px;
+    }
+    .im-channel-status.connected { color: #176b45; background: #e7f7ee; }
+    .im-channel-status.error { color: var(--danger); background: #fff0f0; }
+    .im-channel-description { margin: 0; min-height: 38px; color: var(--muted); font-size: 11px; line-height: 1.55; }
+    .im-channel-field { display: grid; gap: 5px; }
+    .im-channel-field > span { color: var(--muted); font-size: 11px; }
+    .im-channel-field select { width: 100%; min-width: 0; }
+    .im-channel-meta { min-height: 32px; color: #56615c; font-size: 10px; line-height: 1.5; overflow-wrap: anywhere; }
+    .im-channel-actions { display: flex; flex-wrap: wrap; gap: 7px; }
+    .im-typing-setting {
+      padding: 9px 10px;
+      border: 1px solid #cbe5d6;
+      border-radius: 7px;
+      background: #f1faf5;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+      color: #476254;
+      font-size: 10px;
+      line-height: 1.45;
+    }
+    .im-typing-setting input { width: 16px; height: 16px; flex: 0 0 auto; }
+    .im-qr-dialog { width: min(430px, calc(100vw - 28px)); }
+    .im-qr-body { padding: 18px; display: grid; justify-items: center; gap: 12px; text-align: center; }
+    .im-qr-stage {
+      width: 246px;
+      min-height: 246px;
+      padding: 10px;
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      background: #fff;
+      display: grid;
+      place-items: center;
+    }
+    .im-qr-stage img { display: block; width: 224px; height: 224px; object-fit: contain; }
+    .im-qr-placeholder { color: var(--muted); font-size: 12px; line-height: 1.6; }
+    .im-qr-message { margin: 0; max-width: 350px; color: #4d5852; font-size: 12px; line-height: 1.6; }
+    .im-verify-form { width: 100%; display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 8px; }
+    .im-verify-form input { min-width: 0; }
     .workspace-section {
       padding: 18px clamp(16px, 2vw, 22px) 20px;
       border-bottom: 1px solid var(--line);
@@ -3779,7 +3877,7 @@ export function renderAppHtml(): string {
     }
 
     .management-tabs { grid-template-columns: repeat(4, minmax(0, 1fr)); }
-    .settings-tabs { grid-template-columns: repeat(5, minmax(0, 1fr)); }
+    .settings-tabs { grid-template-columns: repeat(6, minmax(0, 1fr)); }
     .settings-shell {
       max-width: 1040px;
       padding: 0;
@@ -5246,12 +5344,26 @@ export function renderAppHtml(): string {
             <h2>设置</h2>
             <div class="segmented settings-tabs" aria-label="设置视图">
               <button id="modelSettingsTabBtn" class="active" type="button">模型</button>
+              <button id="imSettingsTabBtn" type="button">IM 通道</button>
               <button id="visionSettingsTabBtn" type="button">视觉</button>
               <button id="searchSettingsTabBtn" type="button">搜索</button>
               <button id="promptSettingsTabBtn" type="button">提示词</button>
               <button id="dataSettingsTabBtn" type="button">数据</button>
             </div>
           </div>
+          <section id="imSettingsPanel" class="management-panel settings-panel" hidden>
+            <div class="schedule-head">
+              <div>
+                <h3>微信与飞书</h3>
+                <p class="muted">把本人私聊接入指定角色；两个平台分别选择角色。</p>
+              </div>
+              <button id="refreshImChannelsBtn" class="secondary" type="button"><i data-lucide="refresh-cw" aria-hidden="true"></i><span>刷新</span></button>
+            </div>
+            <p class="im-privacy-banner"><strong>仅普通模式 · 单主人私聊。</strong> IM 不会打开或读取私密模式，也不支持群聊或多人共享。外部消息会进入所选角色的普通会话，并与该角色的普通历史、记忆和普通 Workspace 连续；平台本身仍会保留已传输的消息。</p>
+            <div id="imGatewayState" class="im-gateway-state" role="status" aria-live="polite">正在读取 Channel Runtime 状态…</div>
+            <div id="imChannelList" class="im-channel-grid" aria-live="polite"></div>
+            <div class="settings-actions"><span id="imChannelState" class="muted" role="status" aria-live="polite"></span></div>
+          </section>
           <section id="modelSettingsPanel" class="management-panel settings-panel">
             <h3>模型 API</h3>
             <div class="model-profile-bar">
@@ -5541,6 +5653,30 @@ export function renderAppHtml(): string {
         </div>
       </section>
     </main>
+    <dialog id="imQrDialog" class="session-action-dialog im-qr-dialog" aria-labelledby="imQrTitle">
+      <div class="dialog-head">
+        <h2 id="imQrTitle">扫码绑定 IM 通道</h2>
+        <button id="closeImQrBtn" class="secondary icon-button" type="button" title="关闭" aria-label="关闭绑定窗口"><i data-lucide="x" aria-hidden="true"></i></button>
+      </div>
+      <div class="im-qr-body">
+        <div id="imQrStage" class="im-qr-stage">
+          <img id="imQrImage" alt="IM 账号绑定二维码" hidden />
+          <div id="imQrPlaceholder" class="im-qr-placeholder">正在生成二维码…</div>
+        </div>
+        <strong id="imQrStatus">正在生成</strong>
+        <p id="imQrMessage" class="im-qr-message">请稍候，正在创建安全绑定会话。</p>
+        <span id="imQrExpiry" class="muted"></span>
+        <form id="imVerifyForm" class="im-verify-form" hidden>
+          <input id="imVerifyCode" autocomplete="one-time-code" inputmode="numeric" maxlength="32" placeholder="输入手机端显示的验证码" />
+          <button id="submitImVerifyBtn" class="primary" type="submit">提交验证码</button>
+        </form>
+        <div class="settings-actions">
+          <button id="refreshImQrBtn" class="secondary" type="button">重新生成</button>
+          <button id="cancelImBindingBtn" class="secondary" type="button">取消绑定</button>
+          <button id="finishImQrBtn" class="primary" type="button">关闭</button>
+        </div>
+      </div>
+    </dialog>
     <dialog id="archivedSessionsDialog" class="archived-dialog" aria-labelledby="archivedSessionsTitle">
       <div class="archived-dialog-head">
         <h2 id="archivedSessionsTitle">已归档会话</h2>
@@ -5845,6 +5981,21 @@ export function renderAppHtml(): string {
       memories: [],
 	      managementTab: "modules",
 	      settingsTab: "model",
+	      imChannels: [],
+	      imCharacters: [],
+	      imGateway: { configured: false, detail: "" },
+	      imRuntimeSettings: null,
+	      imViewEpoch: 0,
+	      imLoadRequestId: 0,
+	      imRouteRequestIds: { feishu: 0, wechat: 0 },
+	      imSettingsRequestId: 0,
+	      imBindingProvider: "",
+	      imBindingDomain: "feishu",
+	      imBindingSession: null,
+	      imBindingRequestId: 0,
+	      imBindingPollGeneration: 0,
+	      imBindingPollTimer: null,
+	      imBindingPollFailures: 0,
 	      promptSettingsView: "system",
 	      promptMode: "sms",
 	      systemPrompts: null,
@@ -6403,11 +6554,17 @@ export function renderAppHtml(): string {
       clearApiKeyBtn: document.getElementById("clearApiKeyBtn"),
       apiSettingsState: document.getElementById("apiSettingsState"),
       modelSettingsTabBtn: document.getElementById("modelSettingsTabBtn"),
+      imSettingsTabBtn: document.getElementById("imSettingsTabBtn"),
       visionSettingsTabBtn: document.getElementById("visionSettingsTabBtn"),
       searchSettingsTabBtn: document.getElementById("searchSettingsTabBtn"),
 	      promptSettingsTabBtn: document.getElementById("promptSettingsTabBtn"),
 	      dataSettingsTabBtn: document.getElementById("dataSettingsTabBtn"),
       modelSettingsPanel: document.getElementById("modelSettingsPanel"),
+      imSettingsPanel: document.getElementById("imSettingsPanel"),
+      refreshImChannelsBtn: document.getElementById("refreshImChannelsBtn"),
+      imGatewayState: document.getElementById("imGatewayState"),
+      imChannelList: document.getElementById("imChannelList"),
+      imChannelState: document.getElementById("imChannelState"),
       visionSettingsPanel: document.getElementById("visionSettingsPanel"),
       searchSettingsPanel: document.getElementById("searchSettingsPanel"),
 	      promptSettingsPanel: document.getElementById("promptSettingsPanel"),
@@ -6493,7 +6650,21 @@ export function renderAppHtml(): string {
       okfDocumentList: document.getElementById("okfDocumentList"),
       exportDataBtn: document.getElementById("exportDataBtn"),
       deleteDataBtn: document.getElementById("deleteDataBtn"),
-      runtimeState: document.getElementById("runtimeState")
+      runtimeState: document.getElementById("runtimeState"),
+      imQrDialog: document.getElementById("imQrDialog"),
+      imQrTitle: document.getElementById("imQrTitle"),
+      closeImQrBtn: document.getElementById("closeImQrBtn"),
+      imQrImage: document.getElementById("imQrImage"),
+      imQrPlaceholder: document.getElementById("imQrPlaceholder"),
+      imQrStatus: document.getElementById("imQrStatus"),
+      imQrMessage: document.getElementById("imQrMessage"),
+      imQrExpiry: document.getElementById("imQrExpiry"),
+      imVerifyForm: document.getElementById("imVerifyForm"),
+      imVerifyCode: document.getElementById("imVerifyCode"),
+      submitImVerifyBtn: document.getElementById("submitImVerifyBtn"),
+      refreshImQrBtn: document.getElementById("refreshImQrBtn"),
+      cancelImBindingBtn: document.getElementById("cancelImBindingBtn"),
+      finishImQrBtn: document.getElementById("finishImQrBtn")
     };
 
     let mobileViewportFrame = 0;
@@ -6802,6 +6973,7 @@ export function renderAppHtml(): string {
       closeEmojiPicker(true);
     });
     nodes.modelSettingsTabBtn.addEventListener("click", () => setSettingsTab("model"));
+    nodes.imSettingsTabBtn.addEventListener("click", () => setSettingsTab("im"));
     nodes.visionSettingsTabBtn.addEventListener("click", () => setSettingsTab("vision"));
     nodes.searchSettingsTabBtn.addEventListener("click", () => setSettingsTab("search"));
 	    nodes.promptSettingsTabBtn.addEventListener("click", () => setSettingsTab("prompt"));
@@ -6823,6 +6995,15 @@ export function renderAppHtml(): string {
 	    nodes.meetingPresetPromptList.addEventListener("change", updateMeetingPresetPromptRow);
 	    nodes.meetingPresetPromptList.addEventListener("input", updateMeetingPresetPromptRow);
 	    nodes.meetingPresetPromptList.addEventListener("click", preserveMeetingPresetPromptToggle);
+	    nodes.refreshImChannelsBtn.addEventListener("click", () => loadImSettingsView(true));
+	    nodes.imChannelList.addEventListener("change", handleImChannelChange);
+	    nodes.imChannelList.addEventListener("click", handleImChannelAction);
+	    nodes.closeImQrBtn.addEventListener("click", closeImQrDialog);
+	    nodes.finishImQrBtn.addEventListener("click", closeImQrDialog);
+	    nodes.refreshImQrBtn.addEventListener("click", refreshImBindingQr);
+	    nodes.cancelImBindingBtn.addEventListener("click", cancelImBinding);
+	    nodes.imVerifyForm.addEventListener("submit", submitImBindingVerification);
+	    nodes.imQrDialog.addEventListener("cancel", (event) => { event.preventDefault(); closeImQrDialog(); });
 	    nodes.apiModel.addEventListener("change", syncCustomModelVisibility);
     nodes.visionModel.addEventListener("change", syncCustomVisionModelVisibility);
 
@@ -6944,6 +7125,9 @@ export function renderAppHtml(): string {
       if (mode !== "management") {
         void clearAgentSkillInstallStage({ deleteRemote: true });
       }
+      if (mode !== "settings" && state.uiMode === "settings" && state.settingsTab === "im") {
+        deactivateImSettingsView();
+      }
       state.uiMode = mode;
       document.body.dataset.uiMode = mode;
       updatePrivateModeChrome();
@@ -7017,19 +7201,23 @@ export function renderAppHtml(): string {
     }
 
     function setSettingsTab(tab) {
+      if (tab !== "im" && state.settingsTab === "im") deactivateImSettingsView();
       state.settingsTab = tab;
       nodes.modelSettingsTabBtn.classList.toggle("active", tab === "model");
+      nodes.imSettingsTabBtn.classList.toggle("active", tab === "im");
       nodes.visionSettingsTabBtn.classList.toggle("active", tab === "vision");
       nodes.searchSettingsTabBtn.classList.toggle("active", tab === "search");
       nodes.promptSettingsTabBtn.classList.toggle("active", tab === "prompt");
       nodes.dataSettingsTabBtn.classList.toggle("active", tab === "data");
       nodes.modelSettingsPanel.hidden = tab !== "model";
+      nodes.imSettingsPanel.hidden = tab !== "im";
       nodes.visionSettingsPanel.hidden = tab !== "vision";
       nodes.searchSettingsPanel.hidden = tab !== "search";
       nodes.promptSettingsPanel.hidden = tab !== "prompt";
       nodes.dataSettingsPanel.hidden = tab !== "data";
       nodes.settingsPage.scrollTop = 0;
       if (tab === "model") loadApiSettings();
+      if (tab === "im") loadImSettingsView();
       if (tab === "vision") loadVisionSettings();
       if (tab === "search") loadTavilySettings();
       if (tab === "prompt") setPromptSettingsView(state.promptSettingsView);
@@ -12893,6 +13081,482 @@ export function renderAppHtml(): string {
       }
     }
 
+    function imViewIsCurrent(epoch) {
+      return state.uiMode === "settings" && state.settingsTab === "im" && state.imViewEpoch === epoch;
+    }
+
+    function deactivateImSettingsView() {
+      state.imViewEpoch += 1;
+      state.imLoadRequestId += 1;
+      state.imRouteRequestIds.feishu += 1;
+      state.imRouteRequestIds.wechat += 1;
+      state.imSettingsRequestId += 1;
+      const session = state.imBindingSession;
+      state.imBindingRequestId += 1;
+      stopImBindingPolling();
+      state.imBindingSession = null;
+      state.imBindingProvider = "";
+      if (nodes.imQrDialog.open) nodes.imQrDialog.close();
+      void cancelImBindingSessionBestEffort(session);
+    }
+
+    async function loadImSettingsView(force = false) {
+      const epoch = ++state.imViewEpoch;
+      const requestId = ++state.imLoadRequestId;
+      nodes.refreshImChannelsBtn.disabled = true;
+      nodes.imChannelState.textContent = force ? "正在刷新连接状态…" : "正在读取连接状态…";
+      nodes.imGatewayState.className = "im-gateway-state";
+      nodes.imGatewayState.textContent = "正在读取 Channel Runtime 状态…";
+      if (!state.imChannels.length) renderImChannels();
+      try {
+        const responses = await Promise.all([
+          fetch("/api/v1/characters"),
+          fetch("/api/v1/im/channels"),
+          fetch("/api/v1/im/settings")
+        ]);
+        const bodies = await Promise.all(responses.map((response) => response.json().catch(() => ({}))));
+        if (!imViewIsCurrent(epoch) || requestId !== state.imLoadRequestId) return;
+        for (let index = 0; index < responses.length; index += 1) {
+          if (!responses[index].ok) throw new Error(bodies[index].error || "IM 设置加载失败");
+        }
+        state.imCharacters = Array.isArray(bodies[0].characters) ? bodies[0].characters.filter((entry) => entry && typeof entry.id === "string") : [];
+        state.imGateway = bodies[1].gateway && typeof bodies[1].gateway === "object"
+          ? { configured: bodies[1].gateway.configured === true, detail: typeof bodies[1].gateway.detail === "string" ? bodies[1].gateway.detail : "" }
+          : { configured: false, detail: "" };
+        state.imChannels = normalizeImChannels(bodies[1].channels);
+        state.imRuntimeSettings = normalizeImRuntimeSettings(bodies[2]);
+        renderImChannels();
+        nodes.imChannelState.textContent = force ? "连接状态已刷新" : "";
+      } catch (error) {
+        if (!imViewIsCurrent(epoch) || requestId !== state.imLoadRequestId) return;
+        nodes.imChannelState.textContent = "IM 状态加载失败：" + imErrorMessage(error);
+        renderImChannels();
+      } finally {
+        if (imViewIsCurrent(epoch) && requestId === state.imLoadRequestId) {
+          nodes.refreshImChannelsBtn.disabled = false;
+        }
+      }
+    }
+
+    function normalizeImChannels(value) {
+      const source = Array.isArray(value) ? value : [];
+      return ["feishu", "wechat"].map((provider) => {
+        const entry = source.find((candidate) => candidate && candidate.provider === provider) || {};
+        const status = ["unbound", "binding", "connected", "error"].includes(entry.status) ? entry.status : "unbound";
+        const availability = ["available", "gateway_required", "connector_unavailable", "unsupported"].includes(entry.availability)
+          ? entry.availability
+          : state.imGateway.configured ? "connector_unavailable" : "gateway_required";
+        return {
+          provider,
+          label: typeof entry.label === "string" ? entry.label : provider === "wechat" ? "微信" : "飞书 / Lark",
+          description: typeof entry.description === "string" ? entry.description : provider === "wechat"
+            ? "扫码连接本人的微信 AI 助手单聊。"
+            : "扫码创建 Personal Agent，通过官方长连接接入本人单聊。",
+          status,
+          availability,
+          characterId: typeof entry.characterId === "string" ? entry.characterId : "",
+          connector: entry.connector && typeof entry.connector === "object" ? entry.connector : null,
+          connection: entry.connection && typeof entry.connection === "object" ? entry.connection : null
+        };
+      });
+    }
+
+    function normalizeImRuntimeSettings(value) {
+      return {
+        wechatTypingEnabled: value?.wechatTypingEnabled !== false,
+        supported: value?.supported === true,
+        appliesTo: "new_wechat_messages"
+      };
+    }
+
+    function renderImChannels() {
+      const channels = state.imChannels.length ? state.imChannels : normalizeImChannels([]);
+      const gatewayReady = state.imGateway.configured;
+      nodes.imGatewayState.className = "im-gateway-state " + (gatewayReady ? "ready" : "unavailable");
+      nodes.imGatewayState.textContent = gatewayReady
+        ? "Channel Runtime 已就绪。平台凭据只保存在本机运行目录，不会显示给角色。"
+        : (state.imGateway.detail || "Channel Runtime 尚未就绪；角色选择可以预先保存，扫码绑定暂不可用。");
+      nodes.imChannelList.innerHTML = channels.map(renderImChannelCard).join("");
+      refreshIcons();
+    }
+
+    function renderImChannelCard(channel) {
+      const connected = channel.status === "connected";
+      const options = ['<option value="">未选择（停止接收）</option>'].concat(state.imCharacters.map((character) =>
+        '<option value="' + escapeHtml(character.id) + '"' + (character.id === channel.characterId ? ' selected' : '') + '>' + escapeHtml(character.name || character.id) + '</option>'
+      )).join("");
+      const connection = channel.connection;
+      const connectionMeta = connection
+        ? '<div class="im-channel-meta"><strong>' + escapeHtml(connection.displayName || "已验证的本人账号") + '</strong><br />连接时间：' + escapeHtml(formatImTime(connection.connectedAt)) + '</div>'
+        : '<div class="im-channel-meta">尚未连接账号。二维码只用于绑定本人私聊，不会开放群聊。</div>';
+      const availability = imAvailabilityLabel(channel.availability);
+      const bindDisabled = channel.availability !== "available" || !channel.characterId || connected;
+      const domain = channel.provider === "feishu"
+        ? '<label class="im-channel-field"><span>服务区域</span><select data-im-domain="feishu"' + (connected ? ' disabled' : '') + '><option value="feishu">飞书（中国大陆）</option><option value="lark">Lark（国际版）</option></select></label>'
+        : "";
+      const typing = channel.provider === "wechat" ? renderWechatTypingSetting() : "";
+      return '<article class="im-channel-card' + (connected ? ' connected' : '') + '" data-im-card="' + channel.provider + '">' +
+        '<div class="im-channel-head"><div class="im-channel-title"><span class="im-channel-mark ' + channel.provider + '">' + (channel.provider === "wechat" ? "微" : "飞") + '</span><div><h4>' + escapeHtml(channel.label) + '</h4><small>仅普通模式 · 单主人私聊</small></div></div><span class="im-channel-status ' + (connected ? "connected" : channel.status === "error" ? "error" : "") + '">' + escapeHtml(imChannelStatusLabel(channel.status)) + '</span></div>' +
+        '<p class="im-channel-description">' + escapeHtml(channel.description) + '</p>' +
+        '<label class="im-channel-field"><span>绑定角色（仅影响之后的新消息）</span><select data-im-character="' + channel.provider + '">' + options + '</select></label>' +
+        domain + connectionMeta + typing +
+        '<div class="im-channel-actions"><button class="primary" type="button" data-im-action="bind" data-im-provider="' + channel.provider + '"' + (bindDisabled ? ' disabled' : '') + '><i data-lucide="scan-line" aria-hidden="true"></i><span>' + escapeHtml(connected ? "已绑定" : availability) + '</span></button>' +
+        (connected ? '<button class="secondary" type="button" data-im-action="unbind" data-im-provider="' + channel.provider + '">解绑账号</button>' : '') + '</div></article>';
+    }
+
+    function renderWechatTypingSetting() {
+      const settings = state.imRuntimeSettings || { wechatTypingEnabled: true, supported: false };
+      return '<label class="im-typing-setting"><span><strong>处理时显示“正在输入”</strong><br />只作用于之后的新微信消息。</span><input type="checkbox" data-im-setting="wechat-typing"' + (settings.wechatTypingEnabled ? ' checked' : '') + (!settings.supported ? ' disabled' : '') + ' /></label>';
+    }
+
+    function imChannelStatusLabel(status) {
+      return ({ unbound: "未绑定", binding: "等待扫码", connected: "已绑定", error: "绑定异常" })[status] || "未知";
+    }
+
+    function imAvailabilityLabel(availability) {
+      return ({ available: "扫码绑定", gateway_required: "Runtime 未就绪", connector_unavailable: "连接器不可用", unsupported: "当前环境不支持" })[availability] || "暂不可用";
+    }
+
+    async function handleImChannelChange(event) {
+      const character = event.target.closest("select[data-im-character]");
+      if (character) {
+        await saveImCharacterRoute(character.dataset.imCharacter, character.value, character);
+        return;
+      }
+      const domain = event.target.closest('select[data-im-domain="feishu"]');
+      if (domain) state.imBindingDomain = domain.value === "lark" ? "lark" : "feishu";
+      const typing = event.target.closest('input[data-im-setting="wechat-typing"]');
+      if (typing) await saveWechatTypingSetting(typing.checked, typing);
+    }
+
+    async function saveImCharacterRoute(provider, characterId, control) {
+      if (provider !== "wechat" && provider !== "feishu") return;
+      const epoch = state.imViewEpoch;
+      const requestId = ++state.imRouteRequestIds[provider];
+      control.disabled = true;
+      nodes.imChannelState.textContent = characterId ? "正在保存角色绑定…" : "正在清除角色绑定…";
+      try {
+        const response = await controlPlaneFetch("/api/v1/im/channels/" + provider, {
+          method: "PATCH",
+          body: JSON.stringify({ characterId: characterId || null })
+        });
+        const body = await response.json().catch(() => ({}));
+        if (!imViewIsCurrent(epoch) || requestId !== state.imRouteRequestIds[provider]) return;
+        if (!response.ok) throw new Error(body.error || "角色绑定保存失败");
+        await reloadImChannels(epoch);
+        if (!imViewIsCurrent(epoch) || requestId !== state.imRouteRequestIds[provider]) return;
+        nodes.imChannelState.textContent = characterId ? "角色绑定已保存；只影响之后的新消息" : "该通道已停止接收新消息";
+      } catch (error) {
+        if (!imViewIsCurrent(epoch) || requestId !== state.imRouteRequestIds[provider]) return;
+        nodes.imChannelState.textContent = imErrorMessage(error);
+        renderImChannels();
+      }
+    }
+
+    async function reloadImChannels(epoch) {
+      const response = await fetch("/api/v1/im/channels");
+      const body = await response.json().catch(() => ({}));
+      if (!imViewIsCurrent(epoch)) return;
+      if (!response.ok) throw new Error(body.error || "连接状态刷新失败");
+      state.imGateway = body.gateway && typeof body.gateway === "object"
+        ? { configured: body.gateway.configured === true, detail: typeof body.gateway.detail === "string" ? body.gateway.detail : "" }
+        : { configured: false, detail: "" };
+      state.imChannels = normalizeImChannels(body.channels);
+      renderImChannels();
+    }
+
+    async function saveWechatTypingSetting(enabled, control) {
+      const epoch = state.imViewEpoch;
+      const requestId = ++state.imSettingsRequestId;
+      control.disabled = true;
+      nodes.imChannelState.textContent = "正在保存微信输入状态设置…";
+      try {
+        const response = await controlPlaneFetch("/api/v1/im/settings", {
+          method: "PATCH",
+          body: JSON.stringify({ wechatTypingEnabled: Boolean(enabled) })
+        });
+        const body = await response.json().catch(() => ({}));
+        if (!imViewIsCurrent(epoch) || requestId !== state.imSettingsRequestId) return;
+        if (!response.ok) throw new Error(body.error || "微信输入状态设置保存失败");
+        state.imRuntimeSettings = normalizeImRuntimeSettings(body);
+        renderImChannels();
+        nodes.imChannelState.textContent = enabled ? "微信“正在输入”已开启" : "微信“正在输入”已关闭";
+      } catch (error) {
+        if (!imViewIsCurrent(epoch) || requestId !== state.imSettingsRequestId) return;
+        nodes.imChannelState.textContent = imErrorMessage(error);
+        renderImChannels();
+      }
+    }
+
+    async function handleImChannelAction(event) {
+      const button = event.target.closest("button[data-im-action][data-im-provider]");
+      if (!button) return;
+      const provider = button.dataset.imProvider;
+      if (provider !== "wechat" && provider !== "feishu") return;
+      if (button.dataset.imAction === "unbind") await unbindImChannel(provider);
+      else await openImBinding(provider);
+    }
+
+    async function openImBinding(provider) {
+      const channel = state.imChannels.find((entry) => entry.provider === provider);
+      if (!channel || !channel.characterId || channel.availability !== "available" || channel.status === "connected") return;
+      const epoch = state.imViewEpoch;
+      state.imBindingProvider = provider;
+      const domain = provider === "feishu" ? nodes.imChannelList.querySelector('select[data-im-domain="feishu"]') : null;
+      state.imBindingDomain = domain?.value === "lark" ? "lark" : "feishu";
+      state.imBindingSession = null;
+      state.imBindingPollFailures = 0;
+      stopImBindingPolling();
+      const requestId = ++state.imBindingRequestId;
+      prepareImQrDialog(provider);
+      if (!nodes.imQrDialog.open) nodes.imQrDialog.showModal();
+      renderImBindingSession();
+      try {
+        const payload = provider === "feishu" ? { domain: state.imBindingDomain } : {};
+        const response = await controlPlaneFetch("/api/v1/im/bindings/" + provider + "/qr", {
+          method: "POST",
+          body: JSON.stringify(payload)
+        });
+        const body = await response.json().catch(() => ({}));
+        const session = normalizeImBindingSession(body.session || body, provider);
+        if (!response.ok) throw new Error(body.error || "无法创建绑定二维码");
+        if (!imViewIsCurrent(epoch) || requestId !== state.imBindingRequestId || !nodes.imQrDialog.open) {
+          void cancelImBindingSessionBestEffort(session);
+          return;
+        }
+        if (!session?.id) throw new Error("连接器未返回有效绑定会话");
+        applyImBindingSession(session, epoch);
+      } catch (error) {
+        if (!imViewIsCurrent(epoch) || requestId !== state.imBindingRequestId) return;
+        state.imBindingSession = { id: "", provider, status: "failed", message: imErrorMessage(error) };
+        renderImBindingSession();
+      }
+    }
+
+    function prepareImQrDialog(provider) {
+      nodes.imQrTitle.textContent = "扫码绑定" + (provider === "wechat" ? "微信" : state.imBindingDomain === "lark" ? "Lark" : "飞书");
+    }
+
+    function normalizeImBindingSession(value, provider) {
+      if (!value || typeof value !== "object") return null;
+      const actualProvider = value.provider === "wechat" || value.provider === "feishu" ? value.provider : provider;
+      if (actualProvider !== provider) return null;
+      const status = ["waiting_scan", "scanned", "connected", "expired", "cancelled", "failed"].includes(value.status) ? value.status : "failed";
+      return {
+        id: typeof value.id === "string" ? value.id : "",
+        provider: actualProvider,
+        status,
+        qrCodeUrl: typeof value.qrCodeUrl === "string" ? value.qrCodeUrl : "",
+        expiresAt: typeof value.expiresAt === "string" ? value.expiresAt : "",
+        message: typeof value.message === "string" ? value.message : "",
+        verificationRequired: value.verificationRequired === true
+      };
+    }
+
+    function applyImBindingSession(session, epoch = state.imViewEpoch) {
+      if (!imViewIsCurrent(epoch) || session.provider !== state.imBindingProvider) return;
+      state.imBindingSession = session;
+      renderImBindingSession();
+      if (session.status === "waiting_scan" || session.status === "scanned") scheduleImBindingPoll(epoch);
+      else {
+        stopImBindingPolling();
+        if (session.status === "connected") {
+          nodes.imChannelState.textContent = (session.provider === "wechat" ? "微信" : "飞书 / Lark") + "绑定成功";
+          void reloadImChannels(epoch);
+        }
+      }
+    }
+
+    function renderImBindingSession() {
+      const session = state.imBindingSession;
+      const loading = !session;
+      const status = session?.status || "waiting_scan";
+      const qrUrl = safeImQrCodeUrl(session?.qrCodeUrl);
+      nodes.imQrImage.hidden = !qrUrl;
+      if (qrUrl) nodes.imQrImage.src = qrUrl;
+      else nodes.imQrImage.removeAttribute("src");
+      nodes.imQrPlaceholder.hidden = Boolean(qrUrl);
+      nodes.imQrPlaceholder.textContent = loading ? "正在生成二维码…" : status === "connected" ? "账号已绑定" : status === "scanned" ? "已扫码，等待手机确认" : "二维码暂不可用";
+      nodes.imQrStatus.textContent = loading ? "正在生成" : ({ waiting_scan: "等待扫码", scanned: "已扫码", connected: "绑定成功", expired: "二维码已过期", cancelled: "已取消", failed: "绑定失败" })[status] || "状态未知";
+      nodes.imQrMessage.textContent = session?.message || (status === "connected" ? "本人账号已连接；该通道仍只进入普通模式。" : "请使用手机端扫码，并按平台提示完成本人账号确认。");
+      nodes.imQrExpiry.textContent = session?.expiresAt ? "二维码有效期至 " + formatImTime(session.expiresAt) : "";
+      const active = status === "waiting_scan" || status === "scanned";
+      nodes.imVerifyForm.hidden = !session?.verificationRequired || !active;
+      if (nodes.imVerifyForm.hidden) nodes.imVerifyCode.value = "";
+      nodes.refreshImQrBtn.hidden = loading || status === "connected" || active;
+      nodes.cancelImBindingBtn.hidden = !active;
+      nodes.finishImQrBtn.textContent = status === "connected" ? "完成" : "关闭";
+    }
+
+    function safeImQrCodeUrl(value) {
+      const source = String(value || "").trim();
+      if (!source || source.length > 2 * 1024 * 1024) return "";
+      const data = source.match(/^data:image\\/(?:png|jpeg|webp);base64,([a-z0-9+/]+={0,2})$/iu);
+      if (data && data[1].length % 4 === 0) return source;
+      try {
+        const parsed = new URL(source);
+        if (parsed.protocol === "https:" && !parsed.username && !parsed.password) return parsed.href;
+      } catch {}
+      return "";
+    }
+
+    function scheduleImBindingPoll(epoch) {
+      const session = state.imBindingSession;
+      if (!imViewIsCurrent(epoch) || !nodes.imQrDialog.open || !session?.id || !["waiting_scan", "scanned"].includes(session.status)) return;
+      if (state.imBindingPollTimer) window.clearTimeout(state.imBindingPollTimer);
+      const generation = state.imBindingPollGeneration;
+      const sessionId = session.id;
+      const provider = session.provider;
+      state.imBindingPollTimer = window.setTimeout(() => void pollImBindingSession(sessionId, provider, epoch, generation), 1500);
+    }
+
+    async function pollImBindingSession(sessionId, provider, epoch, generation) {
+      if (!imViewIsCurrent(epoch) || generation !== state.imBindingPollGeneration || !nodes.imQrDialog.open) return;
+      state.imBindingPollTimer = null;
+      try {
+        const response = await fetch("/api/v1/im/binding-sessions/" + encodeURIComponent(sessionId));
+        const body = await response.json().catch(() => ({}));
+        if (!imViewIsCurrent(epoch) || generation !== state.imBindingPollGeneration || sessionId !== state.imBindingSession?.id || provider !== state.imBindingProvider) return;
+        if (!response.ok) throw new Error(body.error || "绑定状态同步失败");
+        const session = normalizeImBindingSession(body.session || body, provider);
+        if (!session?.id) throw new Error("连接器返回了无效绑定状态");
+        state.imBindingPollFailures = 0;
+        applyImBindingSession(session, epoch);
+      } catch (error) {
+        if (!imViewIsCurrent(epoch) || generation !== state.imBindingPollGeneration || sessionId !== state.imBindingSession?.id) return;
+        state.imBindingPollFailures += 1;
+        state.imBindingSession = { ...state.imBindingSession, message: "状态同步失败：" + imErrorMessage(error) };
+        renderImBindingSession();
+        if (state.imBindingPollFailures < 3) scheduleImBindingPoll(epoch);
+        else stopImBindingPolling();
+      }
+    }
+
+    function stopImBindingPolling() {
+      state.imBindingPollGeneration += 1;
+      if (state.imBindingPollTimer) window.clearTimeout(state.imBindingPollTimer);
+      state.imBindingPollTimer = null;
+    }
+
+    async function submitImBindingVerification(event) {
+      event.preventDefault();
+      const session = state.imBindingSession;
+      const code = nodes.imVerifyCode.value.trim();
+      const epoch = state.imViewEpoch;
+      if (!session?.id || !code || !imViewIsCurrent(epoch)) return;
+      const requestId = ++state.imBindingRequestId;
+      stopImBindingPolling();
+      nodes.submitImVerifyBtn.disabled = true;
+      try {
+        const response = await controlPlaneFetch("/api/v1/im/binding-sessions/" + encodeURIComponent(session.id) + "/verify", {
+          method: "POST",
+          body: JSON.stringify({ code })
+        });
+        const body = await response.json().catch(() => ({}));
+        if (!imViewIsCurrent(epoch) || requestId !== state.imBindingRequestId || session.id !== state.imBindingSession?.id) return;
+        if (!response.ok) throw new Error(body.error || "验证码提交失败");
+        const normalized = normalizeImBindingSession(body.session || body, session.provider);
+        if (!normalized?.id) throw new Error("连接器返回了无效配对状态");
+        nodes.imVerifyCode.value = "";
+        applyImBindingSession(normalized, epoch);
+      } catch (error) {
+        if (imViewIsCurrent(epoch) && requestId === state.imBindingRequestId && session.id === state.imBindingSession?.id) {
+          state.imBindingSession = { ...session, message: "验证码提交失败：" + imErrorMessage(error) };
+          renderImBindingSession();
+          scheduleImBindingPoll(epoch);
+        }
+      } finally {
+        if (imViewIsCurrent(epoch) && requestId === state.imBindingRequestId) nodes.submitImVerifyBtn.disabled = false;
+      }
+    }
+
+    async function refreshImBindingQr() {
+      const session = state.imBindingSession;
+      const provider = state.imBindingProvider;
+      if (provider !== "wechat" && provider !== "feishu") return;
+      if (session?.id && ["waiting_scan", "scanned"].includes(session.status)) {
+        await cancelImBindingSessionBestEffort(session);
+      }
+      if (nodes.imQrDialog.open) await openImBinding(provider);
+    }
+
+    async function cancelImBinding() {
+      const session = state.imBindingSession;
+      const epoch = state.imViewEpoch;
+      if (!session?.id || !imViewIsCurrent(epoch)) return;
+      const requestId = ++state.imBindingRequestId;
+      stopImBindingPolling();
+      nodes.cancelImBindingBtn.disabled = true;
+      try {
+        const response = await controlPlaneFetch("/api/v1/im/binding-sessions/" + encodeURIComponent(session.id) + "/cancel", {
+          method: "POST",
+          body: "{}"
+        });
+        const body = await response.json().catch(() => ({}));
+        if (!imViewIsCurrent(epoch) || requestId !== state.imBindingRequestId || session.id !== state.imBindingSession?.id) return;
+        if (!response.ok) throw new Error(body.error || "取消绑定失败");
+        const normalized = normalizeImBindingSession(body.session || body, session.provider);
+        state.imBindingSession = normalized?.id ? normalized : { ...session, status: "cancelled" };
+        renderImBindingSession();
+        await reloadImChannels(epoch);
+      } catch (error) {
+        if (imViewIsCurrent(epoch) && requestId === state.imBindingRequestId && session.id === state.imBindingSession?.id) {
+          state.imBindingSession = { ...session, message: imErrorMessage(error) };
+          renderImBindingSession();
+          nodes.cancelImBindingBtn.disabled = false;
+        }
+      }
+    }
+
+    function closeImQrDialog() {
+      const session = state.imBindingSession;
+      state.imBindingRequestId += 1;
+      stopImBindingPolling();
+      state.imBindingSession = null;
+      state.imBindingProvider = "";
+      if (nodes.imQrDialog.open) nodes.imQrDialog.close();
+      void cancelImBindingSessionBestEffort(session);
+    }
+
+    async function cancelImBindingSessionBestEffort(session) {
+      if (!session?.id || !["waiting_scan", "scanned"].includes(session.status)) return;
+      try {
+        await controlPlaneFetch("/api/v1/im/binding-sessions/" + encodeURIComponent(session.id) + "/cancel", {
+          method: "POST",
+          body: "{}"
+        });
+      } catch {}
+    }
+
+    async function unbindImChannel(provider) {
+      const label = provider === "wechat" ? "微信" : "飞书 / Lark";
+      const epoch = state.imViewEpoch;
+      const confirmed = await openActionDialog({
+        title: "解绑" + label,
+        description: "解绑会停止该平台收发消息，并清除本机保存的连接凭据。角色路由可保留，之后仍需重新扫码。",
+        confirmLabel: "确认解绑",
+        onConfirm: async () => {
+          const response = await controlPlaneFetch("/api/v1/im/bindings/" + provider, { method: "DELETE", body: "{}" });
+          const body = await response.json().catch(() => ({}));
+          if (!response.ok) throw new Error(body.error || "解绑失败");
+        }
+      });
+      if (!confirmed) return;
+      if (!imViewIsCurrent(epoch)) return;
+      await reloadImChannels(epoch);
+      nodes.imChannelState.textContent = label + "已解绑";
+    }
+
+    function formatImTime(value) {
+      if (!value) return "未知";
+      const date = new Date(value);
+      return Number.isNaN(date.getTime()) ? "未知" : date.toLocaleString("zh-CN", { hour12: false });
+    }
+
+    function imErrorMessage(error) {
+      return error instanceof Error ? error.message : String(error || "操作失败");
+    }
+
     function controlPlaneFetch(path, options = {}) {
       const headers = new Headers(options.headers || {});
       headers.set("content-type", "application/json");
@@ -17638,7 +18302,7 @@ export function renderAppHtml(): string {
         confirmLabel: "删除全部数据",
         validate: (value) => value !== confirmation ? "确认短语不匹配，未删除。" : "",
         onConfirm: async (value) => {
-          const response = await fetch("/api/v1/data", {
+          const response = await controlPlaneFetch("/api/v1/data", {
             method: "DELETE",
             headers: { "content-type": "application/json" },
             body: JSON.stringify({ confirm: value })

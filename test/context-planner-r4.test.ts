@@ -520,7 +520,7 @@ test("preview APIs are read-only and session deletion/export/delete-all cover co
 
     runtime.model.enqueue([{ kind: "assistant_text", text: "删除前会话。" }]);
     await runtime.kernel.sendMessage("delete-all-session", { mode: "sms", text: "跨会话评测" });
-    runtime.kernel.deleteAllUserData();
+    await runtime.kernel.deleteAllUserData();
     assert.deepEqual(runtime.kernel.contextEconomics.contextState(), {
       bootstrapSessions: [],
       residentMemories: [],

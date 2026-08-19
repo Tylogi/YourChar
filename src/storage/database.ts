@@ -2023,6 +2023,131 @@ const migrations: Migration[] = [
         ON character_skill_versions(character_id, conversation_space, version DESC);
     `,
   },
+  {
+    version: 39,
+    sql: `
+      CREATE TABLE im_character_routes (
+        provider TEXT PRIMARY KEY CHECK (provider IN ('feishu', 'wechat')),
+        character_id TEXT NOT NULL REFERENCES characters(id) ON DELETE CASCADE,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      );
+      CREATE INDEX im_character_routes_character_idx
+        ON im_character_routes(character_id, provider);
+
+      CREATE TABLE im_bindings (
+        provider TEXT PRIMARY KEY CHECK (provider IN ('feishu', 'wechat')),
+        gateway_connection_id TEXT NOT NULL,
+        binding_generation TEXT NOT NULL,
+        account_id TEXT NOT NULL,
+        owner_id TEXT NOT NULL,
+        display_name TEXT,
+        domain TEXT CHECK (
+          (provider = 'feishu' AND (domain IS NULL OR domain IN ('feishu', 'lark'))) OR
+          (provider = 'wechat' AND domain IS NULL)
+        ),
+        connected_at TEXT NOT NULL,
+        last_seen_at TEXT,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      );
+      CREATE UNIQUE INDEX im_bindings_provider_connection_idx
+        ON im_bindings(provider, gateway_connection_id);
+
+      CREATE TABLE im_binding_sessions (
+        id TEXT PRIMARY KEY,
+        provider TEXT NOT NULL CHECK (provider IN ('feishu', 'wechat')),
+        status TEXT NOT NULL CHECK (status IN (
+          'waiting_scan', 'scanned', 'connected', 'expired', 'cancelled', 'failed'
+        )),
+        domain TEXT CHECK (
+          (provider = 'feishu' AND (domain IS NULL OR domain IN ('feishu', 'lark'))) OR
+          (provider = 'wechat' AND domain IS NULL)
+        ),
+        gateway_connection_id TEXT,
+        expires_at TEXT,
+        message TEXT,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      );
+      CREATE INDEX im_binding_sessions_provider_idx
+        ON im_binding_sessions(provider, updated_at DESC, id DESC);
+
+      CREATE TABLE im_inbound_events (
+        provider TEXT NOT NULL CHECK (provider IN ('feishu', 'wechat')),
+        event_id TEXT NOT NULL,
+        gateway_connection_id TEXT NOT NULL,
+        binding_generation TEXT NOT NULL,
+        character_id TEXT NOT NULL,
+        external_chat_id TEXT NOT NULL,
+        external_user_id TEXT NOT NULL,
+        chat_type TEXT NOT NULL CHECK (chat_type IN ('direct', 'group')),
+        payload_digest TEXT NOT NULL,
+        status TEXT NOT NULL CHECK (status IN ('processing', 'completed', 'failed')),
+        attempts INTEGER NOT NULL DEFAULT 1 CHECK (attempts >= 1),
+        reply_text TEXT,
+        last_error TEXT,
+        attachments_json TEXT NOT NULL DEFAULT '[]',
+        received_at TEXT,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        completed_at TEXT,
+        PRIMARY KEY (provider, event_id)
+      );
+      CREATE INDEX im_inbound_events_status_idx
+        ON im_inbound_events(status, updated_at DESC);
+      CREATE INDEX im_inbound_events_connection_idx
+        ON im_inbound_events(
+          provider, gateway_connection_id, binding_generation, created_at DESC
+        );
+      CREATE INDEX im_inbound_events_character_idx
+        ON im_inbound_events(character_id, created_at DESC);
+
+      CREATE TABLE im_outbox (
+        id TEXT PRIMARY KEY,
+        provider TEXT NOT NULL CHECK (provider IN ('feishu', 'wechat')),
+        gateway_connection_id TEXT NOT NULL,
+        binding_generation TEXT NOT NULL,
+        external_chat_id TEXT NOT NULL,
+        inbound_event_id TEXT NOT NULL,
+        text TEXT NOT NULL,
+        attachments_json TEXT NOT NULL DEFAULT '[]',
+        status TEXT NOT NULL DEFAULT 'pending'
+          CHECK (status IN ('pending', 'delivered', 'failed', 'abandoned')),
+        attempts INTEGER NOT NULL DEFAULT 0 CHECK (attempts >= 0),
+        available_at TEXT NOT NULL,
+        lease_token TEXT,
+        lease_expires_at TEXT,
+        last_error TEXT,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        delivered_at TEXT,
+        UNIQUE (provider, inbound_event_id),
+        FOREIGN KEY (provider, inbound_event_id)
+          REFERENCES im_inbound_events(provider, event_id) ON DELETE CASCADE
+      );
+      CREATE INDEX im_outbox_pending_idx
+        ON im_outbox(
+          provider, gateway_connection_id, binding_generation, status, available_at,
+          lease_expires_at, created_at, id
+        );
+
+      CREATE TABLE im_runtime_settings (
+        singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
+        wechat_typing_enabled INTEGER NOT NULL DEFAULT 1
+          CHECK (wechat_typing_enabled IN (0, 1)),
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      );
+      INSERT INTO im_runtime_settings(
+        singleton, wechat_typing_enabled, created_at, updated_at
+      ) VALUES (
+        1, 1,
+        strftime('%Y-%m-%dT%H:%M:%fZ', 'now'),
+        strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+      );
+    `,
+  },
 ];
 
 export class AppDatabase {

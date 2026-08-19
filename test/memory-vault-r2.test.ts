@@ -477,7 +477,7 @@ test("backup/restore and delete-all include Vault without provider metadata leak
     assert.doesNotMatch(provider, new RegExp(restoredDir.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
     assert.doesNotMatch(provider, /schemaVersion:|contentHash:|quarantineReasons:|memory-vault-state/);
 
-    kernel.deleteAllUserData();
+    await kernel.deleteAllUserData();
     assert.equal(kernel.listMemoryVaultDocuments().length, 0);
     assert.equal(existsSync(join(restoredDir, "memory-vault", "reality")), true);
     assert.equal(existsSync(join(restoredDir, "memory-vault", "legacy", "quarantine")), true);

@@ -31,6 +31,7 @@ and adds the RP companion domain on top:
 - collapsible per-message execution progress without exposing hidden model reasoning;
 - collapsed-by-default tool results and MCP/Skill token-impact estimates;
 - one canonical private SMS thread per character and one shared timeline per world;
+- optional single-owner WeChat and Feishu/Lark channels, each routed to a selected character's normal conversation;
 - world-level narrative/Analyzer profiles; World turns never invoke character-bound chat models;
 - event-scoped fixed World prompts with restart-safe append-only history and KV-cache metrics;
 - first-class World Cards and turn-grouped third-person interactive-fiction rendering;
@@ -69,6 +70,9 @@ Workspace, shell, and protected-document permissions are documented in
 Per-character private-mode isolation, shared boundaries, backup behavior, and
 the non-encryption threat model are documented in
 [`docs/private-mode.md`](docs/private-mode.md).
+Single-owner WeChat and Feishu/Lark setup, normal-only routing, attachment,
+credential, and backup boundaries are documented in
+[`docs/im-channels.md`](docs/im-channels.md).
 Tavily module enablement, Key handling, tool limits, and test contracts are
 documented in [`docs/tavily-search-mcp.md`](docs/tavily-search-mcp.md).
 Read-only URL extraction, network boundaries, TUN behavior, and test contracts
@@ -143,6 +147,11 @@ and retry use `/api/v1/notifications`. Character, scene, and memory APIs use
 Canonical private chat opens through `/api/v1/direct-conversations`; World
 timelines use `/api/v1/world-conversations` and
 `/api/v1/worlds/{id}/conversation/*`.
+WeChat and Feishu/Lark status, per-platform character routes, QR binding, and
+typing settings use `/api/v1/im/*`. IM is normal-mode only and the main HTTP
+service must remain loopback-only. The bundled/local Channel Runtime is the
+supported deployment; external Gateway mode is experimental and limited to a
+same-host loopback adapter, not a reason to expose or reverse-proxy `/api/*`.
 Agent capability management uses `/api/v1/agent-modules` and
 `/api/v1/agent-permissions`; the user-editable
 profile Markdown uses `/api/v1/user-profile`. Roleplay memory creation remains

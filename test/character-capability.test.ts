@@ -552,7 +552,7 @@ test("invalid character Skill reflection cannot grant permissions or replace the
   }
 });
 
-test("functional profile and route preview HTTP APIs expose schema 38 behavior", async () => {
+test("functional profile and route preview HTTP APIs expose schema 39 behavior", async () => {
   const runtime = createTestRuntime({ seed: "character-capability-http" });
   const setup = setupWorld(runtime, ["HTTP 发起者", "HTTP 专家"]);
   const [source, target] = setup.characters;
@@ -675,7 +675,7 @@ test("functional profile and route preview HTTP APIs expose schema 38 behavior",
     const migration = runtime.kernel.database.connection.prepare(
       "SELECT MAX(version) AS version FROM schema_migrations",
     ).get() as { version: number };
-    assert.equal(Number(migration.version), 38);
+    assert.equal(Number(migration.version), 39);
   } finally {
     await new Promise<void>((resolve, reject) =>
       server.close((error) => error ? reject(error) : resolve()));
@@ -704,7 +704,7 @@ test("functional profiles participate in user export and delete-all", async () =
     assert.equal(exported.characterFunctions[0].skillVersions.length, 1);
     assert.match(exported.characterFunctions[0].skillVersions[0].markdown, /工作方法/);
 
-    runtime.kernel.deleteAllUserData();
+    await runtime.kernel.deleteAllUserData();
     for (const table of [
       "character_function_profiles",
       "character_capabilities",

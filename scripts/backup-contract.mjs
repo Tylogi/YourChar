@@ -11,7 +11,7 @@ import { DatabaseSync } from "node:sqlite";
 import { parseDocument } from "yaml";
 
 export const BACKUP_SCHEMA_VERSION = 3;
-export const MAX_DATABASE_SCHEMA_VERSION = 38;
+export const MAX_DATABASE_SCHEMA_VERSION = 39;
 const V1_FRONTMATTER_KEYS = [
   "schemaVersion", "id", "kind", "realm", "scope", "type", "characterId", "sessionId",
   "validity", "confirmed", "sourceSessionId", "sourceMessageId", "createdAt", "updatedAt",
@@ -91,6 +91,26 @@ export function validateBackupDirectory(root, manifest) {
       actualFiles.some((file) => file.path.startsWith("skills/"))
   ) {
     throw new Error("backup installed Skill metadata does not match payload");
+  }
+  const imRuntimePresent = actualFiles.some((file) => file.path.startsWith("im-runtime/"));
+  const imCredentialsPresent = existsSync(join(root, "im-runtime", "credentials.json"));
+  if (
+    manifest.containsImRuntime !== undefined &&
+    Boolean(manifest.containsImRuntime) !== imRuntimePresent
+  ) {
+    throw new Error("backup IM runtime metadata does not match payload");
+  }
+  if (
+    manifest.containsImCredentials !== undefined &&
+    Boolean(manifest.containsImCredentials) !== imCredentialsPresent
+  ) {
+    throw new Error("backup IM credential metadata does not match payload");
+  }
+  if (
+    manifest.credentials?.imRuntimeCredentialsPresent !== undefined &&
+    Boolean(manifest.credentials.imRuntimeCredentialsPresent) !== imCredentialsPresent
+  ) {
+    throw new Error("backup IM credential manifest does not match payload");
   }
   const database = validateDatabase(join(root, "rp-agent.sqlite"));
   const vault = validateVault(root, database);

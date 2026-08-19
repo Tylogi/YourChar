@@ -1,4 +1,5 @@
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
+import { timingSafeEqual } from "node:crypto";
 import { createReadStream } from "node:fs";
 import { pipeline } from "node:stream/promises";
 import { URL } from "node:url";
@@ -121,11 +122,20 @@ import {
   AgentSkillInstallerError,
   type AgentSkillStageResult,
 } from "../modules/skill-installer.js";
+import {
+  ImIntegrationError,
+  isFeishuDomain,
+  isImProvider,
+  type ImBindingSession,
+  type ImInboundEventInput,
+  type ImProvider,
+} from "../im/index.js";
 
 export type HttpServerOptions = {
   kernel?: CompanionKernel;
   testMode?: boolean;
   testRuns?: TestRunRegistry;
+  imGatewaySecret?: string;
 };
 
 const ownedResourceDisposers = new WeakMap<Server, () => void>();
@@ -135,14 +145,24 @@ export function disposeHttpServerOwnedResources(server: Server): void {
 }
 
 export function createHttpServer(options: HttpServerOptions = {}) {
-  const ownsKernel = !options.kernel;
-  const kernel = options.kernel ?? new CompanionKernel();
   const testMode = options.testMode ?? process.env.RP_AGENT_TEST_MODE === "1";
+  const ownsKernel = !options.kernel;
+  const kernel = options.kernel ?? new CompanionKernel({
+    ...(testMode ? { imGateway: false } : {}),
+  });
   const ownsTestRuns = !options.testRuns && testMode;
   const testRuns = options.testRuns ?? (testMode ? new TestRunRegistry() : undefined);
+  const configuredImGatewaySecret = options.imGatewaySecret ??
+    process.env.YOURCHAR_IM_GATEWAY_INGRESS_TOKEN?.trim() ??
+    process.env.YOURCHAR_IM_GATEWAY_TOKEN?.trim() ??
+    process.env.RP_AGENT_IM_GATEWAY_INGRESS_TOKEN?.trim() ??
+    process.env.RP_AGENT_IM_GATEWAY_TOKEN?.trim();
+  const imGatewaySecret = configuredImGatewaySecret && configuredImGatewaySecret.length >= 16
+    ? configuredImGatewaySecret
+    : undefined;
   const server = createServer(async (request, response) => {
     try {
-      await route({ kernel, testRuns, request, response });
+      await route({ kernel, testRuns, request, response, imGatewaySecret });
     } catch (error) {
       if (response.headersSent || response.writableEnded) {
         console.error("YourChar HTTP request failed after the response started", error);
@@ -156,6 +176,8 @@ export function createHttpServer(options: HttpServerOptions = {}) {
           code: error.code,
           error: error.message,
         });
+      } else if (error instanceof ImIntegrationError) {
+        sendJson(response, error.httpStatus, { code: error.code, error: error.message });
       } else if (error instanceof RequestBodyTooLargeError) {
         sendJson(response, 413, { code: "BODY_TOO_LARGE", error: error.message });
       } else if (error instanceof SyntaxError) {
@@ -311,6 +333,7 @@ async function route(input: {
   testRuns?: TestRunRegistry;
   request: IncomingMessage;
   response: ServerResponse;
+  imGatewaySecret?: string;
 }) {
   const method = input.request.method ?? "GET";
   const url = new URL(input.request.url ?? "/", "http://127.0.0.1");
@@ -413,6 +436,238 @@ async function route(input: {
       characterCollaborations: "GET /api/v1/sessions/{id}/character-collaborations",
       contextBudget: "GET /api/v1/sessions/{id}/context-budget",
       compactContext: "POST /api/v1/sessions/{id}/compact",
+      imChannels: "GET /api/v1/im/channels",
+      imSettings: "GET/PATCH /api/v1/im/settings",
+      imBindingQr: "POST /api/v1/im/bindings/{provider}/qr",
+    });
+    return;
+  }
+
+  if (method === "GET" && pathname === "/api/v1/im/channels") {
+    sendJson(input.response, 200, kernel.listImChannels());
+    return;
+  }
+
+  const imChannelMatch = pathname.match(/^\/api\/v1\/im\/channels\/([^/]+)$/);
+  if (imChannelMatch && method === "PATCH") {
+    assertLocalControlPlaneMutation(input.request);
+    const provider = requireImProvider(decodeURIComponent(imChannelMatch[1]));
+    const body = asImRecord(await readJson(input.request));
+    assertOnlyImKeys(body, ["characterId"], "IM channel route");
+    const route = body.characterId === null
+      ? (kernel.clearImCharacterRoute(provider), undefined)
+      : kernel.setImCharacterRoute(
+          provider,
+          requiredImString(body.characterId, "characterId"),
+        );
+    sendJson(input.response, 200, { route: route ?? null });
+    return;
+  }
+
+  if (pathname === "/api/v1/im/settings") {
+    if (method === "GET") {
+      sendJson(input.response, 200, kernel.getImRuntimeSettings());
+      return;
+    }
+    if (method === "PATCH") {
+      assertLocalControlPlaneMutation(input.request);
+      const body = asImRecord(await readJson(input.request));
+      assertOnlyImKeys(body, ["wechatTypingEnabled"], "IM settings");
+      sendJson(input.response, 200, kernel.patchImRuntimeSettings({
+        ...(body.wechatTypingEnabled === undefined
+          ? {}
+          : {
+              wechatTypingEnabled: requiredImBoolean(
+                body.wechatTypingEnabled,
+                "wechatTypingEnabled",
+              ),
+            }),
+      }));
+      return;
+    }
+  }
+
+  const imBindingQrMatch = pathname.match(/^\/api\/v1\/im\/bindings\/([^/]+)\/qr$/);
+  if (imBindingQrMatch && method === "POST") {
+    assertLocalControlPlaneMutation(input.request);
+    const provider = requireImProvider(decodeURIComponent(imBindingQrMatch[1]));
+    const body = asImRecord(await readJson(input.request));
+    assertOnlyImKeys(body, ["domain"], "IM binding request");
+    const domain = body.domain;
+    if (domain !== undefined && !isFeishuDomain(domain)) {
+      throw new ImIntegrationError("IM_DOMAIN_INVALID", "domain must be feishu or lark", 400);
+    }
+    sendJson(input.response, 201, {
+      session: publicImBindingSession(await kernel.startImBinding(provider, {
+        ...(domain ? { domain } : {}),
+      })),
+    });
+    return;
+  }
+
+  const imBindingSessionMatch = pathname.match(
+    /^\/api\/v1\/im\/binding-sessions\/([^/]+)$/,
+  );
+  if (imBindingSessionMatch && method === "GET") {
+    sendJson(input.response, 200, {
+      session: publicImBindingSession(
+        await kernel.getImBindingSession(decodeURIComponent(imBindingSessionMatch[1])),
+      ),
+    });
+    return;
+  }
+
+  const imBindingCancelMatch = pathname.match(
+    /^\/api\/v1\/im\/binding-sessions\/([^/]+)\/cancel$/,
+  );
+  if (imBindingCancelMatch && method === "POST") {
+    assertLocalControlPlaneMutation(input.request);
+    const body = asImRecord(await readJson(input.request));
+    assertOnlyImKeys(body, [], "IM binding cancellation");
+    sendJson(input.response, 200, {
+      session: publicImBindingSession(
+        await kernel.cancelImBindingSession(decodeURIComponent(imBindingCancelMatch[1])),
+      ),
+    });
+    return;
+  }
+
+  const imBindingVerifyMatch = pathname.match(
+    /^\/api\/v1\/im\/binding-sessions\/([^/]+)\/verify$/,
+  );
+  if (imBindingVerifyMatch && method === "POST") {
+    assertLocalControlPlaneMutation(input.request);
+    const body = asImRecord(await readJson(input.request));
+    assertOnlyImKeys(body, ["code"], "IM binding verification");
+    sendJson(input.response, 200, {
+      session: publicImBindingSession(
+        await kernel.submitImBindingVerification(
+          decodeURIComponent(imBindingVerifyMatch[1]),
+          requiredImString(body.code, "code"),
+        ),
+      ),
+    });
+    return;
+  }
+
+  const imBindingMatch = pathname.match(/^\/api\/v1\/im\/bindings\/([^/]+)$/);
+  if (imBindingMatch && method === "DELETE") {
+    assertLocalControlPlaneMutation(input.request);
+    const body = asImRecord(await readJson(input.request));
+    assertOnlyImKeys(body, [], "IM disconnect request");
+    sendJson(input.response, 200, await kernel.disconnectImBinding(
+      requireImProvider(decodeURIComponent(imBindingMatch[1])),
+    ));
+    return;
+  }
+
+  if (pathname === "/api/v1/im/gateway/events" && method === "POST") {
+    assertImGatewayAuthorization(input.request, input.imGatewaySecret);
+    assertImJsonRequest(input.request);
+    const body = asImRecord(await readJson(input.request));
+    assertOnlyImKeys(body, [
+      "eventId",
+      "provider",
+      "connectionId",
+      "bindingGeneration",
+      "externalChatId",
+      "externalUserId",
+      "chatType",
+      "text",
+      "attachments",
+      "receivedAt",
+      "timezone",
+    ], "IM gateway event");
+    const provider = requireImProvider(body.provider, 400);
+    const chatType = body.chatType;
+    if (chatType !== "direct" && chatType !== "group") {
+      throw new ImIntegrationError("IM_CHAT_TYPE_INVALID", "chatType must be direct or group", 400);
+    }
+    if (
+      body.attachments !== undefined &&
+      (!Array.isArray(body.attachments) || body.attachments.length > 0)
+    ) {
+      throw new ImIntegrationError(
+        "IM_MEDIA_GATEWAY_UNSUPPORTED",
+        "外部 Gateway 入站媒体需要独立的鉴权上传协议，当前接口仅接受文字",
+        501,
+      );
+    }
+    const receivedAt = optionalImString(body.receivedAt, "receivedAt");
+    const timezone = optionalImString(body.timezone, "timezone");
+    const bindingGeneration = optionalImString(
+      body.bindingGeneration,
+      "bindingGeneration",
+    );
+    const event: ImInboundEventInput = {
+      eventId: requiredImString(body.eventId, "eventId"),
+      provider,
+      connectionId: requiredImString(body.connectionId, "connectionId"),
+      externalChatId: requiredImString(body.externalChatId, "externalChatId"),
+      externalUserId: requiredImString(body.externalUserId, "externalUserId"),
+      chatType,
+      text: requiredImString(body.text, "text"),
+      ...(bindingGeneration ? { bindingGeneration } : {}),
+      ...(receivedAt ? { receivedAt } : {}),
+      ...(timezone ? { timezone } : {}),
+    };
+    sendJson(input.response, 200, await kernel.receiveImInboundEvent(event));
+    return;
+  }
+
+  if (pathname === "/api/v1/im/gateway/outbox/claim" && method === "POST") {
+    assertImGatewayAuthorization(input.request, input.imGatewaySecret);
+    assertImJsonRequest(input.request);
+    const body = asImRecord(await readJson(input.request));
+    assertOnlyImKeys(body, ["provider", "connectionId", "limit"], "IM outbox claim");
+    const provider = optionalImString(body.provider, "provider");
+    const connectionId = optionalImString(body.connectionId, "connectionId");
+    const limit = optionalImPositiveInteger(body.limit, "limit");
+    sendJson(input.response, 200, {
+      items: kernel.claimImPendingOutbox({
+        ...(provider ? { provider: requireImProvider(provider, 400) } : {}),
+        ...(connectionId ? { connectionId } : {}),
+        ...(limit ? { limit } : {}),
+      }),
+    });
+    return;
+  }
+
+  const imOutboxAuthorizeMatch = pathname.match(
+    /^\/api\/v1\/im\/gateway\/outbox\/([^/]+)\/authorize$/,
+  );
+  if (imOutboxAuthorizeMatch && method === "POST") {
+    assertImGatewayAuthorization(input.request, input.imGatewaySecret);
+    assertImJsonRequest(input.request);
+    const body = asImRecord(await readJson(input.request));
+    assertOnlyImKeys(body, ["leaseToken"], "IM outbox authorization");
+    sendJson(input.response, 200, {
+      item: kernel.authorizeImOutbox(
+        decodeURIComponent(imOutboxAuthorizeMatch[1]),
+        requiredImString(body.leaseToken, "leaseToken"),
+      ),
+    });
+    return;
+  }
+
+  const imOutboxAckMatch = pathname.match(
+    /^\/api\/v1\/im\/gateway\/outbox\/([^/]+)\/ack$/,
+  );
+  if (imOutboxAckMatch && method === "POST") {
+    assertImGatewayAuthorization(input.request, input.imGatewaySecret);
+    assertImJsonRequest(input.request);
+    const body = asImRecord(await readJson(input.request));
+    assertOnlyImKeys(body, ["leaseToken", "delivered", "error", "retryAt"], "IM outbox acknowledgement");
+    const deliveryError = optionalImString(body.error, "error");
+    const retryAt = optionalImString(body.retryAt, "retryAt");
+    sendJson(input.response, 200, {
+      item: kernel.acknowledgeImOutbox({
+        id: decodeURIComponent(imOutboxAckMatch[1]),
+        leaseToken: requiredImString(body.leaseToken, "leaseToken"),
+        delivered: requiredImBoolean(body.delivered, "delivered"),
+        ...(deliveryError ? { error: deliveryError } : {}),
+        ...(retryAt ? { retryAt } : {}),
+      }),
     });
     return;
   }
@@ -2844,12 +3099,13 @@ async function route(input: {
   }
 
   if (pathname === "/api/v1/data" && method === "DELETE") {
+    assertLocalControlPlaneMutation(input.request);
     const body = asRecord(await readJson(input.request));
     if (body.confirm !== "DELETE_ALL_DATA") {
       sendJson(input.response, 400, { error: "confirm must equal DELETE_ALL_DATA" });
       return;
     }
-    kernel.deleteAllUserData();
+    await kernel.deleteAllUserData();
     sendJson(input.response, 200, { deleted: true });
     return;
   }
@@ -3268,6 +3524,135 @@ function assertSessionWorkspaceScope(
     );
   }
   return conversationSpace;
+}
+
+function requireImProvider(value: unknown, httpStatus = 404): ImProvider {
+  if (!isImProvider(value)) {
+    throw new ImIntegrationError("IM_PROVIDER_INVALID", "不支持的 IM 平台", httpStatus);
+  }
+  return value;
+}
+
+function asImRecord(value: unknown): Record<string, unknown> {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    throw new ImIntegrationError("IM_REQUEST_INVALID", "JSON body must be an object", 400);
+  }
+  return value as Record<string, unknown>;
+}
+
+function assertOnlyImKeys(
+  value: Record<string, unknown>,
+  allowedKeys: readonly string[],
+  context: string,
+): void {
+  const allowed = new Set(allowedKeys);
+  const unexpected = Object.keys(value).filter((key) => !allowed.has(key));
+  if (unexpected.length) {
+    throw new ImIntegrationError(
+      "IM_REQUEST_INVALID",
+      `${context} contains unsupported fields: ${unexpected.join(", ")}`,
+      400,
+    );
+  }
+}
+
+function requiredImString(value: unknown, field: string): string {
+  if (typeof value !== "string" || !value.trim()) {
+    throw new ImIntegrationError("IM_REQUEST_INVALID", `${field} is required`, 400);
+  }
+  return value.trim();
+}
+
+function optionalImString(value: unknown, field: string): string | undefined {
+  if (value === undefined || value === null || value === "") return undefined;
+  if (typeof value !== "string") {
+    throw new ImIntegrationError("IM_REQUEST_INVALID", `${field} must be a string`, 400);
+  }
+  return value.trim() || undefined;
+}
+
+function requiredImBoolean(value: unknown, field: string): boolean {
+  if (typeof value !== "boolean") {
+    throw new ImIntegrationError("IM_REQUEST_INVALID", `${field} must be a boolean`, 400);
+  }
+  return value;
+}
+
+function optionalImPositiveInteger(value: unknown, field: string): number | undefined {
+  if (value === undefined || value === null || value === "") return undefined;
+  if (typeof value !== "number" || !Number.isInteger(value) || value <= 0) {
+    throw new ImIntegrationError(
+      "IM_REQUEST_INVALID",
+      `${field} must be a positive integer`,
+      400,
+    );
+  }
+  return value;
+}
+
+function assertImJsonRequest(request: IncomingMessage): void {
+  const contentType = request.headers["content-type"] ?? "";
+  const mediaType = String(contentType).split(";", 1)[0].trim().toLowerCase();
+  if (mediaType !== "application/json") {
+    throw new ImIntegrationError(
+      "IM_CONTENT_TYPE_REQUIRED",
+      "IM mutation requests require Content-Type: application/json",
+      415,
+    );
+  }
+}
+
+function publicImBindingSession(session: ImBindingSession) {
+  return {
+    id: session.id,
+    provider: session.provider,
+    status: session.status,
+    ...(session.domain ? { domain: session.domain } : {}),
+    ...(session.qrCodeUrl ? { qrCodeUrl: session.qrCodeUrl } : {}),
+    ...(session.expiresAt ? { expiresAt: session.expiresAt } : {}),
+    ...(session.message ? { message: session.message } : {}),
+    ...(session.verificationRequired !== undefined
+      ? { verificationRequired: session.verificationRequired }
+      : {}),
+    createdAt: session.createdAt,
+    updatedAt: session.updatedAt,
+    ...(session.connection
+      ? {
+          connection: {
+            provider: session.connection.provider,
+            ...(session.connection.displayName
+              ? { displayName: session.connection.displayName }
+              : {}),
+            ...(session.connection.domain ? { domain: session.connection.domain } : {}),
+            connectedAt: session.connection.connectedAt,
+            updatedAt: session.connection.updatedAt,
+            ...(session.connection.lastSeenAt
+              ? { lastSeenAt: session.connection.lastSeenAt }
+              : {}),
+          },
+        }
+      : {}),
+  };
+}
+
+function assertImGatewayAuthorization(request: IncomingMessage, secret?: string): void {
+  if (!secret) {
+    throw new ImIntegrationError(
+      "IM_GATEWAY_INGRESS_DISABLED",
+      "未配置 YOURCHAR_IM_GATEWAY_INGRESS_TOKEN 或 YOURCHAR_IM_GATEWAY_TOKEN，gateway ingress 已关闭",
+      503,
+    );
+  }
+  const authorization = request.headers.authorization ?? "";
+  const expected = Buffer.from(`Bearer ${secret}`);
+  const received = Buffer.from(authorization);
+  if (received.length !== expected.length || !timingSafeEqual(received, expected)) {
+    throw new ImIntegrationError(
+      "IM_GATEWAY_UNAUTHORIZED",
+      "IM gateway authentication failed",
+      401,
+    );
+  }
 }
 
 function asRecord(value: unknown): Record<string, unknown> {

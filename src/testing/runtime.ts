@@ -35,6 +35,7 @@ import type {
   CharacterFunctionInferer,
   CharacterSkillReflector,
 } from "../organization/index.js";
+import type { ImGateway } from "../im/index.js";
 
 export type ScriptedModelResponse = (
   | {
@@ -77,6 +78,7 @@ export type CreateTestRuntimeOptions = {
   conversationLifecycleThresholds?: Partial<ConversationLifecycleThresholds>;
   privateInboxOptions?: PrivateInboxCoordinatorOptions;
   startPrivateInboxCoordinator?: boolean;
+  imGateway?: ImGateway | false;
 };
 
 export class ScriptedModelController {
@@ -215,6 +217,7 @@ export class TestRuntime {
       conversationLifecycleThresholds: options.conversationLifecycleThresholds,
       privateInboxOptions: options.privateInboxOptions,
       startPrivateInboxCoordinator: options.startPrivateInboxCoordinator,
+      imGateway: options.imGateway ?? false,
     });
     this.kernel.patchModelApiConfig({
       enabled: true,

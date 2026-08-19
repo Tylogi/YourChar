@@ -80,7 +80,7 @@ test("character, scene, and confirmed memory survive restart and enter Pi contex
   }
 });
 
-test("legacy structured characters lazily migrate to per-character SOUL.md", () => {
+test("legacy structured characters lazily migrate to per-character SOUL.md", async () => {
   const stateDir = mkdtempSync(join(tmpdir(), "rp-agent-legacy-soul-"));
   const databasePath = join(stateDir, "rp-agent.sqlite");
   try {
@@ -112,7 +112,7 @@ test("legacy structured characters lazily migrate to per-character SOUL.md", () 
     const soulPath = join(stateDir, "characters", character.id, "SOUL.md");
     assert.equal(readFileSync(soulPath, "utf8"), character.soulMarkdown);
 
-    kernel.deleteAllUserData();
+    await kernel.deleteAllUserData();
     assert.equal(existsSync(join(stateDir, "characters")), false);
     kernel.dispose();
   } finally {

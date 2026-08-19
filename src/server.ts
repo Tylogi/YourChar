@@ -1,3 +1,11 @@
+import { join, resolve } from "node:path";
+import { CompanionKernel, CompanionStore } from "./domain/index.js";
+import {
+  createImGatewayFromEnvironment,
+  LocalImGateway,
+  type LocalImCore,
+  UnavailableImGateway,
+} from "./im/index.js";
 import { createHttpServer, disposeHttpServerOwnedResources } from "./http/router.js";
 
 const port = Number(process.env.PORT ?? 8765);
@@ -10,7 +18,51 @@ if (!isLoopbackHost(host)) {
   throw new Error("YourChar has no HTTP authentication and may only bind to a loopback host");
 }
 
-const server = createHttpServer({ testMode });
+const imRuntimeMode = resolveImRuntimeMode(process.env, testMode);
+const store = new CompanionStore();
+const workspaceDir = resolve(
+  store.stateDir
+    ? join(store.stateDir, "workspace")
+    : join(process.cwd(), ".rp-agent-ephemeral", "workspace"),
+);
+const localImGateway = imRuntimeMode === "local"
+  ? new LocalImGateway(requiredStateDirectory(store.stateDir), workspaceDir)
+  : undefined;
+const imGateway = localImGateway ?? (imRuntimeMode === "external"
+  ? createImGatewayFromEnvironment({
+      ...process.env,
+      YOURCHAR_IM_GATEWAY_URL: process.env.YOURCHAR_IM_GATEWAY_URL ??
+        process.env.RP_AGENT_IM_GATEWAY_URL,
+      YOURCHAR_IM_GATEWAY_TOKEN: process.env.YOURCHAR_IM_GATEWAY_TOKEN ??
+        process.env.RP_AGENT_IM_GATEWAY_TOKEN,
+    })
+  : new UnavailableImGateway("IM Channel Runtime 已由 YOURCHAR_IM_RUNTIME_MODE=off 禁用"));
+const kernel = new CompanionKernel({ store, workspaceDir, imGateway });
+
+if (localImGateway) {
+  const localCore: LocalImCore = {
+    isWechatTypingEnabled: () => kernel.isWechatTypingEnabled(),
+    receiveInboundEvent: (event) => kernel.receiveImInboundEvent(event),
+    claimPendingOutbox: (input) => kernel.claimImPendingOutbox(input),
+    acknowledgeOutbox: (input) => kernel.acknowledgeImOutbox(input),
+    authorizeOutbox: (id, leaseToken) => kernel.authorizeImOutbox(id, leaseToken),
+  };
+  try {
+    await localImGateway.attachCore(localCore);
+  } catch (error) {
+    try {
+      await localImGateway.dispose();
+    } finally {
+      kernel.dispose();
+    }
+    throw error;
+  }
+  console.log("Bundled IM Channel Runtime started (Feishu + WeChat).");
+} else if (imRuntimeMode === "external") {
+  console.log(`External IM Channel Runtime selected: ${imGateway.detail ?? "configured"}`);
+}
+
+const server = createHttpServer({ kernel, testMode });
 server.listen(port, host, () => {
   const address = server.address();
   const listeningPort = address && typeof address === "object" ? address.port : port;
@@ -18,6 +70,29 @@ server.listen(port, host, () => {
 });
 
 let shutdownStarted = false;
+let resourceDisposalOperation: Promise<void> | undefined;
+
+function disposeResources(): Promise<void> {
+  if (resourceDisposalOperation) return resourceDisposalOperation;
+  resourceDisposalOperation = (async () => {
+    const errors: Error[] = [];
+    if (localImGateway) {
+      try {
+        await localImGateway.dispose();
+      } catch (error) {
+        errors.push(error instanceof Error ? error : new Error(String(error)));
+      }
+    }
+    try {
+      kernel.dispose();
+    } catch (error) {
+      errors.push(error instanceof Error ? error : new Error(String(error)));
+    }
+    if (errors.length === 1) throw errors[0];
+    if (errors.length > 1) throw new AggregateError(errors, "failed to dispose YourChar resources");
+  })();
+  return resourceDisposalOperation;
+}
 
 function shutdown(signal: "SIGTERM" | "SIGINT"): void {
   if (shutdownStarted) return;
@@ -31,21 +106,29 @@ function shutdown(signal: "SIGTERM" | "SIGINT"): void {
     hardExitTimer = setTimeout(() => {
       console.error("YourChar forced shutdown did not complete.");
       disposeHttpServerOwnedResources(server);
-      process.exit(1);
+      void disposeResources().finally(() => process.exit(1));
     }, hardExitAfterMs);
   }, forceShutdownAfterMs);
 
-  server.close((error) => {
-    clearTimeout(forceTimer);
-    if (hardExitTimer) clearTimeout(hardExitTimer);
+  server.close(async (error) => {
     const notRunning = (error as NodeJS.ErrnoException | undefined)?.code === "ERR_SERVER_NOT_RUNNING";
     if (error && !notRunning) {
       console.error("YourChar shutdown failed while releasing service resources.");
       process.exitCode = 1;
-      return;
     }
-    console.log("YourChar stopped.");
-    process.exitCode = 0;
+    try {
+      await disposeResources();
+    } catch (disposeError) {
+      console.error("YourChar shutdown failed while disposing runtime resources.", disposeError);
+      process.exitCode = 1;
+    } finally {
+      clearTimeout(forceTimer);
+      if (hardExitTimer) clearTimeout(hardExitTimer);
+    }
+    if (!process.exitCode) {
+      console.log("YourChar stopped.");
+      process.exitCode = 0;
+    }
   });
 }
 
@@ -60,4 +143,40 @@ function isLoopbackHost(value: string): boolean {
     const number = Number(octet);
     return number >= 0 && number <= 255;
   });
+}
+
+type ImRuntimeMode = "local" | "external" | "off";
+
+function resolveImRuntimeMode(
+  environment: NodeJS.ProcessEnv,
+  isTestMode: boolean,
+): ImRuntimeMode {
+  const configured = (
+    environment.YOURCHAR_IM_RUNTIME_MODE ??
+    environment.RP_AGENT_IM_RUNTIME_MODE ??
+    "auto"
+  ).trim().toLowerCase();
+  if (
+    configured !== "auto" && configured !== "local" &&
+    configured !== "external" && configured !== "off"
+  ) {
+    throw new Error("YOURCHAR_IM_RUNTIME_MODE must be auto, local, external, or off");
+  }
+  if (configured === "local" || configured === "external" || configured === "off") {
+    return configured;
+  }
+  if (
+    environment.YOURCHAR_IM_GATEWAY_URL?.trim() ||
+    environment.RP_AGENT_IM_GATEWAY_URL?.trim()
+  ) {
+    return "external";
+  }
+  return isTestMode ? "off" : "local";
+}
+
+function requiredStateDirectory(value: string | undefined): string {
+  if (!value) {
+    throw new Error("Bundled IM Channel Runtime requires a persistent YourChar state directory");
+  }
+  return value;
 }

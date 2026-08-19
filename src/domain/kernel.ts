@@ -241,6 +241,19 @@ import {
   type PrivateInboxSnapshot,
   type PrivateMessageBurst,
 } from "../inbox/index.js";
+import {
+  ImIntegrationError,
+  ImIntegrationService,
+  LocalImMediaStore,
+  ImRepository,
+  UnavailableImGateway,
+  createImGatewayFromEnvironment,
+  type FeishuDomain,
+  type ImGateway,
+  type ImInboundEventInput,
+  type ImProvider,
+  type ImRuntimeSettingsPatch,
+} from "../im/index.js";
 import type {
   ActionRecord,
   ConversationSpace,
@@ -384,6 +397,7 @@ export type CompanionKernelOptions = CompanionStoreOptions & {
   characterSkillReflector?: CharacterSkillReflector | false;
   startWorldCoordinator?: boolean;
   startPrivateInboxCoordinator?: boolean;
+  imGateway?: ImGateway | false;
   privateInboxOptions?: PrivateInboxCoordinatorOptions;
   memoryVaultFailpoint?: MemoryVaultFailpoint;
   conversationLifecycleThresholds?: Partial<ConversationLifecycleThresholds>;
@@ -403,6 +417,7 @@ export class CompanionKernel {
   readonly avatarService: AvatarService;
   readonly systemPromptService: SystemPromptService;
   readonly workspaceFiles: WorkspaceFileService;
+  readonly imMediaStore: LocalImMediaStore;
   readonly workspaceRegistry: WorkspaceScopeRegistry;
   readonly memoryVault: MemoryVaultService;
   readonly memoryLifecycle: MemoryLifecycleService;
@@ -420,6 +435,7 @@ export class CompanionKernel {
   readonly interactionService: InteractionService;
   readonly meetingPresetService: MeetingPresetService;
   readonly privateInbox: PrivateInboxCoordinator;
+  readonly imIntegrations: ImIntegrationService;
   readonly okfService: OkfService;
   readonly contextEconomics: ContextEconomicsRepository;
   readonly memoryRetriever: MemoryRetriever;
@@ -431,6 +447,7 @@ export class CompanionKernel {
   readonly notificationChannel: string;
   private readonly clock: Clock;
   private readonly executionQueue = new SessionExecutionQueue();
+  private deleteAllUserDataOperation?: Promise<void>;
   private readonly ownsDatabase: boolean;
   private readonly dataManagement: DataManagementRepository;
   private readonly removeScheduleInsightListener: () => void;
@@ -462,6 +479,20 @@ export class CompanionKernel {
     this.database =
       normalizedOptions.database ??
       new AppDatabase(this.store.stateDir ? join(this.store.stateDir, "rp-agent.sqlite") : ":memory:");
+    this.imIntegrations = new ImIntegrationService(
+      new ImRepository(this.database),
+      normalizedOptions.imGateway === false
+        ? new UnavailableImGateway("IM Channel Runtime 已由运行参数禁用")
+        : normalizedOptions.imGateway ?? createImGatewayFromEnvironment(),
+      this.clock,
+      this.store.idGenerator,
+    );
+    for (const provider of ["feishu", "wechat"] as const) {
+      this.imIntegrations.gateway.setInboundEnabled?.(
+        provider,
+        Boolean(this.imIntegrations.getCharacterRoute(provider)),
+      );
+    }
     const scheduleRepository = new ScheduleRepository(this.database);
     this.scheduleService =
       normalizedOptions.scheduleService ??
@@ -489,6 +520,7 @@ export class CompanionKernel {
         : undefined);
     this.permissionCatalog = new AgentPermissionCatalog(this.database, this.clock, workspaceDir);
     this.workspaceFiles = new WorkspaceFileService(workspaceDir);
+    this.imMediaStore = new LocalImMediaStore(workspaceDir);
     this.workspaceRegistry = new WorkspaceScopeRegistry(workspaceDir, this.workspaceFiles);
     this.profileService = new UserProfileService({
       clock: this.clock,
@@ -2049,6 +2081,7 @@ export class CompanionKernel {
       modelConfigured: Boolean(model.enabled && model.baseUrl && model.model),
       tavilyConfigured: this.tavilyService.isConfigured(),
       visionConfigured: this.visionService.isConfigured(),
+      imGatewayConfigured: this.imIntegrations.gateway.configured,
       worldCount: this.worldService.listWorlds(true).length,
       notificationChannel: this.notificationChannel,
     };
@@ -2279,23 +2312,56 @@ export class CompanionKernel {
     };
   }
 
-  deleteAllUserData(): void {
-    this.characterCapabilities.cancelPending();
-    this.privateInbox.stop();
-    this.scheduler.stop();
-    this.worldCoordinator.stop();
-    this.sessionRuntime.deleteAllConversations();
-    this.memoryVault.deleteAll();
-    this.dataManagement.deleteAllUserData();
-    this.profileService.clear();
-    this.avatarService.clear();
-    this.systemPromptService.clear();
-    this.rpService.clearCharacterSouls();
-    this.store.clearRuntimeData();
-    this.privateInbox.start();
-    if (this.store.stateDir) {
-      this.scheduler.start();
-      this.worldCoordinator.start();
+  deleteAllUserData(): Promise<void> {
+    if (this.deleteAllUserDataOperation) return this.deleteAllUserDataOperation;
+    const operation = this.performDeleteAllUserData();
+    this.deleteAllUserDataOperation = operation;
+    void operation.finally(() => {
+      if (this.deleteAllUserDataOperation === operation) {
+        this.deleteAllUserDataOperation = undefined;
+      }
+    }).catch(() => undefined);
+    return operation;
+  }
+
+  private async performDeleteAllUserData(): Promise<void> {
+    this.imIntegrations.pauseIngress();
+    let coordinatorsStopped = false;
+    try {
+      await this.imIntegrations.drainIngress();
+      const revocation = await this.imIntegrations.revokeAll();
+      if (revocation.failures.length) {
+        throw new ImIntegrationError(
+          "IM_REVOKE_FAILED",
+          `无法安全解绑所有 IM 通道：${revocation.failures.join("; ")}`,
+          502,
+        );
+      }
+
+      coordinatorsStopped = true;
+      this.characterCapabilities.cancelPending();
+      this.privateInbox.stop();
+      this.scheduler.stop();
+      this.worldCoordinator.stop();
+      this.sessionRuntime.deleteAllConversations();
+      this.memoryVault.deleteAll();
+      this.dataManagement.deleteAllUserData();
+      this.imMediaStore.clearInboundAttachments();
+      this.imIntegrations.clearEphemeralState();
+      this.profileService.clear();
+      this.avatarService.clear();
+      this.systemPromptService.clear();
+      this.rpService.clearCharacterSouls();
+      this.store.clearRuntimeData();
+    } finally {
+      if (coordinatorsStopped) {
+        this.privateInbox.start();
+        if (this.store.stateDir) {
+          this.scheduler.start();
+          this.worldCoordinator.start();
+        }
+      }
+      this.imIntegrations.resumeIngress();
     }
   }
 
@@ -2920,6 +2986,109 @@ export class CompanionKernel {
     const result = this.store.deleteModelApiProfile(id);
     this.rpService.repository.clearModelProfileBindings(id);
     return result;
+  }
+
+  listImChannels() {
+    return this.imIntegrations.listChannels();
+  }
+
+  getImRuntimeSettings() {
+    return this.imIntegrations.getRuntimeSettings();
+  }
+
+  patchImRuntimeSettings(patch: ImRuntimeSettingsPatch) {
+    return this.imIntegrations.patchRuntimeSettings(patch);
+  }
+
+  isWechatTypingEnabled(): boolean {
+    return this.imIntegrations.isWechatTypingEnabled();
+  }
+
+  getImCharacterRoute(provider: ImProvider) {
+    return this.imIntegrations.getCharacterRoute(provider);
+  }
+
+  setImCharacterRoute(provider: ImProvider, characterId: string) {
+    return this.imIntegrations.setCharacterRoute(provider, characterId);
+  }
+
+  clearImCharacterRoute(provider: ImProvider) {
+    return this.imIntegrations.clearCharacterRoute(provider);
+  }
+
+  startImBinding(provider: ImProvider, options: { domain?: FeishuDomain } = {}) {
+    return this.imIntegrations.startBinding(provider, options);
+  }
+
+  getImBindingSession(id: string) {
+    return this.imIntegrations.getBindingSession(id);
+  }
+
+  cancelImBindingSession(id: string) {
+    return this.imIntegrations.cancelBindingSession(id);
+  }
+
+  submitImBindingVerification(id: string, code: string) {
+    return this.imIntegrations.submitBindingVerification(id, code);
+  }
+
+  disconnectImBinding(provider: ImProvider) {
+    return this.imIntegrations.disconnect(provider);
+  }
+
+  receiveImInboundEvent(event: ImInboundEventInput) {
+    return this.imIntegrations.receiveInboundEvent(event, async (normalized, target) => {
+      // An external IM event is pinned by the durable route captured in the
+      // claim. It is never allowed to select RP mode or the secret space.
+      const conversation = await this.openCanonicalPrivateConversation(
+        target.characterId,
+        "normal",
+      );
+      const response = await this.sendMessage(conversation.id, {
+        mode: "sms",
+        conversationSpace: "normal",
+        characterId: target.characterId,
+        text: normalized.text,
+        attachments: normalized.attachments?.map((attachment) => ({
+          path: attachment.path,
+          name: attachment.name,
+          contentType: attachment.contentType,
+          size: attachment.size,
+          previewKind: attachment.kind === "image" ? "image" : "unsupported",
+        })),
+        timezone: normalized.timezone ?? "Asia/Shanghai",
+      });
+      return {
+        text: response.messageType === "system"
+          ? `【系统提示】\n${response.reply}`
+          : response.reply,
+        attachments: response.status === "completed" && response.messageType === "assistant"
+          ? this.imMediaStore.describeOutboundAttachments(response.attachments)
+          : [],
+      };
+    });
+  }
+
+  claimImPendingOutbox(input: {
+    provider?: ImProvider;
+    connectionId?: string;
+    limit?: number;
+  } = {}) {
+    return this.imIntegrations.claimPendingOutbox(input);
+  }
+
+  acknowledgeImOutbox(input: {
+    id: string;
+    leaseToken: string;
+    delivered: boolean;
+    error?: string;
+    retryAt?: string;
+  }) {
+    return this.imIntegrations.acknowledgeOutbox(input);
+  }
+
+  authorizeImOutbox(id: string, leaseToken: string) {
+    return this.imIntegrations.authorizeOutbox(id, leaseToken);
   }
 
   dispose(): void {
