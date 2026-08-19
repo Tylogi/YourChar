@@ -6,6 +6,8 @@ const includeRealModel = process.argv.includes("--real");
 const steps = [
   ["Build", "npm", ["run", "build"]],
   ["Backup contract syntax", "node", ["--check", "scripts/backup-contract.mjs"]],
+  ["State-directory resolver syntax", "node", ["--check", "scripts/state-directory.mjs"]],
+  ["State migration syntax", "node", ["--check", "scripts/migrate-state-directory.mjs"]],
   ["Restore contract syntax", "node", ["--check", "scripts/restore-state.mjs"]],
   ["Unit and integration tests", "npm", ["test"]],
   ["Browser visual tests", "npm", ["run", "test:browser"]],

@@ -10,13 +10,14 @@ Environment=NODE_ENV=production
 Environment=HOST=127.0.0.1
 Environment=PORT=8765
 Environment=PATH=__HOME__/.local/bin:/usr/local/bin:/usr/bin:/bin
+Environment="YOURCHAR_STATE_DIR=__PROJECT_DIR__/.yourchar"
 ExecStart=__NODE__ --disable-warning=ExperimentalWarning __PROJECT_DIR__/dist/src/server.js
 Restart=on-failure
 RestartSec=3
 NoNewPrivileges=true
 PrivateTmp=true
 ProtectSystem=strict
-ReadWritePaths=__PROJECT_DIR__/.rp-agent
+ReadWritePaths=__PROJECT_DIR__/.yourchar
 
 [Install]
 WantedBy=default.target

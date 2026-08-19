@@ -4,6 +4,9 @@ coverage/
 .env
 .env.*
 !.env.example
+.yourchar/
+.yourchar-ephemeral/
+.yourchar-state-migration.lock
 .rp-agent/
 .rp-agent-assistant/
 .rp-agent-ephemeral/

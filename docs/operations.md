@@ -20,7 +20,25 @@ scripts/install-user-service.sh
 
 The installer builds the current checkout, writes
 `~/.config/systemd/user/rp-agent.service`, enables it, and starts it on
-`127.0.0.1:8765`. User lingering must remain enabled for reminders after logout:
+`127.0.0.1:8765`. It preflights the state paths before creating anything. When
+only `.rp-agent` exists, the installer stops the old unit, verifies the Vault
+writer is inactive, writes a verified timestamped backup under
+`backups/yourchar-pre-migration-*` (and prints its path), and performs one
+same-parent atomic rename to `.yourchar`.
+It rejects symlinks, non-directories, wrong ownership, and old/new conflicts;
+it never implements migration by copying. The legacy service filename remains
+unchanged for upgrade compatibility. The generated unit always pins
+`YOURCHAR_STATE_DIR` and `ReadWritePaths` to this checkout's `.yourchar`; the
+installer manages only that project-default state path. Before stopping or
+overwriting an existing unit, it requires an exact `WorkingDirectory`, verifies
+that `ExecStart` names this checkout's `dist/src/server.js`, and rejects any
+custom `YOURCHAR_STATE_DIR` or `RP_AGENT_STATE_DIR` value. A failed backup or
+migration leaves the legacy directory in place and attempts to restart a unit
+that was active before installation. After restart, the installer allows up to
+30 seconds for the loopback readiness endpoint, then verifies that the service
+remains active with the same main PID during a short stability window; failure
+prints unit status and recent journal entries and exits nonzero. User lingering
+must remain enabled for reminders after logout:
 
 ```bash
 loginctl show-user "$USER" -p Linger
@@ -32,6 +50,30 @@ Useful commands:
 systemctl --user restart rp-agent.service
 systemctl --user status rp-agent.service
 journalctl --user -u rp-agent.service -f
+```
+
+To run the service with a custom state directory, manage that customization as
+a systemd drop-in and override both the runtime path and the filesystem write
+allowlist together:
+
+```ini
+[Service]
+Environment="YOURCHAR_STATE_DIR=/absolute/path/to/custom-state"
+ReadWritePaths=
+ReadWritePaths=/absolute/path/to/custom-state
+```
+
+After editing the drop-in, run `systemctl --user daemon-reload` and restart the
+unit. Future installer runs deliberately refuse to replace a unit that reports
+this custom path; migrate or remove the drop-in manually before reinstalling.
+
+To run the same state migration separately, stop the service first. The command
+uses an exclusive sibling lock, rechecks directory identity and writer state,
+and fsyncs the parent after the rename:
+
+```bash
+systemctl --user stop rp-agent.service
+npm run migrate:state
 ```
 
 The production entrypoint treats `SIGTERM` and `SIGINT` as idempotent graceful
@@ -63,11 +105,15 @@ its frontmatter revisions and hashes. Backup schema v3 records every payload fil
 SHA-256 and size, SQLite schema and `integrity_check`, Vault hashes, and
 Vault-to-SQLite projection consistency. The destination is staged, fully
 validated, and only then published by rename.
+With no state-directory argument it uses `YOURCHAR_STATE_DIR`, then the legacy
+`RP_AGENT_STATE_DIR`, then the sole existing `.yourchar` or `.rp-agent` sibling.
+If both sibling directories exist and neither environment variable chooses one,
+the script fails closed.
 
 An explicit source and destination may be supplied:
 
 ```bash
-node --disable-warning=ExperimentalWarning scripts/backup-state.mjs .rp-agent /secure/path/yourchar-backup
+node --disable-warning=ExperimentalWarning scripts/backup-state.mjs .yourchar /secure/path/yourchar-backup
 ```
 
 Backups have directory mode `0700`. They may include `model-api.json`,
@@ -89,17 +135,18 @@ Verify a backup without changing the target, then inspect a restore dry run:
 
 ```bash
 node scripts/restore-state.mjs /secure/path/yourchar-backup --verify
-node scripts/restore-state.mjs /secure/path/yourchar-backup .rp-agent --dry-run
+node scripts/restore-state.mjs /secure/path/yourchar-backup .yourchar --dry-run
 ```
 
 Stop the service before replacing state. Restore validates the source, copies
 it to a sibling staging directory, validates it again, and only then switches
-the state directory. A failed validation or switch leaves the old target in
-place:
+the state directory. Its default target follows the same
+`YOURCHAR_STATE_DIR` → `RP_AGENT_STATE_DIR` → unambiguous sibling resolution. A
+failed validation or switch leaves the old target in place:
 
 ```bash
 systemctl --user stop rp-agent.service
-node scripts/restore-state.mjs /secure/path/yourchar-backup .rp-agent --force
+node scripts/restore-state.mjs /secure/path/yourchar-backup .yourchar --force
 systemctl --user start rp-agent.service
 curl -fsS http://127.0.0.1:8765/api/v1/readiness
 ```
@@ -109,6 +156,14 @@ The restore script refuses to overwrite an existing state directory without
 restored Vault, rebuilds SQLite/FTS, aligns profile/SOUL mirrors, and removes
 stale resident-memory versions before provider use. Keep the original backup
 until sessions, schedules, characters, and memories have been checked.
+
+Legacy backups remain valid: their payload still contains the compatibility
+database filename `rp-agent.sqlite`, and `sourceDirectoryName: ".rp-agent"` does
+not force the restore target to use the old name. To keep using an existing old
+state directory intentionally, pass `.rp-agent` explicitly or set
+`YOURCHAR_STATE_DIR=.rp-agent` (the legacy `RP_AGENT_STATE_DIR` remains accepted).
+Backup and restore validate/copy backup payloads; they are not state-directory
+migration tools. Use the stopped-service `migrate:state` command for renaming.
 
 After restoring a backup that contains `im-runtime`, verify both platform
 bindings and their selected character routes in **Settings → IM Channels** before

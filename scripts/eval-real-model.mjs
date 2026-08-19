@@ -2,6 +2,7 @@ import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "nod
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { CompanionKernel, CompanionStore } from "../dist/src/domain/index.js";
+import { resolveStateDirectory } from "./state-directory.mjs";
 import {
   hasLongRpSceneContinuity,
   longRpSceneForTurn,
@@ -924,7 +925,10 @@ function resolveModelConfig() {
     };
   }
   if (process.env.RP_EVAL_REUSE_CONFIG !== "1") return undefined;
-  const sourceStateDir = resolve(process.env.RP_EVAL_SOURCE_STATE_DIR || process.env.RP_AGENT_STATE_DIR || ".rp-agent");
+  const evaluationStateDir = process.env.RP_EVAL_SOURCE_STATE_DIR?.trim();
+  const sourceStateDir = evaluationStateDir
+    ? resolve(evaluationStateDir)
+    : resolveStateDirectory();
   const stored = new CompanionStore({ stateDir: sourceStateDir }).getRawModelApiConfig();
   if (!stored.enabled || !stored.baseUrl || !stored.model) return undefined;
   return {

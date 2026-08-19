@@ -19,14 +19,14 @@ The command stops on the first failure and runs:
 Browser screenshots are written to the ignored `browser-artifacts/` directory.
 The scanner checks common credential formats and rejects evaluation JSON that
 contains raw `apiKey` or `baseUrl` fields. Runtime state and real credentials in
-`.rp-agent/` are ignored and must never be committed.
+`.yourchar/` and the legacy `.rp-agent/` are ignored and must never be committed.
 
 ## Pre-release real-model stage
 
 Run the optional pre-release stage with:
 
 ```bash
-RP_EVAL_REUSE_CONFIG=1 RP_EVAL_SOURCE_STATE_DIR=.rp-agent npm run release:gate:real
+RP_EVAL_REUSE_CONFIG=1 RP_EVAL_SOURCE_STATE_DIR=.yourchar npm run release:gate:real
 ```
 
 It first runs the complete deterministic gate, then adds three isolated

@@ -4,78 +4,177 @@ import {
   renameSync, rmSync,
 } from "node:fs";
 import { dirname, join, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 import { DatabaseSync } from "node:sqlite";
 import { assertWriterInactive, validateBackupDirectory } from "./backup-contract.mjs";
+import { resolveStateDirectory } from "./state-directory.mjs";
 
 const RESTORE_IM_QUARANTINE_REASON = "restored backup: pending IM delivery quarantined";
 
-const positional = process.argv.slice(2).filter((argument) => !argument.startsWith("--"));
-const backupDir = resolve(positional[0] ?? "");
-const stateDir = resolve(positional[1] ?? process.env.RP_AGENT_STATE_DIR ?? ".rp-agent");
-const force = process.argv.includes("--force");
-const verifyOnly = process.argv.includes("--verify");
-const dryRun = process.argv.includes("--dry-run");
-const manifestPath = join(backupDir, "backup-manifest.json");
-if (!positional[0] || !existsSync(manifestPath)) throw new Error("a valid backup directory is required");
-
-const manifest = JSON.parse(readFileSync(manifestPath, "utf8"));
-const validation = validateBackupDirectory(backupDir, manifest);
-if (verifyOnly || dryRun) {
-  console.log(JSON.stringify({
-    valid: true,
-    operation: verifyOnly ? "verify" : "dry-run",
-    schemaVersion: manifest.schemaVersion,
-    createdAt: manifest.createdAt,
-    fileCount: manifest.files.length,
-    databaseSchemaVersion: validation.database.schemaVersion,
-    vaultDocumentCount: validation.vault.documentCount,
-    projectionConsistent: validation.vault.projectionConsistent,
-  }));
-  process.exit(0);
+if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+  restoreState(process.argv.slice(2));
 }
 
-if (existsSync(stateDir)) {
-  assertWriterInactive(stateDir);
-  if (!force) throw new Error(`state directory exists: ${stateDir}; stop YourChar and pass --force to replace it`);
-}
+function restoreState(arguments_) {
+  const positional = arguments_.filter((argument) => !argument.startsWith("--"));
+  const backupDir = resolve(positional[0] ?? "");
+  const stateDir = resolveStateDirectory({ explicit: positional[1] });
+  const force = arguments_.includes("--force");
+  const verifyOnly = arguments_.includes("--verify");
+  const dryRun = arguments_.includes("--dry-run");
+  const manifestPath = join(backupDir, "backup-manifest.json");
+  if (!positional[0] || !existsSync(manifestPath)) throw new Error("a valid backup directory is required");
 
-const parent = dirname(stateDir);
-const staging = join(parent, `.${randomUUID()}.restore-staging`);
-const previous = join(parent, `.${randomUUID()}.restore-previous`);
-mkdirSync(parent, { recursive: true, mode: 0o700 });
-try {
-  mkdirSync(staging, { recursive: false, mode: 0o700 });
-  for (const file of manifest.files) {
-    const source = join(backupDir, file.path);
-    const target = join(staging, file.path);
-    mkdirSync(dirname(target), { recursive: true, mode: 0o700 });
-    cpSync(source, target);
+  const manifest = JSON.parse(readFileSync(manifestPath, "utf8"));
+  const validation = validateBackupDirectory(backupDir, manifest);
+  if (verifyOnly || dryRun) {
+    console.log(JSON.stringify({
+      valid: true,
+      operation: verifyOnly ? "verify" : "dry-run",
+      schemaVersion: manifest.schemaVersion,
+      createdAt: manifest.createdAt,
+      fileCount: manifest.files.length,
+      databaseSchemaVersion: validation.database.schemaVersion,
+      vaultDocumentCount: validation.vault.documentCount,
+      projectionConsistent: validation.vault.projectionConsistent,
+    }));
+    return;
   }
-  cpSync(manifestPath, join(staging, "backup-manifest.json"));
-  validateBackupDirectory(staging, manifest);
-  quarantineRestoredImDelivery(staging);
 
-  let movedPrevious = false;
+  if (existsSync(stateDir)) {
+    assertWriterInactive(stateDir);
+    if (!force) throw new Error(`state directory exists: ${stateDir}; stop YourChar and pass --force to replace it`);
+  }
+
+  const parent = dirname(stateDir);
+  const staging = join(parent, `.${randomUUID()}.restore-staging`);
+  const previous = join(parent, `.${randomUUID()}.restore-previous`);
+  mkdirSync(parent, { recursive: true, mode: 0o700 });
   try {
-    if (existsSync(stateDir)) {
-      renameSync(stateDir, previous);
-      movedPrevious = true;
-      fsyncDirectory(parent);
+    mkdirSync(staging, { recursive: false, mode: 0o700 });
+    for (const file of manifest.files) {
+      const source = join(backupDir, file.path);
+      const target = join(staging, file.path);
+      mkdirSync(dirname(target), { recursive: true, mode: 0o700 });
+      cpSync(source, target);
     }
-    renameSync(staging, stateDir);
-    fsyncDirectory(parent);
-    if (movedPrevious) rmSync(previous, { recursive: true, force: true });
+    cpSync(manifestPath, join(staging, "backup-manifest.json"));
+    validateBackupDirectory(staging, manifest);
+    quarantineRestoredImDelivery(staging);
+
+    publishRestoredState({ staging, stateDir, previous, parent });
+    console.log(stateDir);
+  } finally {
+    removeBestEffort(staging, "restore staging directory");
+  }
+}
+
+export function publishRestoredState(
+  { staging, stateDir, previous, parent = dirname(stateDir) },
+  overrides = {},
+) {
+  const operations = {
+    exists: existsSync,
+    rename: renameSync,
+    remove: (path) => rmSync(path, { recursive: true, force: true }),
+    fsyncDirectory,
+    warn: (message) => console.error(message),
+    ...overrides,
+  };
+  let movedPrevious = false;
+  let published = false;
+
+  try {
+    if (operations.exists(stateDir)) {
+      operations.rename(stateDir, previous);
+      movedPrevious = true;
+      operations.fsyncDirectory(parent);
+    }
+    operations.rename(staging, stateDir);
+    published = true;
+    operations.fsyncDirectory(parent);
   } catch (error) {
-    if (!existsSync(stateDir) && movedPrevious && existsSync(previous)) {
-      renameSync(previous, stateDir);
-      fsyncDirectory(parent);
+    const rollbackErrors = [];
+    let rollbackChangedParent = false;
+
+    if (published && operations.exists(stateDir)) {
+      try {
+        if (operations.exists(staging)) {
+          throw new Error(`cannot quarantine failed restored state because path exists: ${staging}`);
+        }
+        operations.rename(stateDir, staging);
+        rollbackChangedParent = true;
+      } catch (rollbackError) {
+        rollbackErrors.push(rollbackError);
+      }
+    }
+
+    if (movedPrevious && operations.exists(previous)) {
+      if (operations.exists(stateDir)) {
+        rollbackErrors.push(new Error(
+          `cannot restore previous state while failed restored state remains at: ${stateDir}`,
+        ));
+      } else {
+        try {
+          operations.rename(previous, stateDir);
+          rollbackChangedParent = true;
+        } catch (rollbackError) {
+          rollbackErrors.push(rollbackError);
+        }
+      }
+    }
+
+    if (rollbackChangedParent) {
+      try {
+        operations.fsyncDirectory(parent);
+      } catch (rollbackError) {
+        rollbackErrors.push(rollbackError);
+      }
+    }
+
+    if (published && operations.exists(staging)) {
+      try {
+        operations.remove(staging);
+      } catch (cleanupError) {
+        operations.warn(
+          `warning: failed restored state remains quarantined at ${staging}: ${errorMessage(cleanupError)}`,
+        );
+      }
+    }
+
+    if (rollbackErrors.length > 0) {
+      throw new AggregateError(
+        [error, ...rollbackErrors],
+        `restore publication failed and rollback was incomplete: ${errorMessage(error)}`,
+        { cause: error },
+      );
     }
     throw error;
   }
-  console.log(stateDir);
-} finally {
-  rmSync(staging, { recursive: true, force: true });
-  if (existsSync(previous) && existsSync(stateDir)) rmSync(previous, { recursive: true, force: true });
+
+  // Publication is committed after its parent directory has been synced. Removing the
+  // previous tree is cleanup, not part of the transaction: a partial rm cannot be rolled back.
+  if (movedPrevious) {
+    try {
+      operations.remove(previous);
+    } catch (cleanupError) {
+      operations.warn(
+        `warning: restored state is active; previous state cleanup remains at ${previous}: ${errorMessage(cleanupError)}`,
+      );
+    }
+  }
+}
+
+function removeBestEffort(path, label) {
+  try {
+    rmSync(path, { recursive: true, force: true });
+  } catch (error) {
+    console.error(`warning: failed to remove ${label} at ${path}: ${errorMessage(error)}`);
+  }
+}
+
+function errorMessage(error) {
+  return error instanceof Error ? error.message : String(error);
 }
 
 function fsyncDirectory(directory) {

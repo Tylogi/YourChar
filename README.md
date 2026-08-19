@@ -119,18 +119,29 @@ Default dev server:
 http://127.0.0.1:8765
 ```
 
-Persistent state is stored under `.rp-agent/` by default. Relevant runtime
+Persistent state is stored under `.yourchar/` by default. Relevant runtime
 settings are:
 
 To keep existing installations upgrade-compatible, YourChar retains the legacy
-`.rp-agent/` state directory, `RP_AGENT_*` environment variables,
-`rp-agent.sqlite` database filename, `rp-agent.service` systemd unit, and
-`rp-agent/*` internal protocol identifiers. Do not rename these identifiers in
-an existing installation; they are compatibility names, not the product name.
+`RP_AGENT_*` environment variables, `rp-agent.sqlite` database filename,
+`rp-agent.service` systemd unit, and `rp-agent/*` internal protocol identifiers.
+`YOURCHAR_STATE_DIR` takes precedence over the legacy `RP_AGENT_STATE_DIR`. With
+neither set, a sole existing `.rp-agent/` remains readable; if `.yourchar/` and
+`.rp-agent/` both exist, startup and maintenance scripts fail closed until the
+operator resolves the ambiguity.
+
+The user-service installer migrates a sole legacy directory automatically. It
+stops the existing unit, verifies that no Vault writer is active, creates a
+verified timestamped backup under `backups/`, and atomically renames
+`.rp-agent/` to `.yourchar/` without copying. Symlinks, non-directories, wrong
+ownership, a second state directory, or a failed backup or rename aborts
+installation. Do not rename compatibility database, service, or protocol
+identifiers.
 
 | Variable | Default | Purpose |
 |---|---|---|
-| `RP_AGENT_STATE_DIR` | `.rp-agent` | Pi transcripts, metadata, model settings, and SQLite database |
+| `YOURCHAR_STATE_DIR` | `.yourchar` | Pi transcripts, metadata, model settings, and SQLite database |
+| `RP_AGENT_STATE_DIR` | unset | Legacy state-directory override, used only when `YOURCHAR_STATE_DIR` is unset |
 | `RP_AGENT_TIMEZONE` | `Asia/Shanghai` | Timezone used by quiet hours |
 | `RP_AGENT_QUIET_HOURS` | unset | Delivery pause window such as `22:00-07:00` |
 | `RP_AGENT_DESKTOP_NOTIFICATIONS` | unset | Set to `1` to use the `notify-send` adapter |

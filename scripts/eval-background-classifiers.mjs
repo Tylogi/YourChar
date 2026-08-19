@@ -1,5 +1,6 @@
 import { readFileSync } from "node:fs";
-import { resolve } from "node:path";
+import { join } from "node:path";
+import { resolveStateDirectory } from "./state-directory.mjs";
 import {
   memoryExtractorUserPrompt,
   parseExtractorOutput,
@@ -22,7 +23,8 @@ import {
 const modeArg = process.argv.find((argument) => argument.startsWith("--thinking="))?.split("=")[1] ?? "off";
 if (modeArg !== "on" && modeArg !== "off") throw new Error("--thinking must be on or off");
 const smoke = process.argv.includes("--smoke");
-const config = activeConfig(JSON.parse(readFileSync(resolve(".rp-agent/model-api.json"), "utf8")));
+const configPath = join(resolveStateDirectory(), "model-api.json");
+const config = activeConfig(JSON.parse(readFileSync(configPath, "utf8")));
 if (!config?.enabled || !config.baseUrl || !config.model) throw new Error("the default model API profile is not configured");
 
 const baseRelationship = {

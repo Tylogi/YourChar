@@ -13,7 +13,7 @@ Generic file and shell capabilities are restricted to:
 <stateDir>/workspace
 ```
 
-The default location is `.rp-agent/workspace`. User Profile and character
+The default location is `.yourchar/workspace`. User Profile and character
 SOUL.md files are outside this root and cannot be reached through generic file
 tools or the sandboxed shell. They are available only through their dedicated
 services and MCP authorization switches.

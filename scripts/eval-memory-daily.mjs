@@ -1,5 +1,6 @@
 import { readFileSync } from "node:fs";
-import { resolve } from "node:path";
+import { join } from "node:path";
+import { resolveStateDirectory } from "./state-directory.mjs";
 import {
   memoryExtractorUserPrompt,
   parseExtractorOutput,
@@ -10,7 +11,8 @@ import {
   backgroundThinkingPolicy,
 } from "../dist/src/model/background-thinking-policy.js";
 
-const config = activeConfig(JSON.parse(readFileSync(resolve(".rp-agent/model-api.json"), "utf8")));
+const configPath = join(resolveStateDirectory(), "model-api.json");
+const config = activeConfig(JSON.parse(readFileSync(configPath, "utf8")));
 if (!config?.enabled || !config.baseUrl || !config.model) {
   throw new Error("the default model API profile is not configured");
 }

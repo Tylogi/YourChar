@@ -18,6 +18,7 @@
     "scan:sensitive": "node scripts/scan-sensitive.mjs",
     "backup": "node --disable-warning=ExperimentalWarning scripts/backup-state.mjs",
     "restore": "node --disable-warning=ExperimentalWarning scripts/restore-state.mjs",
+    "migrate:state": "node --disable-warning=ExperimentalWarning scripts/migrate-state-directory.mjs migrate",
     "release:gate": "node scripts/release-gate.mjs",
     "release:gate:real": "node scripts/release-gate.mjs --real"
   },

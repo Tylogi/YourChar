@@ -2,6 +2,7 @@ import { readFileSync, realpathSync } from "node:fs";
 import { basename, join, relative, resolve, sep } from "node:path";
 import { formatSkillsForPrompt, loadSkills, type Skill } from "@earendil-works/pi-coding-agent";
 import type { Clock } from "../app/clock.js";
+import { EPHEMERAL_STATE_DIRECTORY_NAME } from "../app/state-directory.js";
 import type { ConversationSpace } from "../domain/types.js";
 import type { AppDatabase } from "../storage/database.js";
 import type { AgentModule, AgentModuleDetail } from "./types.js";
@@ -219,7 +220,9 @@ export class AgentModuleCatalog {
     options: { cwd?: string; stateDir?: string } = {},
   ) {
     this.cwd = resolve(options.cwd ?? process.cwd());
-    this.agentDir = options.stateDir ? join(resolve(options.stateDir), "pi-agent") : join(this.cwd, ".rp-agent-ephemeral");
+    this.agentDir = options.stateDir
+      ? join(resolve(options.stateDir), "pi-agent")
+      : join(this.cwd, EPHEMERAL_STATE_DIRECTORY_NAME);
   }
 
   listModules(): AgentModule[] {

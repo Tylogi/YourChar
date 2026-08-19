@@ -12,6 +12,7 @@ import {
 import type { Clock } from "../app/clock.js";
 import { SystemClock } from "../app/clock.js";
 import { SessionExecutionQueue } from "../app/session-queue.js";
+import { EPHEMERAL_STATE_DIRECTORY_NAME } from "../app/state-directory.js";
 import { existsSync, readdirSync, realpathSync } from "node:fs";
 import { basename, dirname, join, relative, resolve, sep } from "node:path";
 import {
@@ -455,25 +456,23 @@ export class CompanionKernel {
 
   constructor(options: CompanionKernelOptions | CompanionStore = {}) {
     const normalizedOptions = options instanceof CompanionStore ? { store: options } : options;
-    const configuredStateDir = normalizedOptions.store
-      ? normalizedOptions.store.stateDir
-      : resolveConfiguredStateDir(normalizedOptions.stateDir);
+    this.store = normalizedOptions.store ?? new CompanionStore(normalizedOptions);
+    const configuredStateDir = this.store.stateDir;
     const workspaceDir = resolve(
       normalizedOptions.workspaceDir ??
       (configuredStateDir
         ? join(configuredStateDir, "workspace")
-        : join(process.cwd(), ".rp-agent-ephemeral", "workspace")),
+        : join(process.cwd(), EPHEMERAL_STATE_DIRECTORY_NAME, "workspace")),
     );
     const agentDir = configuredStateDir
       ? join(configuredStateDir, "pi-agent")
-      : join(process.cwd(), ".rp-agent-ephemeral");
+      : join(process.cwd(), EPHEMERAL_STATE_DIRECTORY_NAME);
     assertWorkspaceIsolation(
       workspaceDir,
       configuredStateDir,
       agentSkillDiscoveryRoots(process.cwd(), agentDir),
     );
     this.characterCollaborationReporter = normalizedOptions.characterCollaborationReporter;
-    this.store = normalizedOptions.store ?? new CompanionStore(normalizedOptions);
     this.clock = normalizedOptions.clock ?? this.store.clock ?? new SystemClock();
     this.ownsDatabase = !normalizedOptions.database;
     this.database =
@@ -7966,11 +7965,6 @@ function workspaceActionScope(workspace: ScopedWorkspace): {
     };
   }
   return { conversationSpace: "normal" };
-}
-
-function resolveConfiguredStateDir(value: string | false | undefined): string | undefined {
-  const configured = value === undefined ? process.env.RP_AGENT_STATE_DIR ?? ".rp-agent" : value;
-  return configured === false ? undefined : resolve(configured);
 }
 
 function assertWorkspaceIsolation(

@@ -1,4 +1,5 @@
 import { join, resolve } from "node:path";
+import { EPHEMERAL_STATE_DIRECTORY_NAME } from "./app/state-directory.js";
 import { CompanionKernel, CompanionStore } from "./domain/index.js";
 import {
   createImGatewayFromEnvironment,
@@ -23,8 +24,13 @@ const store = new CompanionStore();
 const workspaceDir = resolve(
   store.stateDir
     ? join(store.stateDir, "workspace")
-    : join(process.cwd(), ".rp-agent-ephemeral", "workspace"),
+    : join(process.cwd(), EPHEMERAL_STATE_DIRECTORY_NAME, "workspace"),
 );
+if (store.stateDirectoryMigrationNeeded) {
+  console.warn(
+    `Using legacy state directory ${store.stateDir}; stop YourChar and run npm run migrate:state before removing .rp-agent compatibility`,
+  );
+}
 const localImGateway = imRuntimeMode === "local"
   ? new LocalImGateway(requiredStateDirectory(store.stateDir), workspaceDir)
   : undefined;

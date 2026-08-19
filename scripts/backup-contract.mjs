@@ -50,9 +50,21 @@ export function payloadFiles(root) {
   return files.sort((left, right) => left.path.localeCompare(right.path));
 }
 
-export function assertWriterInactive(stateDir) {
+export function assertWriterInactive(stateDir, now = new Date()) {
+  if (!(now instanceof Date) || !Number.isFinite(now.getTime())) {
+    throw new Error("writer-lease check requires a valid current time");
+  }
   const databasePath = join(stateDir, "rp-agent.sqlite");
-  if (!existsSync(databasePath)) return;
+  let databaseStatus;
+  try {
+    databaseStatus = lstatSync(databasePath);
+  } catch (error) {
+    if (error?.code === "ENOENT") return;
+    throw error;
+  }
+  if (databaseStatus.isSymbolicLink() || !databaseStatus.isFile()) {
+    throw new Error(`state database must be a regular non-symlink file: ${databasePath}`);
+  }
   const database = new DatabaseSync(databasePath, { readOnly: true });
   try {
     const table = database.prepare(
@@ -62,7 +74,17 @@ export function assertWriterInactive(stateDir) {
     const row = database.prepare(
       "SELECT owner_id, expires_at FROM memory_vault_writer_lease WHERE singleton = 1",
     ).get();
-    if (row?.owner_id && row?.expires_at && String(row.expires_at) > new Date().toISOString()) {
+    if (!row) {
+      throw new Error("Memory Vault writer-lease table has no singleton row; refusing maintenance");
+    }
+    if (!row.owner_id) return;
+    const expiresAt = typeof row.expires_at === "string"
+      ? Date.parse(row.expires_at)
+      : Number.NaN;
+    if (!Number.isFinite(expiresAt)) {
+      throw new Error("Memory Vault writer lease has an owner but no valid expiration");
+    }
+    if (expiresAt > now.getTime()) {
       throw new Error("YourChar is holding the Memory Vault writer lease; stop it before backup or restore");
     }
   } finally {

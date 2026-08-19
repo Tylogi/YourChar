@@ -9,8 +9,9 @@ import {
   BACKUP_SCHEMA_VERSION, assertWriterInactive, payloadFiles, sha256,
   validateBackupDirectory, validateDatabase, validateVault,
 } from "./backup-contract.mjs";
+import { resolveStateDirectory } from "./state-directory.mjs";
 
-const stateDir = resolve(process.argv[2] ?? process.env.RP_AGENT_STATE_DIR ?? ".rp-agent");
+const stateDir = resolveStateDirectory({ explicit: process.argv[2] });
 const destination = resolve(process.argv[3] ?? join("backups", `yourchar-${safeTimestamp()}`));
 const staging = `${destination}.preparing-${randomUUID()}`;
 if (!existsSync(stateDir)) throw new Error(`state directory not found: ${stateDir}`);

@@ -71,9 +71,12 @@ loopback 上的实验性适配器，不属于受支持的远程部署拓扑；�
 Channel Runtime 在状态目录下使用：
 
 ```text
-<RP_AGENT_STATE_DIR>/im-runtime/credentials.json
-<RP_AGENT_STATE_DIR>/im-runtime/spool.json
+<YOURCHAR_STATE_DIR>/im-runtime/credentials.json
+<YOURCHAR_STATE_DIR>/im-runtime/spool.json
 ```
+
+`<YOURCHAR_STATE_DIR>` defaults to `.yourchar`. The legacy
+`RP_AGENT_STATE_DIR` alias is used only when `YOURCHAR_STATE_DIR` is unset.
 
 目录权限为 `0700`，文件以原子方式写入并设为 `0600`。`credentials.json` 可能包含飞书
 App Secret、微信 channel token 和刷新凭据；`spool.json` 可能包含尚未提交的消息正文与

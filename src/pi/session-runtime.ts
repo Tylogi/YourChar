@@ -14,6 +14,7 @@ import {
 import type { Api, Model } from "@earendil-works/pi-ai/compat";
 import type { Clock } from "../app/clock.js";
 import { SystemClock } from "../app/clock.js";
+import { EPHEMERAL_STATE_DIRECTORY_NAME } from "../app/state-directory.js";
 import {
   maxInteractiveThinkingRetries,
   minimumInteractiveThinkingCharacters,
@@ -370,7 +371,9 @@ export class PiSessionRuntime {
     );
     this.conversationIndexPath = this.stateDir ? join(this.stateDir, "conversations.json") : undefined;
     this.piSessionDir = this.stateDir ? join(this.stateDir, "pi-sessions") : undefined;
-    this.piAgentDir = this.stateDir ? join(this.stateDir, "pi-agent") : join(this.cwd, ".rp-agent-ephemeral");
+    this.piAgentDir = this.stateDir
+      ? join(this.stateDir, "pi-agent")
+      : join(this.cwd, EPHEMERAL_STATE_DIRECTORY_NAME);
     this.loadConversationIndex();
   }
 

@@ -1,10 +1,14 @@
 import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { dirname, join, resolve } from "node:path";
+import { dirname, join } from "node:path";
 import { AsyncLocalStorage } from "node:async_hooks";
 import type { Clock } from "../app/clock.js";
 import { SystemClock } from "../app/clock.js";
 import type { IdGenerator } from "../app/id-generator.js";
 import { SystemIdGenerator } from "../app/id-generator.js";
+import {
+  resolveStateDirectorySelection,
+  type ResolvedStateDirectory,
+} from "../app/state-directory.js";
 import type { ObservabilitySink } from "../storage/observability.js";
 import { TraceArchive } from "../storage/trace-archive.js";
 import { modelContextTraceScope } from "./types.js";
@@ -49,6 +53,8 @@ const defaultModelProfileId = "default";
 
 export class CompanionStore {
   readonly stateDir?: string;
+  readonly stateDirectorySource: ResolvedStateDirectory["source"];
+  readonly stateDirectoryMigrationNeeded: boolean;
   readonly clock: Clock;
   readonly idGenerator: IdGenerator;
   readonly actions: ActionRecord[] = [];
@@ -65,9 +71,10 @@ export class CompanionStore {
   private modelRequestCount = 0;
 
   constructor(options: CompanionStoreOptions = {}) {
-    const stateDir =
-      options.stateDir === undefined ? process.env.RP_AGENT_STATE_DIR ?? ".rp-agent" : options.stateDir;
-    this.stateDir = stateDir === false ? undefined : resolve(stateDir);
+    const stateDirectory = resolveStateDirectorySelection({ stateDir: options.stateDir });
+    this.stateDir = stateDirectory.stateDir;
+    this.stateDirectorySource = stateDirectory.source;
+    this.stateDirectoryMigrationNeeded = stateDirectory.migrationNeeded;
     this.clock = options.clock ?? new SystemClock();
     this.idGenerator = options.idGenerator ?? new SystemIdGenerator();
     this.modelApiConfigPath = this.stateDir ? join(this.stateDir, "model-api.json") : undefined;
