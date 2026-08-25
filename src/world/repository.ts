@@ -4,12 +4,16 @@ import {
   type CharacterActivityPlan,
   type CharacterAutonomyPolicy,
   type CharacterRuntimeState,
+  type CharacterWorldAttribute,
   type CharacterWorldMembership,
   type ProactiveMessage,
   type ProactiveFeedbackType,
   type ProactiveMessageStatus,
   type ProactiveTopicPolicy,
   type RoleWorld,
+  type WorldAttributeDefinition,
+  type WorldAttributeEvent,
+  type WorldSharedAttribute,
   type WorldCapabilityId,
   type WorldEvent,
   type WorldPlace,
@@ -131,6 +135,231 @@ export class WorldRepository {
 
   deletePlace(id: string): boolean {
     return Number(this.database.connection.prepare("DELETE FROM role_places WHERE id = ?").run(id).changes) > 0;
+  }
+
+  createAttributeDefinition(definition: WorldAttributeDefinition): WorldAttributeDefinition {
+    this.database.connection.prepare(`
+      INSERT INTO world_attribute_definitions(
+        id, world_id, attribute_key, name, value_scope, description,
+        min_value, max_value, default_value,
+        agent_mutable, agent_can_increase, agent_can_decrease, agent_max_delta,
+        visible_to_agent, status, created_at, updated_at,
+        analysis_enabled, increase_rule, increase_delta, decrease_rule, decrease_delta
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(
+      definition.id,
+      definition.worldId,
+      definition.key,
+      definition.name,
+      definition.scope,
+      definition.description,
+      definition.minValue,
+      definition.maxValue,
+      definition.defaultValue,
+      0,
+      definition.increaseRule ? 1 : 0,
+      definition.decreaseRule ? 1 : 0,
+      Math.max(definition.increaseDelta, definition.decreaseDelta),
+      definition.visibleToAgent ? 1 : 0,
+      definition.status,
+      definition.createdAt,
+      definition.updatedAt,
+      definition.analysisEnabled ? 1 : 0,
+      definition.increaseRule,
+      definition.increaseDelta,
+      definition.decreaseRule,
+      definition.decreaseDelta,
+    );
+    return definition;
+  }
+
+  getAttributeDefinition(id: string): WorldAttributeDefinition | undefined {
+    const row = this.database.connection.prepare(`
+      SELECT * FROM world_attribute_definitions WHERE id = ?
+    `).get(id) as Row | undefined;
+    return row ? mapAttributeDefinition(row) : undefined;
+  }
+
+  getAttributeDefinitionByKey(worldId: string, key: string): WorldAttributeDefinition | undefined {
+    const row = this.database.connection.prepare(`
+      SELECT * FROM world_attribute_definitions WHERE world_id = ? AND attribute_key = ?
+    `).get(worldId, key) as Row | undefined;
+    return row ? mapAttributeDefinition(row) : undefined;
+  }
+
+  listAttributeDefinitions(worldId: string, includeArchived = false): WorldAttributeDefinition[] {
+    return (this.database.connection.prepare(`
+      SELECT * FROM world_attribute_definitions
+      WHERE world_id = ? AND (status = 'active' OR ? = 1)
+      ORDER BY status, name, attribute_key, id
+    `).all(worldId, includeArchived ? 1 : 0) as Row[]).map(mapAttributeDefinition);
+  }
+
+  updateAttributeDefinition(definition: WorldAttributeDefinition): WorldAttributeDefinition {
+    this.database.connection.prepare(`
+      UPDATE world_attribute_definitions SET
+        name = ?, description = ?, min_value = ?, max_value = ?, default_value = ?,
+        agent_mutable = ?, agent_can_increase = ?, agent_can_decrease = ?, agent_max_delta = ?,
+        visible_to_agent = ?, status = ?, updated_at = ?,
+        analysis_enabled = ?, increase_rule = ?, increase_delta = ?,
+        decrease_rule = ?, decrease_delta = ?
+      WHERE id = ?
+    `).run(
+      definition.name,
+      definition.description,
+      definition.minValue,
+      definition.maxValue,
+      definition.defaultValue,
+      0,
+      definition.increaseRule ? 1 : 0,
+      definition.decreaseRule ? 1 : 0,
+      Math.max(definition.increaseDelta, definition.decreaseDelta),
+      definition.visibleToAgent ? 1 : 0,
+      definition.status,
+      definition.updatedAt,
+      definition.analysisEnabled ? 1 : 0,
+      definition.increaseRule,
+      definition.increaseDelta,
+      definition.decreaseRule,
+      definition.decreaseDelta,
+      definition.id,
+    );
+    return definition;
+  }
+
+  hasAttributeValuesOutsideRange(attributeId: string, minValue: number, maxValue: number): boolean {
+    const characterValue = this.database.connection.prepare(`
+      SELECT 1 FROM character_world_attribute_values
+      WHERE attribute_id = ? AND (value < ? OR value > ?) LIMIT 1
+    `).get(attributeId, minValue, maxValue);
+    const worldValue = this.database.connection.prepare(`
+      SELECT 1 FROM world_attribute_values
+      WHERE attribute_id = ? AND (value < ? OR value > ?) LIMIT 1
+    `).get(attributeId, minValue, maxValue);
+    return Boolean(characterValue || worldValue);
+  }
+
+  listCharacterAttributes(
+    worldId: string,
+    characterId: string,
+    includeArchived = false,
+  ): CharacterWorldAttribute[] {
+    const rows = this.database.connection.prepare(`
+      SELECT d.*, v.character_id, v.value, v.updated_at AS value_updated_at
+      FROM world_attribute_definitions d
+      LEFT JOIN character_world_attribute_values v
+        ON v.world_id = d.world_id AND v.attribute_id = d.id AND v.character_id = ?
+      WHERE d.world_id = ? AND d.value_scope = 'character' AND (d.status = 'active' OR ? = 1)
+      ORDER BY d.status, d.name, d.attribute_key, d.id
+    `).all(characterId, worldId, includeArchived ? 1 : 0) as Row[];
+    return rows.map((row) => mapCharacterAttribute(row, characterId));
+  }
+
+  listWorldAttributes(worldId: string, includeArchived = false): WorldSharedAttribute[] {
+    const rows = this.database.connection.prepare(`
+      SELECT d.*, v.value, v.updated_at AS value_updated_at
+      FROM world_attribute_definitions d
+      LEFT JOIN world_attribute_values v
+        ON v.world_id = d.world_id AND v.attribute_id = d.id
+      WHERE d.world_id = ? AND d.value_scope = 'world' AND (d.status = 'active' OR ? = 1)
+      ORDER BY d.status, d.name, d.attribute_key, d.id
+    `).all(worldId, includeArchived ? 1 : 0) as Row[];
+    return rows.map(mapWorldAttribute);
+  }
+
+  upsertCharacterAttributeValue(
+    worldId: string,
+    characterId: string,
+    attributeId: string,
+    value: number,
+    updatedAt: string,
+  ): void {
+    this.database.connection.prepare(`
+      INSERT INTO character_world_attribute_values(
+        world_id, character_id, attribute_id, value, updated_at
+      ) VALUES (?, ?, ?, ?, ?)
+      ON CONFLICT(world_id, character_id, attribute_id) DO UPDATE SET
+        value = excluded.value,
+        updated_at = excluded.updated_at
+    `).run(worldId, characterId, attributeId, value, updatedAt);
+  }
+
+  upsertWorldAttributeValue(
+    worldId: string,
+    attributeId: string,
+    value: number,
+    updatedAt: string,
+  ): void {
+    this.database.connection.prepare(`
+      INSERT INTO world_attribute_values(world_id, attribute_id, value, updated_at)
+      VALUES (?, ?, ?, ?)
+      ON CONFLICT(world_id, attribute_id) DO UPDATE SET
+        value = excluded.value,
+        updated_at = excluded.updated_at
+    `).run(worldId, attributeId, value, updatedAt);
+  }
+
+  createAttributeEvent(event: WorldAttributeEvent): WorldAttributeEvent {
+    this.database.connection.prepare(`
+      INSERT INTO world_attribute_events(
+        id, world_id, character_id, attribute_id, source,
+        requested_delta, applied_delta, before_value, after_value,
+        summary, idempotency_key, analysis_direction, rule_snapshot,
+        evidence, confidence, source_reference_id, created_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(idempotency_key) DO NOTHING
+    `).run(
+      event.id,
+      event.worldId,
+      event.characterId ?? null,
+      event.attributeId,
+      event.source,
+      event.requestedDelta,
+      event.appliedDelta,
+      event.beforeValue,
+      event.afterValue,
+      event.summary,
+      event.idempotencyKey,
+      event.analysisDirection ?? null,
+      event.ruleSnapshot ?? "",
+      event.evidence ?? "",
+      event.confidence ?? null,
+      event.sourceReferenceId ?? null,
+      event.createdAt,
+    );
+    return this.findAttributeEventByIdempotencyKey(event.idempotencyKey)!;
+  }
+
+  findAttributeEventByIdempotencyKey(idempotencyKey: string): WorldAttributeEvent | undefined {
+    const row = this.database.connection.prepare(`
+      SELECT e.*, d.attribute_key, d.value_scope AS attribute_scope
+      FROM world_attribute_events e
+      JOIN world_attribute_definitions d ON d.id = e.attribute_id AND d.world_id = e.world_id
+      WHERE e.idempotency_key = ?
+    `).get(idempotencyKey) as Row | undefined;
+    return row ? mapAttributeEvent(row) : undefined;
+  }
+
+  listAttributeEvents(characterId: string, worldId: string, limit = 20): WorldAttributeEvent[] {
+    const bounded = Math.max(1, Math.min(Math.floor(limit), 100));
+    return (this.database.connection.prepare(`
+      SELECT e.*, d.attribute_key, d.value_scope AS attribute_scope
+      FROM world_attribute_events e
+      JOIN world_attribute_definitions d ON d.id = e.attribute_id AND d.world_id = e.world_id
+      WHERE e.character_id = ? AND e.world_id = ? AND d.value_scope = 'character'
+      ORDER BY e.created_at DESC, e.id DESC LIMIT ?
+    `).all(characterId, worldId, bounded) as Row[]).map(mapAttributeEvent);
+  }
+
+  listWorldAttributeEvents(worldId: string, limit = 20): WorldAttributeEvent[] {
+    const bounded = Math.max(1, Math.min(Math.floor(limit), 100));
+    return (this.database.connection.prepare(`
+      SELECT e.*, d.attribute_key, d.value_scope AS attribute_scope
+      FROM world_attribute_events e
+      JOIN world_attribute_definitions d ON d.id = e.attribute_id AND d.world_id = e.world_id
+      WHERE e.world_id = ? AND d.value_scope = 'world'
+      ORDER BY e.created_at DESC, e.id DESC LIMIT ?
+    `).all(worldId, bounded) as Row[]).map(mapAttributeEvent);
   }
 
   getMembership(characterId: string): CharacterWorldMembership | undefined {
@@ -676,6 +905,86 @@ function mapMembership(row: Row): CharacterWorldMembership {
     ...(homePlaceId ? { homePlaceId } : {}),
     createdAt: String(row.created_at),
     updatedAt: String(row.updated_at),
+  };
+}
+
+function mapAttributeDefinition(row: Row): WorldAttributeDefinition {
+  return {
+    id: String(row.id),
+    worldId: String(row.world_id),
+    key: String(row.attribute_key),
+    name: String(row.name),
+    scope: row.value_scope === "world" ? "world" : "character",
+    description: String(row.description),
+    minValue: Number(row.min_value),
+    maxValue: Number(row.max_value),
+    defaultValue: Number(row.default_value),
+    analysisEnabled: Boolean(row.analysis_enabled),
+    increaseRule: String(row.increase_rule ?? ""),
+    increaseDelta: Number(row.increase_delta ?? 1),
+    decreaseRule: String(row.decrease_rule ?? ""),
+    decreaseDelta: Number(row.decrease_delta ?? 1),
+    visibleToAgent: Boolean(row.visible_to_agent),
+    status: String(row.status) as WorldAttributeDefinition["status"],
+    createdAt: String(row.created_at),
+    updatedAt: String(row.updated_at),
+  };
+}
+
+function mapCharacterAttribute(row: Row, characterId: string): CharacterWorldAttribute {
+  const definition = mapAttributeDefinition(row);
+  if (definition.scope !== "character") throw new Error("world attribute scope mismatch");
+  const valueUpdatedAt = nullableString(row.value_updated_at);
+  return {
+    ...definition,
+    scope: "character",
+    characterId,
+    value: row.value === null || row.value === undefined ? definition.defaultValue : Number(row.value),
+    ...(valueUpdatedAt ? { valueUpdatedAt } : {}),
+  };
+}
+
+function mapWorldAttribute(row: Row): WorldSharedAttribute {
+  const definition = mapAttributeDefinition(row);
+  if (definition.scope !== "world") throw new Error("world attribute scope mismatch");
+  const valueUpdatedAt = nullableString(row.value_updated_at);
+  return {
+    ...definition,
+    scope: "world",
+    value: row.value === null || row.value === undefined ? definition.defaultValue : Number(row.value),
+    ...(valueUpdatedAt ? { valueUpdatedAt } : {}),
+  };
+}
+
+function mapAttributeEvent(row: Row): WorldAttributeEvent {
+  return {
+    id: String(row.id),
+    worldId: String(row.world_id),
+    attributeScope: row.attribute_scope === "world" ? "world" : "character",
+    ...(typeof row.character_id === "string" && row.character_id
+      ? { characterId: row.character_id }
+      : {}),
+    attributeId: String(row.attribute_id),
+    attributeKey: String(row.attribute_key),
+    source: String(row.source) as WorldAttributeEvent["source"],
+    requestedDelta: Number(row.requested_delta),
+    appliedDelta: Number(row.applied_delta),
+    beforeValue: Number(row.before_value),
+    afterValue: Number(row.after_value),
+    summary: String(row.summary),
+    idempotencyKey: String(row.idempotency_key),
+    ...(row.analysis_direction === "increase" || row.analysis_direction === "decrease"
+      ? { analysisDirection: row.analysis_direction }
+      : {}),
+    ...(typeof row.rule_snapshot === "string" && row.rule_snapshot
+      ? { ruleSnapshot: row.rule_snapshot }
+      : {}),
+    ...(typeof row.evidence === "string" && row.evidence ? { evidence: row.evidence } : {}),
+    ...(typeof row.confidence === "number" ? { confidence: Number(row.confidence) } : {}),
+    ...(typeof row.source_reference_id === "string" && row.source_reference_id
+      ? { sourceReferenceId: row.source_reference_id }
+      : {}),
+    createdAt: String(row.created_at),
   };
 }
 

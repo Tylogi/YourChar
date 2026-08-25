@@ -96,13 +96,13 @@ class FakeImGateway implements ImGateway {
   }
 }
 
-test("schema v39 contains the final character-routed IM tables without schedule coupling", () => {
+test("current schema contains character-routed IM tables and scoped interaction state", () => {
   const database = new AppDatabase(":memory:");
   try {
     const version = database.connection.prepare(
       "SELECT MAX(version) AS version FROM schema_migrations",
     ).get() as { version: number };
-    assert.equal(Number(version.version), 39);
+    assert.equal(Number(version.version), 46);
     const tables = database.connection.prepare(`
       SELECT name FROM sqlite_master
       WHERE type = 'table' AND name LIKE 'im_%'

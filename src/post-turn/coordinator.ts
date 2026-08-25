@@ -8,6 +8,7 @@ import type { AgentModuleCatalog } from "../modules/catalog.js";
 import {
   interactionStateMcpModuleId,
   relationshipStateMcpModuleId,
+  worldStateMcpModuleId,
 } from "../modules/catalog.js";
 import type { RelationshipRepository } from "../relationship/repository.js";
 import type { RelationshipService } from "../relationship/service.js";
@@ -16,6 +17,7 @@ import type {
   RelationshipExtractionJob,
 } from "../relationship/types.js";
 import { parsePostTurnAnalysis, stablePostTurnAnalyzerPrompt } from "./extractor.js";
+import type { WorldService } from "../world/service.js";
 import type {
   PostTurnAnalysisInput,
   PostTurnAnalysisKind,
@@ -28,25 +30,31 @@ export class PostTurnCoordinator {
   private scheduled = false;
   private processing?: Promise<void>;
   private disposed = false;
+  private readonly enabled: boolean;
 
   constructor(
     readonly repository: RelationshipRepository,
     readonly relationshipService: RelationshipService,
     private readonly interactionService: InteractionService,
+    private readonly worldService: WorldService,
     private readonly modules: AgentModuleCatalog,
     private readonly clock: Clock,
     private readonly idGenerator: IdGenerator,
     private readonly analyzer: PostTurnAnalyzer,
     private readonly onInteractionApplied: (result: InteractionTransitionResult) => void = () => undefined,
+    options: { enabled?: boolean } = {},
   ) {
+    this.enabled = options.enabled !== false;
+    if (!this.enabled) return;
     this.repository.recoverExpired(this.now());
     this.schedule();
   }
 
   enqueueTurn(log: ContextLogEntry, context: PostTurnEnqueueContext): RelationshipExtractionJob | undefined {
+    if (!this.enabled) return undefined;
     if (log.status !== "completed" || !context.characterId) return undefined;
     const relationshipRequested = this.modules.isEnabled(relationshipStateMcpModuleId);
-    const interaction = this.interactionService.get(log.sessionId);
+    const interaction = this.interactionService.get(log.sessionId, { conversationSpace: "normal" });
     const start = context.interactionStateAtTurnStart;
     const interactionRequested = this.modules.isEnabled(interactionStateMcpModuleId) &&
       log.mode === "sms" &&
@@ -58,9 +66,13 @@ export class PostTurnCoordinator {
       interaction.presence === "co_present" &&
       !interaction.pendingEventId &&
       interaction.revision === start.revision;
+    const worldAttributes = log.mode === "sms" && this.modules.isEnabled(worldStateMcpModuleId)
+      ? this.worldService.attributeAnalysisContext(context.characterId)
+      : undefined;
     const analysisKinds: PostTurnAnalysisKind[] = [
       ...(relationshipRequested ? ["relationship" as const] : []),
       ...(interactionRequested ? ["interaction" as const] : []),
+      ...(worldAttributes ? ["world_attributes" as const] : []),
     ];
     const now = this.now();
     const enabled = analysisKinds.length > 0;
@@ -81,7 +93,8 @@ export class PostTurnCoordinator {
       attempts: 0,
       maxAttempts: 3,
       inputTokenEstimate: enabled
-        ? estimateTurnTokens([log]) + estimateTokens(stablePostTurnAnalyzerPrompt) + 350
+        ? estimateTurnTokens([log]) + estimateTokens(stablePostTurnAnalyzerPrompt) +
+          estimateTokens(JSON.stringify(worldAttributes ?? {})) + 350
         : 0,
       resultCount: 0,
       relationshipResultCount: 0,
@@ -97,10 +110,12 @@ export class PostTurnCoordinator {
   status(): RelationshipCoordinatorStatus {
     const relationshipEnabled = this.modules.isEnabled(relationshipStateMcpModuleId);
     const interactionFallbackEnabled = this.modules.isEnabled(interactionStateMcpModuleId);
+    const worldAttributeAnalysisEnabled = this.modules.isEnabled(worldStateMcpModuleId);
     return {
-      enabled: relationshipEnabled || interactionFallbackEnabled,
+      enabled: relationshipEnabled || interactionFallbackEnabled || worldAttributeAnalysisEnabled,
       relationshipEnabled,
       interactionFallbackEnabled,
+      worldAttributeAnalysisEnabled,
       pendingCount: this.repository.pendingCount(),
       estimatedTokensLast24Hours: this.repository.estimatedTokensSince(
         new Date(this.clock.now().getTime() - 24 * 60 * 60_000).toISOString(),
@@ -116,6 +131,7 @@ export class PostTurnCoordinator {
   }
 
   async drain(): Promise<void> {
+    if (!this.enabled) return;
     this.schedule();
     while (this.scheduled || this.processing) {
       await this.processing;
@@ -130,7 +146,7 @@ export class PostTurnCoordinator {
   }
 
   private schedule(): void {
-    if (this.disposed || this.scheduled) return;
+    if (!this.enabled || this.disposed || this.scheduled) return;
     this.scheduled = true;
     setTimeout(() => {
       this.scheduled = false;
@@ -189,6 +205,12 @@ export class PostTurnCoordinator {
       const interaction = requestedAnalyses.includes("interaction")
         ? this.interactionInput(job)
         : undefined;
+      const worldAttributes = requestedAnalyses.includes("world_attributes")
+        ? this.worldAttributeInput(job)
+        : undefined;
+      const completedWorldActions = worldAttributes
+        ? this.completedWorldActions(log, job.characterId, worldAttributes.worldId)
+        : [];
       const input: PostTurnAnalysisInput = {
         mode: job.mode,
         characterId: job.characterId,
@@ -213,6 +235,8 @@ export class PostTurnCoordinator {
           },
         } : {}),
         ...(interaction ? { interaction } : {}),
+        ...(worldAttributes ? { worldAttributes } : {}),
+        ...(completedWorldActions.length ? { completedWorldActions } : {}),
       };
       const raw = await this.analyzer(input);
       if (this.disposed || claimLost) return;
@@ -229,6 +253,7 @@ export class PostTurnCoordinator {
             sessionId: fresh.sessionId,
             characterId: fresh.characterId,
             mode: fresh.mode,
+            scope: { conversationSpace: "normal" },
             sourceContextLogId: fresh.sourceContextLogId,
             expectedRevision: fresh.interactionRevision,
             userText: log.requestText,
@@ -236,6 +261,19 @@ export class PostTurnCoordinator {
             decision: analysis.interaction,
           })
         : undefined;
+      const worldAttributeEvents = activeAfterAnalysis.includes("world_attributes") && worldAttributes
+        ? this.worldService.applyAttributeAnalysis({
+            context: worldAttributes,
+            decisions: analysis.worldAttributes,
+            source: "post_turn_analysis",
+            sourceReferenceId: fresh.sourceContextLogId,
+            evidenceTexts: [
+              log.requestText,
+              log.reply,
+              ...completedWorldActions.map((action) => action.summary),
+            ],
+          })
+        : [];
       if (interactionResult) {
         try {
           this.onInteractionApplied(interactionResult);
@@ -245,9 +283,10 @@ export class PostTurnCoordinator {
       }
       const relationshipResultCount = relationshipEvent ? 1 : 0;
       const interactionResultCount = interactionResult ? 1 : 0;
+      const worldAttributeResultCount = worldAttributeEvents.length;
       this.repository.finish(job.id, "completed", {
         durationMs: Date.now() - started,
-        resultCount: relationshipResultCount + interactionResultCount,
+        resultCount: relationshipResultCount + interactionResultCount + worldAttributeResultCount,
         relationshipResultCount,
         interactionResultCount,
       }, this.now(), claim);
@@ -266,13 +305,47 @@ export class PostTurnCoordinator {
   private activeAnalyses(job: RelationshipExtractionJob): PostTurnAnalysisKind[] {
     return job.analysisKinds.filter((kind) => {
       if (kind === "relationship") return this.modules.isEnabled(relationshipStateMcpModuleId);
-      return this.modules.isEnabled(interactionStateMcpModuleId) && Boolean(this.interactionInput(job));
+      if (kind === "interaction") {
+        return this.modules.isEnabled(interactionStateMcpModuleId) && Boolean(this.interactionInput(job));
+      }
+      return this.modules.isEnabled(worldStateMcpModuleId) && Boolean(this.worldAttributeInput(job));
     });
+  }
+
+  private worldAttributeInput(job: RelationshipExtractionJob): PostTurnAnalysisInput["worldAttributes"] | undefined {
+    return job.mode === "sms" ? this.worldService.attributeAnalysisContext(job.characterId) : undefined;
+  }
+
+  private completedWorldActions(
+    log: ContextLogEntry,
+    characterId: string,
+    worldId: string,
+  ): NonNullable<PostTurnAnalysisInput["completedWorldActions"]> {
+    const seen = new Set<string>();
+    return log.actions.flatMap((action) => {
+      if (action.status !== "completed" || action.actionType !== "perform_place_action") return [];
+      const eventId = typeof action.payload.worldEventId === "string" ? action.payload.worldEventId : "";
+      const capabilityId = typeof action.payload.capabilityId === "string" ? action.payload.capabilityId : "";
+      if (!eventId || !capabilityId || seen.has(eventId)) return [];
+      const event = this.worldService.repository.getEvent(eventId);
+      if (
+        !event || event.worldId !== worldId || event.source !== "agent_tool" ||
+        !event.participantIds.includes(characterId)
+      ) return [];
+      seen.add(eventId);
+      return [{
+        actionType: "perform_place_action" as const,
+        eventId,
+        summary: event.summary,
+        capabilityId,
+        ...(event.placeId ? { placeId: event.placeId } : {}),
+      }];
+    }).slice(0, 8);
   }
 
   private interactionInput(job: RelationshipExtractionJob): PostTurnAnalysisInput["interaction"] | undefined {
     if (job.mode !== "sms" || job.interactionPresence !== "co_present" || !job.interactionRevision) return undefined;
-    const state = this.interactionService.get(job.sessionId);
+    const state = this.interactionService.get(job.sessionId, { conversationSpace: "normal" });
     if (
       !state ||
       state.characterId !== job.characterId ||
@@ -302,9 +375,10 @@ export class PostTurnCoordinator {
 }
 
 function triggerReason(kinds: PostTurnAnalysisKind[]): string {
-  if (kinds.length === 2) return "private_turn_post_review";
+  if (kinds.length > 1) return "private_turn_post_review";
   if (kinds[0] === "relationship") return "private_turn_review";
   if (kinds[0] === "interaction") return "private_turn_interaction_review";
+  if (kinds[0] === "world_attributes") return "private_turn_world_attribute_review";
   return "all_post_turn_consumers_inactive";
 }
 

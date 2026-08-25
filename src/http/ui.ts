@@ -380,7 +380,10 @@ export function renderAppHtml(): string {
       background: #d9dddb;
     }
     .conversation-header-avatar.group > .group-avatar-cluster { width: 100%; height: 100%; }
-    .chat-thread { min-width: 0; min-height: 0; display: grid; grid-template-rows: 1fr auto; overflow: hidden; }
+    .chat-thread { min-width: 0; min-height: 0; display: grid; grid-template-rows: auto minmax(0, 1fr) auto; overflow: hidden; }
+    .chat-thread > .incognito-notice { grid-row: 1; }
+    .chat-thread > .messages { grid-row: 2; }
+    .chat-thread > .composer { grid-row: 3; }
     .conversation-list-toggle { display: none; }
     .settings-page {
       grid-column: 1 / -1;
@@ -922,6 +925,93 @@ export function renderAppHtml(): string {
       color: var(--muted);
       font-size: 12px;
     }
+    .owned-skill-workbench {
+      min-width: 0;
+      display: grid;
+      gap: 12px;
+      padding-block: 2px 4px;
+    }
+    .owned-skill-workbench-head,
+    .owned-skill-detail-head,
+    .owned-skill-review-bar,
+    .owned-skill-learning {
+      min-width: 0;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+    }
+    .owned-skill-workbench-head > div,
+    .owned-skill-detail-head > div:first-child { min-width: 0; display: grid; gap: 3px; }
+    .owned-skill-workbench-head strong { font-size: 14px; }
+    .owned-skill-workbench-head span,
+    .owned-skill-detail-head span,
+    .owned-skill-description { color: var(--muted); font-size: 11px; line-height: 1.5; }
+    .owned-skill-workbench-head button,
+    .owned-skill-detail-actions button,
+    .owned-skill-review-bar button { width: auto; }
+    .owned-skill-layout {
+      min-width: 0;
+      display: grid;
+      grid-template-columns: minmax(190px, .72fr) minmax(0, 1.6fr);
+      gap: 12px;
+      align-items: start;
+    }
+    .owned-skill-list { min-width: 0; display: grid; gap: 7px; }
+    .owned-skill-card {
+      width: 100%;
+      min-width: 0;
+      padding: 10px 11px;
+      border: 1px solid var(--line);
+      border-radius: 7px;
+      display: grid;
+      gap: 6px;
+      text-align: left;
+      background: #fff;
+      color: inherit;
+    }
+    .owned-skill-card:hover,
+    .owned-skill-card.active { border-color: #9fcbb1; background: #f4faf6; }
+    .owned-skill-card-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+    .owned-skill-card-head strong { min-width: 0; overflow-wrap: anywhere; font-size: 12px; }
+    .owned-skill-card p { margin: 0; color: var(--muted); font-size: 10px; line-height: 1.45; }
+    .owned-skill-card-meta,
+    .owned-skill-tags { display: flex; flex-wrap: wrap; gap: 5px; color: var(--muted); font-size: 9px; }
+    .owned-skill-badge { padding: 2px 5px; border-radius: 4px; background: #edf1ef; color: #53605a; }
+    .owned-skill-badge.active { background: #e5f6eb; color: #167248; }
+    .owned-skill-badge.draft { background: #fff4d9; color: #83621d; }
+    .owned-skill-detail {
+      min-width: 0;
+      border: 1px solid var(--line);
+      border-radius: 7px;
+      overflow: hidden;
+      background: #fff;
+    }
+    .owned-skill-detail-head { padding: 11px 13px; border-bottom: 1px solid var(--line); background: #f8faf9; }
+    .owned-skill-detail-actions { flex: 0 0 auto; display: flex; gap: 7px; }
+    .owned-skill-description { margin: 0; padding: 10px 13px 0; }
+    .owned-skill-review-bar { padding: 10px 13px; }
+    .owned-skill-review-bar select { width: auto; min-width: 132px; }
+    .owned-skill-learning { padding: 10px 13px; border-top: 1px solid var(--line); }
+    .owned-skill-learning strong { font-size: 12px; }
+    .owned-skill-proposals { display: grid; gap: 8px; padding: 0 13px 13px; }
+    .owned-skill-proposal { padding: 10px; border: 1px solid #ead39c; border-radius: 6px; background: #fffaf0; display: grid; gap: 8px; }
+    .owned-skill-proposal p { margin: 0; color: #5f5540; font-size: 11px; line-height: 1.5; }
+    .owned-skill-proposal-actions { display: flex; gap: 7px; justify-content: flex-end; }
+    .owned-skill-proposal-actions button { width: auto; }
+    .owned-skill-empty { min-height: 110px; display: grid; place-items: center; padding: 18px; border: 1px dashed var(--line); border-radius: 7px; color: var(--muted); text-align: center; font-size: 11px; }
+    .owned-skill-dialog { width: min(720px, calc(100vw - 28px)); }
+    .owned-skill-dialog form { display: grid; gap: 16px; }
+    .owned-skill-form-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+    .owned-skill-form-grid > label:not(.toggle) { display: grid; gap: 6px; color: var(--muted); font-size: 11px; }
+    .owned-skill-form-grid .full { grid-column: 1 / -1; }
+    .owned-skill-form-grid textarea { width: 100%; resize: vertical; }
+    .owned-skill-form-grid textarea:not(.owned-skill-markdown-editor) { min-height: 64px; }
+    .owned-skill-markdown-editor { min-height: 230px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; line-height: 1.55; }
+    .owned-skill-capabilities { margin: 0; padding: 10px; border: 1px solid var(--line); }
+    .owned-skill-capabilities legend { padding-inline: 4px; color: var(--muted); font-size: 11px; }
+    .owned-skill-capabilities > div { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 7px 12px; }
+    .owned-skill-capabilities label { display: flex; align-items: center; gap: 7px; font-size: 11px; }
     .character-function-advanced {
       min-width: 0;
       border-top: 1px solid var(--line);
@@ -945,7 +1035,7 @@ export function renderAppHtml(): string {
     }
     .character-function-advanced[open] > summary svg { transform: rotate(90deg); }
     .character-function-advanced > form { padding-top: 2px; }
-    .function-profile-grid {
+    .collaboration-profile-grid {
       display: grid;
       grid-template-columns: minmax(0, 1fr) 160px;
       gap: 12px;
@@ -953,18 +1043,18 @@ export function renderAppHtml(): string {
       border-top: 1px solid var(--line);
       border-bottom: 1px solid var(--line);
     }
-    .function-profile-grid label {
+    .collaboration-profile-grid label {
       min-width: 0;
       display: grid;
       gap: 6px;
       color: var(--muted);
       font-size: 12px;
     }
-    .function-profile-grid input,
-    .function-profile-grid select,
-    .function-profile-grid textarea { width: 100%; min-width: 0; }
-    .function-profile-grid .full { grid-column: 1 / -1; }
-    .function-profile-grid textarea { min-height: 76px; resize: vertical; }
+    .collaboration-profile-grid input,
+    .collaboration-profile-grid select,
+    .collaboration-profile-grid textarea { width: 100%; min-width: 0; }
+    .collaboration-profile-grid .full { grid-column: 1 / -1; }
+    .collaboration-profile-grid textarea { min-height: 76px; resize: vertical; }
     .capability-section-head {
       display: flex;
       align-items: baseline;
@@ -1188,6 +1278,16 @@ export function renderAppHtml(): string {
     }
     .life-proactive-pause[hidden] { display: none; }
     .life-proactive-pause button { min-height: 30px; padding: 0 9px; }
+    .life-world-attributes { display: grid; gap: 10px; padding: 14px 0; border-top: 1px solid var(--line); border-bottom: 1px solid var(--line); }
+    .life-world-attributes-head { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; }
+    .life-world-attributes-head h5 { margin: 0; font-size: 13px; }
+    .life-world-attribute-list { display: grid; gap: 8px; }
+    .life-world-attribute-row { display: grid; grid-template-columns: minmax(0, 1fr) minmax(110px, 180px); gap: 12px; align-items: center; }
+    .life-world-attribute-copy { min-width: 0; display: grid; gap: 2px; }
+    .life-world-attribute-copy strong { font-size: 12px; }
+    .life-world-attribute-copy span { color: var(--muted); font-size: 10px; line-height: 1.45; }
+    .life-world-attribute-row input { width: 100%; }
+    .life-attribute-events { color: var(--muted); font-size: 10px; line-height: 1.55; }
     .life-detail-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 18px; }
     .life-detail-section { min-width: 0; }
     .life-detail-section h5 { margin: 0 0 8px; font-size: 13px; }
@@ -2341,7 +2441,10 @@ export function renderAppHtml(): string {
       .composer { grid-template-columns: 1fr; }
       .primary { width: 100%; }
       .settings-grid,
-      .im-channel-grid { grid-template-columns: 1fr; }
+      .im-channel-grid,
+      .git-registry-grid { grid-template-columns: 1fr; }
+      .git-registry-context { grid-template-columns: minmax(0, 1fr); }
+      .git-registry-context-state { grid-column: auto; }
       .model-profile-bar { grid-template-columns: minmax(0, 1fr) repeat(3, auto); }
       .schedule-form { grid-template-columns: 1fr; }
       .schedule-form > label { grid-column: auto; }
@@ -2773,7 +2876,8 @@ export function renderAppHtml(): string {
     .world-manager-body { max-height: min(750px, calc(100vh - 86px)); padding: 16px; overflow: auto; display: grid; gap: 16px; }
     .world-manager-picker { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 8px; }
     .world-form,
-    .world-place-form { display: grid; gap: 14px; }
+    .world-place-form,
+    .world-attribute-form { display: grid; gap: 14px; }
     .world-form-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
     .world-form-grid .full { grid-column: 1 / -1; }
     .world-form-grid label { display: grid; gap: 6px; color: var(--muted); font-size: 12px; }
@@ -2793,10 +2897,25 @@ export function renderAppHtml(): string {
     .world-card-summary strong { overflow-wrap: anywhere; font-size: 12px; font-weight: 600; }
     .world-card-members { display: flex !important; align-items: center; gap: 7px !important; }
     .world-card-members .group-avatar-cluster { flex: 0 0 28px; }
-    .world-places-section { padding-top: 16px; border-top: 1px solid var(--line); display: grid; gap: 14px; }
+    .world-places-section,
+    .world-attributes-section { padding-top: 16px; border-top: 1px solid var(--line); display: grid; gap: 14px; }
     .world-place-row { grid-template-columns: minmax(0, 1fr) auto; align-items: center; }
     .world-place-row-copy { min-width: 0; display: grid; gap: 4px; }
     .world-place-row-actions { display: flex; gap: 6px; }
+    .world-attribute-list { display: grid; gap: 14px; }
+    .world-attribute-scope-group { border-top: 1px solid var(--line); }
+    .world-attribute-scope-head { padding: 9px 0 4px; display: grid; gap: 2px; }
+    .world-attribute-scope-head strong { font-size: 12px; }
+    .world-attribute-scope-head span { color: var(--muted); font-size: 10px; }
+    .world-attribute-row { padding: 10px 0; border-bottom: 1px solid var(--line); display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 10px; align-items: center; }
+    .world-attribute-row-copy { min-width: 0; display: grid; gap: 4px; }
+    .world-attribute-row-copy strong { font-size: 12px; }
+    .world-attribute-row-copy p { margin: 0; color: #525a56; font-size: 11px; line-height: 1.5; }
+    .world-attribute-meta { display: flex; flex-wrap: wrap; gap: 4px; }
+    .world-attribute-meta span { padding: 2px 6px; border-radius: 4px; background: #eef3f0; color: #466052; font-size: 10px; }
+    .world-attribute-row-actions { display: flex; gap: 6px; }
+    .world-shared-attribute-value { width: 112px; display: grid; gap: 3px; color: var(--muted); font-size: 10px; }
+    .world-shared-attribute-value input { width: 100%; height: 34px; }
     .capability-fieldset { margin: 0; padding: 10px 12px 12px; border: 1px solid var(--line); }
     .capability-fieldset legend { padding: 0 4px; color: var(--muted); font-size: 11px; }
     .world-capability-options { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px 10px; }
@@ -2809,7 +2928,7 @@ export function renderAppHtml(): string {
       z-index: 30;
       top: calc(100% + 6px);
       right: 0;
-      width: 168px;
+      width: 196px;
       padding: 5px;
       border: 1px solid #d9d9d9;
       border-radius: 6px;
@@ -2834,6 +2953,17 @@ export function renderAppHtml(): string {
     .session-actions-menu button:focus-visible { background: #f0f1f2; }
     .session-actions-menu button:disabled { color: #b5b8bb; cursor: not-allowed; }
     .session-actions-menu button svg { width: 15px; height: 15px; }
+    .session-actions-menu .privacy-mode-toggle[aria-checked="true"] { font-weight: 600; }
+    .session-actions-menu .private-mode-toggle[aria-checked="true"] {
+      color: #6d28d9;
+      background: #f5f3ff;
+    }
+    .session-actions-menu .incognito-mode-toggle[aria-checked="true"] {
+      color: #8a510f;
+      background: #fff8e8;
+    }
+    .session-actions-separator { height: 1px; margin: 5px 4px; background: #e7e8e8; }
+    .session-actions-separator[hidden] { display: none; }
     .message-avatar {
       flex: 0 0 38px;
       width: 38px;
@@ -3405,6 +3535,61 @@ export function renderAppHtml(): string {
       font-size: 12px;
       line-height: 1.6;
     }
+    .git-registry-context {
+      margin-bottom: 14px;
+      padding: 12px;
+      border: 1px solid var(--line);
+      border-radius: 7px;
+      background: #fafafa;
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto;
+      gap: 8px 10px;
+      align-items: end;
+    }
+    .git-registry-context .settings-field { min-width: 0; }
+    .git-registry-context-state { grid-column: 1 / -1; min-height: 16px; color: var(--muted); font-size: 11px; }
+    .git-registry-grid {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 12px;
+      align-items: start;
+    }
+    .git-registry-card {
+      min-width: 0;
+      padding: 13px;
+      border: 1px solid var(--line);
+      border-radius: 7px;
+      background: #fff;
+      display: grid;
+      gap: 11px;
+    }
+    .git-registry-card-head { min-width: 0; display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+    .git-registry-card-head h4 { margin: 0; font-size: 13px; }
+    .git-registry-card-actions { display: flex; gap: 5px; }
+    .git-registry-card .settings-grid { grid-template-columns: minmax(0, 1fr); gap: 9px; }
+    .git-registry-card .settings-field.full { grid-column: auto; }
+    .git-registry-card .settings-field > span,
+    .git-registry-context .settings-field > span { color: var(--muted); font-size: 11px; }
+    .git-registry-card textarea { min-height: 68px; resize: vertical; }
+    .git-registry-card select,
+    .git-registry-card input,
+    .git-registry-card textarea { width: 100%; min-width: 0; }
+    .git-registry-card .settings-actions { margin-top: 0; gap: 6px; }
+    .git-registry-card .settings-actions button { flex: 1 1 auto; min-width: 0; }
+    .git-registry-meta {
+      min-height: 34px;
+      padding: 7px 8px;
+      border-radius: 5px;
+      background: #f5f7f6;
+      color: var(--muted);
+      font-size: 10px;
+      line-height: 1.5;
+      overflow-wrap: anywhere;
+    }
+    .git-binding-box { padding-top: 10px; border-top: 1px solid var(--line); display: grid; gap: 8px; }
+    .git-binding-box h5 { margin: 0; font-size: 11px; }
+    .git-public-key { min-height: 68px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 10px; }
+    .git-public-key[hidden] { display: none; }
     .im-gateway-state {
       margin-bottom: 14px;
       padding: 10px 12px;
@@ -3716,14 +3901,21 @@ export function renderAppHtml(): string {
       .character-skill-version-controls { display: grid; grid-template-columns: minmax(0, 1fr) auto; }
       .character-skill-version-controls select { width: 100%; min-width: 0; }
       .character-skill-markdown { padding: 13px 14px 16px; }
-      .function-profile-grid { grid-template-columns: minmax(0, 1fr); }
-      .function-profile-grid .full { grid-column: auto; }
+      .collaboration-profile-grid { grid-template-columns: minmax(0, 1fr); }
+      .collaboration-profile-grid .full { grid-column: auto; }
       .capability-row-main { grid-template-columns: minmax(0, 1fr); align-items: stretch; }
       .capability-controls { grid-template-columns: 82px minmax(120px, 1fr); }
       .capability-level select { width: 82px; }
       .capability-auto { grid-column: 1 / -1; justify-self: start; }
       .capability-bindings { margin-left: 0; }
       .capability-module-grid { grid-template-columns: minmax(0, 1fr); }
+      .owned-skill-layout,
+      .owned-skill-form-grid { grid-template-columns: minmax(0, 1fr); }
+      .owned-skill-form-grid .full { grid-column: auto; }
+      .owned-skill-capabilities > div { grid-template-columns: minmax(0, 1fr); }
+      .owned-skill-workbench-head,
+      .owned-skill-detail-head { align-items: stretch; flex-direction: column; }
+      .owned-skill-workbench-head button { align-self: flex-start; }
       .life-world-binding { align-items: stretch; flex-direction: column; }
       .life-world-binding label { grid-template-columns: minmax(0, 1fr); }
       .life-runtime-band { grid-template-columns: repeat(2, minmax(0, 1fr)); }
@@ -3877,7 +4069,7 @@ export function renderAppHtml(): string {
     }
 
     .management-tabs { grid-template-columns: repeat(4, minmax(0, 1fr)); }
-    .settings-tabs { grid-template-columns: repeat(6, minmax(0, 1fr)); }
+    .settings-tabs { grid-template-columns: repeat(8, minmax(0, 1fr)); }
     .settings-shell {
       max-width: 1040px;
       padding: 0;
@@ -4271,6 +4463,16 @@ export function renderAppHtml(): string {
       font-family: "Apple Color Emoji", "Segoe UI Emoji", "Noto Color Emoji", "Noto Emoji", sans-serif;
       touch-action: manipulation;
     }
+    img.emoji {
+      display: inline-block;
+      width: 1em;
+      height: 1em;
+      margin: 0 0.05em 0 0.08em;
+      border-radius: 0;
+      vertical-align: -0.14em;
+      object-fit: contain;
+      pointer-events: none;
+    }
     .emoji-category-button {
       height: 33px;
       border-radius: 5px;
@@ -4509,20 +4711,22 @@ export function renderAppHtml(): string {
       white-space: nowrap;
     }
     .conversation-header-actions { flex: 0 0 auto; display: flex; align-items: center; gap: 6px; }
-    .private-mode-toggle {
-      width: auto;
-      min-width: 34px;
-      padding: 0 9px;
-      gap: 5px;
-      color: #52615a;
-      white-space: nowrap;
+    .incognito-notice {
+      min-height: 34px;
+      padding: 7px 14px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 7px;
+      border-bottom: 1px solid #f0d9ad;
+      color: #79501e;
+      background: #fff9ec;
+      font-size: 11px;
+      line-height: 1.45;
+      text-align: center;
     }
-    .private-mode-toggle span { font-size: 11px; }
-    .private-mode-toggle[aria-pressed="true"] {
-      color: #7c3aed;
-      border-color: #c4b5fd;
-      background: #f5f3ff;
-    }
+    .incognito-notice[hidden] { display: none; }
+    .incognito-notice svg { width: 14px; height: 14px; flex: 0 0 auto; }
     .conversation-header-actions > .icon-button,
     .mobile-session-actions > .icon-button { width: 34px; height: 34px; }
     .conversation-header-actions > .context-budget-button {
@@ -4626,8 +4830,6 @@ export function renderAppHtml(): string {
       .conversation-header-actions { gap: 4px; }
       .conversation-header-actions > .icon-button,
       .mobile-session-actions > .icon-button { width: 32px; height: 32px; }
-      .conversation-header-actions > .private-mode-toggle { width: 32px; min-width: 32px; padding: 0; }
-      .private-mode-toggle span { display: none; }
       .conversation-header-actions > .context-budget-button { width: 32px; min-width: 32px; padding: 0; gap: 0; }
       .context-budget-button svg,
       .context-budget-tokens { display: none; }
@@ -4692,7 +4894,6 @@ export function renderAppHtml(): string {
           </span>
         </div>
         <div class="conversation-header-actions">
-          <button id="privateModeToggle" class="secondary icon-button private-mode-toggle" type="button" title="开启私密模式" aria-label="开启私密模式" aria-pressed="false" hidden><i data-lucide="lock-keyhole" aria-hidden="true"></i><span>私密</span></button>
           <button id="contextBudgetBtn" class="secondary icon-button context-budget-button" type="button" title="上下文余量" aria-label="查看上下文余量" hidden><i data-lucide="gauge" aria-hidden="true"></i><span id="contextBudgetTokens" class="context-budget-tokens">--</span><span id="contextBudgetPercent" class="context-budget-percent">--</span></button>
           <button id="interactionToggleBtn" class="secondary icon-button" type="button" title="发起见面" aria-label="发起见面" hidden><i data-lucide="map-pin" aria-hidden="true"></i></button>
           <button id="interactionUndoBtn" class="secondary icon-button" type="button" title="撤销上次状态切换" aria-label="撤销上次状态切换" hidden><i data-lucide="undo-2" aria-hidden="true"></i></button>
@@ -4700,6 +4901,9 @@ export function renderAppHtml(): string {
           <div class="mobile-session-actions">
             <button id="sessionActionsMenuBtn" class="secondary icon-button" type="button" title="会话操作" aria-label="会话操作" aria-expanded="false" aria-controls="sessionActionsMenu"><i data-lucide="ellipsis" aria-hidden="true"></i></button>
             <div id="sessionActionsMenu" class="session-actions-menu" role="menu" hidden>
+              <button id="privateModeToggle" class="privacy-mode-toggle private-mode-toggle" type="button" role="menuitemcheckbox" aria-checked="false" hidden><i data-lucide="unlock-keyhole" aria-hidden="true"></i><span>进入私密模式</span></button>
+              <button id="incognitoModeToggle" class="privacy-mode-toggle incognito-mode-toggle" type="button" role="menuitemcheckbox" aria-checked="false" hidden><i data-lucide="eye-off" aria-hidden="true"></i><span>进入无痕模式</span></button>
+              <div id="privacyModeMenuSeparator" class="session-actions-separator" role="separator" hidden></div>
               <button id="mobileRenameSessionBtn" type="button" role="menuitem" disabled><i data-lucide="pencil" aria-hidden="true"></i><span>重命名会话</span></button>
               <button id="mobileArchiveSessionBtn" type="button" role="menuitem" disabled><i data-lucide="archive" aria-hidden="true"></i><span>归档会话</span></button>
               <button id="mobileDeleteSessionBtn" type="button" role="menuitem" disabled><i data-lucide="trash-2" aria-hidden="true"></i><span>永久删除会话</span></button>
@@ -4732,6 +4936,7 @@ export function renderAppHtml(): string {
             </div>
           </aside>
           <div class="chat-thread">
+            <div id="incognitoNotice" class="incognito-notice" role="status" hidden><i data-lucide="eye-off" aria-hidden="true"></i><span>无痕会话仅保存在 YourChar 内存盘；退出或重启后丢弃。模型提供商仍可能保留请求。</span></div>
             <div id="messages" class="messages" aria-live="polite"></div>
             <form id="composer" class="composer">
               <div id="attachmentQueue" class="attachment-queue" hidden></div>
@@ -4867,7 +5072,7 @@ export function renderAppHtml(): string {
               <div class="character-detail-title"><span>角色资料</span><h3 id="characterDetailTitle">新角色</h3></div>
               <div class="segmented character-tabs" role="tablist" aria-label="角色管理视图">
                 <button id="characterSettingsTabBtn" class="active" type="button" role="tab" aria-selected="true" aria-controls="characterSettingsPanel">角色设定</button>
-                <button id="characterFunctionTabBtn" type="button" role="tab" aria-selected="false" aria-controls="characterFunctionPanel">职责能力</button>
+                <button id="characterFunctionTabBtn" type="button" role="tab" aria-selected="false" aria-controls="characterFunctionPanel">协作与技能</button>
                 <button id="characterMemoryTabBtn" type="button" role="tab" aria-selected="false" aria-controls="characterMemoryPanel">长期记忆</button>
                 <button id="characterRelationshipTabBtn" type="button" role="tab" aria-selected="false" aria-controls="characterRelationshipPanel">关系</button>
                 <button id="characterLifeTabBtn" type="button" role="tab" aria-selected="false" aria-controls="characterLifePanel">生活</button>
@@ -4905,41 +5110,56 @@ export function renderAppHtml(): string {
             </div>
             <div id="characterFunctionPanel" class="character-panel character-function-panel" role="tabpanel" hidden>
               <div class="character-function-head">
-                <div><h4>职能与 SKILL.md</h4><span id="characterFunctionState" class="muted"></span></div>
-                <div class="character-function-head-actions">
-                  <label class="toggle"><span>自动维护</span><input id="characterFunctionAutomatic" type="checkbox" /></label>
-                  <button id="refreshCharacterFunctionBtn" class="secondary" type="button"><i data-lucide="refresh-cw" aria-hidden="true"></i><span>重新分析</span></button>
-                </div>
+                <div><h4>协作档案与专属 Skills</h4><span id="characterFunctionState" class="muted"></span></div>
               </div>
-              <section class="function-overview" aria-label="角色职能概览">
+              <section class="function-overview" aria-label="角色协作概览">
                 <div class="function-overview-primary">
                   <div class="function-role-copy">
-                    <span>当前职责</span>
-                    <strong id="characterFunctionRole">尚未形成</strong>
+                    <span>协作介绍</span>
+                    <strong id="characterFunctionRole">尚未填写</strong>
                   </div>
-                  <span id="characterFunctionStatusBadge" class="function-status-badge">等待分析</span>
                 </div>
                 <div id="characterFunctionCapabilities" class="function-capability-chips"></div>
                 <span id="characterFunctionLearning" class="function-learning-summary"></span>
               </section>
-              <section class="character-skill-document" aria-labelledby="characterSkillTitle">
-                <div class="character-skill-document-head">
-                  <div class="character-skill-title">
-                    <strong id="characterSkillTitle">SKILL.md</strong>
-                    <span id="characterSkillMeta">尚未生成</span>
+              <section class="owned-skill-workbench" aria-labelledby="characterOwnedSkillsTitle">
+                <div class="owned-skill-workbench-head">
+                  <div>
+                    <strong id="characterOwnedSkillsTitle">专属 Skills</strong>
+                    <span>正文只会注入这个角色的执行上下文；其他角色仅看到公开介绍并可发起委派。</span>
                   </div>
-                  <div class="character-skill-version-controls">
-                    <select id="characterSkillVersionSelect" aria-label="Skill 历史版本" disabled></select>
-                    <button id="activateCharacterSkillVersionBtn" class="secondary" type="button" hidden><i data-lucide="history" aria-hidden="true"></i><span>恢复</span></button>
+                  <button id="newCharacterOwnedSkillBtn" class="primary" type="button"><i data-lucide="plus" aria-hidden="true"></i><span>新建 Skill</span></button>
+                </div>
+                <div class="owned-skill-layout">
+                  <div id="characterOwnedSkillList" class="owned-skill-list" aria-label="角色专属 Skill 列表"></div>
+                  <div id="characterOwnedSkillDetail" class="owned-skill-detail" hidden>
+                    <div class="owned-skill-detail-head">
+                      <div><strong id="characterOwnedSkillName"></strong><span id="characterOwnedSkillMeta"></span></div>
+                      <div class="owned-skill-detail-actions">
+                        <button id="editCharacterOwnedSkillBtn" class="secondary" type="button">编辑</button>
+                        <button id="toggleCharacterOwnedSkillBtn" class="secondary" type="button"></button>
+                      </div>
+                    </div>
+                    <p id="characterOwnedSkillDescription" class="owned-skill-description"></p>
+                    <div class="owned-skill-review-bar">
+                      <select id="characterOwnedSkillVersionSelect" aria-label="专属 Skill 历史版本"></select>
+                      <button id="activateCharacterOwnedSkillBtn" class="secondary" type="button" hidden>启用此版本</button>
+                    </div>
+                    <div id="characterOwnedSkillMarkdown" class="character-skill-markdown markdown-body"></div>
+                    <div class="owned-skill-learning">
+                      <strong>执行复盘</strong>
+                      <span id="characterOwnedSkillEvaluationSummary" class="muted"></span>
+                    </div>
+                    <div id="characterOwnedSkillProposalList" class="owned-skill-proposals"></div>
                   </div>
                 </div>
-                <div id="characterSkillMarkdown" class="character-skill-markdown markdown-body"><div class="character-skill-empty">尚未生成 Skill</div></div>
               </section>
               <details id="characterFunctionAdvanced" class="character-function-advanced">
-                <summary><i data-lucide="chevron-right" aria-hidden="true"></i><span>高级设置</span></summary>
+                <summary><i data-lucide="chevron-right" aria-hidden="true"></i><span>编辑协作介绍</span></summary>
                 <form id="characterFunctionForm">
-                  <div class="function-profile-grid">
-                    <label>公开职责<input id="characterPublicRole" maxlength="120" /></label>
+                  <div class="collaboration-profile-grid">
+                    <label class="full">公开介绍<textarea id="characterPublicRole" maxlength="600" placeholder="向其他角色说明擅长解决什么问题、适合怎样协作。"></textarea></label>
+                    <label class="full">特点标签<input id="characterTaskPreferences" maxlength="400" placeholder="严谨, 擅长核验, 善于解释" /></label>
                     <label>并行任务上限
                       <select id="characterMaxConcurrentTasks">
                         <option value="1">1</option>
@@ -4949,19 +5169,32 @@ export function renderAppHtml(): string {
                         <option value="5">5</option>
                       </select>
                     </label>
-                    <label class="full">偏好任务<textarea id="characterTaskPreferences" maxlength="1000"></textarea></label>
-                    <label class="full">回避任务<textarea id="characterAvoidedTasks" maxlength="1000"></textarea></label>
                   </div>
-                  <div class="capability-section-head">
-                    <h5>专业能力</h5>
-                    <span id="characterCapabilityCount" class="muted">0 项</span>
-                  </div>
-                  <div id="characterCapabilityList" class="capability-list"></div>
                   <div class="settings-actions character-function-actions">
-                    <button id="saveCharacterFunctionBtn" class="primary" type="submit">保存高级设置</button>
+                    <button id="saveCharacterFunctionBtn" class="primary" type="submit">保存协作介绍</button>
                   </div>
                 </form>
               </details>
+              <dialog id="characterOwnedSkillDialog" class="owned-skill-dialog">
+                <form id="characterOwnedSkillForm" method="dialog">
+                  <div class="dialog-head">
+                    <div><h3 id="characterOwnedSkillDialogTitle">新建专属 Skill</h3><span>Skill 是工作方法，不会授予角色额外权限。</span></div>
+                    <button id="closeCharacterOwnedSkillDialogBtn" class="icon-button" type="button" aria-label="关闭"><i data-lucide="x" aria-hidden="true"></i></button>
+                  </div>
+                  <div class="owned-skill-form-grid">
+                    <label>名称<input id="characterOwnedSkillFormName" maxlength="80" required /></label>
+                    <label>标签<input id="characterOwnedSkillFormTags" maxlength="240" placeholder="研究, 写作, 核验" /></label>
+                    <label class="full">公开介绍<textarea id="characterOwnedSkillFormDescription" maxlength="600" placeholder="其他角色据此判断什么时候应该请求协助。"></textarea></label>
+                    <label class="full">SKILL.md<textarea id="characterOwnedSkillFormMarkdown" class="owned-skill-markdown-editor" maxlength="6000" required spellcheck="false"></textarea></label>
+                    <label class="toggle"><span>执行后生成改进提案</span><input id="characterOwnedSkillFormAutoImprove" type="checkbox" checked /></label>
+                    <label class="toggle"><span>保存后立即启用</span><input id="characterOwnedSkillFormActivate" type="checkbox" checked /></label>
+                  </div>
+                  <div class="settings-actions">
+                    <button id="cancelCharacterOwnedSkillBtn" class="secondary" type="button">取消</button>
+                    <button id="saveCharacterOwnedSkillBtn" class="primary" type="submit">保存 Skill</button>
+                  </div>
+                </form>
+              </dialog>
             </div>
             <div id="characterMemoryPanel" class="character-panel" role="tabpanel" hidden>
               <div class="character-memory-head">
@@ -5026,6 +5259,12 @@ export function renderAppHtml(): string {
                     <span id="lifeProactivePauseText"></span>
                     <button id="resumeProactiveBtn" class="secondary" type="button"><i data-lucide="play" aria-hidden="true"></i><span>恢复主动消息</span></button>
                   </div>
+                </section>
+                <section class="life-world-attributes">
+                  <div class="life-world-attributes-head"><h5>角色数值</h5><span class="muted">由当前世界定义；每个角色在每个世界分别保存</span></div>
+                  <div id="lifeWorldAttributeList" class="life-world-attribute-list"></div>
+                  <div id="lifeWorldAttributeEvents" class="life-attribute-events"></div>
+                  <div class="settings-actions"><button id="saveLifeWorldAttributesBtn" class="secondary" type="button">保存角色数值</button></div>
                 </section>
                 <section class="life-detail-grid">
                   <div class="life-detail-section"><h5>地点能力</h5><div id="lifePlaceList" class="life-place-list"></div></div>
@@ -5346,6 +5585,8 @@ export function renderAppHtml(): string {
               <button id="modelSettingsTabBtn" class="active" type="button">模型</button>
               <button id="imSettingsTabBtn" type="button">IM 通道</button>
               <button id="visionSettingsTabBtn" type="button">视觉</button>
+              <button id="documentSettingsTabBtn" type="button">文档</button>
+              <button id="gitSettingsTabBtn" type="button">仓库</button>
               <button id="searchSettingsTabBtn" type="button">搜索</button>
               <button id="promptSettingsTabBtn" type="button">提示词</button>
               <button id="dataSettingsTabBtn" type="button">数据</button>
@@ -5479,6 +5720,79 @@ export function renderAppHtml(): string {
               <button id="clearVisionApiKeyBtn" class="secondary" type="button">清除 Key</button>
               <span id="visionSettingsState" class="muted"></span>
             </div>
+          </section>
+          <section id="documentSettingsPanel" class="management-panel settings-panel" hidden>
+            <h3>MinerU 深度文档解析</h3>
+            <p class="im-privacy-banner"><strong>显式外发能力。</strong> MarkItDown 仍在 YourChar 本机做轻量转换；MinerU MCP 会把 Agent 选中的整份 Workspace 文档发送到这里配置的 MinerU 服务。返回的 Markdown 与提取图片会组成完整文档包，暂存在当前空间的 <code>tmp/mineru/</code>，保留 24 小时后由 YourChar 清理；不会清理该目录中的其他文件。API 配置本身不会启用工具，还需在“管理 → Agent”中单独打开 MinerU Document MCP。</p>
+            <div class="settings-grid">
+              <div class="settings-field full">
+                <label for="mineruBaseUrl">MinerU Base URL</label>
+                <input id="mineruBaseUrl" placeholder="http://127.0.0.1:8000" />
+                <span class="muted">使用自托管 MinerU FastAPI 的 /health 与 /file_parse；可填写本机、局域网或 HTTPS 地址。</span>
+              </div>
+              <div class="settings-field">
+                <label for="mineruApiKey">Bearer Token（可选）</label>
+                <input id="mineruApiKey" type="password" placeholder="留空表示不修改" autocomplete="off" />
+              </div>
+              <div class="settings-field">
+                <label for="mineruBackend">解析后端</label>
+                <input id="mineruBackend" value="pipeline" placeholder="pipeline" />
+              </div>
+              <div class="settings-field">
+                <label for="mineruParseMethod">解析方式</label>
+                <select id="mineruParseMethod">
+                  <option value="auto">自动</option>
+                  <option value="ocr">强制 OCR</option>
+                  <option value="txt">文本优先</option>
+                </select>
+              </div>
+              <div class="settings-field">
+                <label for="mineruLanguage">语言</label>
+                <input id="mineruLanguage" value="ch" placeholder="ch" />
+              </div>
+              <div class="settings-field">
+                <label for="mineruTimeoutSeconds">超时（秒）</label>
+                <input id="mineruTimeoutSeconds" type="number" min="10" max="900" step="1" value="600" />
+                <span class="muted">默认 600 秒；CPU 服务解析较长 PDF 时建议保留该值。</span>
+              </div>
+              <label class="checkbox-row">
+                <input id="mineruFormulaEnabled" type="checkbox" checked />
+                <span>解析公式</span>
+              </label>
+              <label class="checkbox-row">
+                <input id="mineruTableEnabled" type="checkbox" checked />
+                <span>解析表格</span>
+              </label>
+            </div>
+            <div class="settings-actions">
+              <button id="saveMineruSettingsBtn" class="primary" type="button">保存 MinerU 设置</button>
+              <button id="testMineruBtn" class="secondary" type="button">测试 MinerU</button>
+              <button id="clearMineruApiKeyBtn" class="secondary" type="button">清除 Token</button>
+              <span id="mineruSettingsState" class="muted" role="status" aria-live="polite"></span>
+            </div>
+          </section>
+          <section id="gitSettingsPanel" class="management-panel settings-panel" hidden>
+            <h3>Git 访问</h3>
+            <p class="im-privacy-banner"><strong>面向个人本机使用。</strong> 配置一次 SSH 身份后，把 <code>ssh://</code> 仓库 URL 直接发给普通模式角色即可。角色会把仓库克隆到 <code>Workspace/repos/</code>，并在其中编辑、commit 和 push；无需预先登记项目、仓库或白名单。私密模式、无痕模式与通用子 Agent 不会获得远端 Git 工具。托管 Key 会随完整状态备份，备份文件应视为敏感数据。</p>
+            <section class="git-registry-card" aria-labelledby="gitAccessCardTitle">
+              <div class="git-registry-card-head">
+                <h4 id="gitAccessCardTitle">SSH 身份</h4>
+              </div>
+              <div class="settings-grid">
+                <label class="settings-field" for="gitCredentialMode"><span>凭据方式</span><select id="gitCredentialMode"><option value="unconfigured">暂不配置</option><option value="external-file">使用已有私钥</option></select></label>
+                <label class="settings-field full" for="gitPrivateKeyPath"><span>已有私钥的宿主绝对路径</span><input id="gitPrivateKeyPath" placeholder="/home/user/.ssh/id_ed25519" autocomplete="off" /></label>
+                <label class="settings-field" for="gitProxyMode"><span>SSH 连接方式</span><select id="gitProxyMode"><option value="direct">直接 SSH</option><option value="hclient">hclient HTTP CONNECT</option></select></label>
+                <label class="settings-field" for="gitProxyPort"><span>hclient 端口</span><input id="gitProxyPort" type="number" min="1" max="65535" step="1" value="61090" /></label>
+              </div>
+              <div id="gitAccessMeta" class="git-registry-meta">私钥不会进入 Workspace 或模型上下文；托管 Key 会随完整状态备份。</div>
+              <textarea id="gitAccessPublicKey" class="git-public-key" readonly hidden aria-label="SSH 公钥"></textarea>
+              <div class="settings-actions">
+                <button id="saveGitAccessBtn" class="primary" type="button">保存 Git 访问设置</button>
+                <button id="generateGitAccessKeyBtn" class="secondary" type="button">生成托管 Key</button>
+                <button id="copyGitAccessPublicKeyBtn" class="secondary" type="button">复制公钥</button>
+                <span id="gitSettingsState" class="muted" role="status" aria-live="polite"></span>
+              </div>
+            </section>
           </section>
           <section id="searchSettingsPanel" class="management-panel settings-panel" hidden>
             <h3>Tavily 网页搜索</h3>
@@ -5813,6 +6127,39 @@ export function renderAppHtml(): string {
           </div>
         </form>
         <section id="worldCardSummary" class="world-card-summary" hidden></section>
+        <section id="worldAttributesSection" class="world-attributes-section" hidden>
+          <div class="schedule-head"><h3>世界与角色数值</h3><span id="worldAttributeCount" class="muted"></span></div>
+          <p class="muted">世界统一数值由所有角色共享，直接在世界卡中查看与调整；角色数值由世界定义、每个角色独立保存，并显示在角色面板。普通私聊回合与世界角色行动完成后，后台只判断是否命中规则，固定增减值由系统结算。</p>
+          <div id="worldAttributeList" class="world-attribute-list"></div>
+          <div class="settings-actions"><button id="saveWorldSharedAttributesBtn" class="secondary" type="button" hidden>保存世界统一数值</button></div>
+          <form id="worldAttributeForm" class="world-attribute-form">
+            <div class="world-form-grid">
+              <label>属性键<input id="worldAttributeKey" required maxlength="40" pattern="[a-z][a-z0-9_.-]{0,39}" placeholder="reputation" /></label>
+              <label>显示名称<input id="worldAttributeName" required maxlength="40" placeholder="声望" /></label>
+              <label>数值归属<select id="worldAttributeScope"><option value="character">每个角色独立</option><option value="world">世界统一共享</option></select></label>
+              <label>最小值<input id="worldAttributeMin" type="number" min="-10000" max="10000" step="1" value="0" required /></label>
+              <label>最大值<input id="worldAttributeMax" type="number" min="-10000" max="10000" step="1" value="100" required /></label>
+              <label>默认值<input id="worldAttributeDefault" type="number" min="-10000" max="10000" step="1" value="0" required /></label>
+              <label class="full">说明<textarea id="worldAttributeDescription" maxlength="240" placeholder="这个数值在世界中的含义与变化依据。"></textarea></label>
+              <fieldset class="full capability-fieldset">
+                <legend>可见性与回合后结算</legend>
+                <div class="world-capability-options">
+                  <label><input id="worldAttributeVisible" type="checkbox" checked />角色可见</label>
+                  <label><input id="worldAttributeAnalysisEnabled" type="checkbox" />启用回合后规则分析</label>
+                </div>
+              </fieldset>
+              <label>每次固定增加<input id="worldAttributeIncreaseDelta" type="number" min="1" max="1000" step="1" value="1" required /></label>
+              <label>每次固定减少<input id="worldAttributeDecreaseDelta" type="number" min="1" max="1000" step="1" value="1" required /></label>
+              <label class="full">增加规则<textarea id="worldAttributeIncreaseRule" maxlength="800" placeholder="例如：角色在本回合明确完成一次公开委托。留空则不自动增加。"></textarea></label>
+              <label class="full">减少规则<textarea id="worldAttributeDecreaseRule" maxlength="800" placeholder="例如：角色在本回合被证实公开违约。留空则不自动减少。"></textarea></label>
+              <p class="full muted">这里填写的是每次命中规则后的固定变化值，不是上限；到达最小值或最大值时，实际变化会被边界截断。每个回合的世界统一属性最多结算一次，角色属性则每个角色最多结算一次。私密、无痕、失败或取消的回合不结算。</p>
+            </div>
+            <div class="settings-actions">
+              <button id="cancelWorldAttributeEditBtn" class="secondary" type="button">清空</button>
+              <button id="saveWorldAttributeBtn" class="primary" type="submit">添加属性</button>
+            </div>
+          </form>
+        </section>
         <section id="worldPlacesSection" class="world-places-section" hidden>
           <div class="schedule-head"><h3>地点与功能</h3><span id="worldPlaceCount" class="muted"></span></div>
           <div id="worldPlaceList" class="world-place-list"></div>
@@ -5926,11 +6273,20 @@ export function renderAppHtml(): string {
   <script src="/assets/marked.umd.js"></script>
   <script src="/assets/purify.min.js"></script>
   <script src="/assets/lucide.min.js"></script>
+  <script src="/assets/twemoji.min.js"></script>
   <script>
     const state = {
       uiMode: "normal",
       conversationSpace: "normal",
       conversationSpaceEpoch: 0,
+      conversationViewEpoch: 0,
+      conversationViewLoading: false,
+      incognitoConversation: null,
+      incognitoReturnView: null,
+      incognitoTransitioning: false,
+      privateModeTransitioning: false,
+      incognitoOpenRequestId: 0,
+      incognitoAbortController: null,
       messages: [],
       busy: false,
       sessions: [],
@@ -5954,14 +6310,18 @@ export function renderAppHtml(): string {
       characterFunctionOpenCapabilities: [],
       characterSkillVersions: [],
       characterSkillViewingHistory: false,
-      characterFunctionPollTimer: null,
-      characterFunctionPollAttempts: 0,
+      characterOwnedSkills: [],
+      selectedCharacterOwnedSkillId: "",
+      characterOwnedSkillReview: null,
       relationship: null,
       worlds: [],
       characterLife: null,
       worldEditorId: "",
       placeEditorId: "",
       worldEditorPlaces: [],
+      worldAttributeEditorId: "",
+      worldEditorAttributes: [],
+      worldEditorAttributeEvents: [],
       unreadConversations: [],
       unreadProactiveMessages: [],
       activeProactiveMessages: [],
@@ -6011,6 +6371,8 @@ export function renderAppHtml(): string {
 	      imBindingPollGeneration: 0,
 	      imBindingPollTimer: null,
 	      imBindingPollFailures: 0,
+	      gitAccess: null,
+	      gitAccessRequestId: 0,
 	      promptSettingsView: "system",
 	      promptMode: "sms",
 	      systemPrompts: null,
@@ -6274,6 +6636,8 @@ export function renderAppHtml(): string {
       conversationScene: document.getElementById("conversationScene"),
       conversationHeaderAvatar: document.getElementById("conversationHeaderAvatar"),
       privateModeToggle: document.getElementById("privateModeToggle"),
+      incognitoModeToggle: document.getElementById("incognitoModeToggle"),
+      incognitoNotice: document.getElementById("incognitoNotice"),
       contextBudgetBtn: document.getElementById("contextBudgetBtn"),
       contextBudgetTokens: document.getElementById("contextBudgetTokens"),
       contextBudgetPercent: document.getElementById("contextBudgetPercent"),
@@ -6300,6 +6664,7 @@ export function renderAppHtml(): string {
       archivedSessionsBtn: document.getElementById("archivedSessionsBtn"),
       sessionActionsMenuBtn: document.getElementById("sessionActionsMenuBtn"),
       sessionActionsMenu: document.getElementById("sessionActionsMenu"),
+      privacyModeMenuSeparator: document.getElementById("privacyModeMenuSeparator"),
       mobileRenameSessionBtn: document.getElementById("mobileRenameSessionBtn"),
       mobileArchiveSessionBtn: document.getElementById("mobileArchiveSessionBtn"),
       mobileDeleteSessionBtn: document.getElementById("mobileDeleteSessionBtn"),
@@ -6439,23 +6804,38 @@ export function renderAppHtml(): string {
       characterLifePanel: document.getElementById("characterLifePanel"),
       characterFunctionForm: document.getElementById("characterFunctionForm"),
       characterFunctionState: document.getElementById("characterFunctionState"),
-      characterFunctionAutomatic: document.getElementById("characterFunctionAutomatic"),
-      refreshCharacterFunctionBtn: document.getElementById("refreshCharacterFunctionBtn"),
       characterFunctionRole: document.getElementById("characterFunctionRole"),
-      characterFunctionStatusBadge: document.getElementById("characterFunctionStatusBadge"),
       characterFunctionCapabilities: document.getElementById("characterFunctionCapabilities"),
       characterFunctionLearning: document.getElementById("characterFunctionLearning"),
-      characterSkillMeta: document.getElementById("characterSkillMeta"),
-      characterSkillVersionSelect: document.getElementById("characterSkillVersionSelect"),
-      activateCharacterSkillVersionBtn: document.getElementById("activateCharacterSkillVersionBtn"),
-      characterSkillMarkdown: document.getElementById("characterSkillMarkdown"),
+      newCharacterOwnedSkillBtn: document.getElementById("newCharacterOwnedSkillBtn"),
+      characterOwnedSkillList: document.getElementById("characterOwnedSkillList"),
+      characterOwnedSkillDetail: document.getElementById("characterOwnedSkillDetail"),
+      characterOwnedSkillName: document.getElementById("characterOwnedSkillName"),
+      characterOwnedSkillMeta: document.getElementById("characterOwnedSkillMeta"),
+      characterOwnedSkillDescription: document.getElementById("characterOwnedSkillDescription"),
+      editCharacterOwnedSkillBtn: document.getElementById("editCharacterOwnedSkillBtn"),
+      toggleCharacterOwnedSkillBtn: document.getElementById("toggleCharacterOwnedSkillBtn"),
+      characterOwnedSkillVersionSelect: document.getElementById("characterOwnedSkillVersionSelect"),
+      activateCharacterOwnedSkillBtn: document.getElementById("activateCharacterOwnedSkillBtn"),
+      characterOwnedSkillMarkdown: document.getElementById("characterOwnedSkillMarkdown"),
+      characterOwnedSkillEvaluationSummary: document.getElementById("characterOwnedSkillEvaluationSummary"),
+      characterOwnedSkillProposalList: document.getElementById("characterOwnedSkillProposalList"),
+      characterOwnedSkillDialog: document.getElementById("characterOwnedSkillDialog"),
+      characterOwnedSkillForm: document.getElementById("characterOwnedSkillForm"),
+      characterOwnedSkillDialogTitle: document.getElementById("characterOwnedSkillDialogTitle"),
+      closeCharacterOwnedSkillDialogBtn: document.getElementById("closeCharacterOwnedSkillDialogBtn"),
+      cancelCharacterOwnedSkillBtn: document.getElementById("cancelCharacterOwnedSkillBtn"),
+      saveCharacterOwnedSkillBtn: document.getElementById("saveCharacterOwnedSkillBtn"),
+      characterOwnedSkillFormName: document.getElementById("characterOwnedSkillFormName"),
+      characterOwnedSkillFormTags: document.getElementById("characterOwnedSkillFormTags"),
+      characterOwnedSkillFormDescription: document.getElementById("characterOwnedSkillFormDescription"),
+      characterOwnedSkillFormMarkdown: document.getElementById("characterOwnedSkillFormMarkdown"),
+      characterOwnedSkillFormAutoImprove: document.getElementById("characterOwnedSkillFormAutoImprove"),
+      characterOwnedSkillFormActivate: document.getElementById("characterOwnedSkillFormActivate"),
       characterFunctionAdvanced: document.getElementById("characterFunctionAdvanced"),
       characterPublicRole: document.getElementById("characterPublicRole"),
       characterMaxConcurrentTasks: document.getElementById("characterMaxConcurrentTasks"),
       characterTaskPreferences: document.getElementById("characterTaskPreferences"),
-      characterAvoidedTasks: document.getElementById("characterAvoidedTasks"),
-      characterCapabilityCount: document.getElementById("characterCapabilityCount"),
-      characterCapabilityList: document.getElementById("characterCapabilityList"),
       saveCharacterFunctionBtn: document.getElementById("saveCharacterFunctionBtn"),
       characterLifeState: document.getElementById("characterLifeState"),
       characterWorldSelect: document.getElementById("characterWorldSelect"),
@@ -6487,6 +6867,9 @@ export function renderAppHtml(): string {
       lifeEventList: document.getElementById("lifeEventList"),
       lifeProactiveList: document.getElementById("lifeProactiveList"),
       lifeTopicPolicyList: document.getElementById("lifeTopicPolicyList"),
+      lifeWorldAttributeList: document.getElementById("lifeWorldAttributeList"),
+      lifeWorldAttributeEvents: document.getElementById("lifeWorldAttributeEvents"),
+      saveLifeWorldAttributesBtn: document.getElementById("saveLifeWorldAttributesBtn"),
       worldManagerDialog: document.getElementById("worldManagerDialog"),
       closeWorldManagerBtn: document.getElementById("closeWorldManagerBtn"),
       worldManagerWorldSelect: document.getElementById("worldManagerWorldSelect"),
@@ -6501,6 +6884,26 @@ export function renderAppHtml(): string {
       worldManagerState: document.getElementById("worldManagerState"),
       saveWorldBtn: document.getElementById("saveWorldBtn"),
       worldCardSummary: document.getElementById("worldCardSummary"),
+      worldAttributesSection: document.getElementById("worldAttributesSection"),
+      worldAttributeCount: document.getElementById("worldAttributeCount"),
+      worldAttributeList: document.getElementById("worldAttributeList"),
+      saveWorldSharedAttributesBtn: document.getElementById("saveWorldSharedAttributesBtn"),
+      worldAttributeForm: document.getElementById("worldAttributeForm"),
+      worldAttributeKey: document.getElementById("worldAttributeKey"),
+      worldAttributeName: document.getElementById("worldAttributeName"),
+      worldAttributeScope: document.getElementById("worldAttributeScope"),
+      worldAttributeDescription: document.getElementById("worldAttributeDescription"),
+      worldAttributeMin: document.getElementById("worldAttributeMin"),
+      worldAttributeMax: document.getElementById("worldAttributeMax"),
+      worldAttributeDefault: document.getElementById("worldAttributeDefault"),
+      worldAttributeAnalysisEnabled: document.getElementById("worldAttributeAnalysisEnabled"),
+      worldAttributeIncreaseRule: document.getElementById("worldAttributeIncreaseRule"),
+      worldAttributeIncreaseDelta: document.getElementById("worldAttributeIncreaseDelta"),
+      worldAttributeDecreaseRule: document.getElementById("worldAttributeDecreaseRule"),
+      worldAttributeDecreaseDelta: document.getElementById("worldAttributeDecreaseDelta"),
+      worldAttributeVisible: document.getElementById("worldAttributeVisible"),
+      cancelWorldAttributeEditBtn: document.getElementById("cancelWorldAttributeEditBtn"),
+      saveWorldAttributeBtn: document.getElementById("saveWorldAttributeBtn"),
       worldPlacesSection: document.getElementById("worldPlacesSection"),
       worldPlaceCount: document.getElementById("worldPlaceCount"),
       worldPlaceList: document.getElementById("worldPlaceList"),
@@ -6572,6 +6975,8 @@ export function renderAppHtml(): string {
       modelSettingsTabBtn: document.getElementById("modelSettingsTabBtn"),
       imSettingsTabBtn: document.getElementById("imSettingsTabBtn"),
       visionSettingsTabBtn: document.getElementById("visionSettingsTabBtn"),
+      documentSettingsTabBtn: document.getElementById("documentSettingsTabBtn"),
+      gitSettingsTabBtn: document.getElementById("gitSettingsTabBtn"),
       searchSettingsTabBtn: document.getElementById("searchSettingsTabBtn"),
 	      promptSettingsTabBtn: document.getElementById("promptSettingsTabBtn"),
 	      dataSettingsTabBtn: document.getElementById("dataSettingsTabBtn"),
@@ -6582,6 +6987,8 @@ export function renderAppHtml(): string {
       imChannelList: document.getElementById("imChannelList"),
       imChannelState: document.getElementById("imChannelState"),
       visionSettingsPanel: document.getElementById("visionSettingsPanel"),
+      documentSettingsPanel: document.getElementById("documentSettingsPanel"),
+      gitSettingsPanel: document.getElementById("gitSettingsPanel"),
       searchSettingsPanel: document.getElementById("searchSettingsPanel"),
 	      promptSettingsPanel: document.getElementById("promptSettingsPanel"),
 	      dataSettingsPanel: document.getElementById("dataSettingsPanel"),
@@ -6638,6 +7045,28 @@ export function renderAppHtml(): string {
       discoverVisionModelsBtn: document.getElementById("discoverVisionModelsBtn"),
       clearVisionApiKeyBtn: document.getElementById("clearVisionApiKeyBtn"),
       visionSettingsState: document.getElementById("visionSettingsState"),
+      mineruBaseUrl: document.getElementById("mineruBaseUrl"),
+      mineruApiKey: document.getElementById("mineruApiKey"),
+      mineruBackend: document.getElementById("mineruBackend"),
+      mineruParseMethod: document.getElementById("mineruParseMethod"),
+      mineruLanguage: document.getElementById("mineruLanguage"),
+      mineruTimeoutSeconds: document.getElementById("mineruTimeoutSeconds"),
+      mineruFormulaEnabled: document.getElementById("mineruFormulaEnabled"),
+      mineruTableEnabled: document.getElementById("mineruTableEnabled"),
+      saveMineruSettingsBtn: document.getElementById("saveMineruSettingsBtn"),
+      testMineruBtn: document.getElementById("testMineruBtn"),
+      clearMineruApiKeyBtn: document.getElementById("clearMineruApiKeyBtn"),
+      mineruSettingsState: document.getElementById("mineruSettingsState"),
+      gitCredentialMode: document.getElementById("gitCredentialMode"),
+      gitPrivateKeyPath: document.getElementById("gitPrivateKeyPath"),
+      gitProxyMode: document.getElementById("gitProxyMode"),
+      gitProxyPort: document.getElementById("gitProxyPort"),
+      gitAccessMeta: document.getElementById("gitAccessMeta"),
+      gitAccessPublicKey: document.getElementById("gitAccessPublicKey"),
+      saveGitAccessBtn: document.getElementById("saveGitAccessBtn"),
+      generateGitAccessKeyBtn: document.getElementById("generateGitAccessKeyBtn"),
+      copyGitAccessPublicKeyBtn: document.getElementById("copyGitAccessPublicKeyBtn"),
+      gitSettingsState: document.getElementById("gitSettingsState"),
       memoryVaultPath: document.getElementById("memoryVaultPath"),
       syncMemoryVaultBtn: document.getElementById("syncMemoryVaultBtn"),
       rebuildMemoryVaultBtn: document.getElementById("rebuildMemoryVaultBtn"),
@@ -6770,6 +7199,16 @@ export function renderAppHtml(): string {
     nodes.testVisionBtn.addEventListener("click", testVisionConnection);
     nodes.discoverVisionModelsBtn.addEventListener("click", discoverVisionModels);
     nodes.clearVisionApiKeyBtn.addEventListener("click", clearVisionApiKey);
+    nodes.saveMineruSettingsBtn.addEventListener("click", () => saveMineruSettings());
+    nodes.testMineruBtn.addEventListener("click", testMineruConnection);
+    nodes.clearMineruApiKeyBtn.addEventListener("click", clearMineruApiKey);
+    nodes.saveGitAccessBtn.addEventListener("click", saveGitAccess);
+    nodes.generateGitAccessKeyBtn.addEventListener("click", generateGitAccessKey);
+    nodes.copyGitAccessPublicKeyBtn.addEventListener("click", copyGitAccessPublicKey);
+    nodes.gitCredentialMode.addEventListener("change", updateGitCredentialDraft);
+    nodes.gitProxyMode.addEventListener("change", () => {
+      nodes.gitProxyPort.disabled = nodes.gitProxyMode.value !== "hclient";
+    });
     nodes.syncMemoryVaultBtn.addEventListener("click", () => runMemoryVaultAction("sync"));
     nodes.rebuildMemoryVaultBtn.addEventListener("click", () => runMemoryVaultAction("rebuild"));
     nodes.traceArchiveEnabled.addEventListener("change", updateTraceArchiveSetting);
@@ -6790,7 +7229,8 @@ export function renderAppHtml(): string {
     nodes.conversationBatchArchiveBtn.addEventListener("click", () => runConversationBatchAction("archive"));
     nodes.conversationBatchDeleteBtn.addEventListener("click", () => runConversationBatchAction("delete"));
     nodes.conversationListToggle.addEventListener("click", toggleConversationList);
-    nodes.privateModeToggle.addEventListener("click", togglePrivateMode);
+    nodes.privateModeToggle.addEventListener("click", () => runSessionMenuAction(togglePrivateMode));
+    nodes.incognitoModeToggle.addEventListener("click", () => runSessionMenuAction(toggleIncognitoMode));
     nodes.conversationList.addEventListener("click", selectConversationFromList);
     nodes.conversationList.addEventListener("change", updateConversationBatchSelection);
     nodes.renameSessionBtn.addEventListener("click", renameCurrentSession);
@@ -6798,11 +7238,11 @@ export function renderAppHtml(): string {
     nodes.deleteSessionBtn.addEventListener("click", deleteCurrentSession);
     nodes.archivedSessionsBtn.addEventListener("click", openArchivedSessions);
     nodes.sessionActionsMenuBtn.addEventListener("click", toggleSessionActionsMenu);
-    nodes.mobileRenameSessionBtn.addEventListener("click", () => runMobileSessionAction(renameCurrentSession));
-    nodes.mobileArchiveSessionBtn.addEventListener("click", () => runMobileSessionAction(archiveCurrentSession));
-    nodes.mobileDeleteSessionBtn.addEventListener("click", () => runMobileSessionAction(deleteCurrentSession));
-    nodes.resetWorldConversationBtn.addEventListener("click", () => runMobileSessionAction(resetCurrentWorldConversation));
-    nodes.mobileArchivedSessionsBtn.addEventListener("click", () => runMobileSessionAction(openArchivedSessions));
+    nodes.mobileRenameSessionBtn.addEventListener("click", () => runSessionMenuAction(renameCurrentSession));
+    nodes.mobileArchiveSessionBtn.addEventListener("click", () => runSessionMenuAction(archiveCurrentSession));
+    nodes.mobileDeleteSessionBtn.addEventListener("click", () => runSessionMenuAction(deleteCurrentSession));
+    nodes.resetWorldConversationBtn.addEventListener("click", () => runSessionMenuAction(resetCurrentWorldConversation));
+    nodes.mobileArchivedSessionsBtn.addEventListener("click", () => runSessionMenuAction(openArchivedSessions));
     nodes.newConversationForm.addEventListener("submit", createNewConversation);
     nodes.newConversationDirectBtn.addEventListener("click", () => setNewConversationKind("direct"));
     nodes.newConversationGroupBtn.addEventListener("click", () => setNewConversationKind("world"));
@@ -6856,10 +7296,15 @@ export function renderAppHtml(): string {
     document.addEventListener("click", closeSessionActionsMenuFromOutside);
     document.addEventListener("keydown", closeSessionActionsMenuOnEscape);
     nodes.modeSelect.addEventListener("change", () => {
+      if (state.incognitoTransitioning) return;
       updateRpControls();
       void loadConversationScene();
     });
     nodes.chatCharacterSelect.addEventListener("change", () => {
+      if (state.incognitoTransitioning) {
+        nodes.chatCharacterSelect.value = state.selectedCharacterId;
+        return;
+      }
       state.selectedCharacterId = nodes.chatCharacterSelect.value;
       if (state.conversationSpace === "secret") {
         clearWorkspaceManagerState();
@@ -6904,6 +7349,7 @@ export function renderAppHtml(): string {
     nodes.resetRelationshipBtn.addEventListener("click", resetRelationship);
     nodes.saveCharacterWorldBtn.addEventListener("click", saveCharacterWorld);
     nodes.saveCharacterLifeBtn.addEventListener("click", saveCharacterLife);
+    nodes.saveLifeWorldAttributesBtn.addEventListener("click", saveLifeWorldAttributes);
     nodes.planCharacterLifeBtn.addEventListener("click", planCharacterLife);
     nodes.simulateCharacterMomentBtn.addEventListener("click", simulateCharacterMoment);
     nodes.resumeProactiveBtn.addEventListener("click", resumeProactiveMessages);
@@ -6913,17 +7359,29 @@ export function renderAppHtml(): string {
     nodes.worldManagerWorldSelect.addEventListener("change", selectWorldEditor);
     nodes.newWorldBtn.addEventListener("click", resetWorldEditor);
     nodes.worldForm.addEventListener("submit", saveWorld);
+    nodes.worldAttributeForm.addEventListener("submit", saveWorldAttribute);
+    nodes.saveWorldSharedAttributesBtn.addEventListener("click", saveWorldSharedAttributes);
+    nodes.cancelWorldAttributeEditBtn.addEventListener("click", resetWorldAttributeEditor);
+    nodes.worldAttributeList.addEventListener("click", handleWorldAttributeAction);
     nodes.worldPlaceForm.addEventListener("submit", saveWorldPlace);
     nodes.cancelPlaceEditBtn.addEventListener("click", resetPlaceEditor);
     nodes.worldPlaceList.addEventListener("click", handleWorldPlaceAction);
     nodes.characterForm.addEventListener("submit", saveCharacter);
     nodes.characterFunctionForm.addEventListener("submit", saveCharacterFunction);
-    nodes.characterFunctionAutomatic.addEventListener("change", updateCharacterFunctionAutomation);
-    nodes.refreshCharacterFunctionBtn.addEventListener("click", refreshCharacterFunction);
-    nodes.characterSkillVersionSelect.addEventListener("change", inspectCharacterSkillVersion);
-    nodes.activateCharacterSkillVersionBtn.addEventListener("click", activateCharacterSkillVersion);
-    nodes.characterCapabilityList.addEventListener("change", updateCharacterCapabilityControls);
-    nodes.characterCapabilityList.addEventListener("click", setCharacterCapabilityResponsibility);
+    nodes.newCharacterOwnedSkillBtn.addEventListener("click", () => openCharacterOwnedSkillDialog());
+    nodes.characterOwnedSkillList.addEventListener("click", selectCharacterOwnedSkill);
+    nodes.editCharacterOwnedSkillBtn.addEventListener("click", () => openCharacterOwnedSkillDialog(true));
+    nodes.toggleCharacterOwnedSkillBtn.addEventListener("click", toggleCharacterOwnedSkill);
+    nodes.characterOwnedSkillVersionSelect.addEventListener("change", renderCharacterOwnedSkillDetail);
+    nodes.activateCharacterOwnedSkillBtn.addEventListener("click", activateCharacterOwnedSkillVersion);
+    nodes.characterOwnedSkillProposalList.addEventListener("click", reviewCharacterOwnedSkillProposal);
+    nodes.characterOwnedSkillForm.addEventListener("submit", saveCharacterOwnedSkill);
+    nodes.closeCharacterOwnedSkillDialogBtn.addEventListener("click", closeCharacterOwnedSkillDialog);
+    nodes.cancelCharacterOwnedSkillBtn.addEventListener("click", closeCharacterOwnedSkillDialog);
+    nodes.characterOwnedSkillDialog.addEventListener("cancel", (event) => {
+      event.preventDefault();
+      closeCharacterOwnedSkillDialog();
+    });
     nodes.characterName.addEventListener("input", renderCharacterAvatarPreview);
     nodes.characterSoulMarkdown.addEventListener("input", updateCharacterSoulCount);
     nodes.changeCharacterAvatarBtn.addEventListener("click", () => nodes.characterAvatarInput.click());
@@ -6991,6 +7449,8 @@ export function renderAppHtml(): string {
     nodes.modelSettingsTabBtn.addEventListener("click", () => setSettingsTab("model"));
     nodes.imSettingsTabBtn.addEventListener("click", () => setSettingsTab("im"));
     nodes.visionSettingsTabBtn.addEventListener("click", () => setSettingsTab("vision"));
+    nodes.documentSettingsTabBtn.addEventListener("click", () => setSettingsTab("document"));
+    nodes.gitSettingsTabBtn.addEventListener("click", () => setSettingsTab("git"));
     nodes.searchSettingsTabBtn.addEventListener("click", () => setSettingsTab("search"));
 	    nodes.promptSettingsTabBtn.addEventListener("click", () => setSettingsTab("prompt"));
 	    nodes.dataSettingsTabBtn.addEventListener("click", () => setSettingsTab("data"));
@@ -7035,6 +7495,7 @@ export function renderAppHtml(): string {
     window.addEventListener("orientationchange", scheduleMobileViewportSync, { passive: true });
     window.visualViewport?.addEventListener("resize", scheduleMobileViewportSync, { passive: true });
     window.visualViewport?.addEventListener("scroll", scheduleMobileViewportSync, { passive: true });
+    window.addEventListener("pagehide", discardIncognitoConversationOnPageHide);
     window.addEventListener("focus", () => void acknowledgeVisibleConversation());
     document.addEventListener("visibilitychange", () => {
       if (document.visibilityState === "visible") void acknowledgeVisibleConversation();
@@ -7060,6 +7521,8 @@ export function renderAppHtml(): string {
         '<button class="emoji-option" type="button" data-emoji-value="' + escapeHtml(emoji) + '"' +
           ' aria-label="插入表情 ' + escapeHtml(emoji) + '" title="' + escapeHtml(emoji) + '">' + escapeHtml(emoji) + '</button>'
       ).join("");
+      renderTwemoji(nodes.emojiPickerCategories);
+      renderTwemoji(nodes.emojiPickerGrid);
       nodes.emojiPickerGrid.scrollTop = 0;
     }
 
@@ -7138,11 +7601,22 @@ export function renderAppHtml(): string {
     }
 
     function setUiMode(mode) {
+      if (state.incognitoTransitioning) {
+        setStatus("正在准备无痕会话，请稍候", true);
+        return;
+      }
+      if (incognitoConversationIsActive() && mode !== "normal") {
+        setStatus("请先退出无痕会话，再打开管理或设置页面", true);
+        return;
+      }
       if (mode !== "management") {
         void clearAgentSkillInstallStage({ deleteRemote: true });
       }
       if (mode !== "settings" && state.uiMode === "settings" && state.settingsTab === "im") {
         deactivateImSettingsView();
+      }
+      if (mode !== "settings" && state.uiMode === "settings" && state.settingsTab === "git") {
+        deactivateGitSettingsView();
       }
       state.uiMode = mode;
       document.body.dataset.uiMode = mode;
@@ -7218,16 +7692,21 @@ export function renderAppHtml(): string {
 
     function setSettingsTab(tab) {
       if (tab !== "im" && state.settingsTab === "im") deactivateImSettingsView();
+      if (tab !== "git" && state.settingsTab === "git") deactivateGitSettingsView();
       state.settingsTab = tab;
       nodes.modelSettingsTabBtn.classList.toggle("active", tab === "model");
       nodes.imSettingsTabBtn.classList.toggle("active", tab === "im");
       nodes.visionSettingsTabBtn.classList.toggle("active", tab === "vision");
+      nodes.documentSettingsTabBtn.classList.toggle("active", tab === "document");
+      nodes.gitSettingsTabBtn.classList.toggle("active", tab === "git");
       nodes.searchSettingsTabBtn.classList.toggle("active", tab === "search");
       nodes.promptSettingsTabBtn.classList.toggle("active", tab === "prompt");
       nodes.dataSettingsTabBtn.classList.toggle("active", tab === "data");
       nodes.modelSettingsPanel.hidden = tab !== "model";
       nodes.imSettingsPanel.hidden = tab !== "im";
       nodes.visionSettingsPanel.hidden = tab !== "vision";
+      nodes.documentSettingsPanel.hidden = tab !== "document";
+      nodes.gitSettingsPanel.hidden = tab !== "git";
       nodes.searchSettingsPanel.hidden = tab !== "search";
       nodes.promptSettingsPanel.hidden = tab !== "prompt";
       nodes.dataSettingsPanel.hidden = tab !== "data";
@@ -7235,6 +7714,8 @@ export function renderAppHtml(): string {
       if (tab === "model") loadApiSettings();
       if (tab === "im") loadImSettingsView();
       if (tab === "vision") loadVisionSettings();
+      if (tab === "document") loadMineruSettings();
+      if (tab === "git") loadGitSettings();
       if (tab === "search") loadTavilySettings();
       if (tab === "prompt") setPromptSettingsView(state.promptSettingsView);
       if (tab === "data") {
@@ -7776,6 +8257,9 @@ export function renderAppHtml(): string {
     }
 
     function requireWorkspaceManagerScope() {
+      if (state.incognitoTransitioning || incognitoConversationIsActive()) {
+        throw new Error("无痕会话不开放持久 Workspace 管理");
+      }
       if (state.conversationSpace === "normal") {
         return {
           sessionScoped: false,
@@ -7829,7 +8313,8 @@ export function renderAppHtml(): string {
     }
 
     function updateWorkspaceManagerAvailability() {
-      const available = state.conversationSpace === "normal" || Boolean(activeSecretWorkspaceManagerScope());
+      const available = !incognitoConversationIsActive() &&
+        (state.conversationSpace === "normal" || Boolean(activeSecretWorkspaceManagerScope()));
       nodes.workspaceFileUpBtn.disabled = !available || !state.workspaceFileDirectory;
       nodes.workspaceFileRefreshBtn.disabled = !available;
       nodes.workspaceFileUploadBtn.disabled = !available;
@@ -8753,6 +9238,7 @@ export function renderAppHtml(): string {
     }
 
     function captureMemoryConversationScope() {
+      if (state.incognitoTransitioning || incognitoConversationIsActive()) return null;
       const conversationSpace = state.conversationSpace;
       const characterId = state.selectedCharacterId;
       if (conversationSpace === "secret" && !characterId) return null;
@@ -8844,27 +9330,138 @@ export function renderAppHtml(): string {
 
     function conversationSpaceIdle() {
       return !state.busy && !state.uploadingAttachments && !state.contextCompacting &&
+        !state.incognitoTransitioning && !state.privateModeTransitioning &&
         !state.privateInboxRunning && !state.privateInboxMessages.some((message) =>
           message.status === "queued" || message.status === "processing"
         );
     }
 
+    function activeIncognitoConversation() {
+      const conversation = state.incognitoConversation;
+      if (
+        !conversation || !conversation.incognito ||
+        state.activeConversationKind !== "direct" ||
+        state.activeSessionId !== conversation.id
+      ) return null;
+      return conversation;
+    }
+
+    function incognitoConversationIsActive() {
+      return Boolean(activeIncognitoConversation());
+    }
+
+    function captureIncognitoOpeningScope(requestId, characterId = state.selectedCharacterId) {
+      return {
+        requestId,
+        spaceEpoch: state.conversationSpaceEpoch,
+        viewEpoch: state.conversationViewEpoch,
+        conversationSpace: state.conversationSpace,
+        conversationKind: state.activeConversationKind,
+        sessionId: state.activeSessionId,
+        worldId: state.activeWorldId,
+        groupId: state.activeGroupId,
+        characterId
+      };
+    }
+
+    function incognitoOpeningScopeMatches(scope) {
+      return Boolean(
+        scope && scope.requestId === state.incognitoOpenRequestId &&
+        scope.spaceEpoch === state.conversationSpaceEpoch &&
+        scope.viewEpoch === state.conversationViewEpoch &&
+        scope.conversationSpace === state.conversationSpace &&
+        scope.conversationKind === state.activeConversationKind &&
+        scope.sessionId === state.activeSessionId &&
+        scope.worldId === state.activeWorldId &&
+        scope.groupId === state.activeGroupId &&
+        scope.characterId === state.selectedCharacterId
+      );
+    }
+
+    function incognitoActivationMatches(requestId, conversationId, characterId) {
+      return requestId === state.incognitoOpenRequestId &&
+        state.incognitoConversation?.id === conversationId &&
+        state.selectedCharacterId === characterId &&
+        incognitoConversationIsActive();
+    }
+
+    async function discardReturnedIncognitoConversation(conversation) {
+      if (!conversation?.id || !conversation.incognito) return;
+      try {
+        const response = await controlPlaneFetch(
+          "/api/v1/incognito-conversations/" + encodeURIComponent(conversation.id),
+          { method: "DELETE", body: "{}" }
+        );
+        if (!response.ok && response.status !== 404) {
+          await response.json().catch(() => ({}));
+        }
+      } catch {
+        // A later reload can recover the still-active overlay and let the user close it explicitly.
+      }
+    }
+
     function updatePrivateModeChrome() {
       const secret = state.conversationSpace === "secret";
+      const incognito = incognitoConversationIsActive();
       const directChat = state.uiMode === "normal" && state.activeConversationKind === "direct";
       document.body.dataset.conversationSpace = state.conversationSpace;
       nodes.privateModeToggle.hidden = !directChat;
       nodes.privateModeToggle.disabled = !state.selectedCharacterId || !conversationSpaceIdle();
-      nodes.privateModeToggle.setAttribute("aria-pressed", String(secret));
-      nodes.privateModeToggle.title = secret ? "关闭私密模式" : "开启私密模式";
-      nodes.privateModeToggle.setAttribute("aria-label", nodes.privateModeToggle.title);
+      nodes.privateModeToggle.setAttribute("aria-checked", String(secret));
+      const privateModeLabel = incognito
+        ? "切换到私密模式"
+        : secret ? "退出私密模式" : "进入私密模式";
+      nodes.privateModeToggle.title = incognito
+        ? "退出无痕会话并切换到私密模式"
+        : secret ? "关闭私密模式" : "开启私密模式";
+      nodes.privateModeToggle.setAttribute("aria-label", privateModeLabel);
       nodes.privateModeToggle.innerHTML = '<i data-lucide="' + (secret ? "lock-keyhole" : "unlock-keyhole") +
-        '" aria-hidden="true"></i><span>' + (secret ? "私密中" : "私密") + '</span>';
+        '" aria-hidden="true"></i><span>' + privateModeLabel + '</span>';
       nodes.newConversationGroupBtn.hidden = secret;
+      updateIncognitoModeChrome();
       refreshIcons();
     }
 
+    function updateIncognitoModeChrome() {
+      const incognito = incognitoConversationIsActive();
+      const navigationLocked = incognito || state.incognitoTransitioning || state.privateModeTransitioning;
+      const directChat = state.uiMode === "normal" && state.activeConversationKind === "direct";
+      document.body.dataset.incognito = String(incognito);
+      nodes.incognitoModeToggle.hidden = !directChat;
+      nodes.incognitoModeToggle.disabled = !state.selectedCharacterId || !conversationSpaceIdle();
+      nodes.incognitoModeToggle.setAttribute("aria-checked", String(incognito));
+      const returnSpaceLabel = state.incognitoReturnView?.conversationSpace === "secret" ? "私密对话" : "普通对话";
+      nodes.incognitoModeToggle.title = incognito ? "退出无痕会话并返回" + returnSpaceLabel : "开启无痕会话";
+      const incognitoModeLabel = incognito ? "退出无痕模式" : "进入无痕模式";
+      nodes.incognitoModeToggle.setAttribute("aria-label", incognitoModeLabel);
+      nodes.incognitoModeToggle.innerHTML = '<i data-lucide="eye-off" aria-hidden="true"></i><span>' +
+        incognitoModeLabel + '</span>';
+      nodes.incognitoNotice.hidden = !incognito;
+      nodes.attachFileBtn.disabled = incognito || state.uploadingAttachments || state.activeConversationKind === "group";
+      nodes.sendBtn.disabled = state.incognitoTransitioning || state.privateModeTransitioning || state.uploadingAttachments;
+      nodes.chatAttachmentInput.disabled = incognito;
+      nodes.attachFileBtn.title = incognito ? "无痕会话不支持附件" : "上传附件";
+      nodes.attachFileBtn.setAttribute("aria-label", nodes.attachFileBtn.title);
+      for (const control of [nodes.scheduleBtn, nodes.charactersBtn, nodes.managementBtn, nodes.settingsBtn, nodes.debugBtn]) {
+        control.disabled = navigationLocked;
+        control.title = state.incognitoTransitioning || state.privateModeTransitioning
+          ? "正在切换对话模式"
+          : incognito ? "请先退出无痕会话" : "";
+      }
+      nodes.sidebarNewSessionBtn.disabled = state.incognitoTransitioning || state.privateModeTransitioning;
+      nodes.newSessionBtn.disabled = state.incognitoTransitioning || state.privateModeTransitioning;
+      nodes.sessionSelect.disabled = state.incognitoTransitioning || state.privateModeTransitioning;
+      nodes.conversationListToggle.disabled = state.incognitoTransitioning || state.privateModeTransitioning;
+      nodes.modeSelect.disabled = state.incognitoTransitioning || state.privateModeTransitioning || !state.sessionDraft;
+      nodes.chatCharacterSelect.disabled = state.incognitoTransitioning || state.privateModeTransitioning || !state.sessionDraft;
+      nodes.sidebarArchivedSessionsBtn.disabled = navigationLocked;
+      nodes.sidebarBatchManageBtn.disabled = navigationLocked;
+      nodes.sessionActionsMenuBtn.disabled = state.incognitoTransitioning || state.privateModeTransitioning;
+    }
+
     function clearConversationSpaceTransientState() {
+      ++state.conversationViewEpoch;
+      state.conversationViewLoading = false;
       void clearAgentSkillInstallStage({ deleteRemote: true });
       closePrivateInboxEvents();
       if (state.privateTypingHeartbeatTimer) window.clearTimeout(state.privateTypingHeartbeatTimer);
@@ -8906,8 +9503,10 @@ export function renderAppHtml(): string {
       state.characterFunctionOpenCapabilities = [];
       state.characterSkillVersions = [];
       state.characterSkillViewingHistory = false;
-      state.characterFunctionPollAttempts = 0;
-      clearCharacterFunctionPoll();
+      state.characterOwnedSkills = [];
+      state.selectedCharacterOwnedSkillId = "";
+      state.characterOwnedSkillReview = null;
+      if (nodes.characterOwnedSkillDialog?.open) nodes.characterOwnedSkillDialog.close();
       state.lastTurnStatus = null;
       state.lastTurnCanRetry = false;
       state.activeSessionId = "";
@@ -8936,18 +9535,7 @@ export function renderAppHtml(): string {
       nodes.initiativeSummary.textContent = "";
     }
 
-    async function togglePrivateMode() {
-      if (state.activeConversationKind !== "direct") return;
-      if (!conversationSpaceIdle()) {
-        setStatus("当前消息仍在排队或生成，结束后才能切换私密模式", true);
-        return;
-      }
-      const characterId = state.selectedCharacterId;
-      if (!characterId) {
-        setStatus("请先选择一个角色，再切换私密模式", true);
-        return;
-      }
-      const nextSpace = state.conversationSpace === "secret" ? "normal" : "secret";
+    async function openPersistentDirectConversation(characterId, nextSpace, preferredSessionId = "") {
       const epoch = ++state.conversationSpaceEpoch;
       clearConversationSpaceTransientState();
       state.conversationSpace = nextSpace;
@@ -8968,16 +9556,327 @@ export function renderAppHtml(): string {
         if (epoch !== state.conversationSpaceEpoch || state.conversationSpace !== nextSpace) return;
         await refreshConversationMetadata(epoch);
         if (epoch !== state.conversationSpaceEpoch || state.conversationSpace !== nextSpace) return;
-        const session = state.sessions.find((entry) => entry.id === body.session?.id);
+        const session = state.sessions.find((entry) => entry.id === preferredSessionId) ||
+          state.sessions.find((entry) => entry.id === body.session?.id);
         if (!session) throw new Error("目标对话未出现在当前空间");
         await applySession(session, epoch);
         if (epoch !== state.conversationSpaceEpoch || state.conversationSpace !== nextSpace) return;
         setStatus(nextSpace === "secret" ? "私密模式已开启" : "已返回普通模式");
+        return session;
       } catch (error) {
         if (epoch !== state.conversationSpaceEpoch || state.conversationSpace !== nextSpace) return;
         startNewSession();
         setStatus(error.message || String(error), true);
       } finally {
+        updatePrivateModeChrome();
+      }
+    }
+
+    async function destroyIncognitoConversation() {
+      const conversation = state.incognitoConversation;
+      if (!conversation?.id || state.incognitoTransitioning) return null;
+      state.incognitoTransitioning = true;
+      updatePrivateModeChrome();
+      setStatus("正在销毁无痕会话...");
+      try {
+        state.incognitoAbortController?.abort();
+        const response = await controlPlaneFetch(
+          "/api/v1/incognito-conversations/" + encodeURIComponent(conversation.id),
+          { method: "DELETE", body: "{}" }
+        );
+        if (!response.ok && response.status !== 404) {
+          const body = await response.json().catch(() => ({}));
+          throw new Error(body.error || "无痕会话销毁失败");
+        }
+        const discarded = {
+          conversation,
+          returnView: state.incognitoReturnView
+        };
+        state.incognitoConversation = null;
+        state.incognitoReturnView = null;
+        ++state.conversationSpaceEpoch;
+        clearConversationSpaceTransientState();
+        state.conversationSpace = "normal";
+        state.selectedCharacterId = conversation.characterId || "";
+        nodes.chatCharacterSelect.value = state.selectedCharacterId;
+        updatePrivateModeChrome();
+        updateWorkspaceManagerAvailability();
+        updateChatIdentity();
+        return discarded;
+      } catch (error) {
+        setStatus(error.message || String(error), true);
+        return null;
+      } finally {
+        state.incognitoTransitioning = false;
+        updatePrivateModeChrome();
+      }
+    }
+
+    function discardIncognitoConversationOnPageHide() {
+      const conversation = state.incognitoConversation;
+      if (!conversation?.id) return;
+      state.incognitoAbortController?.abort();
+      void controlPlaneFetch(
+        "/api/v1/incognito-conversations/" + encodeURIComponent(conversation.id),
+        { method: "DELETE", body: "{}", keepalive: true }
+      ).catch(() => undefined);
+    }
+
+    async function restoreConversationAfterIncognito(discarded) {
+      const characterId = discarded?.conversation?.characterId || state.selectedCharacterId;
+      const returnView = discarded?.returnView || {};
+      const targetSpace = returnView.conversationSpace === "secret" ? "secret" : "normal";
+      const sourceWasArchived = Boolean(
+        discarded?.conversation?.sourceArchived || discarded?.conversation?.sourceArchivedAt
+      );
+      const preferredSessionIds = targetSpace === "secret"
+        ? [returnView.sessionId]
+        : sourceWasArchived
+          ? []
+          : [returnView.sessionId, discarded?.conversation?.sourceSessionId];
+      const requestId = ++state.incognitoOpenRequestId;
+      const epoch = ++state.conversationSpaceEpoch;
+      const expectedViewEpoch = state.conversationViewEpoch;
+      state.incognitoTransitioning = true;
+      state.conversationSpace = targetSpace;
+      state.selectedCharacterId = characterId;
+      nodes.chatCharacterSelect.value = characterId;
+      updatePrivateModeChrome();
+      updateWorkspaceManagerAvailability();
+      updateChatIdentity();
+      setStatus(targetSpace === "secret" ? "正在返回私密对话..." : "正在返回普通对话...");
+      let restored = false;
+      try {
+        await refreshConversationMetadata(epoch);
+        if (
+          epoch !== state.conversationSpaceEpoch || state.conversationSpace !== targetSpace ||
+          expectedViewEpoch !== state.conversationViewEpoch
+        ) return;
+        const existing = preferredSessionIds.filter(Boolean).map((sessionId) =>
+          state.sessions.find((entry) =>
+            entry.id === sessionId && entry.characterId === characterId && !entry.incognito &&
+            !entry.archivedAt &&
+            (entry.conversationSpace === "secret" ? "secret" : "normal") === targetSpace
+          )
+        ).find(Boolean);
+        if (existing) {
+          await applySession(existing, epoch);
+          if (
+            epoch !== state.conversationSpaceEpoch || state.conversationSpace !== targetSpace ||
+            state.activeConversationKind !== "direct" || state.activeSessionId !== existing.id
+          ) return;
+          restored = true;
+          setStatus(targetSpace === "secret" ? "已返回私密对话" : "已返回普通对话");
+          return;
+        }
+      } catch (error) {
+        if (epoch !== state.conversationSpaceEpoch || state.conversationSpace !== targetSpace) return;
+        setStatus(error.message || String(error), true);
+      } finally {
+        if (requestId === state.incognitoOpenRequestId) {
+          state.incognitoTransitioning = false;
+          updatePrivateModeChrome();
+        }
+      }
+      if (
+        restored || requestId !== state.incognitoOpenRequestId ||
+        epoch !== state.conversationSpaceEpoch || state.conversationSpace !== targetSpace
+      ) return;
+      state.selectedCharacterId = characterId;
+      nodes.chatCharacterSelect.value = characterId;
+      startNewSession();
+      setStatus(sourceWasArchived && targetSpace === "normal"
+        ? "已退出无痕会话；原普通对话已归档，已回到新对话草稿"
+        : "已退出无痕会话；原对话不存在，已回到新对话草稿");
+    }
+
+    async function toggleIncognitoMode() {
+      if (state.activeConversationKind !== "direct") return;
+      if (!conversationSpaceIdle()) {
+        setStatus("当前消息仍在排队或生成，结束后才能切换无痕会话", true);
+        return;
+      }
+      const characterId = state.selectedCharacterId;
+      if (!characterId) {
+        setStatus("请先选择一个角色，再开启无痕会话", true);
+        return;
+      }
+      if (incognitoConversationIsActive()) {
+        const discarded = await destroyIncognitoConversation();
+        if (!discarded) return;
+        await restoreConversationAfterIncognito(discarded);
+        return;
+      }
+      const confirmed = await openActionDialog({
+        title: "开启无痕会话",
+        description: "将继承进入时普通对话的关系、记忆、角色设定、Skill、见面状态与对话快照。之后的消息和互动只保存在 YourChar 的内存盘，退出或重启后全部丢弃；请求仍会发送给模型提供商，模型提供商仍可能保留请求。",
+        confirmLabel: "进入无痕会话"
+      });
+      if (
+        !confirmed || !conversationSpaceIdle() || state.activeConversationKind !== "direct" ||
+        state.selectedCharacterId !== characterId
+      ) return;
+      const requestId = ++state.incognitoOpenRequestId;
+      const openingScope = captureIncognitoOpeningScope(requestId, characterId);
+      const returnView = {
+        conversationSpace: state.conversationSpace,
+        sessionId: state.activeSessionId,
+        sessionDraft: state.sessionDraft,
+        characterId
+      };
+      const persistentSessions = state.conversationSpace === "normal"
+        ? state.sessions.filter((entry) => !entry.incognito)
+        : [];
+      state.incognitoTransitioning = true;
+      updatePrivateModeChrome();
+      setStatus("正在创建无痕快照...");
+      let conversation = null;
+      let activationStarted = false;
+      try {
+        const response = await controlPlaneFetch("/api/v1/incognito-conversations", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ characterId })
+        });
+        const body = await response.json().catch(() => ({}));
+        conversation = body.conversation;
+        if (!incognitoOpeningScopeMatches(openingScope)) {
+          await discardReturnedIncognitoConversation(conversation);
+          return;
+        }
+        if (!response.ok) throw new Error(body.error || "无痕会话创建失败");
+        if (!conversation?.id || !conversation.incognito) throw new Error("服务未返回有效的无痕会话");
+        const epoch = ++state.conversationSpaceEpoch;
+        clearConversationSpaceTransientState();
+        state.conversationSpace = "normal";
+        state.incognitoConversation = conversation;
+        state.incognitoReturnView = returnView;
+        activationStarted = true;
+        state.sessions = [conversation, ...persistentSessions.filter((entry) => entry.id !== conversation.id)];
+        state.selectedCharacterId = characterId;
+        nodes.chatCharacterSelect.value = characterId;
+        updateWorkspaceManagerAvailability();
+        await applySession(conversation, epoch);
+        if (!incognitoActivationMatches(requestId, conversation.id, characterId)) {
+          await discardReturnedIncognitoConversation(conversation);
+          if (
+            requestId === state.incognitoOpenRequestId &&
+            state.incognitoConversation?.id === conversation.id
+          ) {
+            state.incognitoConversation = null;
+            state.incognitoReturnView = null;
+            state.sessions = state.sessions.filter((entry) => entry.id !== conversation.id);
+          }
+          return;
+        }
+        setStatus("无痕会话已开启；退出或重启后内容会丢弃");
+      } catch (error) {
+        const requestOwnsView = activationStarted && conversation?.id
+          ? incognitoActivationMatches(requestId, conversation.id, characterId)
+          : incognitoOpeningScopeMatches(openingScope);
+        if (requestOwnsView) setStatus(error.message || String(error), true);
+      } finally {
+        if (requestId === state.incognitoOpenRequestId) {
+          state.incognitoTransitioning = false;
+          updatePrivateModeChrome();
+        }
+      }
+    }
+
+    async function recoverIncognitoConversation() {
+      if (state.incognitoConversation || state.incognitoTransitioning) return true;
+      const requestId = ++state.incognitoOpenRequestId;
+      const openingScope = captureIncognitoOpeningScope(requestId);
+      state.incognitoTransitioning = true;
+      updatePrivateModeChrome();
+      let conversation = null;
+      let activationStarted = false;
+      try {
+        const response = await fetch("/api/v1/incognito-conversations", { credentials: "same-origin" });
+        const body = await response.json().catch(() => ({}));
+        if (!incognitoOpeningScopeMatches(openingScope)) return true;
+        if (!response.ok) throw new Error(body.error || "无痕会话恢复检查失败");
+        const conversations = Array.isArray(body.conversations) ? body.conversations : [];
+        if (!conversations.length) return false;
+        if (conversations.length !== 1) throw new Error("服务返回了多个无痕会话，无法安全恢复");
+        conversation = conversations[0];
+        if (!conversation?.id || !conversation.incognito || !conversation.characterId) {
+          throw new Error("服务未返回有效的无痕会话");
+        }
+        const persistentSessions = state.conversationSpace === "normal"
+          ? state.sessions.filter((entry) => !entry.incognito)
+          : [];
+        const sourceWasArchived = Boolean(conversation.sourceArchived || conversation.sourceArchivedAt);
+        const returnSessionId = sourceWasArchived ? "" : conversation.sourceSessionId || "";
+        const epoch = ++state.conversationSpaceEpoch;
+        clearConversationSpaceTransientState();
+        state.conversationSpace = "normal";
+        state.incognitoConversation = conversation;
+        state.incognitoReturnView = {
+          conversationSpace: "normal",
+          sessionId: returnSessionId,
+          sessionDraft: !returnSessionId,
+          characterId: conversation.characterId
+        };
+        activationStarted = true;
+        state.sessions = [conversation, ...persistentSessions.filter((entry) => entry.id !== conversation.id)];
+        state.selectedCharacterId = conversation.characterId;
+        nodes.chatCharacterSelect.value = conversation.characterId;
+        updatePrivateModeChrome();
+        updateWorkspaceManagerAvailability();
+        await applySession(conversation, epoch);
+        if (!incognitoActivationMatches(requestId, conversation.id, conversation.characterId)) {
+          await discardReturnedIncognitoConversation(conversation);
+          if (
+            requestId === state.incognitoOpenRequestId &&
+            state.incognitoConversation?.id === conversation.id
+          ) {
+            state.incognitoConversation = null;
+            state.incognitoReturnView = null;
+            state.sessions = state.sessions.filter((entry) => entry.id !== conversation.id);
+          }
+          return true;
+        }
+        setStatus("已恢复未退出的无痕会话；退出或重启后内容会丢弃");
+        return true;
+      } catch (error) {
+        const requestOwnsView = activationStarted && conversation?.id
+          ? incognitoActivationMatches(requestId, conversation.id, conversation.characterId)
+          : incognitoOpeningScopeMatches(openingScope);
+        if (requestOwnsView) setStatus(error.message || String(error), true);
+        return true;
+      } finally {
+        if (requestId === state.incognitoOpenRequestId) {
+          state.incognitoTransitioning = false;
+          updatePrivateModeChrome();
+        }
+      }
+    }
+
+    async function togglePrivateMode() {
+      if (state.activeConversationKind !== "direct" || state.privateModeTransitioning) return;
+      if (!conversationSpaceIdle()) {
+        setStatus("当前消息仍在排队或生成，结束后才能切换私密模式", true);
+        return;
+      }
+      let characterId = state.selectedCharacterId;
+      if (!characterId) {
+        setStatus("请先选择一个角色，再切换私密模式", true);
+        return;
+      }
+      state.privateModeTransitioning = true;
+      closeSessionActionsMenu();
+      updatePrivateModeChrome();
+      try {
+        if (incognitoConversationIsActive()) {
+          const discarded = await destroyIncognitoConversation();
+          if (!discarded) return;
+          characterId = discarded.conversation.characterId || characterId;
+        }
+        const nextSpace = state.conversationSpace === "secret" ? "normal" : "secret";
+        await openPersistentDirectConversation(characterId, nextSpace);
+      } finally {
+        state.privateModeTransitioning = false;
         updatePrivateModeChrome();
       }
     }
@@ -8989,11 +9888,15 @@ export function renderAppHtml(): string {
 	        loadUserAvatarState()
 	      ]);
 	      await loadCharacters();
-      await loadSessions();
-      await pollIncomingMessages();
+      const recoveredIncognito = await recoverIncognitoConversation();
+      if (!recoveredIncognito) {
+        await loadSessions();
+        await pollIncomingMessages();
+      }
     }
 
     async function refreshConversationMetadata(expectedEpoch = state.conversationSpaceEpoch) {
+      if (incognitoConversationIsActive()) return false;
       const requestedSpace = state.conversationSpace;
       const [response, worldResponse, channelResponse] = await Promise.all([
         fetch(withConversationSpace("/api/v1/sessions", requestedSpace)),
@@ -9025,6 +9928,7 @@ export function renderAppHtml(): string {
     }
 
     async function pollIncomingMessages() {
+      if (incognitoConversationIsActive()) return;
       try {
         const requestedSpace = state.conversationSpace;
         const expectedEpoch = state.conversationSpaceEpoch;
@@ -9150,13 +10054,17 @@ export function renderAppHtml(): string {
       if (!isConversationVisible(sessionId)) return;
       await refreshSessionMessages(true);
       if (!isConversationVisible(sessionId)) return;
-      await markConversationRead(sessionId);
-      void refreshConversationMetadata();
+      if (!incognitoConversationIsActive()) {
+        await markConversationRead(sessionId);
+        void refreshConversationMetadata();
+      }
     }
 
     async function loadSessions() {
+      if (incognitoConversationIsActive()) return;
       const requestedSpace = state.conversationSpace;
       const expectedEpoch = state.conversationSpaceEpoch;
+      const expectedViewEpoch = state.conversationViewEpoch;
       try {
         const [response, worldResponse, channelResponse] = await Promise.all([
           fetch(withConversationSpace("/api/v1/sessions", requestedSpace)),
@@ -9171,7 +10079,10 @@ export function renderAppHtml(): string {
         if (!response.ok) throw new Error(body.error || "会话加载失败");
         if (worldResponse && !worldResponse.ok) throw new Error(worldBody.error || "世界会话加载失败");
         if (channelResponse && !channelResponse.ok) throw new Error(channelBody.error || "角色通信加载失败");
-        if (expectedEpoch !== state.conversationSpaceEpoch || requestedSpace !== state.conversationSpace) return;
+        if (
+          expectedEpoch !== state.conversationSpaceEpoch || requestedSpace !== state.conversationSpace ||
+          expectedViewEpoch !== state.conversationViewEpoch
+        ) return;
         state.sessions = Array.isArray(body.sessions)
           ? body.sessions.slice().sort((left, right) => String(right.updatedAt || "").localeCompare(String(left.updatedAt || "")))
           : [];
@@ -9209,14 +10120,19 @@ export function renderAppHtml(): string {
         }
         startNewSession();
       } catch (error) {
-        if (expectedEpoch !== state.conversationSpaceEpoch || requestedSpace !== state.conversationSpace) return;
+        if (
+          expectedEpoch !== state.conversationSpaceEpoch || requestedSpace !== state.conversationSpace ||
+          expectedViewEpoch !== state.conversationViewEpoch
+        ) return;
         setStatus(error.message || String(error), true);
         if (!state.activeSessionId) startNewSession();
       }
     }
 
     function startNewSession() {
-      if (state.busy) return;
+      if (state.busy || state.incognitoTransitioning) return;
+      ++state.conversationViewEpoch;
+      state.conversationViewLoading = false;
       closePrivateInboxEvents();
       if (state.conversationSpace === "secret") clearWorkspaceManagerState();
       state.activeConversationKind = "direct";
@@ -9226,6 +10142,9 @@ export function renderAppHtml(): string {
       resetCharacterCollaborationState(state.activeSessionId);
       state.sessionDraft = true;
       state.messages = [];
+      state.pendingAttachments = [];
+      state.attachmentUploadQueue = [];
+      renderAttachmentQueue();
       state.privateInboxMessages = [];
       state.privateInboxRunning = false;
       state.contextBudget = null;
@@ -9250,11 +10169,16 @@ export function renderAppHtml(): string {
 
     let newConversationOpener = null;
 
-    function openNewConversationDialog() {
+    async function openNewConversationDialog() {
       if (nodes.newConversationDialog.open) return;
-      if (state.busy) {
+      if (state.busy || state.incognitoTransitioning) {
         setStatus("当前消息仍在生成，结束后再新建对话", true);
         return;
+      }
+      if (incognitoConversationIsActive()) {
+        const discarded = await destroyIncognitoConversation();
+        if (!discarded) return;
+        await restoreConversationAfterIncognito(discarded);
       }
       newConversationOpener = document.activeElement;
       const options = state.characters.map((character) =>
@@ -9328,18 +10252,29 @@ export function renderAppHtml(): string {
         nodes.newConversationError.textContent = "请选择角色。";
         return;
       }
-      if (state.conversationSpace === "secret" && state.selectedCharacterId !== characterId) {
+      const changedSecretOwner = state.conversationSpace === "secret" && state.selectedCharacterId !== characterId;
+      if (changedSecretOwner) {
         ++state.conversationSpaceEpoch;
         clearConversationSpaceTransientState();
       }
+      const knownSession = state.sessions.find((entry) =>
+        entry.characterId === characterId &&
+        entry.canonicalDirect &&
+        (entry.conversationSpace === "secret" ? "secret" : "normal") === state.conversationSpace
+      );
+      const provisionalSessionId = knownSession?.id || generateSessionId();
+      const provisionalView = beginConversationView("direct", provisionalSessionId);
+      state.sessionDraft = !knownSession;
       state.selectedCharacterId = characterId;
-      state.newConversationPreferredCharacterId = "";
       nodes.chatCharacterSelect.value = characterId;
       nodes.modeSelect.value = "sms";
+      renderSessionOptions();
       updatePrivateModeChrome();
       updateChatIdentity();
+      state.newConversationPreferredCharacterId = "";
       nodes.createConversationBtn.disabled = true;
       const expectedEpoch = state.conversationSpaceEpoch;
+      const expectedViewEpoch = provisionalView.epoch;
       const requestedSpace = state.conversationSpace;
       try {
         const response = await fetch("/api/v1/direct-conversations", {
@@ -9349,46 +10284,167 @@ export function renderAppHtml(): string {
         });
         const body = await response.json();
         if (!response.ok) throw new Error(body.error || "私聊打开失败");
-        if (expectedEpoch !== state.conversationSpaceEpoch || requestedSpace !== state.conversationSpace) return;
+        if (
+          expectedEpoch !== state.conversationSpaceEpoch || requestedSpace !== state.conversationSpace ||
+          !conversationViewIsCurrent("direct", provisionalSessionId, expectedViewEpoch)
+        ) return;
         await refreshConversationMetadata(expectedEpoch);
-        if (expectedEpoch !== state.conversationSpaceEpoch) return;
+        if (
+          expectedEpoch !== state.conversationSpaceEpoch ||
+          !conversationViewIsCurrent("direct", provisionalSessionId, expectedViewEpoch)
+        ) return;
         const session = state.sessions.find((entry) => entry.id === body.session?.id);
         if (!session) throw new Error("私聊会话未出现在会话列表中");
         closeNewConversationDialog();
         await applySession(session, expectedEpoch);
         requestAnimationFrame(() => nodes.textInput.focus());
       } catch (error) {
-        if (expectedEpoch !== state.conversationSpaceEpoch || requestedSpace !== state.conversationSpace) return;
+        if (
+          expectedEpoch !== state.conversationSpaceEpoch || requestedSpace !== state.conversationSpace ||
+          !conversationViewIsCurrent("direct", provisionalSessionId, expectedViewEpoch)
+        ) return;
+        finishConversationViewLoading("direct", provisionalSessionId, expectedViewEpoch);
+        renderMessages();
         nodes.newConversationError.textContent = error.message || String(error);
         nodes.createConversationBtn.disabled = false;
       }
     }
 
     async function selectSession() {
+      if (state.busy || state.incognitoTransitioning) {
+        nodes.sessionSelect.value = state.activeSessionId;
+        return;
+      }
       const session = state.sessions.find((entry) => entry.id === nodes.sessionSelect.value);
       if (!session) return;
+      if (incognitoConversationIsActive() && !session.incognito) {
+        const target = { ...session };
+        if (!await destroyIncognitoConversation()) return;
+        await openPersistentDirectConversation(
+          target.characterId || state.selectedCharacterId,
+          target.conversationSpace === "secret" ? "secret" : "normal",
+          target.id
+        );
+        return;
+      }
       await applySession(session);
+    }
+
+    function conversationViewIsCurrent(kind, id, expectedViewEpoch) {
+      if (expectedViewEpoch !== state.conversationViewEpoch || state.activeConversationKind !== kind) {
+        return false;
+      }
+      if (kind === "direct") return state.activeSessionId === id;
+      if (kind === "world") return state.activeWorldId === id;
+      return kind === "group" && state.activeGroupId === id;
+    }
+
+    function beginConversationView(kind, id) {
+      const changed = !conversationViewIsCurrent(kind, id, state.conversationViewEpoch);
+      if (!changed) return { changed: false, epoch: state.conversationViewEpoch };
+      ++state.conversationViewEpoch;
+      closePrivateInboxEvents();
+      if (state.privateTypingHeartbeatTimer) window.clearTimeout(state.privateTypingHeartbeatTimer);
+      state.privateTypingHeartbeatTimer = null;
+      state.activeConversationKind = kind;
+      state.activeSessionId = kind === "direct" ? id : "";
+      state.activeWorldId = kind === "world" ? id : "";
+      state.activeGroupId = kind === "group" ? id : "";
+      state.messages = [];
+      state.privateInboxMessages = [];
+      state.privateInboxRunning = false;
+      state.activeProactiveMessages = [];
+      state.contextBudget = null;
+      state.characterLiveState = null;
+      state.lastTurnStatus = null;
+      state.lastTurnCanRetry = false;
+      state.pendingAttachments = [];
+      state.attachmentUploadQueue = [];
+      state.conversationViewLoading = true;
+      clearInteractionState();
+      clearConversationScene();
+      closeMessageEditDialog();
+      renderAttachmentQueue();
+      updateContextBudgetChrome();
+      updateRetryState();
+      return { changed: true, epoch: state.conversationViewEpoch };
+    }
+
+    function finishConversationViewLoading(kind, id, expectedViewEpoch) {
+      if (!conversationViewIsCurrent(kind, id, expectedViewEpoch)) return false;
+      const wasLoading = state.conversationViewLoading;
+      state.conversationViewLoading = false;
+      return wasLoading;
+    }
+
+    function captureDirectConversationScope() {
+      if (
+        state.activeConversationKind !== "direct" || state.sessionDraft ||
+        !state.activeSessionId
+      ) return null;
+      const session = state.sessions.find((entry) => entry.id === state.activeSessionId);
+      const conversationSpace = state.conversationSpace;
+      const characterId = state.selectedCharacterId;
+      const incognito = Boolean(
+        session?.incognito && state.incognitoConversation?.id === state.activeSessionId
+      );
+      if (conversationSpace === "secret" && !characterId) return null;
+      if (
+        session && (
+          (session.conversationSpace === "secret" ? "secret" : "normal") !== conversationSpace ||
+          (session.characterId || "") !== characterId ||
+          Boolean(session.incognito) !== incognito
+        )
+      ) return null;
+      return {
+        sessionId: state.activeSessionId,
+        characterId,
+        conversationSpace,
+        incognito,
+        spaceEpoch: state.conversationSpaceEpoch,
+        viewEpoch: state.conversationViewEpoch
+      };
+    }
+
+    function directConversationScopeMatches(scope) {
+      if (
+        !scope || scope.spaceEpoch !== state.conversationSpaceEpoch ||
+        scope.viewEpoch !== state.conversationViewEpoch ||
+        scope.conversationSpace !== state.conversationSpace ||
+        scope.incognito !== Boolean(
+          state.incognitoConversation?.incognito &&
+          state.incognitoConversation.id === state.activeSessionId &&
+          state.activeConversationKind === "direct"
+        ) ||
+        scope.characterId !== state.selectedCharacterId ||
+        !conversationViewIsCurrent("direct", scope.sessionId, scope.viewEpoch)
+      ) return false;
+      const session = state.sessions.find((entry) => entry.id === scope.sessionId);
+      return Boolean(
+        !state.sessionDraft && (!session || (
+          (session.conversationSpace === "secret" ? "secret" : "normal") === scope.conversationSpace &&
+          (session.characterId || "") === scope.characterId &&
+          Boolean(session.incognito) === scope.incognito
+        ))
+      );
     }
 
     async function applySession(session, expectedEpoch = state.conversationSpaceEpoch) {
       const sessionSpace = session.conversationSpace === "secret" ? "secret" : "normal";
       if (expectedEpoch !== state.conversationSpaceEpoch || sessionSpace !== state.conversationSpace) return;
       const changedSession = state.activeSessionId !== session.id || state.activeConversationKind !== "direct";
-      if (changedSession) closePrivateInboxEvents();
       if (changedSession && state.conversationSpace === "secret") {
         clearWorkspaceManagerState();
         if (state.selectedCharacterId !== (session.characterId || "")) clearMemoryConversationState();
       }
-      if (state.conversationSpace === "normal") {
+      const view = beginConversationView("direct", session.id);
+      const incognito = Boolean(session.incognito && state.incognitoConversation?.id === session.id);
+      if (state.conversationSpace === "normal" && !incognito) {
         if (changedSession) resetCharacterCollaborationState(session.id);
         else ensureCharacterCollaborationSession(session.id);
       } else {
         resetCharacterCollaborationState();
       }
-      state.activeConversationKind = "direct";
-      state.activeGroupId = "";
-      state.activeWorldId = "";
-      state.activeSessionId = session.id;
       state.sessionDraft = false;
       if (changedSession) {
         state.contextBudget = null;
@@ -9399,7 +10455,7 @@ export function renderAppHtml(): string {
       updateRetryState();
       nodes.modeSelect.value = "sms";
       state.selectedCharacterId = session.characterId || "";
-      state.interactionState = state.conversationSpace === "normal" && session.interactionPresence ? {
+      state.interactionState = session.interactionPresence ? {
         presence: session.interactionPresence,
         location: session.interactionLocation || "",
         continuity: "canonical",
@@ -9407,7 +10463,6 @@ export function renderAppHtml(): string {
       } : null;
       nodes.chatCharacterSelect.value = state.selectedCharacterId;
       setSessionControlsLocked(true);
-      nodes.attachFileBtn.disabled = false;
       renderSessionOptions();
       updateSessionActionState();
       updateChatIdentity();
@@ -9416,11 +10471,14 @@ export function renderAppHtml(): string {
       setConversationListOpen(false);
       renderConversationList();
       if (state.uiMode === "management" && state.managementTab === "files") void loadWorkspaceFiles();
-      if (session.characterId) openPrivateInboxEvents(session.id);
-      await refreshSessionMessages(false, expectedEpoch);
-      if (expectedEpoch !== state.conversationSpaceEpoch) return;
-      if (isConversationVisible(session.id)) await markConversationRead(session.id);
-      if (state.conversationSpace === "normal") await loadConversationScene();
+      const scope = captureDirectConversationScope();
+      if (!scope || scope.spaceEpoch !== expectedEpoch || scope.viewEpoch !== view.epoch) return;
+      if (scope.characterId && !scope.incognito) openPrivateInboxEvents(scope.sessionId, scope.viewEpoch);
+      await refreshSessionMessages(false, scope.spaceEpoch, scope.viewEpoch);
+      if (!directConversationScopeMatches(scope)) return;
+      if (!scope.incognito && isConversationVisible(session.id)) await markConversationRead(session.id);
+      if (!directConversationScopeMatches(scope)) return;
+      if (state.conversationSpace === "normal" && !scope.incognito) await loadConversationScene(false, view.epoch);
       else clearConversationScene();
       if (!session.characterId) {
         setStatus("这是未绑定角色的旧会话，仅供查看；请新建会话后继续。", true);
@@ -9429,27 +10487,13 @@ export function renderAppHtml(): string {
 
     async function applyWorldConversation(conversation) {
       if (state.conversationSpace !== "normal") return;
-      closePrivateInboxEvents();
+      const view = beginConversationView("world", conversation.worldId);
       resetCharacterCollaborationState();
-      state.activeConversationKind = "world";
-      state.activeWorldId = conversation.worldId;
-      state.activeGroupId = "";
-      state.activeSessionId = "";
       state.sessionDraft = false;
       state.selectedCharacterId = "";
-      state.privateInboxMessages = [];
-      state.privateInboxRunning = false;
-      state.contextBudget = null;
-      state.characterLiveState = null;
-      state.lastTurnStatus = null;
-      state.lastTurnCanRetry = false;
       nodes.modeSelect.value = "sms";
       nodes.chatCharacterSelect.value = "";
       nodes.attachFileBtn.disabled = false;
-      state.pendingAttachments = [];
-      renderAttachmentQueue();
-      clearInteractionState();
-      updateContextBudgetChrome();
       setSessionControlsLocked(true);
       renderSessionOptions();
       updateRetryState();
@@ -9459,13 +10503,17 @@ export function renderAppHtml(): string {
       setConversationListOpen(false);
       renderConversationList();
       clearConversationScene();
-      await refreshWorldMessages(false);
-      if (isWorldConversationVisible(conversation.worldId)) await markWorldConversationRead(conversation.worldId);
+      await refreshWorldMessages(false, view.epoch);
+      if (
+        conversationViewIsCurrent("world", conversation.worldId, view.epoch) &&
+        isWorldConversationVisible(conversation.worldId)
+      ) await markWorldConversationRead(conversation.worldId);
     }
 
-    async function refreshWorldMessages(silent) {
+    async function refreshWorldMessages(silent, expectedViewEpoch = state.conversationViewEpoch) {
       if (state.activeConversationKind !== "world" || !state.activeWorldId) return;
       const requestedWorldId = state.activeWorldId;
+      if (!conversationViewIsCurrent("world", requestedWorldId, expectedViewEpoch)) return;
       if (!silent) setStatus("加载世界时间线...");
       try {
         const [messageResponse, conversationResponse] = await Promise.all([
@@ -9478,15 +10526,19 @@ export function renderAppHtml(): string {
         ]);
         if (!messageResponse.ok) throw new Error(messageBody.error || "世界时间线加载失败");
         if (!conversationResponse.ok) throw new Error(conversationBody.error || "世界状态加载失败");
-        if (state.activeConversationKind !== "world" || state.activeWorldId !== requestedWorldId) return;
+        if (!conversationViewIsCurrent("world", requestedWorldId, expectedViewEpoch)) return;
         const detail = conversationBody.conversation;
         const index = state.worldConversations.findIndex((entry) => entry.worldId === requestedWorldId);
         if (detail && index >= 0) state.worldConversations[index] = { ...state.worldConversations[index], ...detail };
         state.messages = (messageBody.messages || []).map(normalizeWorldMessage).filter(Boolean);
+        finishConversationViewLoading("world", requestedWorldId, expectedViewEpoch);
         updateChatIdentity();
         renderMessages();
         if (!silent) setStatus("就绪");
       } catch (error) {
+        if (!conversationViewIsCurrent("world", requestedWorldId, expectedViewEpoch)) return;
+        const wasLoading = finishConversationViewLoading("world", requestedWorldId, expectedViewEpoch);
+        if (wasLoading) renderMessages();
         if (!silent) setStatus(error.message || String(error), true);
       }
     }
@@ -9512,26 +10564,13 @@ export function renderAppHtml(): string {
     }
 
     async function applyGroupChat(group) {
-      closePrivateInboxEvents();
+      const view = beginConversationView("group", group.id);
       resetCharacterCollaborationState();
-      state.activeConversationKind = "group";
-      state.activeGroupId = group.id;
-      state.activeSessionId = "";
       state.sessionDraft = false;
       state.selectedCharacterId = "";
-      state.privateInboxMessages = [];
-      state.privateInboxRunning = false;
-      state.contextBudget = null;
-      state.characterLiveState = null;
-      updateContextBudgetChrome();
-      clearInteractionState();
-      state.lastTurnStatus = null;
-      state.lastTurnCanRetry = false;
       nodes.modeSelect.value = group.mode === "rp" ? "rp" : "sms";
       nodes.chatCharacterSelect.value = "";
       nodes.attachFileBtn.disabled = true;
-      state.pendingAttachments = [];
-      renderAttachmentQueue();
       setSessionControlsLocked(true);
       updateRetryState();
       updateSessionActionState();
@@ -9539,16 +10578,19 @@ export function renderAppHtml(): string {
       setConversationListOpen(false);
       renderConversationList();
       clearConversationScene();
-      await refreshGroupMessages(false);
+      await refreshGroupMessages(false, view.epoch);
     }
 
-    async function refreshGroupMessages(silent) {
+    async function refreshGroupMessages(silent, expectedViewEpoch = state.conversationViewEpoch) {
       if (state.activeConversationKind !== "group" || !state.activeGroupId) return;
+      const requestedGroupId = state.activeGroupId;
+      if (!conversationViewIsCurrent("group", requestedGroupId, expectedViewEpoch)) return;
       if (!silent) setStatus("加载群聊...");
       try {
-        const response = await fetch("/api/v1/group-chats/" + encodeURIComponent(state.activeGroupId) + "/messages");
+        const response = await fetch("/api/v1/group-chats/" + encodeURIComponent(requestedGroupId) + "/messages");
         const body = await response.json();
         if (!response.ok) throw new Error(body.error || "群聊消息加载失败");
+        if (!conversationViewIsCurrent("group", requestedGroupId, expectedViewEpoch)) return;
         state.messages = (body.messages || []).map((message) => ({
           role: message.senderType === "user" ? "user" : message.senderType === "character" ? "assistant" : "system",
           text: message.content || "",
@@ -9556,9 +10598,13 @@ export function renderAppHtml(): string {
           groupMessageId: message.id,
           at: message.createdAt ? new Date(message.createdAt).toLocaleTimeString() : ""
         }));
+        finishConversationViewLoading("group", requestedGroupId, expectedViewEpoch);
         renderMessages();
         if (!silent) setStatus("就绪");
       } catch (error) {
+        if (!conversationViewIsCurrent("group", requestedGroupId, expectedViewEpoch)) return;
+        const wasLoading = finishConversationViewLoading("group", requestedGroupId, expectedViewEpoch);
+        if (wasLoading) renderMessages();
         if (!silent) setStatus(error.message || String(error), true);
       }
     }
@@ -9698,7 +10744,7 @@ export function renderAppHtml(): string {
       const time = date && !Number.isNaN(date.getTime())
         ? date.toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit" })
         : "";
-      const title = character?.name || session.title || "未绑定角色";
+      const title = session.incognito ? (character?.name || "角色") + " · 无痕" : character?.name || session.title || "未绑定角色";
       const lifecycle = session.sleepState === "sleeping"
         ? "休息中"
         : session.sleepState === "tired" ? "有些困了" : "";
@@ -9707,7 +10753,9 @@ export function renderAppHtml(): string {
         : session.interactionPresence === "meeting_pending"
           ? "约好见面" + (session.interactionLocation ? " · " + session.interactionLocation : "")
           : "";
-      const previewText = session.preview && session.preview !== title ? session.preview : "开始聊天";
+      const previewText = session.incognito
+        ? "退出或重启后丢弃"
+        : session.preview && session.preview !== title ? session.preview : "开始聊天";
       const preview = [interaction, lifecycle, previewText].filter(Boolean).join(" · ");
       const unreadCount = conversationUnreadCount(session.id);
       const unread = conversationUnreadBadge(unreadCount, "未读消息");
@@ -9734,23 +10782,24 @@ export function renderAppHtml(): string {
     function updateConversationBatchControls() {
       const selectedCount = state.selectedSessionIds.size;
       const selectableCount = state.sessions.length;
+      const incognito = incognitoConversationIsActive();
       nodes.conversationListTitle.textContent = state.conversationBatchMode ? "批量管理" : "会话";
       nodes.conversationBatchBar.hidden = !state.conversationBatchMode;
       nodes.sidebarArchivedSessionsBtn.hidden = state.conversationBatchMode;
       nodes.sidebarNewSessionBtn.hidden = state.conversationBatchMode;
-      nodes.sidebarBatchManageBtn.disabled = !state.conversationBatchMode && !selectableCount;
+      nodes.sidebarBatchManageBtn.disabled = incognito || (!state.conversationBatchMode && !selectableCount);
       nodes.sidebarBatchManageBtn.innerHTML = '<i data-lucide="' + (state.conversationBatchMode ? "check" : "list-checks") + '" aria-hidden="true"></i>';
       nodes.sidebarBatchManageBtn.title = state.conversationBatchMode ? "完成批量管理" : "批量管理";
       nodes.sidebarBatchManageBtn.setAttribute("aria-label", state.conversationBatchMode ? "完成批量管理" : "批量管理会话");
       nodes.conversationBatchCount.textContent = "已选 " + selectedCount + " 项";
       nodes.conversationBatchSelectAllBtn.textContent = selectableCount > 0 && selectedCount === selectableCount ? "取消全选" : "全选";
-      nodes.conversationBatchSelectAllBtn.disabled = !selectableCount;
-      nodes.conversationBatchArchiveBtn.disabled = !selectedCount || state.busy;
-      nodes.conversationBatchDeleteBtn.disabled = !selectedCount || state.busy;
+      nodes.conversationBatchSelectAllBtn.disabled = incognito || !selectableCount;
+      nodes.conversationBatchArchiveBtn.disabled = incognito || !selectedCount || state.busy;
+      nodes.conversationBatchDeleteBtn.disabled = incognito || !selectedCount || state.busy;
     }
 
     function toggleConversationBatchMode() {
-      if (state.busy) return;
+      if (state.busy || incognitoConversationIsActive()) return;
       state.conversationBatchMode = !state.conversationBatchMode;
       state.selectedSessionIds.clear();
       renderConversationList();
@@ -9839,6 +10888,7 @@ export function renderAppHtml(): string {
     }
 
     async function selectConversationFromList(event) {
+      if (state.incognitoTransitioning) return;
       const groupToggle = event.target.closest("button[data-conversation-group-toggle]");
       if (groupToggle) {
         const groupKey = groupToggle.dataset.conversationGroupToggle;
@@ -9868,6 +10918,16 @@ export function renderAppHtml(): string {
       }
       const session = state.sessions.find((entry) => entry.id === item.dataset.sessionId);
       if (session) {
+        if (incognitoConversationIsActive() && !session.incognito) {
+          const target = { ...session };
+          if (!await destroyIncognitoConversation()) return;
+          await openPersistentDirectConversation(
+            target.characterId || state.selectedCharacterId,
+            target.conversationSpace === "secret" ? "secret" : "normal",
+            target.id
+          );
+          return;
+        }
         await applySession(session);
       }
     }
@@ -9887,11 +10947,12 @@ export function renderAppHtml(): string {
     let actionDialogState = null;
 
     function toggleSessionActionsMenu() {
+      if (state.incognitoTransitioning || state.privateModeTransitioning) return;
       const opening = nodes.sessionActionsMenu.hidden;
       nodes.sessionActionsMenu.hidden = !opening;
       nodes.sessionActionsMenuBtn.setAttribute("aria-expanded", String(opening));
       if (opening) {
-        const firstEnabled = nodes.sessionActionsMenu.querySelector("button:not(:disabled)");
+        const firstEnabled = nodes.sessionActionsMenu.querySelector("button:not([hidden]):not(:disabled)");
         firstEnabled?.focus();
       }
     }
@@ -9912,15 +10973,19 @@ export function renderAppHtml(): string {
       nodes.sessionActionsMenuBtn.focus();
     }
 
-    function runMobileSessionAction(action) {
+    function runSessionMenuAction(action) {
       closeSessionActionsMenu();
       nodes.sessionActionsMenuBtn.focus();
       void action();
     }
 
     function updateSessionActionState() {
-      const directActive = state.activeConversationKind === "direct" && !state.sessionDraft && Boolean(state.activeSessionId);
+      const incognito = incognitoConversationIsActive();
+      const directActive = state.activeConversationKind === "direct" && !state.sessionDraft &&
+        !state.incognitoTransitioning && !state.privateModeTransitioning &&
+        Boolean(state.activeSessionId) && !incognito;
       const worldActive = state.activeConversationKind === "world" && Boolean(state.activeWorldId);
+      const privacyMenuAvailable = state.uiMode === "normal" && state.activeConversationKind === "direct";
       const privatePending = directActive && (state.privateInboxRunning || state.privateInboxMessages.length > 0);
       nodes.renameSessionBtn.disabled = !directActive;
       nodes.archiveSessionBtn.disabled = !directActive || privatePending;
@@ -9933,14 +10998,18 @@ export function renderAppHtml(): string {
       nodes.mobileDeleteSessionBtn.hidden = !directActive;
       nodes.resetWorldConversationBtn.hidden = !worldActive;
       nodes.resetWorldConversationBtn.disabled = !worldActive || state.busy;
+      nodes.privacyModeMenuSeparator.hidden = !privacyMenuAvailable || !directActive;
       nodes.mobileArchiveSessionBtn.querySelector("span").textContent = "归档会话";
       nodes.mobileDeleteSessionBtn.querySelector("span").textContent = "永久删除会话";
-      nodes.sessionActionsMenuBtn.hidden = !directActive && !worldActive;
-      if (!directActive && !worldActive) closeSessionActionsMenu();
+      nodes.sessionActionsMenuBtn.hidden = !privacyMenuAvailable && !worldActive;
+      if (!privacyMenuAvailable && !worldActive) closeSessionActionsMenu();
     }
 
     async function renameCurrentSession() {
-      if (state.busy || state.sessionDraft || !state.activeSessionId) return;
+      if (
+        state.busy || state.incognitoTransitioning || state.sessionDraft ||
+        !state.activeSessionId || incognitoConversationIsActive()
+      ) return;
       const current = state.sessions.find((entry) => entry.id === state.activeSessionId);
       if (!current || !await openSessionActionDialog("rename", current)) return;
       await loadSessions();
@@ -9948,7 +11017,10 @@ export function renderAppHtml(): string {
     }
 
     async function archiveCurrentSession() {
-      if (state.busy || state.privateInboxRunning || state.privateInboxMessages.length || state.sessionDraft) return;
+      if (
+        state.busy || state.incognitoTransitioning || state.privateInboxRunning || state.privateInboxMessages.length ||
+        state.sessionDraft || incognitoConversationIsActive()
+      ) return;
       if (state.activeConversationKind === "group") {
         const group = state.groupChats.find((entry) => entry.id === state.activeGroupId);
         if (!group) return;
@@ -9999,6 +11071,10 @@ export function renderAppHtml(): string {
     }
 
     async function openArchivedSessions() {
+      if (state.incognitoTransitioning || incognitoConversationIsActive()) {
+        setStatus("请先退出无痕会话，再管理归档会话", true);
+        return;
+      }
       nodes.archivedSessionList.innerHTML = '<div class="archived-empty">加载中...</div>';
       nodes.archivedSessionsDialog.showModal();
       refreshIcons();
@@ -10096,7 +11172,10 @@ export function renderAppHtml(): string {
     }
 
     async function deleteCurrentSession() {
-      if (state.busy || state.privateInboxRunning || state.privateInboxMessages.length || state.sessionDraft) return;
+      if (
+        state.busy || state.incognitoTransitioning || state.privateInboxRunning || state.privateInboxMessages.length ||
+        state.sessionDraft || incognitoConversationIsActive()
+      ) return;
       if (state.activeConversationKind === "group") {
         const group = state.groupChats.find((entry) => entry.id === state.activeGroupId);
         if (!group || !await permanentlyDeleteGroup(group)) return;
@@ -10386,9 +11465,12 @@ export function renderAppHtml(): string {
         return;
       }
       const character = state.characters.find((entry) => entry.id === state.selectedCharacterId);
+      const incognito = incognitoConversationIsActive();
       nodes.conversationHeaderAvatar.classList.remove("group");
       nodes.conversationCharacter.textContent = character?.name || "未选择角色";
-      nodes.conversationMode.textContent = state.conversationSpace === "secret" ? "私密对话" : "角色私聊";
+      nodes.conversationMode.textContent = incognito
+        ? "无痕会话"
+        : state.conversationSpace === "secret" ? "私密对话" : "角色私聊";
       nodes.conversationHeaderAvatar.style.setProperty("--avatar-hue", avatarHue(character?.name || "角色"));
       nodes.conversationHeaderAvatar.innerHTML = avatarImageOrInitial(character?.avatarUrl, character?.name, "角");
       setHeaderCharacterProfileTarget(character);
@@ -10464,7 +11546,8 @@ export function renderAppHtml(): string {
       nodes.contextBudgetMetrics.innerHTML = metrics.map((entry) =>
         '<div><dt>' + escapeHtml(entry[0]) + '</dt><dd>' + escapeHtml(entry[1]) + '</dd></div>'
       ).join("");
-      nodes.compactContextBtn.disabled = state.contextCompacting || state.busy || state.privateInboxRunning;
+      nodes.compactContextBtn.disabled = state.contextCompacting || state.busy ||
+        state.incognitoTransitioning || state.privateInboxRunning;
       if (!state.contextCompacting) {
         nodes.contextBudgetState.textContent = state.privateInboxRunning
           ? "消息仍在合并或生成，结束后可以整理。"
@@ -10473,7 +11556,10 @@ export function renderAppHtml(): string {
     }
 
     async function compactCurrentContext() {
-      if (!state.activeSessionId || state.contextCompacting || state.busy || state.privateInboxRunning) return;
+      if (
+        !state.activeSessionId || state.contextCompacting || state.busy ||
+        state.incognitoTransitioning || state.privateInboxRunning
+      ) return;
       const requestedSessionId = state.activeSessionId;
       state.contextCompacting = true;
       nodes.contextBudgetState.textContent = "正在整理上下文...";
@@ -10502,20 +11588,28 @@ export function renderAppHtml(): string {
     }
 
     function updateInteractionChrome() {
+      const incognito = Boolean(
+        state.incognitoConversation?.incognito &&
+        state.incognitoConversation.id === state.activeSessionId &&
+        state.activeConversationKind === "direct"
+      );
       if (state.activeConversationKind === "world") {
         nodes.interactionToggleBtn.hidden = true;
         nodes.interactionUndoBtn.hidden = true;
         nodes.textInput.placeholder = "推动世界中的下一幕";
         return;
       }
+      if (state.activeConversationKind === "direct" && state.conversationSpace === "secret") {
+        nodes.sceneInfoBtn.hidden = true;
+      }
       const available = state.uiMode === "normal" && state.activeConversationKind === "direct" &&
-        state.conversationSpace === "normal" && !state.sessionDraft && nodes.modeSelect.value === "sms" &&
+        !state.sessionDraft && nodes.modeSelect.value === "sms" &&
         Boolean(state.interactionState);
       nodes.interactionToggleBtn.hidden = !available;
       nodes.interactionUndoBtn.hidden = !available || !state.interactionCanUndo;
       if (!available) {
-        if (state.activeConversationKind === "direct" && state.conversationSpace === "secret") {
-          nodes.conversationMode.textContent = "私密对话";
+        if (state.activeConversationKind === "direct" && (state.conversationSpace === "secret" || incognito)) {
+          nodes.conversationMode.textContent = incognito ? "无痕会话" : "私密对话";
           nodes.conversationScene.hidden = true;
         }
         nodes.textInput.placeholder = nodes.modeSelect.value === "rp" ? "继续当前剧情" : "发消息";
@@ -10524,7 +11618,9 @@ export function renderAppHtml(): string {
       const interaction = state.interactionState;
       const location = interaction.location || "地点待定";
       if (interaction.presence === "co_present") {
-        nodes.conversationMode.textContent = "见面中";
+        nodes.conversationMode.textContent = incognito
+          ? "无痕见面中"
+          : state.conversationSpace === "secret" ? "私密见面中" : "见面中";
         nodes.conversationScene.textContent = "正在一起 · " + location;
         nodes.conversationScene.title = nodes.conversationScene.textContent;
         nodes.conversationScene.hidden = false;
@@ -10533,7 +11629,9 @@ export function renderAppHtml(): string {
         nodes.interactionToggleBtn.setAttribute("aria-label", "结束见面");
         nodes.textInput.placeholder = "描述你说的话或正在做的事";
       } else if (interaction.presence === "meeting_pending") {
-        nodes.conversationMode.textContent = "约好见面";
+        nodes.conversationMode.textContent = incognito
+          ? "无痕·约好见面"
+          : state.conversationSpace === "secret" ? "私密·约好见面" : "约好见面";
         nodes.conversationScene.textContent = "约好见面 · " + location;
         nodes.conversationScene.title = nodes.conversationScene.textContent;
         nodes.conversationScene.hidden = false;
@@ -10542,8 +11640,10 @@ export function renderAppHtml(): string {
         nodes.interactionToggleBtn.setAttribute("aria-label", "确认已经到达");
         nodes.textInput.placeholder = "发消息，或告诉她你到了";
       } else {
-        nodes.conversationMode.textContent = "角色私聊";
-        const live = state.characterLiveState;
+        nodes.conversationMode.textContent = incognito
+          ? "无痕会话"
+          : state.conversationSpace === "secret" ? "私密对话" : "角色私聊";
+        const live = state.conversationSpace === "normal" && !incognito ? state.characterLiveState : null;
         const availabilityLabels = { free: "空闲", busy: "忙碌", resting: "休息中", traveling: "在路上" };
         const liveSummary = [live?.place, live?.activity, availabilityLabels[live?.availability]].filter(Boolean).join(" · ");
         nodes.conversationScene.textContent = liveSummary;
@@ -10554,8 +11654,8 @@ export function renderAppHtml(): string {
         nodes.interactionToggleBtn.setAttribute("aria-label", "发起见面");
         nodes.textInput.placeholder = "发消息";
       }
-      nodes.interactionToggleBtn.disabled = state.busy || state.privateInboxRunning;
-      nodes.interactionUndoBtn.disabled = state.busy || state.privateInboxRunning;
+      nodes.interactionToggleBtn.disabled = state.busy || state.privateInboxRunning || state.incognitoTransitioning;
+      nodes.interactionUndoBtn.disabled = state.busy || state.privateInboxRunning || state.incognitoTransitioning;
       refreshIcons();
     }
 
@@ -10583,7 +11683,7 @@ export function renderAppHtml(): string {
           confirmLabel: "我到了",
           onConfirm: () => runInteractionAction("begin", {
             location: interaction.location || undefined,
-            placeId: interaction.placeId || undefined,
+            placeId: state.conversationSpace === "normal" ? interaction.placeId || undefined : undefined,
             userConfirmed: true
           })
         });
@@ -10614,7 +11714,7 @@ export function renderAppHtml(): string {
         try {
           await runInteractionAction("begin", {
             location: state.interactionState?.location || undefined,
-            placeId: state.interactionState?.placeId || undefined,
+            placeId: state.conversationSpace === "normal" ? state.interactionState?.placeId || undefined : undefined,
             userConfirmed: true
           });
         } catch {
@@ -10630,12 +11730,18 @@ export function renderAppHtml(): string {
     }
 
     async function runInteractionAction(action, payload) {
-      if (state.busy || state.privateInboxRunning || !state.activeSessionId) return;
+      if (state.busy || state.privateInboxRunning) return;
+      const scope = captureDirectConversationScope();
+      if (!scope?.characterId) return;
       state.busy = true;
       updateInteractionChrome();
       try {
         const response = await fetch(
-          withConversationSpace("/api/v1/sessions/" + encodeURIComponent(state.activeSessionId) + "/interaction"),
+          withConversationSpace(
+            "/api/v1/sessions/" + encodeURIComponent(scope.sessionId) + "/interaction",
+            scope.conversationSpace,
+            scope.characterId
+          ),
           {
             method: "POST",
             headers: { "content-type": "application/json" },
@@ -10643,20 +11749,27 @@ export function renderAppHtml(): string {
           }
         );
         const body = await response.json();
+        if (!directConversationScopeMatches(scope)) return;
         if (!response.ok) throw new Error(body.error || "互动状态更新失败");
         state.interactionState = body.state || null;
         state.interactionEvents = Array.isArray(body.events) ? body.events : [];
         state.interactionCanUndo = Boolean(body.canUndo);
         state.interactionLocations = Array.isArray(body.suggestedLocations) ? body.suggestedLocations : [];
-        await refreshSessionMessages(true);
-        await refreshConversationMetadata();
+        state.characterLiveState = body.liveState || null;
+        await refreshSessionMessages(true, scope.spaceEpoch, scope.viewEpoch);
+        if (!directConversationScopeMatches(scope)) return;
+        if (!scope.incognito) {
+          await refreshConversationMetadata(scope.spaceEpoch);
+          if (!directConversationScopeMatches(scope)) return;
+        }
         setStatus(action === "begin" ? "已经见面" : action === "end" ? "已回到消息交流" : "互动状态已更新");
       } catch (error) {
+        if (!directConversationScopeMatches(scope)) return;
         setStatus(error.message || String(error), true);
         throw error;
       } finally {
         state.busy = false;
-        updateInteractionChrome();
+        if (directConversationScopeMatches(scope)) updateInteractionChrome();
       }
     }
 
@@ -10679,8 +11792,11 @@ export function renderAppHtml(): string {
       closeSessionActionsMenu();
     }
 
-    async function loadConversationScene(preserveDialog = false) {
-      if (state.conversationSpace !== "normal" || nodes.modeSelect.value !== "rp") {
+    async function loadConversationScene(
+      preserveDialog = false,
+      expectedViewEpoch = state.conversationViewEpoch
+    ) {
+      if (state.conversationSpace !== "normal" || incognitoConversationIsActive() || nodes.modeSelect.value !== "rp") {
         state.currentScene = null;
         nodes.sceneInfoBtn.hidden = true;
         if (!preserveDialog && nodes.sceneInfoDialog.open) nodes.sceneInfoDialog.close();
@@ -10696,6 +11812,7 @@ export function renderAppHtml(): string {
         !state.selectedCharacterId
       ) return;
       const requestedSessionId = state.activeSessionId;
+      if (!conversationViewIsCurrent("direct", requestedSessionId, expectedViewEpoch)) return;
       const expectedEpoch = state.conversationSpaceEpoch;
       try {
         const response = await fetch(
@@ -10708,7 +11825,7 @@ export function renderAppHtml(): string {
         if (!response.ok) return;
         if (
           expectedEpoch !== state.conversationSpaceEpoch || state.conversationSpace !== "normal" ||
-          state.activeSessionId !== requestedSessionId
+          !conversationViewIsCurrent("direct", requestedSessionId, expectedViewEpoch)
         ) return;
         const scene = body.scene || {};
         state.currentScene = scene;
@@ -10728,7 +11845,9 @@ export function renderAppHtml(): string {
         nodes.conversationScene.title = summary;
         nodes.conversationScene.hidden = false;
       } catch {
-        clearConversationScene();
+        if (conversationViewIsCurrent("direct", requestedSessionId, expectedViewEpoch)) {
+          clearConversationScene();
+        }
       }
     }
 
@@ -11031,8 +12150,9 @@ export function renderAppHtml(): string {
       state.characterFunctionOpenCapabilities = [];
       state.characterSkillVersions = [];
       state.characterSkillViewingHistory = false;
-      state.characterFunctionPollAttempts = 0;
-      clearCharacterFunctionPoll();
+      state.characterOwnedSkills = [];
+      state.selectedCharacterOwnedSkillId = "";
+      state.characterOwnedSkillReview = null;
       setCharacterTab("settings");
     }
 
@@ -11045,14 +12165,14 @@ export function renderAppHtml(): string {
       nodes.memoryList.innerHTML = "";
       nodes.relationshipOverview.innerHTML = "";
       nodes.relationshipEventList.innerHTML = "";
-      nodes.characterCapabilityList.innerHTML = "";
       state.relationship = null;
       state.characterFunction = null;
       state.characterFunctionOpenCapabilities = [];
       state.characterSkillVersions = [];
       state.characterSkillViewingHistory = false;
-      state.characterFunctionPollAttempts = 0;
-      clearCharacterFunctionPoll();
+      state.characterOwnedSkills = [];
+      state.selectedCharacterOwnedSkillId = "";
+      state.characterOwnedSkillReview = null;
       state.pendingCharacterAvatarDataUrl = "";
       nodes.characterDetail.hidden = false;
       nodes.characterDetailTitle.textContent = "新角色";
@@ -11105,7 +12225,6 @@ export function renderAppHtml(): string {
       nodes.characterRelationshipPanel.hidden = !relationship;
       nodes.characterLifePanel.hidden = !life;
       if (capabilities) void loadCharacterFunction();
-      else clearCharacterFunctionPoll();
       if (memory) void loadMemories();
       if (relationship) void loadRelationship();
       if (life) void loadCharacterLife();
@@ -11135,441 +12254,442 @@ export function renderAppHtml(): string {
       const scope = captureCharacterWorkspaceScope();
       if (!scope) return;
       const characterId = scope.characterId;
-      clearCharacterFunctionPoll();
       if (!silent) nodes.characterFunctionState.textContent = "加载中...";
       nodes.saveCharacterFunctionBtn.disabled = true;
       try {
-        const [response, skillResponse] = await Promise.all([
+        const [profileResponse, ownedSkillResponse] = await Promise.all([
+          fetch("/api/v1/characters/" + encodeURIComponent(characterId) + "/collaboration-profile"),
           fetch(withConversationSpace(
-            "/api/v1/characters/" + encodeURIComponent(characterId) + "/function-profile",
-            scope.conversationSpace,
-            characterId
-          )),
-          fetch(withConversationSpace(
-            "/api/v1/characters/" + encodeURIComponent(characterId) + "/skill-versions?limit=50",
+            "/api/v1/characters/" + encodeURIComponent(characterId) + "/owned-skills",
             scope.conversationSpace,
             characterId
           ))
         ]);
-        const [body, skillBody] = await Promise.all([response.json(), skillResponse.json()]);
-        if (!response.ok) throw new Error(body.error || "职责能力加载失败");
-        if (!skillResponse.ok) throw new Error(skillBody.error || "Skill 历史加载失败");
+        const [profileBody, ownedSkillBody] = await Promise.all([
+          profileResponse.json(),
+          ownedSkillResponse.json()
+        ]);
+        if (!profileResponse.ok) throw new Error(profileBody.error || "协作介绍加载失败");
+        if (!ownedSkillResponse.ok) throw new Error(ownedSkillBody.error || "专属 Skills 加载失败");
         if (!characterWorkspaceScopeIsCurrent(scope)) return;
-        state.characterFunction = body.functionProfile || null;
-        state.characterSkillVersions = Array.isArray(skillBody.skillVersions)
-          ? skillBody.skillVersions
+        state.characterFunction = profileBody.collaborationProfile || null;
+        state.characterSkillVersions = [];
+        state.characterOwnedSkills = Array.isArray(ownedSkillBody.skills)
+          ? ownedSkillBody.skills
           : [];
+        if (!state.characterOwnedSkills.some((entry) =>
+          entry.id === state.selectedCharacterOwnedSkillId)) {
+          state.selectedCharacterOwnedSkillId = state.characterOwnedSkills[0]?.id || "";
+          state.characterOwnedSkillReview = null;
+        }
         renderCharacterFunction();
-        scheduleCharacterFunctionPoll();
+        if (state.selectedCharacterOwnedSkillId) {
+          await loadCharacterOwnedSkillReview(scope, state.selectedCharacterOwnedSkillId);
+        }
       } catch (error) {
         if (characterWorkspaceScopeIsCurrent(scope)) {
           nodes.characterFunctionState.textContent = error.message || String(error);
         }
       } finally {
         if (characterWorkspaceScopeIsCurrent(scope)) {
-          nodes.saveCharacterFunctionBtn.disabled = scope.conversationSpace === "secret";
+          nodes.saveCharacterFunctionBtn.disabled = false;
         }
       }
-    }
-
-    function clearCharacterFunctionPoll() {
-      if (state.characterFunctionPollTimer) {
-        clearTimeout(state.characterFunctionPollTimer);
-        state.characterFunctionPollTimer = null;
-      }
-    }
-
-    function scheduleCharacterFunctionPoll() {
-      clearCharacterFunctionPoll();
-      const profile = state.characterFunction?.profile || {};
-      if (
-        state.characterTab !== "capabilities" ||
-        state.conversationSpace === "secret" ||
-        profile.manualLocked ||
-        !["pending", "uninitialized"].includes(profile.inferenceStatus)
-      ) {
-        state.characterFunctionPollAttempts = 0;
-        return;
-      }
-      if (profile.inferenceStatus === "uninitialized" && state.characterFunctionPollAttempts >= 2) return;
-      state.characterFunctionPollAttempts += 1;
-      state.characterFunctionPollTimer = setTimeout(() => {
-        state.characterFunctionPollTimer = null;
-        void loadCharacterFunction(true);
-      }, 1200);
-    }
-
-    function characterFunctionStatus(profile, soulOutdated) {
-      if (profile.manualLocked) {
-        return { label: soulOutdated ? "手动维护 · 人设已变化" : "手动维护", className: "" };
-      }
-      if (profile.inferenceStatus === "pending") {
-        return { label: "正在分析", className: "pending" };
-      }
-      if (profile.inferenceStatus === "failed") {
-        return { label: "分析失败", className: "failed" };
-      }
-      if (profile.inferenceStatus === "ready") {
-        return { label: soulOutdated ? "等待同步人设" : "自动维护中", className: "ready" };
-      }
-      return { label: "等待分析", className: "" };
     }
 
     function renderCharacterFunction() {
-      const snapshot = state.characterFunction;
-      if (!snapshot) {
-        nodes.characterCapabilityList.innerHTML = "";
-        nodes.characterCapabilityCount.textContent = "0 项";
-        nodes.characterFunctionRole.textContent = "尚未形成";
+      const profile = state.characterFunction;
+      if (!profile) {
+        nodes.characterFunctionRole.textContent = "尚未填写";
         nodes.characterFunctionCapabilities.innerHTML = "";
         nodes.characterFunctionLearning.textContent = "";
-        renderCharacterSkillDocument();
+        renderCharacterOwnedSkills();
         return;
       }
-      const profile = snapshot.profile || {};
-      const selected = new Map((snapshot.capabilities || []).map((entry) => [entry.capabilityId, entry]));
-      const evidence = new Map((snapshot.evidence || []).map((entry) => [entry.capabilityId, entry]));
-      const evolution = new Map((snapshot.evolution || []).map((entry) => [entry.capabilityId, entry]));
-      const openCapabilities = new Set(state.characterFunctionOpenCapabilities || []);
-      const modules = Array.isArray(snapshot.modules) ? snapshot.modules : [];
-      const catalog = new Map((snapshot.catalog || []).map((entry) => [entry.id, entry]));
-      const status = characterFunctionStatus(profile, Boolean(snapshot.soulOutdated));
-      const evidenceCount = (snapshot.evidence || []).reduce(
-        (total, entry) => total + Number(entry.total || 0),
+      nodes.characterFunctionRole.textContent = profile.introduction || "尚未填写";
+      nodes.characterFunctionCapabilities.innerHTML = (profile.traits || []).length
+        ? profile.traits.map((trait) =>
+            '<span class="function-capability-chip primary">' + escapeHtml(trait) + '</span>'
+          ).join("")
+        : '<span class="muted">还没有特点标签</span>';
+      const completed = (state.characterOwnedSkills || []).reduce(
+        (total, skill) => total + Number(skill.completedCount || 0),
         0
       );
-      const activeSkill = (snapshot.activeSkills || [])[0];
-      nodes.characterFunctionAutomatic.checked = !profile.manualLocked;
-      nodes.characterFunctionAutomatic.disabled = profile.inferenceStatus === "pending";
-      nodes.refreshCharacterFunctionBtn.disabled = profile.inferenceStatus === "pending";
-      nodes.characterFunctionRole.textContent = profile.publicRole || "尚未形成";
-      nodes.characterFunctionStatusBadge.textContent = status.label;
-      nodes.characterFunctionStatusBadge.className =
-        "function-status-badge" + (status.className ? " " + status.className : "");
-      nodes.characterFunctionCapabilities.innerHTML = (snapshot.capabilities || []).length
-        ? (snapshot.capabilities || []).map((capability) => {
-            const learned = evolution.get(capability.capabilityId);
-            const label = catalog.get(capability.capabilityId)?.label || capability.capabilityId;
-            const level = Number(learned?.effectiveLevel || capability.level || 1);
-            return '<span class="function-capability-chip' +
-              (capability.responsibility === "primary" ? ' primary' : '') + '">' +
-              escapeHtml(label) + ' · ' + level + '级</span>';
-          }).join("")
-        : '<span class="muted">暂未识别专业能力</span>';
       nodes.characterFunctionLearning.textContent = [
-        "能力证据 " + evidenceCount + " 条",
-        activeSkill ? "Skill v" + activeSkill.version : "Skill 未生成",
-        profile.manualLocked ? "手动配置" : "角色自动演进"
+        (state.characterOwnedSkills || []).length + " 个专属 Skill",
+        completed + " 次成功执行",
+        "并行任务上限 " + Number(profile.maxConcurrentTasks || 1)
       ].join(" · ");
-      if (profile.inferenceStatus === "pending") {
-        nodes.characterFunctionState.textContent = "正在根据 SOUL.md 分析...";
-      } else if (profile.inferenceStatus === "failed") {
-        nodes.characterFunctionState.textContent = profile.inferenceError || "自动分析失败";
-      } else if (snapshot.soulOutdated && profile.manualLocked) {
-        nodes.characterFunctionState.textContent = "SOUL.md 已变化，当前保留手动设置";
-      } else {
-        nodes.characterFunctionState.textContent = "";
-      }
-      renderCharacterSkillDocument();
-      nodes.characterPublicRole.value = profile.publicRole || "";
-      nodes.characterTaskPreferences.value = profile.taskPreferences || "";
-      nodes.characterAvoidedTasks.value = profile.avoidedTasks || "";
+      nodes.characterFunctionState.textContent = "";
+      renderCharacterOwnedSkills();
+      nodes.characterPublicRole.value = profile.introduction || "";
+      nodes.characterTaskPreferences.value = (profile.traits || []).join(", ");
       nodes.characterMaxConcurrentTasks.value = String(profile.maxConcurrentTasks || 1);
-      nodes.characterCapabilityList.innerHTML = (snapshot.catalog || []).map((definition) => {
-        const capability = selected.get(definition.id);
-        const enabled = Boolean(capability);
-        const responsibility = capability?.responsibility || "support";
-        const bound = new Set(capability?.moduleIds || []);
-        const recommended = new Set(definition.recommendedModuleIds || []);
-        const result = evidence.get(definition.id);
-        const evidenceText = result
-          ? "证据 " + Number(result.completed || 0) + "/" + Number(result.total || 0) + " 次完成"
-          : "暂无任务证据";
-        const orderedModules = [...modules].sort((left, right) =>
-          Number(recommended.has(right.id)) - Number(recommended.has(left.id)) ||
-          String(left.name).localeCompare(String(right.name), "zh-CN")
-        );
-        const moduleOptions = orderedModules.map((module) =>
-          '<label class="capability-module-option' + (recommended.has(module.id) ? ' recommended' : '') + '">' +
-            '<input type="checkbox" data-capability-module="' + escapeHtml(module.id) + '"' +
-              (bound.has(module.id) ? ' checked' : '') + (enabled ? '' : ' disabled') + ' />' +
-            '<span title="' + escapeHtml(module.id) + '">' + escapeHtml(module.name) + '</span>' +
-            '<small class="' + (module.enabled ? 'on' : '') + '">' +
-              (module.enabled ? '已启用' : '已关闭') + '</small>' +
-          '</label>'
-        ).join("");
-        const levelOptions = [1, 2, 3, 4, 5].map((level) =>
-          '<option value="' + level + '"' + (Number(capability?.level || 3) === level ? ' selected' : '') + '>' +
-            level + ' 级</option>'
-        ).join("");
-        return '<article class="capability-row' + (enabled ? ' enabled' : '') + '" data-capability-id="' +
-            escapeHtml(definition.id) + '" data-responsibility="' + escapeHtml(responsibility) + '">' +
-          '<div class="capability-row-main">' +
-            '<label class="capability-identity">' +
-              '<input type="checkbox" data-capability-enabled' + (enabled ? ' checked' : '') + ' />' +
-              '<span class="capability-copy"><strong>' + escapeHtml(definition.label) + '</strong>' +
-                '<span>' + escapeHtml(definition.description) + '</span>' +
-                '<span class="capability-evidence">' + escapeHtml(evidenceText) + '</span></span>' +
-            '</label>' +
-            '<div class="capability-controls">' +
-              '<label class="capability-level">等级<select data-capability-level' + (enabled ? '' : ' disabled') + '>' +
-                levelOptions + '</select></label>' +
-              '<div class="segmented capability-responsibility" role="group" aria-label="' +
-                escapeHtml(definition.label) + '职责">' +
-                '<button type="button" data-capability-responsibility="primary" class="' +
-                  (responsibility === "primary" ? 'active' : '') + '"' + (enabled ? '' : ' disabled') + '>主责</button>' +
-                '<button type="button" data-capability-responsibility="support" class="' +
-                  (responsibility === "support" ? 'active' : '') + '"' + (enabled ? '' : ' disabled') + '>协助</button>' +
-              '</div>' +
-              '<label class="toggle capability-auto"><span>自动接单</span>' +
-                '<input type="checkbox" data-capability-auto' + (capability?.autoAccept ? ' checked' : '') +
-                  (enabled ? '' : ' disabled') + ' /></label>' +
-            '</div>' +
-          '</div>' +
-          '<details class="capability-bindings"' + (openCapabilities.has(definition.id) ? ' open' : '') + '>' +
-            '<summary><i data-lucide="boxes" aria-hidden="true"></i><span>模块绑定 · <b data-binding-count>' +
-              bound.size + '</b></span></summary>' +
-            '<div class="capability-binding-body">' +
-              '<div class="capability-module-grid">' + moduleOptions + '</div>' +
-              '<label class="capability-notes">维护备注<textarea data-capability-notes maxlength="500"' +
-                (enabled ? '' : ' disabled') + '>' + escapeHtml(capability?.notes || "") + '</textarea></label>' +
-            '</div>' +
-          '</details>' +
-        '</article>';
-      }).join("");
-      if (state.conversationSpace === "secret") {
-        nodes.characterFunctionAutomatic.disabled = true;
-        nodes.refreshCharacterFunctionBtn.disabled = true;
-        nodes.saveCharacterFunctionBtn.disabled = true;
-        nodes.characterPublicRole.disabled = true;
-        nodes.characterTaskPreferences.disabled = true;
-        nodes.characterAvoidedTasks.disabled = true;
-        nodes.characterMaxConcurrentTasks.disabled = true;
-        nodes.characterCapabilityList.querySelectorAll("input, select, textarea, button")
-          .forEach((control) => { control.disabled = true; });
-        nodes.characterFunctionState.textContent =
-          "职责与能力是角色共享属性，私密模式下只读；上方 SKILL.md 与普通模式独立。";
-      } else {
-        nodes.characterPublicRole.disabled = false;
-        nodes.characterTaskPreferences.disabled = false;
-        nodes.characterAvoidedTasks.disabled = false;
-        nodes.characterMaxConcurrentTasks.disabled = false;
-      }
-      updateCharacterCapabilityCount();
       refreshIcons();
     }
 
-    function renderCharacterSkillDocument() {
-      const snapshotActive = (state.characterFunction?.activeSkills || [])[0];
-      const versions = (state.characterSkillVersions || [])
-        .filter((entry) => entry && entry.status !== "rejected");
-      if (!versions.length && snapshotActive) versions.push(snapshotActive);
-      const active = versions.find((entry) => entry.status === "active") || snapshotActive;
-      let selected = active;
-      if (state.characterSkillViewingHistory) {
-        selected = versions.find((entry) =>
-          String(entry.version) === nodes.characterSkillVersionSelect.value) || active;
-      }
-      if (!selected) {
-        nodes.characterSkillMeta.textContent = "尚未生成";
-        nodes.characterSkillVersionSelect.innerHTML = '<option value="">无版本</option>';
-        nodes.characterSkillVersionSelect.disabled = true;
-        nodes.activateCharacterSkillVersionBtn.hidden = true;
-        nodes.characterSkillMarkdown.innerHTML =
-          '<div class="character-skill-empty">尚未生成 Skill</div>';
+    function renderCharacterOwnedSkills() {
+      const skills = Array.isArray(state.characterOwnedSkills) ? state.characterOwnedSkills : [];
+      nodes.newCharacterOwnedSkillBtn.disabled = !state.workspaceCharacterId;
+      if (!skills.length) {
+        nodes.characterOwnedSkillList.innerHTML =
+          '<div class="owned-skill-empty">还没有专属 Skill。可以由你创建，也可以让角色在完成新类型任务后形成草稿。</div>';
+        nodes.characterOwnedSkillDetail.hidden = true;
         return;
       }
-      const sourceLabels = {
-        bootstrap: "人设初始化",
-        character_reflection: "角色复盘",
-        manual: "手动配置"
-      };
-      nodes.characterSkillVersionSelect.innerHTML = versions.map((entry) =>
-        '<option value="' + Number(entry.version) + '"' +
-          (entry.version === selected.version ? ' selected' : '') + '>' +
-          'v' + Number(entry.version) + (entry.status === "active" ? ' · 当前' : '') +
-        '</option>'
-      ).join("");
-      nodes.characterSkillVersionSelect.disabled = versions.length < 2;
-      nodes.activateCharacterSkillVersionBtn.hidden = selected.status === "active";
-      nodes.activateCharacterSkillVersionBtn.dataset.version = String(selected.version);
-      const createdAt = selected.createdAt ? new Date(selected.createdAt) : null;
-      const timeLabel = createdAt && !Number.isNaN(createdAt.getTime())
-        ? createdAt.toLocaleString("zh-CN")
-        : "";
-      nodes.characterSkillMeta.textContent = [
-        "v" + Number(selected.version),
-        sourceLabels[selected.source] || selected.source,
-        selected.changeSummary || "",
-        timeLabel
-      ].filter(Boolean).join(" · ");
-      nodes.characterSkillMarkdown.innerHTML = renderMarkdown(selected.markdown || "");
+      nodes.characterOwnedSkillList.innerHTML = skills.map((skill) => {
+        const statusLabel = skill.status === "active" ? "已启用" : skill.status === "draft" ? "待审核" : "已停用";
+        const stats = [
+          skill.activeVersion ? "v" + Number(skill.activeVersion.version) : "无启用版本",
+          "执行 " + Number(skill.evaluationCount || 0),
+          Number(skill.pendingProposalCount || 0) ? "改进 " + Number(skill.pendingProposalCount) : ""
+        ].filter(Boolean).join(" · ");
+        return '<button type="button" class="owned-skill-card' +
+          (skill.id === state.selectedCharacterOwnedSkillId ? ' active' : '') +
+          '" data-owned-skill-id="' + escapeHtml(skill.id) + '">' +
+          '<span class="owned-skill-card-head"><strong>' + escapeHtml(skill.name || "未命名 Skill") +
+          '</strong><span class="owned-skill-badge ' + escapeHtml(skill.status || "") + '">' +
+          escapeHtml(statusLabel) + '</span></span>' +
+          '<p>' + escapeHtml(skill.description || "尚未填写公开介绍") + '</p>' +
+          '<span class="owned-skill-card-meta">' + escapeHtml(stats) + '</span>' +
+          '<span class="owned-skill-tags">' + (skill.tags || []).map((tag) =>
+            '<span>#' + escapeHtml(tag) + '</span>').join("") + '</span>' +
+        '</button>';
+      }).join("");
+      renderCharacterOwnedSkillDetail();
+    }
+
+    async function selectCharacterOwnedSkill(event) {
+      const card = event.target.closest("[data-owned-skill-id]");
+      if (!card) return;
+      const scope = captureCharacterWorkspaceScope();
+      if (!scope) return;
+      state.selectedCharacterOwnedSkillId = card.dataset.ownedSkillId || "";
+      state.characterOwnedSkillReview = null;
+      renderCharacterOwnedSkills();
+      await loadCharacterOwnedSkillReview(scope, state.selectedCharacterOwnedSkillId);
+    }
+
+    async function loadCharacterOwnedSkillReview(scope, packageId) {
+      if (!scope || !packageId) return;
+      try {
+        const response = await fetch(withConversationSpace(
+          "/api/v1/characters/" + encodeURIComponent(scope.characterId) +
+          "/owned-skills/" + encodeURIComponent(packageId) + "/review",
+          scope.conversationSpace,
+          scope.characterId
+        ));
+        const body = await response.json();
+        if (!response.ok) throw new Error(body.error || "Skill 复盘加载失败");
+        if (
+          !characterWorkspaceScopeIsCurrent(scope) ||
+          state.selectedCharacterOwnedSkillId !== packageId
+        ) return;
+        state.characterOwnedSkillReview = body;
+        renderCharacterOwnedSkillDetail();
+      } catch (error) {
+        if (
+          characterWorkspaceScopeIsCurrent(scope) &&
+          state.selectedCharacterOwnedSkillId === packageId
+        ) {
+          nodes.characterFunctionState.textContent = error.message || String(error);
+          nodes.characterOwnedSkillDetail.hidden = true;
+        }
+      }
+    }
+
+    function renderCharacterOwnedSkillDetail() {
+      const skill = state.characterOwnedSkills.find((entry) =>
+        entry.id === state.selectedCharacterOwnedSkillId);
+      const review = state.characterOwnedSkillReview;
+      if (!skill) {
+        nodes.characterOwnedSkillDetail.hidden = true;
+        return;
+      }
+      nodes.characterOwnedSkillDetail.hidden = false;
+      nodes.characterOwnedSkillName.textContent = skill.name || "未命名 Skill";
+      nodes.characterOwnedSkillDescription.textContent = skill.description || "尚未填写公开介绍。";
+      nodes.characterOwnedSkillMeta.textContent = [
+        skill.status === "active" ? "已启用" : skill.status === "draft" ? "待审核" : "已停用",
+        skill.autoImprove ? "执行后建议改进" : "不自动建议改进",
+        (skill.tags || []).length ? (skill.tags || []).join(" / ") : "未添加标签"
+      ].join(" · ");
+      nodes.toggleCharacterOwnedSkillBtn.textContent = skill.status === "active" ? "停用" : "启用";
+      const versions = Array.isArray(review?.versions) ? review.versions : [];
+      const previousValue = nodes.characterOwnedSkillVersionSelect.value;
+      const selected = versions.find((entry) => entry.id === previousValue) ||
+        versions.find((entry) => entry.status === "active") || versions[0];
+      nodes.characterOwnedSkillVersionSelect.innerHTML = versions.length
+        ? versions.map((entry) => '<option value="' + escapeHtml(entry.id) + '"' +
+            (selected?.id === entry.id ? ' selected' : '') + '>v' + Number(entry.version) +
+            (entry.status === "active" ? ' · 当前' : entry.status === "draft" ? ' · 草稿' : '') +
+          '</option>').join("")
+        : '<option value="">无版本</option>';
+      nodes.characterOwnedSkillVersionSelect.disabled = versions.length < 2;
+      nodes.activateCharacterOwnedSkillBtn.hidden = !selected || selected.status === "active";
+      nodes.activateCharacterOwnedSkillBtn.dataset.versionId = selected?.id || "";
+      nodes.characterOwnedSkillMarkdown.innerHTML = selected
+        ? renderMarkdown(selected.markdown || "")
+        : '<div class="character-skill-empty">尚未生成版本</div>';
+      const evaluations = Array.isArray(review?.evaluations) ? review.evaluations : [];
+      const scored = evaluations.filter((entry) => Number.isFinite(Number(entry.score)));
+      const average = scored.length
+        ? Math.round(scored.reduce((sum, entry) => sum + Number(entry.score), 0) / scored.length)
+        : null;
+      nodes.characterOwnedSkillEvaluationSummary.textContent = [
+        "已执行 " + evaluations.length + " 次",
+        average === null ? "暂无评分" : "平均 " + average + " 分"
+      ].join(" · ");
+      const proposals = (Array.isArray(review?.proposals) ? review.proposals : [])
+        .filter((entry) => entry.status === "pending");
+      nodes.characterOwnedSkillProposalList.innerHTML = proposals.length
+        ? proposals.map((proposal) =>
+            '<article class="owned-skill-proposal" data-owned-skill-proposal-id="' +
+              escapeHtml(proposal.id) + '">' +
+              '<strong>待审核改进</strong><p>' +
+              escapeHtml(proposal.changeSummary || "角色提出了新的可复用工作方法。") + '</p>' +
+              '<details><summary>查看建议版本</summary><div class="markdown-body">' +
+                renderMarkdown(proposal.proposedMarkdown || "") + '</div></details>' +
+              '<div class="owned-skill-proposal-actions">' +
+                '<button type="button" class="secondary" data-proposal-action="reject">拒绝</button>' +
+                '<button type="button" class="primary" data-proposal-action="approve">审核并启用</button>' +
+              '</div></article>'
+          ).join("")
+        : '<span class="muted">暂无待审核改进。现行版本不会被角色静默覆盖。</span>';
       refreshIcons();
     }
 
-    function inspectCharacterSkillVersion() {
-      state.characterSkillViewingHistory = true;
-      renderCharacterSkillDocument();
+    function openCharacterOwnedSkillDialog(editing) {
+      const skill = editing
+        ? state.characterOwnedSkills.find((entry) => entry.id === state.selectedCharacterOwnedSkillId)
+        : null;
+      if (editing && !skill) return;
+      const reviewVersions = state.characterOwnedSkillReview?.versions || [];
+      const currentVersion = reviewVersions.find((entry) => entry.status === "active") || reviewVersions[0];
+      nodes.characterOwnedSkillDialog.dataset.packageId = skill?.id || "";
+      nodes.characterOwnedSkillDialog.dataset.baseVersionId = currentVersion?.id || "";
+      nodes.characterOwnedSkillDialogTitle.textContent = skill ? "编辑专属 Skill" : "新建专属 Skill";
+      nodes.characterOwnedSkillFormName.value = skill?.name || "";
+      nodes.characterOwnedSkillFormTags.value = (skill?.tags || []).join(", ");
+      nodes.characterOwnedSkillFormDescription.value = skill?.description || "";
+      nodes.characterOwnedSkillFormMarkdown.value = currentVersion?.markdown || [
+        "# 工作目标",
+        "",
+        "说明这个 Skill 适合解决什么问题。",
+        "",
+        "## 执行步骤",
+        "",
+        "- 确认目标、输入和约束。",
+        "- 按专业方法完成任务。",
+        "- 检查结果并说明不确定性。"
+      ].join("\\n");
+      nodes.characterOwnedSkillFormAutoImprove.checked = skill?.autoImprove !== false;
+      nodes.characterOwnedSkillFormActivate.checked = skill ? skill.status === "active" : true;
+      nodes.characterOwnedSkillDialog.showModal();
+      nodes.characterOwnedSkillFormName.focus({ preventScroll: true });
+      refreshIcons();
     }
 
-    async function activateCharacterSkillVersion() {
+    function closeCharacterOwnedSkillDialog() {
+      if (nodes.characterOwnedSkillDialog.open) nodes.characterOwnedSkillDialog.close();
+      nodes.characterOwnedSkillDialog.dataset.packageId = "";
+      nodes.characterOwnedSkillDialog.dataset.baseVersionId = "";
+    }
+
+    async function saveCharacterOwnedSkill(event) {
+      event.preventDefault();
       const scope = captureCharacterWorkspaceScope();
       if (!scope) return;
-      const characterId = scope.characterId;
-      const version = Number(nodes.activateCharacterSkillVersionBtn.dataset.version || 0);
-      if (!characterId || !Number.isInteger(version) || version < 1) return;
-      nodes.activateCharacterSkillVersionBtn.disabled = true;
-      nodes.characterFunctionState.textContent = "正在恢复 Skill...";
+      const packageId = nodes.characterOwnedSkillDialog.dataset.packageId || "";
+      const payload = {
+        name: nodes.characterOwnedSkillFormName.value.trim(),
+        description: nodes.characterOwnedSkillFormDescription.value.trim(),
+        tags: nodes.characterOwnedSkillFormTags.value.split(/[,，]/u).map((entry) => entry.trim()).filter(Boolean),
+        markdown: nodes.characterOwnedSkillFormMarkdown.value.trim(),
+        autoImprove: nodes.characterOwnedSkillFormAutoImprove.checked,
+        activate: nodes.characterOwnedSkillFormActivate.checked
+      };
+      nodes.saveCharacterOwnedSkillBtn.disabled = true;
+      nodes.characterFunctionState.textContent = "正在保存专属 Skill...";
       try {
-          const response = await fetch(
-            withConversationSpace(
-              "/api/v1/characters/" + encodeURIComponent(characterId) +
-              "/skill-versions/" + encodeURIComponent(String(version)) + "/activate",
+        const base = "/api/v1/characters/" + encodeURIComponent(scope.characterId) + "/owned-skills";
+        if (!packageId) {
+          const response = await controlPlaneFetch(withConversationSpace(
+            base,
+            scope.conversationSpace,
+            scope.characterId
+          ), { method: "POST", body: JSON.stringify(payload) });
+          const body = await response.json();
+          if (!response.ok) throw new Error(body.error || "专属 Skill 创建失败");
+          if (!characterWorkspaceScopeIsCurrent(scope)) return;
+          state.selectedCharacterOwnedSkillId = body.skill?.id || "";
+        } else {
+          const current = state.characterOwnedSkills.find((entry) => entry.id === packageId);
+          const response = await controlPlaneFetch(withConversationSpace(
+            base + "/" + encodeURIComponent(packageId),
+            scope.conversationSpace,
+            scope.characterId
+          ), {
+            method: "PATCH",
+            body: JSON.stringify({
+              name: payload.name,
+              description: payload.description,
+              tags: payload.tags,
+              autoImprove: payload.autoImprove
+            })
+          });
+          const body = await response.json();
+          if (!response.ok) throw new Error(body.error || "专属 Skill 更新失败");
+          const versions = state.characterOwnedSkillReview?.versions || [];
+          const baseVersion = versions.find((entry) =>
+            entry.id === nodes.characterOwnedSkillDialog.dataset.baseVersionId);
+          if (!baseVersion || baseVersion.markdown !== payload.markdown) {
+            const versionResponse = await controlPlaneFetch(withConversationSpace(
+              base + "/" + encodeURIComponent(packageId) + "/versions",
               scope.conversationSpace,
-              characterId
-            ),
-          { method: "POST" }
-        );
-        const body = await response.json();
-        if (!response.ok) throw new Error(body.error || "Skill 恢复失败");
+              scope.characterId
+            ), {
+              method: "POST",
+              body: JSON.stringify({
+                markdown: payload.markdown,
+                changeSummary: "用户编辑专属 Skill",
+                activate: payload.activate
+              })
+            });
+            const versionBody = await versionResponse.json();
+            if (!versionResponse.ok) throw new Error(versionBody.error || "Skill 版本保存失败");
+          } else if (payload.activate && baseVersion.status !== "active") {
+            const activateResponse = await controlPlaneFetch(withConversationSpace(
+              base + "/" + encodeURIComponent(packageId) + "/versions/" +
+              encodeURIComponent(baseVersion.id) + "/activate",
+              scope.conversationSpace,
+              scope.characterId
+            ), { method: "POST", body: "{}" });
+            const activateBody = await activateResponse.json();
+            if (!activateResponse.ok) throw new Error(activateBody.error || "Skill 版本启用失败");
+          } else if (current && current.status !== (payload.activate ? "active" : "disabled")) {
+            const statusResponse = await controlPlaneFetch(withConversationSpace(
+              base + "/" + encodeURIComponent(packageId),
+              scope.conversationSpace,
+              scope.characterId
+            ), {
+              method: "PATCH",
+              body: JSON.stringify({ status: payload.activate ? "active" : "disabled" })
+            });
+            const statusBody = await statusResponse.json();
+            if (!statusResponse.ok) throw new Error(statusBody.error || "Skill 状态更新失败");
+          }
+        }
         if (!characterWorkspaceScopeIsCurrent(scope)) return;
-        state.characterSkillViewingHistory = false;
-        state.characterFunction = body.functionProfile || state.characterFunction;
+        closeCharacterOwnedSkillDialog();
+        state.characterOwnedSkillReview = null;
         await loadCharacterFunction(true);
-        nodes.characterFunctionState.textContent = "已恢复 Skill v" + version;
+        nodes.characterFunctionState.textContent = "专属 Skill 已保存";
       } catch (error) {
         if (characterWorkspaceScopeIsCurrent(scope)) {
           nodes.characterFunctionState.textContent = error.message || String(error);
         }
       } finally {
-        if (characterWorkspaceScopeIsCurrent(scope)) {
-          nodes.activateCharacterSkillVersionBtn.disabled = false;
-        }
+        if (characterWorkspaceScopeIsCurrent(scope)) nodes.saveCharacterOwnedSkillBtn.disabled = false;
       }
     }
 
-    function updateCharacterCapabilityControls(event) {
-      const row = event.target.closest("[data-capability-id]");
-      if (!row) return;
-      if (event.target.matches("[data-capability-enabled]")) {
-        const enabled = event.target.checked;
-        row.classList.toggle("enabled", enabled);
-        row.querySelectorAll(
-          "select, textarea, input:not([data-capability-enabled]), button[data-capability-responsibility]"
-        ).forEach((control) => { control.disabled = !enabled; });
-      }
-      const count = row.querySelectorAll("input[data-capability-module]:checked").length;
-      const countNode = row.querySelector("[data-binding-count]");
-      if (countNode) countNode.textContent = String(count);
-      updateCharacterCapabilityCount();
-    }
-
-    function setCharacterCapabilityResponsibility(event) {
-      const button = event.target.closest("button[data-capability-responsibility]");
-      if (!button || button.disabled) return;
-      const row = button.closest("[data-capability-id]");
-      if (!row) return;
-      row.dataset.responsibility = button.dataset.capabilityResponsibility || "support";
-      row.querySelectorAll("button[data-capability-responsibility]").forEach((entry) => {
-        entry.classList.toggle("active", entry === button);
-      });
-    }
-
-    function updateCharacterCapabilityCount() {
-      const count = nodes.characterCapabilityList.querySelectorAll(
-        "[data-capability-enabled]:checked"
-      ).length;
-      nodes.characterCapabilityCount.textContent = count + " 项";
-    }
-
-    async function updateCharacterFunctionAutomation() {
+    async function toggleCharacterOwnedSkill() {
       const scope = captureCharacterWorkspaceScope();
-      if (!scope) return;
-      if (scope.conversationSpace === "secret") {
-        setStatus("职责自动维护是角色共享设置，请返回普通模式修改", true);
-        return;
-      }
-      const characterId = scope.characterId;
-      const automatic = nodes.characterFunctionAutomatic.checked;
-      nodes.characterFunctionAutomatic.disabled = true;
-      nodes.refreshCharacterFunctionBtn.disabled = true;
-      nodes.characterFunctionState.textContent = automatic ? "正在启用自动维护..." : "正在切换为手动维护...";
+      const skill = state.characterOwnedSkills.find((entry) =>
+        entry.id === state.selectedCharacterOwnedSkillId);
+      if (!scope || !skill) return;
+      nodes.toggleCharacterOwnedSkillBtn.disabled = true;
       try {
-        const response = await fetch(
-          withConversationSpace(
-            "/api/v1/characters/" + encodeURIComponent(characterId) + "/function-profile/automation",
+        const base = "/api/v1/characters/" + encodeURIComponent(scope.characterId) +
+          "/owned-skills/" + encodeURIComponent(skill.id);
+        if (skill.status !== "active" && !skill.activeVersion) {
+          const version = (state.characterOwnedSkillReview?.versions || [])[0];
+          if (!version) throw new Error("这个 Skill 还没有可启用版本");
+          const response = await controlPlaneFetch(withConversationSpace(
+            base + "/versions/" + encodeURIComponent(version.id) + "/activate",
             scope.conversationSpace,
-            characterId
-          ),
-          {
+            scope.characterId
+          ), { method: "POST", body: "{}" });
+          const body = await response.json();
+          if (!response.ok) throw new Error(body.error || "Skill 启用失败");
+        } else {
+          const response = await controlPlaneFetch(withConversationSpace(
+            base,
+            scope.conversationSpace,
+            scope.characterId
+          ), {
             method: "PATCH",
-            headers: { "content-type": "application/json" },
-            body: JSON.stringify({ automatic })
-          }
-        );
-        const body = await response.json();
-        if (!response.ok) throw new Error(body.error || "自动维护设置失败");
+            body: JSON.stringify({ status: skill.status === "active" ? "disabled" : "active" })
+          });
+          const body = await response.json();
+          if (!response.ok) throw new Error(body.error || "Skill 状态更新失败");
+        }
         if (!characterWorkspaceScopeIsCurrent(scope)) return;
-        state.characterSkillViewingHistory = false;
-        state.characterFunction = body.functionProfile || null;
         await loadCharacterFunction(true);
-        nodes.characterFunctionState.textContent = automatic ? "自动维护已启用" : "已切换为手动维护";
       } catch (error) {
-        const message = error.message || String(error);
         if (characterWorkspaceScopeIsCurrent(scope)) {
-          await loadCharacterFunction(true);
-          if (characterWorkspaceScopeIsCurrent(scope)) {
-            nodes.characterFunctionState.textContent = message;
-          }
+          nodes.characterFunctionState.textContent = error.message || String(error);
         }
       } finally {
+        if (characterWorkspaceScopeIsCurrent(scope)) nodes.toggleCharacterOwnedSkillBtn.disabled = false;
+      }
+    }
+
+    async function activateCharacterOwnedSkillVersion() {
+      const scope = captureCharacterWorkspaceScope();
+      const packageId = state.selectedCharacterOwnedSkillId;
+      const versionId = nodes.activateCharacterOwnedSkillBtn.dataset.versionId || "";
+      if (!scope || !packageId || !versionId) return;
+      try {
+        const response = await controlPlaneFetch(withConversationSpace(
+          "/api/v1/characters/" + encodeURIComponent(scope.characterId) +
+          "/owned-skills/" + encodeURIComponent(packageId) + "/versions/" +
+          encodeURIComponent(versionId) + "/activate",
+          scope.conversationSpace,
+          scope.characterId
+        ), { method: "POST", body: "{}" });
+        const body = await response.json();
+        if (!response.ok) throw new Error(body.error || "Skill 版本启用失败");
+        if (!characterWorkspaceScopeIsCurrent(scope)) return;
+        state.characterOwnedSkillReview = null;
+        await loadCharacterFunction(true);
+      } catch (error) {
         if (characterWorkspaceScopeIsCurrent(scope)) {
-          nodes.characterFunctionAutomatic.disabled = false;
-          nodes.refreshCharacterFunctionBtn.disabled = false;
+          nodes.characterFunctionState.textContent = error.message || String(error);
         }
       }
     }
 
-    async function refreshCharacterFunction() {
+    async function reviewCharacterOwnedSkillProposal(event) {
+      const button = event.target.closest("[data-proposal-action]");
+      const proposal = event.target.closest("[data-owned-skill-proposal-id]");
       const scope = captureCharacterWorkspaceScope();
-      if (!scope) return;
-      if (scope.conversationSpace === "secret") {
-        setStatus("职责推断会更新角色共享属性，请返回普通模式执行", true);
-        return;
-      }
-      const characterId = scope.characterId;
-      nodes.characterFunctionAutomatic.disabled = true;
-      nodes.refreshCharacterFunctionBtn.disabled = true;
-      nodes.characterFunctionState.textContent = "正在根据 SOUL.md 重新分析...";
+      const packageId = state.selectedCharacterOwnedSkillId;
+      if (!button || !proposal || !scope || !packageId) return;
+      const action = button.dataset.proposalAction;
+      button.disabled = true;
       try {
-        const response = await fetch(
-          withConversationSpace(
-            "/api/v1/characters/" + encodeURIComponent(characterId) + "/function-profile/infer",
-            scope.conversationSpace,
-            characterId
-          ),
-          { method: "POST" }
-        );
+        const response = await controlPlaneFetch(withConversationSpace(
+          "/api/v1/characters/" + encodeURIComponent(scope.characterId) +
+          "/owned-skills/" + encodeURIComponent(packageId) + "/proposals/" +
+          encodeURIComponent(proposal.dataset.ownedSkillProposalId || "") + "/" + action,
+          scope.conversationSpace,
+          scope.characterId
+        ), { method: "POST", body: "{}" });
         const body = await response.json();
-        if (!response.ok) throw new Error(body.error || "角色职能分析失败");
+        if (!response.ok) throw new Error(body.error || "Skill 改进审核失败");
         if (!characterWorkspaceScopeIsCurrent(scope)) return;
-        state.characterSkillViewingHistory = false;
-        state.characterFunction = body.functionProfile || null;
+        state.characterOwnedSkillReview = null;
         await loadCharacterFunction(true);
-        nodes.characterFunctionState.textContent = "已根据 SOUL.md 更新";
+        nodes.characterFunctionState.textContent = action === "approve" ? "改进已审核并启用" : "改进已拒绝";
       } catch (error) {
-        const message = error.message || String(error);
         if (characterWorkspaceScopeIsCurrent(scope)) {
-          await loadCharacterFunction(true);
-          if (characterWorkspaceScopeIsCurrent(scope)) {
-            nodes.characterFunctionState.textContent = message;
-          }
+          nodes.characterFunctionState.textContent = error.message || String(error);
         }
       } finally {
-        if (characterWorkspaceScopeIsCurrent(scope)) {
-          nodes.characterFunctionAutomatic.disabled = false;
-          nodes.refreshCharacterFunctionBtn.disabled = false;
-        }
+        if (characterWorkspaceScopeIsCurrent(scope)) button.disabled = false;
       }
     }
 
@@ -11577,55 +12697,29 @@ export function renderAppHtml(): string {
       event.preventDefault();
       const scope = captureCharacterWorkspaceScope();
       if (!scope) return;
-      if (scope.conversationSpace === "secret") {
-        setStatus("职责与能力是角色共享属性，请返回普通模式修改", true);
-        return;
-      }
       const characterId = scope.characterId;
-      const capabilities = [...nodes.characterCapabilityList.querySelectorAll(
-        "[data-capability-id]"
-      )].filter((row) => row.querySelector("[data-capability-enabled]")?.checked).map((row) => ({
-        capabilityId: row.dataset.capabilityId,
-        level: Number(row.querySelector("[data-capability-level]")?.value || 3),
-        responsibility: row.dataset.responsibility || "support",
-        autoAccept: Boolean(row.querySelector("[data-capability-auto]")?.checked),
-        moduleIds: [...row.querySelectorAll("input[data-capability-module]:checked")]
-          .map((input) => input.dataset.capabilityModule),
-        notes: row.querySelector("[data-capability-notes]")?.value.trim() || ""
-      }));
       const payload = {
-        publicRole: nodes.characterPublicRole.value.trim(),
-        taskPreferences: nodes.characterTaskPreferences.value.trim(),
-        avoidedTasks: nodes.characterAvoidedTasks.value.trim(),
-        maxConcurrentTasks: Number(nodes.characterMaxConcurrentTasks.value || 1),
-        manualLocked: true,
-        capabilities
+        introduction: nodes.characterPublicRole.value.trim(),
+        traits: nodes.characterTaskPreferences.value.split(/[,，]/u)
+          .map((entry) => entry.trim()).filter(Boolean),
+        maxConcurrentTasks: Number(nodes.characterMaxConcurrentTasks.value || 1)
       };
-      state.characterFunctionOpenCapabilities = [...nodes.characterCapabilityList.querySelectorAll(
-        "details.capability-bindings[open]"
-      )].map((details) => details.closest("[data-capability-id]")?.dataset.capabilityId).filter(Boolean);
       nodes.saveCharacterFunctionBtn.disabled = true;
       nodes.characterFunctionState.textContent = "保存中...";
       try {
-        const response = await fetch(
-          withConversationSpace(
-            "/api/v1/characters/" + encodeURIComponent(characterId) + "/function-profile",
-            scope.conversationSpace,
-            characterId
-          ),
+        const response = await controlPlaneFetch(
+          "/api/v1/characters/" + encodeURIComponent(characterId) + "/collaboration-profile",
           {
-            method: "PUT",
-            headers: { "content-type": "application/json" },
+            method: "PATCH",
             body: JSON.stringify(payload)
           }
         );
         const body = await response.json();
-        if (!response.ok) throw new Error(body.error || "职责能力保存失败");
+        if (!response.ok) throw new Error(body.error || "协作介绍保存失败");
         if (!characterWorkspaceScopeIsCurrent(scope)) return;
-        state.characterFunction = body.functionProfile || null;
-        state.characterSkillViewingHistory = false;
+        state.characterFunction = body.collaborationProfile || null;
         await loadCharacterFunction(true);
-        nodes.characterFunctionState.textContent = "已保存 · 手动维护";
+        nodes.characterFunctionState.textContent = "协作介绍已保存";
       } catch (error) {
         if (characterWorkspaceScopeIsCurrent(scope)) {
           nodes.characterFunctionState.textContent = error.message || String(error);
@@ -11727,6 +12821,23 @@ export function renderAppHtml(): string {
         : "";
       nodes.planCharacterLifeBtn.disabled = !life.policy?.enabled || !(life.places || []).length;
       nodes.simulateCharacterMomentBtn.disabled = !(life.places || []).length;
+      const attributes = Array.isArray(life.attributes) ? life.attributes : [];
+      nodes.lifeWorldAttributeList.innerHTML = attributes.length
+        ? attributes.map((attribute) => '<label class="life-world-attribute-row"><span class="life-world-attribute-copy"><strong>' +
+            escapeHtml(attribute.name || attribute.key) + '</strong><span>' +
+            escapeHtml((attribute.description ? attribute.description + ' · ' : '') +
+              attribute.minValue + '～' + attribute.maxValue +
+              (attribute.analysisEnabled ? ' · 回合后规则结算' : ' · 仅设置页可改')) + '</span></span><input type="number" step="1" min="' +
+            Number(attribute.minValue) + '" max="' + Number(attribute.maxValue) + '" value="' + Number(attribute.value) +
+            '" data-life-world-attribute="' + escapeHtml(attribute.key) + '" aria-label="' +
+            escapeHtml(attribute.name || attribute.key) + '" /></label>').join("")
+        : '<div class="life-empty-row">这个世界还没有定义角色数值属性</div>';
+      nodes.saveLifeWorldAttributesBtn.hidden = !attributes.length;
+      nodes.lifeWorldAttributeEvents.innerHTML = (life.attributeEvents || []).length
+        ? '<strong>最近变化：</strong> ' + life.attributeEvents.slice(0, 5).map((event) =>
+            escapeHtml(event.attributeKey + ' ' + event.beforeValue + '→' + event.afterValue +
+              (event.summary ? '（' + event.summary + '）' : ''))).join('；')
+        : '';
       nodes.lifePlaceList.innerHTML = (life.places || []).length
         ? life.places.map((place) => '<div class="life-place-row"><strong>' + escapeHtml(place.name) + '</strong>' +
             (place.description ? '<p>' + escapeHtml(place.description) + '</p>' : '') +
@@ -11862,6 +12973,29 @@ export function renderAppHtml(): string {
       }
     }
 
+    async function saveLifeWorldAttributes() {
+      if (!state.workspaceCharacterId || !state.characterLife?.membership) return;
+      const values = Object.fromEntries([...nodes.lifeWorldAttributeList.querySelectorAll("input[data-life-world-attribute]")]
+        .map((input) => [input.dataset.lifeWorldAttribute, Number(input.value)]));
+      nodes.saveLifeWorldAttributesBtn.disabled = true;
+      nodes.characterLifeState.textContent = "保存角色数值中...";
+      try {
+        const response = await controlPlaneFetch(
+          "/api/v1/characters/" + encodeURIComponent(state.workspaceCharacterId) + "/life/attributes",
+          { method: "PATCH", body: JSON.stringify({ values }) }
+        );
+        const body = await response.json();
+        if (!response.ok) throw new Error(body.error || "角色数值保存失败");
+        state.characterLife = body.life;
+        renderCharacterLife();
+        nodes.characterLifeState.textContent = "角色数值已保存";
+      } catch (error) {
+        nodes.characterLifeState.textContent = error.message || String(error);
+      } finally {
+        nodes.saveLifeWorldAttributesBtn.disabled = false;
+      }
+    }
+
     async function planCharacterLife() {
       if (!state.workspaceCharacterId) return;
       nodes.characterLifeState.textContent = "正在安排...";
@@ -11981,7 +13115,16 @@ export function renderAppHtml(): string {
       if (!response.ok) throw new Error(body.error || "世界详情加载失败");
       state.worldEditorId = body.world.id;
       state.worldEditorPlaces = Array.isArray(body.places) ? body.places : [];
+      const sharedAttributes = new Map((Array.isArray(body.worldAttributes) ? body.worldAttributes : [])
+        .map((attribute) => [attribute.id, attribute]));
+      state.worldEditorAttributes = Array.isArray(body.attributeDefinitions)
+        ? body.attributeDefinitions.filter((attribute) => attribute.status === "active").map((attribute) =>
+            attribute.scope === "world" ? { ...attribute, ...(sharedAttributes.get(attribute.id) || {}) } : attribute
+          )
+        : [];
+      state.worldEditorAttributeEvents = Array.isArray(body.worldAttributeEvents) ? body.worldAttributeEvents : [];
       state.placeEditorId = "";
+      state.worldAttributeEditorId = "";
       nodes.worldManagerWorldSelect.value = state.worldEditorId;
       nodes.worldName.value = body.world.name || "";
       nodes.worldTimezone.value = body.world.timezone || "Asia/Shanghai";
@@ -11991,7 +13134,10 @@ export function renderAppHtml(): string {
       nodes.worldRules.value = body.world.rulesMarkdown || "";
       nodes.saveWorldBtn.textContent = "保存世界";
       renderWorldCardSummary(body.world);
+      nodes.worldAttributesSection.hidden = false;
       nodes.worldPlacesSection.hidden = false;
+      resetWorldAttributeEditor();
+      renderWorldAttributes();
       resetPlaceEditor();
       renderWorldPlaces();
     }
@@ -11999,7 +13145,10 @@ export function renderAppHtml(): string {
     function resetWorldEditor() {
       state.worldEditorId = "";
       state.worldEditorPlaces = [];
+      state.worldEditorAttributes = [];
+      state.worldEditorAttributeEvents = [];
       state.placeEditorId = "";
+      state.worldAttributeEditorId = "";
       nodes.worldManagerWorldSelect.value = "";
       nodes.worldForm.reset();
       nodes.worldTimezone.value = "Asia/Shanghai";
@@ -12008,6 +13157,9 @@ export function renderAppHtml(): string {
       nodes.saveWorldBtn.textContent = "创建世界";
       nodes.worldCardSummary.hidden = true;
       nodes.worldCardSummary.innerHTML = "";
+      nodes.worldAttributesSection.hidden = true;
+      nodes.worldAttributeList.innerHTML = "";
+      nodes.saveWorldSharedAttributesBtn.hidden = true;
       nodes.worldPlacesSection.hidden = true;
       nodes.worldPlaceList.innerHTML = "";
       nodes.worldManagerState.textContent = "";
@@ -12075,6 +13227,174 @@ export function renderAppHtml(): string {
             '<button class="secondary icon-button" type="button" data-world-place-delete="' + escapeHtml(place.id) + '" title="删除地点" aria-label="删除地点"><i data-lucide="trash-2"></i></button></div></div>').join("")
         : '<div class="life-empty-row">添加第一个地点后，角色才可以安排生活。</div>';
       refreshIcons();
+    }
+
+    function renderWorldAttributes() {
+      nodes.worldAttributeCount.textContent = state.worldEditorAttributes.length + " / 8 个属性";
+      const sharedAttributes = state.worldEditorAttributes.filter((attribute) => attribute.scope === "world");
+      const characterAttributes = state.worldEditorAttributes.filter((attribute) => attribute.scope !== "world");
+      nodes.saveWorldSharedAttributesBtn.hidden = !sharedAttributes.length;
+      const renderRows = (attributes) => attributes.length
+        ? attributes.map((attribute) => {
+            const mutability = attribute.analysisEnabled
+              ? '回合后分析 · 每次 +' + Number(attribute.increaseDelta) +
+                (attribute.increaseRule ? '' : '（禁用）') + ' · 每次 -' + Number(attribute.decreaseDelta) +
+                (attribute.decreaseRule ? '' : '（禁用）')
+              : '仅用户可调';
+            const scopeLabel = attribute.scope === "world" ? "世界统一" : "角色独立";
+            const latestEvent = attribute.scope === "world"
+              ? state.worldEditorAttributeEvents.find((event) => event.attributeId === attribute.id)
+              : null;
+            const sharedValueControl = attribute.scope === "world"
+              ? '<label class="world-shared-attribute-value"><span>当前共享值</span><input type="number" step="1" min="' +
+                Number(attribute.minValue) + '" max="' + Number(attribute.maxValue) + '" value="' +
+                Number(attribute.value ?? attribute.defaultValue) + '" data-world-shared-attribute="' +
+                escapeHtml(attribute.key) + '" aria-label="' + escapeHtml(attribute.name || attribute.key) + ' 当前共享值" /></label>'
+              : '';
+            return '<div class="world-attribute-row"><div class="world-attribute-row-copy"><strong>' +
+              escapeHtml(attribute.name) + ' <code>' + escapeHtml(attribute.key) + '</code></strong>' +
+              (attribute.description ? '<p>' + escapeHtml(attribute.description) + '</p>' : '') +
+              '<div class="world-attribute-meta"><span>' + Number(attribute.minValue) + '～' + Number(attribute.maxValue) +
+              '</span><span>默认 ' + Number(attribute.defaultValue) + '</span><span>' + escapeHtml(scopeLabel) +
+              '</span><span>' + escapeHtml(mutability) + '</span><span>' + (attribute.visibleToAgent ? '角色可见' : '角色不可见') +
+              '</span></div>' + (latestEvent ? '<p>最近变化：' + escapeHtml(latestEvent.beforeValue + '→' + latestEvent.afterValue +
+                (latestEvent.summary ? '（' + latestEvent.summary + '）' : '')) + '</p>' : '') + '</div>' +
+              '<div class="world-attribute-row-actions">' + sharedValueControl + '<button class="secondary icon-button" type="button" data-world-attribute-edit="' +
+              escapeHtml(attribute.id) + '" title="编辑属性" aria-label="编辑属性"><i data-lucide="pencil"></i></button>' +
+              '<button class="secondary icon-button" type="button" data-world-attribute-archive="' + escapeHtml(attribute.id) +
+              '" title="停用属性" aria-label="停用属性"><i data-lucide="archive"></i></button></div></div>';
+          }).join("")
+        : '<div class="life-empty-row">尚未定义</div>';
+      nodes.worldAttributeList.innerHTML =
+        '<section class="world-attribute-scope-group"><div class="world-attribute-scope-head"><strong>世界统一数值</strong><span>整个世界只有一个当前值，所有角色共同看到</span></div>' +
+          renderRows(sharedAttributes) + '</section>' +
+        '<section class="world-attribute-scope-group"><div class="world-attribute-scope-head"><strong>角色数值定义</strong><span>世界负责定义规则，每个角色在角色面板维护自己的当前值</span></div>' +
+          renderRows(characterAttributes) + '</section>';
+      refreshIcons();
+    }
+
+    function resetWorldAttributeEditor() {
+      state.worldAttributeEditorId = "";
+      nodes.worldAttributeForm.reset();
+      nodes.worldAttributeKey.disabled = false;
+      nodes.worldAttributeScope.disabled = false;
+      nodes.worldAttributeScope.value = "character";
+      nodes.worldAttributeMin.value = "0";
+      nodes.worldAttributeMax.value = "100";
+      nodes.worldAttributeDefault.value = "0";
+      nodes.worldAttributeAnalysisEnabled.checked = false;
+      nodes.worldAttributeIncreaseRule.value = "";
+      nodes.worldAttributeIncreaseDelta.value = "1";
+      nodes.worldAttributeDecreaseRule.value = "";
+      nodes.worldAttributeDecreaseDelta.value = "1";
+      nodes.worldAttributeVisible.checked = true;
+      nodes.saveWorldAttributeBtn.textContent = "添加属性";
+    }
+
+    async function saveWorldAttribute(event) {
+      event.preventDefault();
+      if (!state.worldEditorId) return;
+      const payload = {
+        key: nodes.worldAttributeKey.value.trim(),
+        name: nodes.worldAttributeName.value.trim(),
+        scope: nodes.worldAttributeScope.value,
+        description: nodes.worldAttributeDescription.value,
+        minValue: Number(nodes.worldAttributeMin.value),
+        maxValue: Number(nodes.worldAttributeMax.value),
+        defaultValue: Number(nodes.worldAttributeDefault.value),
+        analysisEnabled: nodes.worldAttributeAnalysisEnabled.checked,
+        increaseRule: nodes.worldAttributeIncreaseRule.value,
+        increaseDelta: Number(nodes.worldAttributeIncreaseDelta.value),
+        decreaseRule: nodes.worldAttributeDecreaseRule.value,
+        decreaseDelta: Number(nodes.worldAttributeDecreaseDelta.value),
+        visibleToAgent: nodes.worldAttributeVisible.checked
+      };
+      nodes.saveWorldAttributeBtn.disabled = true;
+      nodes.worldManagerState.textContent = "保存属性中...";
+      try {
+        const editing = state.worldAttributeEditorId;
+        const response = await controlPlaneFetch(
+          editing
+            ? "/api/v1/world-attributes/" + encodeURIComponent(editing)
+            : "/api/v1/worlds/" + encodeURIComponent(state.worldEditorId) + "/attributes",
+          { method: editing ? "PATCH" : "POST", body: JSON.stringify(payload) }
+        );
+        const body = await response.json();
+        if (!response.ok) throw new Error(body.error || "世界属性保存失败");
+        await loadWorldEditor(state.worldEditorId);
+        nodes.worldManagerState.textContent = editing ? "属性已更新" : "属性已添加";
+      } catch (error) {
+        nodes.worldManagerState.textContent = error.message || String(error);
+      } finally {
+        nodes.saveWorldAttributeBtn.disabled = false;
+      }
+    }
+
+    async function handleWorldAttributeAction(event) {
+      const edit = event.target.closest("button[data-world-attribute-edit]");
+      if (edit) {
+        const attribute = state.worldEditorAttributes.find((entry) => entry.id === edit.dataset.worldAttributeEdit);
+        if (!attribute) return;
+        state.worldAttributeEditorId = attribute.id;
+        nodes.worldAttributeKey.value = attribute.key || "";
+        nodes.worldAttributeKey.disabled = true;
+        nodes.worldAttributeScope.value = attribute.scope === "world" ? "world" : "character";
+        nodes.worldAttributeScope.disabled = true;
+        nodes.worldAttributeName.value = attribute.name || "";
+        nodes.worldAttributeDescription.value = attribute.description || "";
+        nodes.worldAttributeMin.value = String(attribute.minValue);
+        nodes.worldAttributeMax.value = String(attribute.maxValue);
+        nodes.worldAttributeDefault.value = String(attribute.defaultValue);
+        nodes.worldAttributeAnalysisEnabled.checked = Boolean(attribute.analysisEnabled);
+        nodes.worldAttributeIncreaseRule.value = attribute.increaseRule || "";
+        nodes.worldAttributeIncreaseDelta.value = String(attribute.increaseDelta ?? 1);
+        nodes.worldAttributeDecreaseRule.value = attribute.decreaseRule || "";
+        nodes.worldAttributeDecreaseDelta.value = String(attribute.decreaseDelta ?? 1);
+        nodes.worldAttributeVisible.checked = Boolean(attribute.visibleToAgent);
+        nodes.saveWorldAttributeBtn.textContent = "保存属性";
+        nodes.worldAttributeName.focus();
+        return;
+      }
+      const archive = event.target.closest("button[data-world-attribute-archive]");
+      if (!archive) return;
+      const attribute = state.worldEditorAttributes.find((entry) => entry.id === archive.dataset.worldAttributeArchive);
+      if (!attribute) return;
+      const archived = await openActionDialog({
+        title: "停用世界属性",
+        description: "停用“" + attribute.name + "”后，当前值和变化记录会保留，但不再进入界面或模型上下文。",
+        confirmLabel: "停用",
+        onConfirm: async () => {
+          const response = await controlPlaneFetch(
+            "/api/v1/world-attributes/" + encodeURIComponent(attribute.id),
+            { method: "DELETE", body: "{}" }
+          );
+          const body = await response.json();
+          if (!response.ok) throw new Error(body.error || "属性停用失败");
+        }
+      });
+      if (archived) await loadWorldEditor(state.worldEditorId);
+    }
+
+    async function saveWorldSharedAttributes() {
+      if (!state.worldEditorId) return;
+      const values = Object.fromEntries([...nodes.worldAttributeList.querySelectorAll("input[data-world-shared-attribute]")]
+        .map((input) => [input.dataset.worldSharedAttribute, Number(input.value)]));
+      nodes.saveWorldSharedAttributesBtn.disabled = true;
+      nodes.worldManagerState.textContent = "保存世界统一数值中...";
+      try {
+        const response = await controlPlaneFetch(
+          "/api/v1/worlds/" + encodeURIComponent(state.worldEditorId) + "/attributes",
+          { method: "PATCH", body: JSON.stringify({ values }) }
+        );
+        const body = await response.json();
+        if (!response.ok) throw new Error(body.error || "世界统一数值保存失败");
+        await loadWorldEditor(state.worldEditorId);
+        nodes.worldManagerState.textContent = "世界统一数值已保存";
+      } catch (error) {
+        nodes.worldManagerState.textContent = error.message || String(error);
+      } finally {
+        nodes.saveWorldSharedAttributesBtn.disabled = false;
+      }
     }
 
     function resetPlaceEditor() {
@@ -12194,9 +13514,7 @@ export function renderAppHtml(): string {
       };
       const metrics = [
         ["信任", current.trust, "cool"],
-        ["亲近", current.closeness, ""],
-        ["好感", current.affection, "warm"],
-        ["尊重", current.respect, "cool"],
+        ["羁绊", current.bond, "warm"],
         ["张力", current.tension, "alert"]
       ];
       const affect = current.affect || {};
@@ -12227,7 +13545,7 @@ export function renderAppHtml(): string {
         confession_rejected: "拒绝告白", relationship_confirmed: "确认交往", commitment: "长期承诺",
         jealousy: "嫉妒", shared_secret: "共享秘密", breakup: "结束关系", reconciliation: "复合"
       };
-      const dimensionLabels = { trust: "信任", closeness: "亲近", affection: "好感", respect: "尊重", tension: "张力" };
+      const dimensionLabels = { trust: "信任", bond: "羁绊", tension: "张力" };
       const initiatorLabels = { user: "用户发起", character: "角色发起", mutual: "双方确认" };
       const impactLabels = { minor: "轻微", moderate: "显著", major: "重大" };
       const events = Array.isArray(snapshot.recentEvents) ? snapshot.recentEvents : [];
@@ -14613,12 +15931,19 @@ export function renderAppHtml(): string {
       return refreshSessionMessages(false);
     }
 
-    async function refreshSessionMessages(silent, expectedEpoch = state.conversationSpaceEpoch) {
-      if (!state.activeSessionId || state.sessionDraft) return;
-      const requestedSpace = state.conversationSpace;
-      if (expectedEpoch !== state.conversationSpaceEpoch) return;
-      const requestedSessionId = state.activeSessionId;
-      const sharedStateEnabled = requestedSpace === "normal";
+    async function refreshSessionMessages(
+      silent,
+      expectedEpoch = state.conversationSpaceEpoch,
+      expectedViewEpoch = state.conversationViewEpoch
+    ) {
+      const scope = captureDirectConversationScope();
+      if (
+        !scope || scope.spaceEpoch !== expectedEpoch || scope.viewEpoch !== expectedViewEpoch ||
+        !directConversationScopeMatches(scope)
+      ) return;
+      const requestedSpace = scope.conversationSpace;
+      const requestedSessionId = scope.sessionId;
+      const sharedStateEnabled = requestedSpace === "normal" && !scope.incognito;
       if (sharedStateEnabled) ensureCharacterCollaborationSession(requestedSessionId);
       else resetCharacterCollaborationState();
       const sessionId = encodeURIComponent(requestedSessionId);
@@ -14632,12 +15957,30 @@ export function renderAppHtml(): string {
           proactiveResponse,
           collaborationResponse
         ] = await Promise.all([
-          fetch(withConversationSpace("/api/v1/sessions/" + sessionId + "/messages", requestedSpace)),
-          sharedStateEnabled
-            ? fetch(withConversationSpace("/api/v1/sessions/" + sessionId + "/interaction", requestedSpace))
+          fetch(withConversationSpace(
+            "/api/v1/sessions/" + sessionId + "/messages",
+            requestedSpace,
+            scope.characterId
+          )),
+          scope.characterId
+            ? fetch(withConversationSpace(
+                "/api/v1/sessions/" + sessionId + "/interaction",
+                requestedSpace,
+                scope.characterId
+              ))
             : Promise.resolve(null),
-          fetch(withConversationSpace("/api/v1/sessions/" + sessionId + "/inbox", requestedSpace)),
-          fetch(withConversationSpace("/api/v1/sessions/" + sessionId + "/context-budget", requestedSpace)),
+          scope.incognito
+            ? Promise.resolve(null)
+            : fetch(withConversationSpace(
+                "/api/v1/sessions/" + sessionId + "/inbox",
+                requestedSpace,
+                scope.characterId
+              )),
+          fetch(withConversationSpace(
+            "/api/v1/sessions/" + sessionId + "/context-budget",
+            requestedSpace,
+            scope.characterId
+          )),
           sharedStateEnabled
             ? fetch(withConversationSpace(
                 "/api/v1/proactive-messages?sessionId=" + sessionId + "&status=delivered&limit=100",
@@ -14661,7 +16004,7 @@ export function renderAppHtml(): string {
         ] = await Promise.all([
           response.json(),
           interactionResponse ? interactionResponse.json().catch(() => ({})) : Promise.resolve({}),
-          inboxResponse.json().catch(() => ({})),
+          inboxResponse ? inboxResponse.json().catch(() => ({})) : Promise.resolve({}),
           budgetResponse.json().catch(() => ({})),
           proactiveResponse ? proactiveResponse.json().catch(() => ({})) : Promise.resolve({}),
           collaborationResponse ? collaborationResponse.json().catch(() => ({})) : Promise.resolve({})
@@ -14669,10 +16012,7 @@ export function renderAppHtml(): string {
         if (!response.ok) {
           throw new Error(body.error || "加载会话失败");
         }
-        if (
-          expectedEpoch !== state.conversationSpaceEpoch || requestedSpace !== state.conversationSpace ||
-          state.activeConversationKind !== "direct" || state.activeSessionId !== requestedSessionId
-        ) return;
+        if (!directConversationScopeMatches(scope)) return;
         if (interactionResponse?.ok) {
           state.interactionState = interactionBody.state || null;
           state.interactionEvents = Array.isArray(interactionBody.events) ? interactionBody.events : [];
@@ -14685,11 +16025,11 @@ export function renderAppHtml(): string {
         updateInteractionChrome();
         state.contextBudget = budgetResponse.ok ? budgetBody.budget || null : null;
         updateContextBudgetChrome();
-        state.privateInboxMessages = inboxResponse.ok && Array.isArray(inboxBody.messages)
+        state.privateInboxMessages = inboxResponse?.ok && Array.isArray(inboxBody.messages)
           ? inboxBody.messages
           : [];
         state.privateInboxRunning = Boolean(
-          inboxResponse.ok && inboxBody.running && activePrivateBurstIds(state.privateInboxMessages).size
+          inboxResponse?.ok && inboxBody.running && activePrivateBurstIds(state.privateInboxMessages).size
         );
         state.activeProactiveMessages = proactiveResponse?.ok && Array.isArray(proactiveBody.messages)
           ? proactiveBody.messages
@@ -14705,6 +16045,9 @@ export function renderAppHtml(): string {
         const storedMessages = Array.isArray(body)
           ? mergeToolResultsIntoMessages(dedupeSystemEvents(body.map(normalizeStoredMessage).filter(Boolean)))
           : [];
+        if (scope.incognito) {
+          for (const message of storedMessages) message.attachments = [];
+        }
         const withInbox = mergePrivateInboxMessages(storedMessages, state.privateInboxMessages);
         const messages = annotateProactiveMessages(mergeCharacterCollaborations(
           mergeInteractionEvents(
@@ -14720,15 +16063,28 @@ export function renderAppHtml(): string {
           updateRetryState();
         }
         preserveLocalMessageProgress(messages);
+        const wasLoading = finishConversationViewLoading(
+          "direct",
+          requestedSessionId,
+          expectedViewEpoch
+        );
         if (JSON.stringify(messages) !== JSON.stringify(state.messages)) {
           state.messages = messages;
           renderMessages({ preserveScroll: Boolean(silent) });
+        } else if (wasLoading) {
+          renderMessages();
         }
         updateDirectGenerationControls();
         if (sharedStateEnabled) scheduleCharacterCollaborationRefresh();
         if (!silent) setStatus("就绪");
       } catch (error) {
-        if (expectedEpoch !== state.conversationSpaceEpoch || requestedSpace !== state.conversationSpace) return;
+        if (!directConversationScopeMatches(scope)) return;
+        const wasLoading = finishConversationViewLoading(
+          "direct",
+          requestedSessionId,
+          expectedViewEpoch
+        );
+        if (wasLoading) renderMessages();
         if (!silent) setStatus(error.message || String(error), true);
       }
     }
@@ -14777,11 +16133,16 @@ export function renderAppHtml(): string {
 
     async function queueChatAttachments(files) {
       if (!files.length) return;
+      if (incognitoConversationIsActive()) {
+        setStatus("无痕会话不支持附件；请只发送文本", true);
+        return;
+      }
       if (state.conversationSpace === "secret" && (state.sessionDraft || !state.activeSessionId)) {
         setStatus("请先打开角色的私密对话，再上传附件", true);
         return;
       }
-      state.attachmentUploadQueue.push(...files);
+      const enqueueViewEpoch = state.conversationViewEpoch;
+      state.attachmentUploadQueue.push(...files.map((file) => ({ file, viewEpoch: enqueueViewEpoch })));
       if (state.uploadingAttachments) {
         setStatus(state.attachmentUploadQueue.length + " 个附件等待上传...");
         return;
@@ -14791,19 +16152,30 @@ export function renderAppHtml(): string {
       nodes.sendBtn.disabled = true;
       setStatus("上传附件中...");
       let uploadedCount = 0;
-      const failures = [];
+      let failures = [];
+      let statusViewEpoch = enqueueViewEpoch;
       try {
         while (state.attachmentUploadQueue.length) {
-          const file = state.attachmentUploadQueue.shift();
+          const queuedUpload = state.attachmentUploadQueue.shift();
+          const file = queuedUpload.file;
+          if (queuedUpload.viewEpoch !== statusViewEpoch) {
+            statusViewEpoch = queuedUpload.viewEpoch;
+            uploadedCount = 0;
+            failures = [];
+          }
           try {
             const entries = await uploadWorkspaceFiles([file], "uploads", true);
+            if (queuedUpload.viewEpoch !== state.conversationViewEpoch) continue;
             state.pendingAttachments.push(...entries);
             uploadedCount += entries.length;
             renderAttachmentQueue();
           } catch (error) {
-            failures.push(error.message || String(error));
+            if (queuedUpload.viewEpoch === state.conversationViewEpoch) {
+              failures.push(error.message || String(error));
+            }
           }
         }
+        if (statusViewEpoch !== state.conversationViewEpoch) return;
         if (failures.length) {
           const prefix = uploadedCount ? uploadedCount + " 个附件已上传；" : "";
           setStatus(prefix + failures[0] + (failures.length > 1 ? "，另有 " + (failures.length - 1) + " 个失败" : ""), true);
@@ -14812,7 +16184,7 @@ export function renderAppHtml(): string {
         }
       } finally {
         state.uploadingAttachments = false;
-        nodes.attachFileBtn.disabled = false;
+        nodes.attachFileBtn.disabled = incognitoConversationIsActive() || state.activeConversationKind === "group";
         nodes.sendBtn.disabled = state.busy;
       }
     }
@@ -14855,7 +16227,7 @@ export function renderAppHtml(): string {
       state.privateInboxSessionId = "";
     }
 
-    function openPrivateInboxEvents(sessionId) {
+    function openPrivateInboxEvents(sessionId, expectedViewEpoch = state.conversationViewEpoch) {
       if (!sessionId || state.activeConversationKind !== "direct") return;
       if (state.privateInboxSource && state.privateInboxSessionId === sessionId) return;
       closePrivateInboxEvents();
@@ -14874,17 +16246,19 @@ export function renderAppHtml(): string {
           state.privateInboxSource !== source ||
           expectedEpoch !== state.conversationSpaceEpoch ||
           requestedSpace !== state.conversationSpace ||
-          state.activeConversationKind !== "direct" ||
-          state.activeSessionId !== sessionId
+          !conversationViewIsCurrent("direct", sessionId, expectedViewEpoch)
         ) return;
         try {
           void handlePrivateInboxEvent(
             JSON.parse(messageEvent.data),
             sessionId,
             expectedEpoch,
-            requestedSpace
+            requestedSpace,
+            expectedViewEpoch
           ).catch((error) => {
-            setStatus("消息事件处理失败：" + (error.message || String(error)), true);
+            if (conversationViewIsCurrent("direct", sessionId, expectedViewEpoch)) {
+              setStatus("消息事件处理失败：" + (error.message || String(error)), true);
+            }
           });
         } catch (error) {
           setStatus("消息事件解析失败：" + (error.message || String(error)), true);
@@ -14900,12 +16274,13 @@ export function renderAppHtml(): string {
       event,
       expectedSessionId = state.activeSessionId,
       expectedEpoch = state.conversationSpaceEpoch,
-      requestedSpace = state.conversationSpace
+      requestedSpace = state.conversationSpace,
+      expectedViewEpoch = state.conversationViewEpoch
     ) {
       if (!event || typeof event !== "object") return;
       if (
         expectedEpoch !== state.conversationSpaceEpoch || requestedSpace !== state.conversationSpace ||
-        state.activeSessionId !== expectedSessionId
+        !conversationViewIsCurrent("direct", expectedSessionId, expectedViewEpoch)
       ) return;
       if (event.type === "snapshot") {
         const inbox = event.inbox || {};
@@ -14922,10 +16297,10 @@ export function renderAppHtml(): string {
         renderMessages();
         updateDirectGenerationControls();
         if (recoveredMissedCompletion) {
-          await refreshSessionMessages(true);
+          await refreshSessionMessages(true, expectedEpoch, expectedViewEpoch);
           if (
             expectedEpoch !== state.conversationSpaceEpoch || requestedSpace !== state.conversationSpace ||
-            state.activeSessionId !== expectedSessionId
+            !conversationViewIsCurrent("direct", expectedSessionId, expectedViewEpoch)
           ) return;
           if (!state.privateInboxRunning) {
             if (state.lastTurnStatus) {
@@ -14982,11 +16357,14 @@ export function renderAppHtml(): string {
         state.privateInboxRunning = false;
         updateDirectGenerationControls();
         applyTurnOutcome(event.response || {});
-        await refreshSessionMessages(true);
-        await loadConversationScene();
-        if (isConversationVisible(state.activeSessionId)) await markConversationRead(state.activeSessionId);
+        await refreshSessionMessages(true, expectedEpoch, expectedViewEpoch);
+        if (!conversationViewIsCurrent("direct", expectedSessionId, expectedViewEpoch)) return;
+        await loadConversationScene(false, expectedViewEpoch);
+        if (!conversationViewIsCurrent("direct", expectedSessionId, expectedViewEpoch)) return;
+        if (isConversationVisible(expectedSessionId)) await markConversationRead(expectedSessionId);
+        if (!conversationViewIsCurrent("direct", expectedSessionId, expectedViewEpoch)) return;
         void loadSessions();
-        void showConversationInsightReceipt(event.burstId);
+        void showConversationInsightReceipt(event.burstId, expectedSessionId, expectedViewEpoch);
         if (state.uiMode === "debug") void loadDebugLogs();
         return;
       }
@@ -15031,17 +16409,20 @@ export function renderAppHtml(): string {
       })());
     }
 
-    async function showConversationInsightReceipt(burstId) {
+    async function showConversationInsightReceipt(
+      burstId,
+      sessionId = state.activeSessionId,
+      expectedViewEpoch = state.conversationViewEpoch
+    ) {
       const baselinePromise = state.insightReceiptBaselines.get(burstId);
       const baseline = baselinePromise ? await baselinePromise : null;
       if (!baseline) {
         state.insightReceiptBaselines.delete(burstId);
         return;
       }
-      const sessionId = state.activeSessionId;
       for (const delay of [400, 900, 1_800]) {
         await new Promise((resolve) => setTimeout(resolve, delay));
-        if (state.activeConversationKind !== "direct" || state.activeSessionId !== sessionId) break;
+        if (!conversationViewIsCurrent("direct", sessionId, expectedViewEpoch)) break;
         try {
           const response = await fetch("/api/v1/user-insights?limit=100");
           const body = await response.json();
@@ -15217,8 +16598,9 @@ export function renderAppHtml(): string {
 
     function updateDirectGenerationControls() {
       if (state.activeConversationKind !== "direct") return;
-      nodes.sendBtn.disabled = state.uploadingAttachments;
-      nodes.cancelMessageBtn.disabled = !state.privateInboxRunning;
+      const incognito = incognitoConversationIsActive();
+      nodes.sendBtn.disabled = state.uploadingAttachments || state.incognitoTransitioning || state.privateModeTransitioning;
+      nodes.cancelMessageBtn.disabled = incognito ? !state.busy : !state.privateInboxRunning;
       updateRetryState();
       updateSessionActionState();
       updateInteractionChrome();
@@ -15228,6 +16610,7 @@ export function renderAppHtml(): string {
     function schedulePrivateTypingHeartbeat() {
       const hasQueuedMessage = state.privateInboxMessages.some((message) => message.status === "queued");
       if (
+        state.incognitoTransitioning || state.privateModeTransitioning ||
         state.activeConversationKind !== "direct" || state.sessionDraft || !state.activeSessionId ||
         !nodes.textInput.value || !hasQueuedMessage
       ) return;
@@ -15243,6 +16626,7 @@ export function renderAppHtml(): string {
     async function sendPrivateTypingHeartbeat() {
       const hasQueuedMessage = state.privateInboxMessages.some((message) => message.status === "queued");
       if (
+        state.incognitoTransitioning || state.privateModeTransitioning ||
         state.activeConversationKind !== "direct" || state.sessionDraft || !state.activeSessionId ||
         !nodes.textInput.value || !hasQueuedMessage
       ) return;
@@ -15262,6 +16646,7 @@ export function renderAppHtml(): string {
 
     async function sendMessage() {
       const rawText = nodes.textInput.value.trim();
+      if (state.incognitoTransitioning || state.privateModeTransitioning) return;
       if (state.activeConversationKind === "world") {
         if ((!rawText && !state.pendingAttachments.length) || state.busy || state.uploadingAttachments) return;
         await sendWorldChatMessage(rawText, [...state.pendingAttachments]);
@@ -15270,6 +16655,15 @@ export function renderAppHtml(): string {
       if (state.activeConversationKind === "group") {
         if (!rawText || state.busy) return;
         await sendGroupChatMessage(rawText);
+        return;
+      }
+      if (incognitoConversationIsActive()) {
+        if (!rawText || state.busy || state.uploadingAttachments) return;
+        if (state.pendingAttachments.length) {
+          setStatus("无痕会话不支持附件；请移除附件后再发送", true);
+          return;
+        }
+        await sendIncognitoMessage(rawText);
         return;
       }
       if ((!rawText && !state.pendingAttachments.length) || state.uploadingAttachments) return;
@@ -15283,6 +16677,7 @@ export function renderAppHtml(): string {
       }
       const sessionIdValue = state.activeSessionId;
       const expectedEpoch = state.conversationSpaceEpoch;
+      const expectedViewEpoch = state.conversationViewEpoch;
       const requestedSpace = state.conversationSpace;
       const clientMessageId = generateClientMessageId();
       setStatus("已加入发送队列");
@@ -15324,7 +16719,7 @@ export function renderAppHtml(): string {
         }
         if (
           expectedEpoch === state.conversationSpaceEpoch && requestedSpace === state.conversationSpace &&
-          state.activeConversationKind === "direct" && state.activeSessionId === sessionIdValue
+          conversationViewIsCurrent("direct", sessionIdValue, expectedViewEpoch)
         ) {
           const resolvedSessionId = body.message?.sessionId || sessionIdValue;
           const localMessage = state.messages.find((message) => message.localId === localId);
@@ -15342,7 +16737,7 @@ export function renderAppHtml(): string {
           state.sessionDraft = false;
           setSessionControlsLocked(true);
           updateSessionActionState();
-          openPrivateInboxEvents(resolvedSessionId);
+          openPrivateInboxEvents(resolvedSessionId, expectedViewEpoch);
           renderMessages();
           updateDirectGenerationControls();
           schedulePrivateTypingHeartbeat();
@@ -15351,7 +16746,7 @@ export function renderAppHtml(): string {
       } catch (error) {
         if (
           expectedEpoch === state.conversationSpaceEpoch && requestedSpace === state.conversationSpace &&
-          state.activeConversationKind === "direct" && state.activeSessionId === sessionIdValue
+          conversationViewIsCurrent("direct", sessionIdValue, expectedViewEpoch)
         ) {
           const localMessage = state.messages.find((message) => message.localId === localId);
           if (localMessage) {
@@ -15360,12 +16755,105 @@ export function renderAppHtml(): string {
           }
           renderMessages();
         }
-        if (expectedEpoch === state.conversationSpaceEpoch && requestedSpace === state.conversationSpace) {
+        if (
+          expectedEpoch === state.conversationSpaceEpoch && requestedSpace === state.conversationSpace &&
+          conversationViewIsCurrent("direct", sessionIdValue, expectedViewEpoch)
+        ) {
           setStatus(error.message || String(error), true);
         }
       } finally {
         nodes.sendBtn.disabled = state.uploadingAttachments;
         nodes.textInput.focus();
+      }
+    }
+
+    async function sendIncognitoMessage(text) {
+      const scope = captureDirectConversationScope();
+      if (!scope?.incognito || !directConversationScopeMatches(scope)) return;
+      const clientMessageId = generateClientMessageId();
+      const burstId = "incognito-" + clientMessageId;
+      const controller = new AbortController();
+      state.incognitoAbortController = controller;
+      state.busy = true;
+      state.lastTurnStatus = null;
+      state.lastTurnCanRetry = false;
+      closeEmojiPicker();
+      nodes.textInput.value = "";
+      nodes.sendBtn.disabled = true;
+      nodes.cancelMessageBtn.disabled = false;
+      pushMessage("user", text, {
+        localId: "incognito-user:" + clientMessageId,
+        rawText: text,
+        clientMessageId,
+        latestUser: true,
+        timestampMs: Date.now()
+      });
+      ensurePrivateBurstMessage(burstId, new Date().toISOString());
+      renderMessages();
+      updateInteractionChrome();
+      updatePrivateModeChrome();
+      setStatus("无痕生成中...");
+      try {
+        const response = await fetch(
+          "/api/v1/sessions/" + encodeURIComponent(scope.sessionId) + "/messages/stream",
+          {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify({
+              clientMessageId,
+              mode: "sms",
+              conversationSpace: "normal",
+              text,
+              characterId: scope.characterId,
+              attachments: []
+            }),
+            signal: controller.signal
+          }
+        );
+        if (!response.ok) {
+          const body = await response.json().catch(() => ({}));
+          throw new Error(body.error || "无痕消息发送失败");
+        }
+        if (!response.body) throw new Error("无痕消息流式响应不可用");
+        let finalResponse = null;
+        await consumeEventStream(response.body, (event) => {
+          if (!directConversationScopeMatches(scope)) return;
+          if (event.type === "done") {
+            finalResponse = event.response || {};
+            return;
+          }
+          if (event.type === "error") throw new Error(event.error || "无痕消息生成失败");
+          applyPrivateAgentEvent(burstId, event);
+        });
+        if (!directConversationScopeMatches(scope)) return;
+        if (!finalResponse) throw new Error("无痕消息流式响应提前结束");
+        finishPrivateBurst(burstId, finalResponse);
+        applyTurnOutcome(finalResponse);
+        await refreshSessionMessages(true, scope.spaceEpoch, scope.viewEpoch);
+        if (!directConversationScopeMatches(scope)) return;
+        setStatus("无痕回复已完成；退出后本轮内容会丢弃");
+      } catch (error) {
+        if (!directConversationScopeMatches(scope)) return;
+        const index = privateBurstIndex(burstId);
+        const message = index >= 0 ? state.messages[index] : null;
+        if (message) {
+          message.role = "system";
+          message.text = error?.name === "AbortError" ? "无痕生成已停止" : error.message || String(error);
+          message.status = error?.name === "AbortError" ? "cancelled" : "failed";
+          message.eventType = error?.name === "AbortError" ? "cancelled" : "operation_failed";
+          message.canRetry = false;
+          message.progress = [];
+          message.working = false;
+          renderMessages();
+        }
+        setStatus(error?.name === "AbortError" ? "无痕生成已停止" : error.message || String(error), error?.name !== "AbortError");
+      } finally {
+        if (state.incognitoAbortController === controller) state.incognitoAbortController = null;
+        state.busy = false;
+        if (directConversationScopeMatches(scope)) {
+          updateDirectGenerationControls();
+          nodes.textInput.focus();
+        }
       }
     }
 
@@ -15662,6 +17150,12 @@ export function renderAppHtml(): string {
         setStatus("正在停止群聊生成...");
         return;
       }
+      if (incognitoConversationIsActive()) {
+        if (!state.busy) return;
+        state.incognitoAbortController?.abort();
+        setStatus("正在停止无痕生成...");
+        return;
+      }
       if (!state.privateInboxRunning) return;
       const sessionId = encodeURIComponent(state.activeSessionId);
       try {
@@ -15675,21 +17169,34 @@ export function renderAppHtml(): string {
     }
 
     async function retryMessage() {
-      if (state.busy || state.sessionDraft || !state.lastTurnCanRetry) return;
-      const sessionId = encodeURIComponent(state.activeSessionId);
+      if (
+        state.busy || state.sessionDraft || !state.lastTurnCanRetry ||
+        state.activeConversationKind !== "direct" || !state.activeSessionId ||
+        incognitoConversationIsActive()
+      ) return;
+      const requestedSessionId = state.activeSessionId;
+      const requestedSpace = state.conversationSpace;
+      const expectedViewEpoch = state.conversationViewEpoch;
+      const retryLocalId = "retry:" + generateClientMessageId();
+      const sessionId = encodeURIComponent(requestedSessionId);
       nodes.retryMessageBtn.disabled = true;
       setStatus("重试中...");
-      const assistantIndex = pushMessage("assistant", "", {
+      pushMessage("assistant", "", {
+        localId: retryLocalId,
         working: true,
         progressOpen: false,
         progress: [{ key: "retry", label: "重新调用模型", status: "active" }]
       });
       try {
         const response = await fetch(withConversationSpace(
-          "/api/v1/sessions/" + sessionId + "/messages/retry"
+          "/api/v1/sessions/" + sessionId + "/messages/retry",
+          requestedSpace
         ), { method: "POST" });
         const body = await response.json();
         if (!response.ok) throw new Error(body.error || "重试失败");
+        if (!conversationViewIsCurrent("direct", requestedSessionId, expectedViewEpoch)) return;
+        const assistantIndex = state.messages.findIndex((message) => message.localId === retryLocalId);
+        if (assistantIndex < 0) return;
         state.messages[assistantIndex].text = body.reply || "";
         state.messages[assistantIndex].attachments = normalizeStructuredAttachments(body.attachments);
         state.messages[assistantIndex].status = body.status;
@@ -15705,6 +17212,9 @@ export function renderAppHtml(): string {
         renderMessages();
         applyTurnOutcome(body);
       } catch (error) {
+        if (!conversationViewIsCurrent("direct", requestedSessionId, expectedViewEpoch)) return;
+        const assistantIndex = state.messages.findIndex((message) => message.localId === retryLocalId);
+        if (assistantIndex < 0) return;
         state.messages[assistantIndex].role = "system";
         state.messages[assistantIndex].text = error.message || String(error);
         state.messages[assistantIndex].status = "failed";
@@ -16102,6 +17612,11 @@ export function renderAppHtml(): string {
           .map((details) => details.querySelector("[data-proactive-message-id]")?.dataset.proactiveMessageId)
           .filter(Boolean)
       );
+      if (state.conversationViewLoading && !state.messages.length) {
+        nodes.messages.innerHTML = '<div class="chat-empty"><i data-lucide="loader-circle" aria-hidden="true"></i><strong>正在加载会话...</strong></div>';
+        refreshIcons();
+        return;
+      }
       if (!state.messages.length) {
         if (state.activeConversationKind === "world") {
           const conversation = state.worldConversations.find((entry) => entry.worldId === state.activeWorldId);
@@ -16450,6 +17965,7 @@ export function renderAppHtml(): string {
     }
 
     function renderSystemEventActions(message, index) {
+      if (incognitoConversationIsActive()) return "";
       const actions = [];
       if (message.eventType === "model_unavailable") {
         actions.push(systemActionButton("model-settings", "settings", "前往模型设置"));
@@ -16466,6 +17982,7 @@ export function renderAppHtml(): string {
 
     function renderMessageActions(message, index) {
       if (state.busy) return "";
+      if (incognitoConversationIsActive()) return "";
       if (message.role === "assistant" && message.proactiveMessage) {
         const proactive = message.proactiveMessage;
         if (proactive.feedbackType) {
@@ -16529,7 +18046,7 @@ export function renderAppHtml(): string {
 
     async function handleMessageAction(event) {
       const button = event.target.closest("button[data-message-action]");
-      if (!button || state.busy) return;
+      if (!button || state.busy || state.incognitoTransitioning || incognitoConversationIsActive()) return;
       const message = state.messages[Number(button.dataset.messageIndex)];
       const queued = message?.queueStatus === "queued" && Boolean(message?.inboxMessageId);
       if (!queued && (!message?.entryId || !message.latestUser)) return;
@@ -17008,7 +18525,17 @@ export function renderAppHtml(): string {
         table.replaceWith(wrapper);
         wrapper.append(table);
       });
+      renderTwemoji(template.content);
       return template.innerHTML;
+    }
+
+    function renderTwemoji(root) {
+      if (!root || !window.twemoji) return root;
+      window.twemoji.parse(root, {
+        className: "emoji",
+        callback: (icon) => "/assets/twemoji/svg/" + icon + ".svg"
+      });
+      return root;
     }
 
     function refreshIcons() {
@@ -17163,8 +18690,9 @@ export function renderAppHtml(): string {
 
     function updateRetryState() {
       nodes.retryMessageBtn.disabled = state.activeConversationKind !== "direct" || state.busy ||
+        state.incognitoTransitioning || state.privateModeTransitioning ||
         state.privateInboxRunning || state.privateInboxMessages.length > 0 ||
-        state.sessionDraft || !state.lastTurnCanRetry;
+        state.sessionDraft || incognitoConversationIsActive() || !state.lastTurnCanRetry;
     }
 
     function privateQueueLabel(message) {
@@ -17195,6 +18723,7 @@ export function renderAppHtml(): string {
         bash: "执行终端命令",
         tavily_search: "Tavily 网页搜索",
         analyze_image: "分析图片",
+        parse_document_with_mineru: "MinerU 深度解析文档",
         vision_auto_analyze: "分析图片",
         vision_direct_input: "发送图片给主模型",
         share_workspace_file: "分享文件",
@@ -17923,6 +19452,348 @@ export function renderAppHtml(): string {
       const labels = { auto: "自动", direct: "主模型直读", mcp: "Vision MCP", off: "关闭" };
       return (labels[config.mode] || config.mode) + " · Key: " +
         (config.apiKeySet ? config.apiKeyMasked : "未设置") + " · 上限 " + (config.maxImages || 4) + " 张";
+    }
+
+    async function loadMineruSettings() {
+      nodes.mineruSettingsState.textContent = "加载中...";
+      try {
+        const response = await fetch("/api/settings/mineru");
+        const config = await response.json();
+        if (!response.ok) throw new Error(config.error || "MinerU 设置加载失败");
+        nodes.mineruBaseUrl.value = config.baseUrl || "";
+        nodes.mineruApiKey.value = "";
+        nodes.mineruBackend.value = config.backend || "pipeline";
+        nodes.mineruParseMethod.value = config.parseMethod || "auto";
+        nodes.mineruLanguage.value = config.language || "ch";
+        nodes.mineruTimeoutSeconds.value = config.timeoutSeconds || 600;
+        nodes.mineruFormulaEnabled.checked = config.formulaEnabled !== false;
+        nodes.mineruTableEnabled.checked = config.tableEnabled !== false;
+        nodes.mineruSettingsState.textContent = formatMineruSettingsState(config);
+      } catch (error) {
+        nodes.mineruSettingsState.textContent = error.message || String(error);
+      }
+    }
+
+    async function saveMineruSettings(rethrow) {
+      nodes.mineruSettingsState.textContent = "保存中...";
+      nodes.saveMineruSettingsBtn.disabled = true;
+      const payload = {
+        baseUrl: nodes.mineruBaseUrl.value.trim(),
+        backend: nodes.mineruBackend.value.trim(),
+        parseMethod: nodes.mineruParseMethod.value,
+        language: nodes.mineruLanguage.value.trim(),
+        formulaEnabled: nodes.mineruFormulaEnabled.checked,
+        tableEnabled: nodes.mineruTableEnabled.checked,
+        timeoutSeconds: Math.max(10, Math.min(900, optionalInteger(nodes.mineruTimeoutSeconds.value) || 600))
+      };
+      if (nodes.mineruApiKey.value) payload.apiKey = nodes.mineruApiKey.value;
+      try {
+        const response = await controlPlaneFetch("/api/settings/mineru", {
+          method: "PATCH",
+          body: JSON.stringify(payload)
+        });
+        const config = await response.json();
+        if (!response.ok) throw new Error(config.error || "MinerU 设置保存失败");
+        nodes.mineruApiKey.value = "";
+        nodes.mineruSettingsState.textContent = "已保存 · " + formatMineruSettingsState(config);
+        setStatus("MinerU 设置已保存");
+        return config;
+      } catch (error) {
+        nodes.mineruSettingsState.textContent = error.message || String(error);
+        setStatus(error.message || String(error), true);
+        if (rethrow) throw error;
+        return undefined;
+      } finally {
+        nodes.saveMineruSettingsBtn.disabled = false;
+      }
+    }
+
+    async function testMineruConnection() {
+      nodes.mineruSettingsState.textContent = "测试连接中...";
+      nodes.testMineruBtn.disabled = true;
+      try {
+        await saveMineruSettings(true);
+        const response = await controlPlaneFetch("/api/v1/diagnostics/mineru/test", {
+          method: "POST",
+          body: "{}"
+        });
+        const body = await response.json();
+        if (!response.ok) throw new Error(body.error || "MinerU 连接测试失败");
+        nodes.mineruSettingsState.textContent = "连接正常 · " + body.latencyMs + " ms · " + body.backend;
+      } catch (error) {
+        nodes.mineruSettingsState.textContent = error.message || String(error);
+      } finally {
+        nodes.testMineruBtn.disabled = false;
+      }
+    }
+
+    async function clearMineruApiKey() {
+      nodes.mineruSettingsState.textContent = "清除中...";
+      nodes.clearMineruApiKeyBtn.disabled = true;
+      try {
+        const response = await controlPlaneFetch("/api/settings/mineru", {
+          method: "PATCH",
+          body: JSON.stringify({ clearApiKey: true })
+        });
+        const config = await response.json();
+        if (!response.ok) throw new Error(config.error || "MinerU Token 清除失败");
+        nodes.mineruApiKey.value = "";
+        nodes.mineruSettingsState.textContent = formatMineruSettingsState(config);
+        setStatus("MinerU Token 已清除");
+      } catch (error) {
+        nodes.mineruSettingsState.textContent = error.message || String(error);
+        setStatus(error.message || String(error), true);
+      } finally {
+        nodes.clearMineruApiKeyBtn.disabled = false;
+      }
+    }
+
+    function formatMineruSettingsState(config) {
+      const endpoint = config.baseUrl ? config.baseUrl : "未配置";
+      const token = config.apiKeySet ? config.apiKeyMasked : "无 Token";
+      return endpoint + " · " + (config.backend || "pipeline") + " · " +
+        (config.parseMethod || "auto") + " · " + token;
+    }
+
+    function deactivateGitSettingsView() {
+      state.gitAccessRequestId += 1;
+    }
+
+    function captureGitAccessScope(requestId = state.gitAccessRequestId) {
+      return {
+        requestId,
+        spaceEpoch: state.conversationSpaceEpoch,
+        viewEpoch: state.conversationViewEpoch,
+        conversationSpace: state.conversationSpace,
+        conversationKind: state.activeConversationKind,
+        sessionId: state.activeSessionId,
+        characterId: state.selectedCharacterId,
+      };
+    }
+
+    function gitAccessScopeMatches(scope) {
+      return Boolean(scope) && scope.requestId === state.gitAccessRequestId &&
+        state.uiMode === "settings" && state.settingsTab === "git" &&
+        scope.spaceEpoch === state.conversationSpaceEpoch &&
+        scope.viewEpoch === state.conversationViewEpoch &&
+        scope.conversationSpace === state.conversationSpace &&
+        scope.conversationKind === state.activeConversationKind &&
+        scope.sessionId === state.activeSessionId &&
+        scope.characterId === state.selectedCharacterId;
+    }
+
+    async function loadGitSettings() {
+      const requestId = ++state.gitAccessRequestId;
+      const scope = captureGitAccessScope(requestId);
+      nodes.gitSettingsState.textContent = "正在读取 Git 访问设置...";
+      try {
+        const response = await fetch("/api/settings/git-access");
+        const body = await response.json();
+        if (!gitAccessScopeMatches(scope)) return;
+        if (!response.ok) throw new Error(body.error || "Git 访问设置加载失败");
+        const access = body.access || body;
+        if (!access || !Number.isSafeInteger(access.revision) || !access.credential ||
+            typeof access.credential.kind !== "string") throw new Error("Git 访问设置响应无效");
+        state.gitAccess = access;
+        renderGitAccessSettings();
+        nodes.gitSettingsState.textContent = formatGitAccessState(access);
+      } catch (error) {
+        if (gitAccessScopeMatches(scope)) nodes.gitSettingsState.textContent = error.message || String(error);
+      }
+    }
+
+    function renderGitAccessSettings() {
+      const access = state.gitAccess || {
+        revision: 0,
+        credential: { kind: "unconfigured" },
+        proxyMode: "direct",
+        proxyPort: 61090,
+      };
+      const credential = access.credential || { kind: "unconfigured" };
+      nodes.gitCredentialMode.innerHTML = '<option value="unconfigured">暂不配置</option>' +
+        '<option value="external-file">使用已有私钥</option>' +
+        (credential.kind === "managed-ed25519"
+          ? '<option value="managed-ed25519">YourChar 托管 Key</option>'
+          : "");
+      nodes.gitCredentialMode.value = credential.kind;
+      nodes.gitPrivateKeyPath.value = credential.kind === "external-file" ? credential.privateKeyPath || "" : "";
+      nodes.gitPrivateKeyPath.disabled = credential.kind !== "external-file";
+      nodes.gitPrivateKeyPath.placeholder = credential.kind === "managed-ed25519"
+        ? "由 YourChar 托管，不能在浏览器中修改"
+        : "/home/user/.ssh/id_ed25519";
+      nodes.gitProxyMode.value = access.proxyMode || "direct";
+      nodes.gitProxyPort.value = access.proxyPort || 61090;
+      nodes.gitProxyPort.disabled = nodes.gitProxyMode.value !== "hclient";
+      nodes.generateGitAccessKeyBtn.disabled = credential.kind === "managed-ed25519";
+      nodes.copyGitAccessPublicKeyBtn.disabled = credential.kind === "unconfigured";
+      nodes.gitAccessPublicKey.hidden = true;
+      nodes.gitAccessPublicKey.value = "";
+      const credentialLabel = credential.kind === "managed-ed25519"
+        ? "YourChar 托管 Ed25519 Key"
+        : credential.kind === "external-file"
+          ? "宿主外部私钥"
+          : "尚未配置密钥";
+      nodes.gitAccessMeta.textContent = credentialLabel +
+        (access.fingerprint ? " · " + access.fingerprint : "") +
+        " · 托管 Key 会随完整状态备份";
+    }
+
+    function updateGitCredentialDraft() {
+      const kind = nodes.gitCredentialMode.value;
+      nodes.gitPrivateKeyPath.disabled = kind !== "external-file";
+      if (kind === "external-file") {
+        nodes.gitPrivateKeyPath.placeholder = "/home/user/.ssh/id_ed25519";
+        nodes.gitPrivateKeyPath.focus();
+      }
+      nodes.generateGitAccessKeyBtn.disabled = kind === "managed-ed25519" ||
+        state.gitAccess?.credential?.kind === "managed-ed25519";
+      nodes.gitSettingsState.textContent = kind === state.gitAccess?.credential?.kind
+        ? formatGitAccessState(state.gitAccess)
+        : "凭据方式尚未保存";
+    }
+
+    function setGitAccessControlsDisabled(disabled) {
+      nodes.saveGitAccessBtn.disabled = disabled;
+      nodes.generateGitAccessKeyBtn.disabled = disabled;
+      nodes.copyGitAccessPublicKeyBtn.disabled = disabled;
+    }
+
+    async function saveGitAccess() {
+      const access = state.gitAccess;
+      if (!access) {
+        nodes.gitSettingsState.textContent = "Git 访问设置尚未加载";
+        return;
+      }
+      const credentialKind = nodes.gitCredentialMode.value;
+      const privateKeyPath = nodes.gitPrivateKeyPath.value.trim();
+      if (credentialKind === "external-file" && !privateKeyPath) {
+        nodes.gitSettingsState.textContent = "请填写已有私钥的宿主绝对路径";
+        nodes.gitPrivateKeyPath.focus();
+        return;
+      }
+      if (access.credential?.kind === "managed-ed25519" && credentialKind !== "managed-ed25519") {
+        const confirmed = await openActionDialog({
+          title: "更换 SSH 凭据",
+          description: "保存后将不再使用当前托管 Key；密钥文件不会自动删除，完整状态备份仍应视为敏感数据。",
+          confirmLabel: "确认更换",
+        });
+        if (!confirmed) return;
+      }
+      if (state.gitAccess !== access || state.uiMode !== "settings" || state.settingsTab !== "git") return;
+      const payload = {
+        expectedRevision: access.revision,
+        proxyMode: nodes.gitProxyMode.value,
+        proxyPort: Math.max(1, Math.min(65535, optionalInteger(nodes.gitProxyPort.value) || 61090)),
+      };
+      if (credentialKind !== "managed-ed25519") {
+        payload.credential = credentialKind === "external-file"
+          ? { kind: "external-file", privateKeyPath }
+          : { kind: "unconfigured" };
+      }
+      const requestId = ++state.gitAccessRequestId;
+      const scope = captureGitAccessScope(requestId);
+      setGitAccessControlsDisabled(true);
+      nodes.gitSettingsState.textContent = "正在保存 Git 访问设置...";
+      try {
+        const response = await controlPlaneFetch("/api/settings/git-access", {
+          method: "PATCH",
+          body: JSON.stringify(payload),
+        });
+        const body = await response.json();
+        if (!gitAccessScopeMatches(scope)) return;
+        if (!response.ok) throw new Error(body.error || "Git 访问设置保存失败");
+        state.gitAccess = body.access || body;
+        renderGitAccessSettings();
+        nodes.gitSettingsState.textContent = "已保存 · " + formatGitAccessState(state.gitAccess);
+        setStatus("Git 访问设置已保存");
+      } catch (error) {
+        if (gitAccessScopeMatches(scope)) {
+          nodes.gitSettingsState.textContent = error.message || String(error);
+          setStatus(error.message || String(error), true);
+        }
+      } finally {
+        if (gitAccessScopeMatches(scope)) {
+          setGitAccessControlsDisabled(false);
+          renderGitAccessSettings();
+        }
+      }
+    }
+
+    async function generateGitAccessKey() {
+      const access = state.gitAccess;
+      if (!access) return;
+      const requestId = ++state.gitAccessRequestId;
+      const scope = captureGitAccessScope(requestId);
+      setGitAccessControlsDisabled(true);
+      nodes.gitSettingsState.textContent = "正在生成托管 SSH Key...";
+      try {
+        const response = await controlPlaneFetch("/api/settings/git-access/generate-key", {
+          method: "POST",
+          body: JSON.stringify({ expectedRevision: access.revision }),
+        });
+        const body = await response.json();
+        if (!gitAccessScopeMatches(scope)) return;
+        if (!response.ok) throw new Error(body.error || "托管 SSH Key 生成失败");
+        state.gitAccess = body.access || body;
+        renderGitAccessSettings();
+        showGitAccessPublicKey(body.publicKey || "");
+        nodes.gitSettingsState.textContent = "托管 SSH Key 已生成，请把公钥添加到 Git 账号。";
+      } catch (error) {
+        if (gitAccessScopeMatches(scope)) nodes.gitSettingsState.textContent = error.message || String(error);
+      } finally {
+        if (gitAccessScopeMatches(scope)) {
+          setGitAccessControlsDisabled(false);
+          nodes.generateGitAccessKeyBtn.disabled = state.gitAccess?.credential?.kind === "managed-ed25519";
+          nodes.copyGitAccessPublicKeyBtn.disabled = !nodes.gitAccessPublicKey.value &&
+            state.gitAccess?.credential?.kind === "unconfigured";
+        }
+      }
+    }
+
+    async function loadGitAccessPublicKey(copyAfterLoad) {
+      const requestId = ++state.gitAccessRequestId;
+      const scope = captureGitAccessScope(requestId);
+      try {
+        const response = await fetch("/api/settings/git-access/public-key");
+        const body = await response.json();
+        if (!gitAccessScopeMatches(scope)) return;
+        if (!response.ok) throw new Error(body.error || "SSH 公钥读取失败");
+        showGitAccessPublicKey(body.publicKey || "");
+        if (copyAfterLoad && body.publicKey) await navigator.clipboard.writeText(body.publicKey);
+        nodes.gitSettingsState.textContent = copyAfterLoad ? "SSH 公钥已复制" : "SSH 公钥已读取";
+      } catch (error) {
+        if (gitAccessScopeMatches(scope)) nodes.gitSettingsState.textContent = error.message || String(error);
+      }
+    }
+
+    function showGitAccessPublicKey(publicKey) {
+      nodes.gitAccessPublicKey.value = String(publicKey || "");
+      nodes.gitAccessPublicKey.hidden = !nodes.gitAccessPublicKey.value;
+      nodes.copyGitAccessPublicKeyBtn.disabled = !nodes.gitAccessPublicKey.value;
+    }
+
+    async function copyGitAccessPublicKey() {
+      if (!state.gitAccess || state.gitAccess.credential?.kind === "unconfigured") return;
+      if (!nodes.gitAccessPublicKey.value) {
+        await loadGitAccessPublicKey(true);
+        return;
+      }
+      try {
+        await navigator.clipboard.writeText(nodes.gitAccessPublicKey.value);
+        nodes.gitSettingsState.textContent = "SSH 公钥已复制";
+      } catch (error) {
+        nodes.gitSettingsState.textContent = error.message || String(error);
+      }
+    }
+
+    function formatGitAccessState(access) {
+      const credential = access?.credential?.kind === "managed-ed25519"
+        ? "托管 Key"
+        : access?.credential?.kind === "external-file"
+          ? "外部私钥"
+          : "未配置密钥";
+      const proxy = access?.proxyMode === "hclient" ? "hclient:" + (access.proxyPort || 61090) : "直接 SSH";
+      return "revision " + (access?.revision || 0) + " · " + credential + " · " + proxy;
     }
 
     async function loadReadiness() {

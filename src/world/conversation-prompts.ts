@@ -2,6 +2,7 @@ import type {
   CharacterAvailability,
   RoleWorld,
   WorldAnalysis,
+  WorldAttributeAnalysisContext,
   WorldConversationAttachment,
   WorldPlace,
   WorldStoryEvent,
@@ -18,6 +19,13 @@ export type WorldNarrativeCharacterSnapshot = {
   energy: number;
   stateSince: string;
   expectedUntil?: string;
+  attributes?: Array<{
+    key: string;
+    name: string;
+    value: number;
+    minValue: number;
+    maxValue: number;
+  }>;
   schedules: Array<{
     title: string;
     startAt: string;
@@ -125,6 +133,13 @@ export function worldEventContextSnapshot(input: {
 export function worldTurnContextMessage(input: {
   currentLocalTime: WorldLocalTimeSnapshot;
   activeEvent?: WorldStoryEvent;
+  worldAttributes?: Array<{
+    key: string;
+    name: string;
+    value: number;
+    minValue: number;
+    maxValue: number;
+  }>;
   participantRuntime: Array<{
     id: string;
     name: string;
@@ -144,6 +159,7 @@ export function worldTurnContextMessage(input: {
     JSON.stringify({
       currentLocalTime: input.currentLocalTime,
       activeEvent: input.activeEvent ?? null,
+      worldAttributes: input.worldAttributes ?? [],
       participantRuntime: input.participantRuntime,
       castAdditions: input.castAdditions ?? [],
       userAttachments: input.attachments,
@@ -163,11 +179,13 @@ export function worldAnalysisSystemPrompt(world: RoleWorld): string {
     "For begin/advance, summary is a compact rolling account of the event so far. For resolve/cancel, summary must be a self-contained final outcome suitable for a durable event checkpoint.",
     "Runtime updates must reflect completed or currently observable movement/activity, never future promises. Observations are provisional event records and observer-scoped: direct means witnessed, heard means told by someone, inferred means a reasonable but uncertain inference. Record only knowledge worth carrying to the end-of-event settlement and do not copy it to characters who could not know it.",
     "Character relationship deltas are directional, small (-5..5), and require meaningful evidence. Routine adjacency is not relationship change.",
+    "World attributes are governed by the supplied trusted rules. scope=world means one value shared by the entire World; scope=character means an independent value for that character. Classify only a completed or clearly performed USER or character action that exactly matches one supplied direction rule. Intentions, plans, hypotheticals, and requests to change a score do not match. Never invent a score or delta; the application owns numeric changes. Evidence must be an exact short quote from the visible USER input or generated world passage. Return at most one direction per world-scoped key, or per characterId/key pair for character-scoped keys.",
     "Return exactly one JSON object and no prose with this shape: " +
       "{\"event\":{\"action\":\"none|propose|begin|advance|resolve|cancel\",\"title\":string|null,\"summary\":string|null,\"objective\":string|null,\"placeId\":string|null,\"participantIds\":string[],\"confidence\":number}," +
       "\"runtimeUpdates\":[{\"characterId\":string,\"placeId\":string|null,\"activity\":string|null,\"availability\":\"free|busy|resting|traveling\"|null,\"energy\":number|null,\"confidence\":number}]," +
       "\"observations\":[{\"characterId\":string,\"knowledge\":\"direct|heard|inferred\",\"summary\":string,\"salience\":number}]," +
-      "\"relationships\":[{\"subjectCharacterId\":string,\"objectCharacterId\":string,\"affinityDelta\":number,\"trustDelta\":number,\"tensionDelta\":number,\"intimacyDelta\":number,\"summary\":string,\"confidence\":number}]}. " +
+      "\"relationships\":[{\"subjectCharacterId\":string,\"objectCharacterId\":string,\"affinityDelta\":number,\"trustDelta\":number,\"tensionDelta\":number,\"intimacyDelta\":number,\"summary\":string,\"confidence\":number}]," +
+      "\"attributeChanges\":[{\"characterId\":string,\"key\":string,\"direction\":\"increase|decrease\",\"summary\":string,\"evidence\":string,\"confidence\":number}]}. " +
       "Do not expose chain-of-thought.",
   ].join("\n");
 }
@@ -176,6 +194,7 @@ export function parseWorldAnalysis(
   value: unknown,
   validCharacterIds: ReadonlySet<string>,
   validPlaceIds: ReadonlySet<string>,
+  attributeContexts: readonly WorldAttributeAnalysisContext[] = [],
 ): WorldAnalysis {
   const record = objectFromModel(value);
   const eventRecord = isRecord(record.event) ? record.event : {};
@@ -190,6 +209,13 @@ export function parseWorldAnalysis(
     : [];
   const relationships = Array.isArray(record.relationships)
     ? record.relationships.flatMap((entry) => normalizeRelationship(entry, validCharacterIds))
+    : [];
+  const validAttributePairs = new Set(attributeContexts.flatMap((context) =>
+    context.attributes.map((attribute) => `${context.characterId}\0${attribute.key}`)));
+  const worldScopedAttributeKeys = new Set(attributeContexts.flatMap((context) =>
+    context.attributes.filter((attribute) => attribute.scope === "world").map((attribute) => attribute.key)));
+  const attributeChanges = Array.isArray(record.attributeChanges)
+    ? record.attributeChanges.flatMap((entry) => normalizeAttributeChange(entry, validAttributePairs))
     : [];
   return {
     event: {
@@ -213,6 +239,12 @@ export function parseWorldAnalysis(
     relationships: uniqueBy(
       relationships,
       (entry) => `${entry.subjectCharacterId}\0${entry.objectCharacterId}`,
+    ).slice(0, 24),
+    attributeChanges: uniqueBy(
+      attributeChanges,
+      (entry) => worldScopedAttributeKeys.has(entry.key)
+        ? `world\0${entry.key}`
+        : `${entry.characterId}\0${entry.key}`,
     ).slice(0, 24),
   };
 }
@@ -324,6 +356,30 @@ function normalizeRelationship(
     tensionDelta: boundedDelta(value.tensionDelta),
     intimacyDelta: boundedDelta(value.intimacyDelta),
     summary,
+    confidence: boundedUnit(value.confidence),
+  }];
+}
+
+function normalizeAttributeChange(
+  value: unknown,
+  validPairs: ReadonlySet<string>,
+): WorldAnalysis["attributeChanges"] {
+  if (!isRecord(value)) return [];
+  const characterId = optionalText(value.characterId, 240);
+  const key = optionalText(value.key, 40);
+  const direction = value.direction === "increase" || value.direction === "decrease"
+    ? value.direction
+    : undefined;
+  const summary = optionalText(value.summary, 240);
+  const evidence = optionalText(value.evidence, 240);
+  if (!characterId || !key || !direction || !summary || !evidence) return [];
+  if (!validPairs.has(`${characterId}\0${key}`)) return [];
+  return [{
+    characterId,
+    key,
+    direction,
+    summary,
+    evidence,
     confidence: boundedUnit(value.confidence),
   }];
 }

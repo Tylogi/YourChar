@@ -133,7 +133,7 @@ export class ContextPlanner {
       budgets.worldRuntimeTokens,
     );
     const interaction = boundedContextSection(
-      input.conversationSpace === "normal" ? input.interactionContext ?? "" : "",
+      input.interactionContext ?? "",
       budgets.interactionTokens,
     );
     const relationshipContext = input.conversationSpace === "normal"

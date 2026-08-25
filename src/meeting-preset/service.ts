@@ -190,7 +190,7 @@ export class MeetingPresetService {
     if (!roleSession) return input.payload;
     const character = this.rpService.getCharacter(roleSession.characterId);
     const profile = this.profileService.get();
-    const interaction = this.interactionService.get(input.sessionId);
+    const interaction = this.interactionService.get(input.sessionId, { conversationSpace: "normal" });
     let sceneText = interaction?.presence === "meeting_pending"
       ? [
           "互动状态：约见等待",
@@ -293,7 +293,7 @@ export class MeetingPresetService {
     if (mode !== "sms") return undefined;
     const roleSession = this.rpService.repository.getRoleSession(sessionId);
     if (!roleSession) return undefined;
-    const interaction = this.interactionService.get(sessionId);
+    const interaction = this.interactionService.get(sessionId, { conversationSpace: "normal" });
     if (interaction?.presence !== "co_present") return undefined;
     const presetId = this.rpService.getCharacter(roleSession.characterId).meetingPresetId;
     if (!presetId) return undefined;

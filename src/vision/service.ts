@@ -129,7 +129,7 @@ export class VisionService {
   }
 
   async discoverModels(): Promise<string[]> {
-    const response = await this.request("/models", { method: "GET" }, 10_000);
+    const response = await this.request("/models", { method: "GET" }, 10_000, "base_url");
     const body = await response.json() as { data?: Array<{ id?: unknown }> };
     return (body.data ?? [])
       .map((entry) => entry.id)
@@ -238,8 +238,14 @@ export class VisionService {
     }, timeoutMs);
   }
 
-  private async request(path: string, init: RequestInit, timeoutMs: number): Promise<Response> {
-    this.assertAvailable();
+  private async request(
+    path: string,
+    init: RequestInit,
+    timeoutMs: number,
+    requirement: "configured" | "base_url" = "configured",
+  ): Promise<Response> {
+    if (requirement === "base_url") this.assertBaseUrlAvailable();
+    else this.assertAvailable();
     const signal = init.signal
       ? AbortSignal.any([init.signal, AbortSignal.timeout(timeoutMs)])
       : AbortSignal.timeout(timeoutMs);
@@ -265,9 +271,12 @@ export class VisionService {
   }
 
   private assertAvailable(): void {
-    if (!this.config.baseUrl || !this.config.model) {
-      throw new VisionConfigurationError("Vision Base URL and model are required");
-    }
+    this.assertBaseUrlAvailable();
+    if (!this.config.model) throw new VisionConfigurationError("Vision model is required");
+  }
+
+  private assertBaseUrlAvailable(): void {
+    if (!this.config.baseUrl) throw new VisionConfigurationError("Vision Base URL is required");
   }
 
   private load(): StoredVisionConfig {

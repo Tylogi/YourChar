@@ -905,7 +905,32 @@ function mapEpisode(row: Row): CharacterChannelEpisode {
 }
 
 function mapCollaborationJob(row: Row): CharacterCollaborationJob {
-  const routing = JSON.parse(String(row.routing_json)) as CharacterCollaborationJob["routing"];
+  const parsedRouting = JSON.parse(String(row.routing_json)) as CharacterCollaborationJob["routing"];
+  const routing: CharacterCollaborationJob["routing"] = {
+    ...parsedRouting,
+    requiredSkillIds: Array.isArray(parsedRouting.requiredSkillIds)
+      ? parsedRouting.requiredSkillIds
+      : [],
+    selectedSkillIds: Array.isArray(parsedRouting.selectedSkillIds)
+      ? parsedRouting.selectedSkillIds
+      : [],
+    candidates: parsedRouting.candidates.map((candidate) => ({
+      ...candidate,
+      matchedSkillIds: Array.isArray(candidate.matchedSkillIds)
+        ? candidate.matchedSkillIds
+        : [],
+    })),
+    ...(parsedRouting.selected
+      ? {
+          selected: {
+            ...parsedRouting.selected,
+            matchedSkillIds: Array.isArray(parsedRouting.selected.matchedSkillIds)
+              ? parsedRouting.selected.matchedSkillIds
+              : [],
+          },
+        }
+      : {}),
+  };
   const lastError = optionalString(row.last_error);
   const ownerId = optionalString(row.owner_id);
   const claimToken = optionalString(row.claim_token);

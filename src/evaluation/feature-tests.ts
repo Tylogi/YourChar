@@ -230,13 +230,13 @@ const cases: FeatureTestCase[] = [
   {
     id: "character-capability-routing",
     category: "character",
-    name: "角色专业能力路由",
-    description: "验证当前角色按固定能力请求可信路由，由最高匹配且可接单的同世界角色完成任务并留下证据。",
+    name: "角色专属 Skill 路由",
+    description: "验证当前角色按公开 Skill 请求可信路由，由拥有该 Skill 且可接单的同世界角色完成任务并留下评价。",
     mode: "sms",
     input: "请找这个世界里最适合做网页研究的人，委托她给出两条核对公开资料的原则，再把实际结果告诉我。不要由你自己代答。",
     requiredModules: ["mcp:world-state"],
     requiredPermissions: [],
-    qualityCriteria: ["清楚说明实际由哪位专业角色完成", "结果具体且不暴露能力评分、路由器或后台协议"],
+    qualityCriteria: ["清楚说明实际由哪位专业角色完成", "结果具体且不暴露内部评分、路由器或后台协议"],
   },
   {
     id: "tavily-search-trigger",
@@ -575,6 +575,7 @@ function setupCase(runtime: CompanionKernel, definition: FeatureTestCase, charac
       sessionId,
       characterId,
       mode: "sms",
+      scope: { conversationSpace: "normal" },
       location: "未来道具研究所",
       source: "system",
     });
@@ -583,6 +584,7 @@ function setupCase(runtime: CompanionKernel, definition: FeatureTestCase, charac
         sessionId,
         characterId,
         mode: "sms",
+        scope: { conversationSpace: "normal" },
         source: "user_control",
         userConfirmed: true,
       });
@@ -705,25 +707,22 @@ function setupCase(runtime: CompanionKernel, definition: FeatureTestCase, charac
         currentPlaceId: place.id,
       });
     }
-    runtime.updateCharacterFunctionProfile(expert.id, {
-      publicRole: "网页研究负责人",
+    runtime.updateCharacterCollaborationProfile(expert.id, {
+      introduction: "网页研究负责人",
+      traits: ["重视来源", "严谨"],
       maxConcurrentTasks: 1,
-      capabilities: [{
-        capabilityId: "research.web",
-        level: 5,
-        responsibility: "primary",
-        autoAccept: true,
-      }],
     });
-    runtime.updateCharacterFunctionProfile(support.id, {
-      publicRole: "研究助理",
+    runtime.updateCharacterCollaborationProfile(support.id, {
+      introduction: "研究助理",
+      traits: ["资料整理"],
       maxConcurrentTasks: 2,
-      capabilities: [{
-        capabilityId: "research.web",
-        level: 2,
-        responsibility: "support",
-        autoAccept: true,
-      }],
+    });
+    runtime.createCharacterOwnedSkill(expert.id, {
+      name: "网页资料核验",
+      description: "核对公开网页资料、发布日期和一手出处。",
+      tags: ["research", "verification"],
+      markdown: "# 网页资料核验\n\n- 识别主张。\n- 核对一手来源。\n- 明确日期与不确定性。",
+      activate: true,
     });
   }
   return { attachments: [] };
@@ -839,8 +838,7 @@ function evaluateCase(
     rules.push(rule("subagent-model-calls", "发生独立子 Agent 模型调用", runtime.getModelRequestCount() >= 3, `${runtime.getModelRequestCount()} requests`));
   } else if (definition.id === "relationship-affect-update") {
     const snapshot = runtime.getCharacterRelationship(characterId);
-    const changed = snapshot.state.trust !== 35 || snapshot.state.closeness !== 20 ||
-      snapshot.state.affection !== 25 || snapshot.state.respect !== 50 || snapshot.state.tension !== 5;
+    const changed = snapshot.state.trust !== 35 || snapshot.state.bond !== 25 || snapshot.state.tension !== 0;
     rules.push(rule("relationship-event", "后台生成一条关系事件", snapshot.recentEvents.length === 1, `${snapshot.recentEvents.length} events`));
     rules.push(rule("bounded-update", "关系状态发生受控变化", changed && snapshot.recentEvents.every((event) =>
       Object.values(event.delta).every((value) => Math.abs(value) <= 6)), JSON.stringify(snapshot.recentEvents[0]?.delta ?? {})));
@@ -922,10 +920,13 @@ function evaluateCase(
       message.episodeId === collaboration?.id &&
       message.senderCharacterId === expert?.id &&
       message.kind === "result");
-    const evidence = expert
-      ? runtime.getCharacterFunctionProfile(expert.id).evidence
-        .find((entry) => entry.capabilityId === "research.web")
+    const expertSkill = expert
+      ? runtime.listCharacterOwnedSkills(expert.id)
+        .find((entry) => entry.name === "网页资料核验")
       : undefined;
+    const evidence = expert && expertSkill
+      ? runtime.getCharacterOwnedSkillReview(expert.id, expertSkill.id).evaluations
+      : [];
     rules.push(rule(
       "capability-route-tool",
       "当前角色调用专业协作路由",
@@ -941,8 +942,9 @@ function evaluateCase(
     rules.push(rule(
       "capability-evidence",
       "专业任务留下幂等完成证据",
-      evidence?.completed === 1 && evidence.total === 1,
-      evidence ? `${evidence.completed}/${evidence.total}` : "missing",
+      evidence.filter((entry) => entry.outcome === "completed").length === 1 &&
+        evidence.length === 1,
+      `${evidence.filter((entry) => entry.outcome === "completed").length}/${evidence.length}`,
     ));
     rules.push(rule(
       "specialist-result-reported",

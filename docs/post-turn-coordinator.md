@@ -6,10 +6,17 @@ The Post-turn Coordinator performs bounded asynchronous analysis after one
 completed private turn. It replaces relationship-only orchestration without
 giving one feature ownership of another feature's state.
 
-One analyzer call can currently produce two independent results:
+This durable fallback currently runs only for normal-space conversations.
+Private-space meetings keep their own scoped interaction state, but rely on the
+foreground Interaction tool or the trusted UI controls to end a meeting; they
+never enqueue relationship/post-turn analysis into the shared normal pipeline.
+
+One analyzer call can currently produce three independent results:
 
 - `relationship`: a constrained relationship event candidate;
-- `interaction`: a co-presence departure decision.
+- `interaction`: a co-presence departure decision;
+- `world_attributes`: direction-only matches against owner-authored World
+  attribute rules.
 
 Memory extraction remains on its existing coordinator because its permission,
 candidate lifecycle, and durable write policy are materially different.
@@ -24,6 +31,7 @@ main Agent reply
   -> one structured analyzer call
   -> RelationshipService validates/applies relationship result
   -> InteractionService validates/applies departure fallback
+  -> WorldService validates evidence/rule snapshot and applies the fixed per-hit magnitude
 ```
 
 The main Agent's `end_meeting` tool remains the fast path. Post-turn departure
@@ -38,8 +46,25 @@ evaluated both before and after the model call:
 
 - disabling Relationship State suppresses only relationship application;
 - disabling Interaction State suppresses only departure application;
+- disabling World State suppresses only attribute-rule analysis;
 - either consumer can run without the other;
-- when both are active, they share the same model call.
+- when several are active, they share the same model call.
+
+World-attribute analysis is eligible only for completed normal SMS turns. The
+analyzer returns an exact character/key, `increase|decrease`, exact visible
+evidence, and confidence; it never returns a score or delta. The service
+requires confidence `>= 0.70`, verifies the evidence against the completed
+turn and any already-committed `perform_place_action` World event from that
+turn, rejects changed definitions or memberships, applies the owner-configured
+direction magnitude, and clamps the declared range. The configured increase
+and decrease numbers are fixed steps, not maxima; the ledger distinguishes the
+requested step from the smaller applied delta when a boundary is reached.
+Character-specific definitions write at most one event per
+character/key/source turn. World-shared definitions write at most one event per
+world/key/source turn, so a multi-character World scene cannot apply the same
+global change repeatedly. Secret and incognito conversations do not enqueue
+this consumer. World narrative turns use the same trusted settlement service
+after their visible character actions have been generated.
 
 The compatibility table and endpoints retain their historical
 `relationship_extraction_jobs` and `/relationship-coordinator` names. New code
@@ -72,8 +97,9 @@ not mutate state.
 
 Post-turn jobs reuse the existing durable queue, lease heartbeat, stale-owner
 recovery, bounded retry, token estimate, and context-log idempotency key. Jobs
-record requested consumers and separate relationship/interaction result
-counts. Applied fallback transitions use:
+record requested consumers, separate relationship/interaction result counts,
+and an aggregate result count that also includes accepted world-attribute
+events. Applied fallback transitions use:
 
 - source: `post_turn_coordinator`;
 - evidence kind: `post_turn_analysis`;

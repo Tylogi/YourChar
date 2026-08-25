@@ -4,6 +4,107 @@ import { proactiveTemporalContext, proactiveTemporalContradiction } from "../src
 import { createTestRuntime } from "../src/testing/index.js";
 import type { ProactiveMessageInput } from "../src/world/types.js";
 
+test("world planning converts world-local wall-clock values into UTC schedule instants", async () => {
+  let receivedLocalDateTime = "";
+  const runtime = createTestRuntime({
+    now: "2026-08-22T16:01:00.000Z",
+    seed: "world-plan-local-time",
+    worldPlanner: async (input) => {
+      receivedLocalDateTime = input.localDateTime;
+      return {
+        activities: [{
+          title: "吃晚饭",
+          placeId: input.places[0].id,
+          capabilityId: "eat",
+          startLocal: "2026-08-23T18:30:00",
+          endLocal: "2026-08-23T19:30:00",
+          summary: "在当地傍晚吃晚饭",
+          salience: 0.6,
+        }],
+      };
+    },
+  });
+  try {
+    const character = runtime.kernel.createCharacter({ name: "本地时间角色" });
+    const world = runtime.kernel.createWorld({
+      name: "上海日常",
+      timezone: "Asia/Shanghai",
+    });
+    const restaurant = runtime.kernel.createWorldPlace({
+      worldId: world.id,
+      name: "餐厅",
+      capabilityIds: ["eat"],
+    });
+    runtime.kernel.assignCharacterWorld(character.id, {
+      worldId: world.id,
+      homePlaceId: restaurant.id,
+      currentPlaceId: restaurant.id,
+    });
+    runtime.kernel.updateCharacterAutonomyPolicy(character.id, { enabled: true });
+
+    const result = await runtime.kernel.planCharacterLife(character.id);
+    assert.equal(receivedLocalDateTime, "2026-08-23T00:01:00");
+    assert.equal(result.plans.length, 1);
+    const schedule = runtime.kernel.getScheduleItem(result.plans[0].scheduleItemId);
+    assert.equal(schedule.startAt, "2026-08-23T10:30:00.000Z");
+    assert.equal(schedule.endAt, "2026-08-23T11:30:00.000Z");
+    assert.equal(schedule.timezone, "Asia/Shanghai");
+  } finally {
+    runtime.dispose();
+  }
+});
+
+test("world planning rejects UTC or offset-bearing values in local time fields", async () => {
+  const runtime = createTestRuntime({
+    now: "2026-08-22T16:01:00.000Z",
+    seed: "world-plan-local-time-offset-rejection",
+    worldPlanner: async (input) => ({
+      activities: [
+        {
+          title: "错误的 UTC 晚餐",
+          placeId: input.places[0].id,
+          capabilityId: "eat",
+          startLocal: "2026-08-23T18:30:00Z",
+          endLocal: "2026-08-23T19:30:00Z",
+          summary: "不应把 UTC 值伪装成本地时间",
+          salience: 0.6,
+        },
+        {
+          title: "错误的偏移晚餐",
+          placeId: input.places[0].id,
+          capabilityId: "eat",
+          startLocal: "2026-08-23T18:30:00+08:00",
+          endLocal: "2026-08-23T19:30:00+08:00",
+          summary: "本地墙上时间字段不接受偏移量",
+          salience: 0.6,
+        },
+      ],
+    }),
+  });
+  try {
+    const character = runtime.kernel.createCharacter({ name: "拒绝混合时钟角色" });
+    const world = runtime.kernel.createWorld({ name: "上海日常", timezone: "Asia/Shanghai" });
+    const restaurant = runtime.kernel.createWorldPlace({
+      worldId: world.id,
+      name: "餐厅",
+      capabilityIds: ["eat"],
+    });
+    runtime.kernel.assignCharacterWorld(character.id, {
+      worldId: world.id,
+      homePlaceId: restaurant.id,
+      currentPlaceId: restaurant.id,
+    });
+    runtime.kernel.updateCharacterAutonomyPolicy(character.id, { enabled: true });
+
+    const result = await runtime.kernel.planCharacterLife(character.id);
+    assert.equal(result.fallbackUsed, true);
+    assert.deepEqual(result.plans, []);
+    assert.deepEqual(runtime.kernel.listScheduleItems({ ownerType: "character", characterId: character.id }), []);
+  } finally {
+    runtime.dispose();
+  }
+});
+
 test("world activities reuse character schedules, settle into events, and become durable memories", async () => {
   const runtime = createTestRuntime({
     now: "2026-07-19T01:00:00.000Z",
@@ -13,8 +114,8 @@ test("world activities reuse character schedules, settle into events, and become
         title: "整理实验记录",
         placeId: input.places[0].id,
         capabilityId: "work",
-        startAt: "2026-07-19T01:10:00.000Z",
-        endAt: "2026-07-19T02:00:00.000Z",
+        startLocal: "2026-07-19T09:10:00",
+        endLocal: "2026-07-19T10:00:00",
         summary: "在研究所整理完一批实验记录",
         salience: 0.76,
       }],
@@ -289,8 +390,8 @@ test("moving a character between worlds cancels stale plans and pending proactiv
         title: `在${input.places[0].name}工作`,
         placeId: input.places[0].id,
         capabilityId: "work",
-        startAt: "2026-07-19T01:10:00.000Z",
-        endAt: "2026-07-19T02:00:00.000Z",
+        startLocal: "2026-07-19T09:10:00",
+        endLocal: "2026-07-19T10:00:00",
         summary: `在${input.places[0].name}完成手头工作`,
         salience: 0.72,
       }],
@@ -359,8 +460,8 @@ test("scheduled travel keeps the origin while underway and catches up to the des
         title: "前往快捷酒店",
         placeId: input.places.find((place) => place.name === "快捷酒店")!.id,
         capabilityId: "travel",
-        startAt: "2026-07-19T01:10:00.000Z",
-        endAt: "2026-07-19T01:30:00.000Z",
+        startLocal: "2026-07-19T09:10:00",
+        endLocal: "2026-07-19T09:30:00",
         summary: "已经抵达快捷酒店",
         salience: 0.68,
       }],
@@ -629,8 +730,8 @@ test("autonomy rejects implausible plans instead of fabricating a fallback sched
           title: "低精力连续工作",
           placeId: input.places[0].id,
           capabilityId: "work",
-          startAt: "2026-07-21T01:10:00.000Z",
-          endAt: "2026-07-21T02:00:00.000Z",
+          startLocal: "2026-07-21T09:10:00",
+          endLocal: "2026-07-21T10:00:00",
           summary: "精力不足时继续高强度工作",
           salience: 0.6,
         },
@@ -638,8 +739,8 @@ test("autonomy rejects implausible plans instead of fabricating a fallback sched
           title: "瞬间出现在咖啡店",
           placeId: input.places[1].id,
           capabilityId: "socialize",
-          startAt: "2026-07-21T01:15:00.000Z",
-          endAt: "2026-07-21T02:15:00.000Z",
+          startLocal: "2026-07-21T09:15:00",
+          endLocal: "2026-07-21T10:15:00",
           summary: "没有通勤就出现在另一地点",
           salience: 0.6,
         },

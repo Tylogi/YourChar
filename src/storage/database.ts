@@ -2148,16 +2148,605 @@ const migrations: Migration[] = [
       );
     `,
   },
+  {
+    version: 40,
+    sql: `
+      ALTER TABLE conversation_interaction_states
+        ADD COLUMN conversation_space TEXT NOT NULL DEFAULT 'normal'
+          CHECK (conversation_space IN ('normal', 'secret'));
+      ALTER TABLE conversation_interaction_states
+        ADD COLUMN secret_owner_character_id TEXT
+          REFERENCES characters(id) ON DELETE CASCADE
+          CHECK (
+            (conversation_space = 'normal' AND secret_owner_character_id IS NULL) OR
+            (conversation_space = 'secret' AND secret_owner_character_id IS NOT NULL
+              AND secret_owner_character_id = character_id)
+          );
+
+      DROP INDEX conversation_interaction_single_meeting_idx;
+      CREATE UNIQUE INDEX conversation_interaction_single_meeting_idx
+        ON conversation_interaction_states(conversation_space, character_id)
+        WHERE continuity = 'canonical' AND presence = 'co_present';
+      CREATE INDEX conversation_interaction_scope_idx
+        ON conversation_interaction_states(
+          conversation_space, secret_owner_character_id, session_id
+        );
+
+      ALTER TABLE interaction_transition_events
+        ADD COLUMN conversation_space TEXT NOT NULL DEFAULT 'normal'
+          CHECK (conversation_space IN ('normal', 'secret'));
+      ALTER TABLE interaction_transition_events
+        ADD COLUMN secret_owner_character_id TEXT
+          REFERENCES characters(id) ON DELETE CASCADE
+          CHECK (
+            (conversation_space = 'normal' AND secret_owner_character_id IS NULL) OR
+            (conversation_space = 'secret' AND secret_owner_character_id IS NOT NULL
+              AND secret_owner_character_id = character_id)
+          );
+
+      DROP INDEX interaction_transition_events_session_idx;
+      CREATE INDEX interaction_transition_events_session_idx
+        ON interaction_transition_events(
+          conversation_space, secret_owner_character_id,
+          session_id, created_at DESC, id DESC
+      );
+    `,
+  },
+  {
+    version: 41,
+    sql: `
+      CREATE TABLE character_owned_skill_packages (
+        id TEXT PRIMARY KEY,
+        character_id TEXT NOT NULL REFERENCES characters(id) ON DELETE CASCADE,
+        conversation_space TEXT NOT NULL
+          CHECK (conversation_space IN ('normal', 'secret')),
+        slug TEXT NOT NULL,
+        name TEXT NOT NULL,
+        description TEXT NOT NULL DEFAULT '',
+        tags_json TEXT NOT NULL DEFAULT '[]',
+        capability_ids_json TEXT NOT NULL DEFAULT '[]',
+        status TEXT NOT NULL CHECK (status IN ('draft', 'active', 'disabled')),
+        auto_improve INTEGER NOT NULL DEFAULT 1 CHECK (auto_improve IN (0, 1)),
+        created_by TEXT NOT NULL CHECK (created_by IN ('user', 'character', 'migration')),
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        UNIQUE(character_id, conversation_space, slug),
+        UNIQUE(id, character_id, conversation_space)
+      );
+      CREATE INDEX character_owned_skill_packages_owner_idx
+        ON character_owned_skill_packages(
+          character_id, conversation_space, status, updated_at DESC, id
+        );
+
+      CREATE TABLE character_owned_skill_versions (
+        id TEXT PRIMARY KEY,
+        package_id TEXT NOT NULL,
+        character_id TEXT NOT NULL,
+        conversation_space TEXT NOT NULL
+          CHECK (conversation_space IN ('normal', 'secret')),
+        version INTEGER NOT NULL CHECK (version >= 1),
+        status TEXT NOT NULL CHECK (status IN ('draft', 'active', 'superseded', 'rejected')),
+        markdown TEXT NOT NULL,
+        change_summary TEXT NOT NULL DEFAULT '',
+        source TEXT NOT NULL CHECK (
+          source IN ('manual', 'character_created', 'character_reflection', 'legacy_migration')
+        ),
+        source_task_id TEXT,
+        content_hash TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        activated_at TEXT,
+        superseded_at TEXT,
+        UNIQUE(package_id, version),
+        UNIQUE(package_id, source_task_id),
+        UNIQUE(id, package_id, character_id, conversation_space),
+        FOREIGN KEY (package_id, character_id, conversation_space)
+          REFERENCES character_owned_skill_packages(id, character_id, conversation_space)
+          ON DELETE CASCADE
+      );
+      CREATE UNIQUE INDEX character_owned_skill_versions_active_idx
+        ON character_owned_skill_versions(package_id)
+        WHERE status = 'active';
+      CREATE INDEX character_owned_skill_versions_history_idx
+        ON character_owned_skill_versions(package_id, version DESC);
+
+      CREATE TABLE character_owned_skill_evaluations (
+        id TEXT PRIMARY KEY,
+        package_id TEXT NOT NULL,
+        version_id TEXT NOT NULL,
+        character_id TEXT NOT NULL,
+        conversation_space TEXT NOT NULL
+          CHECK (conversation_space IN ('normal', 'secret')),
+        source_task_id TEXT NOT NULL,
+        outcome TEXT NOT NULL CHECK (outcome IN ('completed', 'declined', 'failed', 'cancelled')),
+        score REAL CHECK (score IS NULL OR (score >= 0 AND score <= 100)),
+        result_summary TEXT NOT NULL DEFAULT '',
+        lesson TEXT NOT NULL DEFAULT '',
+        created_at TEXT NOT NULL,
+        UNIQUE(package_id, source_task_id),
+        FOREIGN KEY (version_id, package_id, character_id, conversation_space)
+          REFERENCES character_owned_skill_versions(
+            id, package_id, character_id, conversation_space
+          ) ON DELETE CASCADE,
+        FOREIGN KEY (package_id, character_id, conversation_space)
+          REFERENCES character_owned_skill_packages(id, character_id, conversation_space)
+          ON DELETE CASCADE
+      );
+      CREATE INDEX character_owned_skill_evaluations_package_idx
+        ON character_owned_skill_evaluations(package_id, created_at DESC, id DESC);
+
+      CREATE TABLE character_owned_skill_proposals (
+        id TEXT PRIMARY KEY,
+        package_id TEXT NOT NULL,
+        base_version_id TEXT NOT NULL,
+        character_id TEXT NOT NULL,
+        conversation_space TEXT NOT NULL
+          CHECK (conversation_space IN ('normal', 'secret')),
+        source_task_id TEXT NOT NULL,
+        status TEXT NOT NULL CHECK (status IN ('pending', 'approved', 'rejected', 'stale')),
+        proposed_markdown TEXT NOT NULL,
+        change_summary TEXT NOT NULL DEFAULT '',
+        content_hash TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        reviewed_at TEXT,
+        activated_version_id TEXT REFERENCES character_owned_skill_versions(id) ON DELETE SET NULL,
+        UNIQUE(package_id, source_task_id),
+        FOREIGN KEY (base_version_id, package_id, character_id, conversation_space)
+          REFERENCES character_owned_skill_versions(
+            id, package_id, character_id, conversation_space
+          ) ON DELETE CASCADE,
+        FOREIGN KEY (package_id, character_id, conversation_space)
+          REFERENCES character_owned_skill_packages(id, character_id, conversation_space)
+          ON DELETE CASCADE
+      );
+      CREATE INDEX character_owned_skill_proposals_status_idx
+        ON character_owned_skill_proposals(
+          character_id, conversation_space, status, created_at DESC, id DESC
+        );
+    `,
+  },
+  {
+    version: 42,
+    sql: `
+      CREATE TABLE character_collaboration_profiles (
+        character_id TEXT PRIMARY KEY REFERENCES characters(id) ON DELETE CASCADE,
+        introduction TEXT NOT NULL DEFAULT '',
+        traits_json TEXT NOT NULL DEFAULT '[]',
+        max_concurrent_tasks INTEGER NOT NULL DEFAULT 1
+          CHECK (max_concurrent_tasks BETWEEN 1 AND 5),
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      );
+
+      INSERT INTO character_collaboration_profiles(
+        character_id, introduction, traits_json, max_concurrent_tasks,
+        created_at, updated_at
+      )
+      SELECT
+        characters.id,
+        COALESCE(character_function_profiles.public_role, ''),
+        '[]',
+        COALESCE(character_function_profiles.max_concurrent_tasks, 1),
+        characters.created_at,
+        COALESCE(character_function_profiles.updated_at, characters.updated_at)
+      FROM characters
+      LEFT JOIN character_function_profiles
+        ON character_function_profiles.character_id = characters.id;
+
+      INSERT INTO character_owned_skill_packages(
+        id, character_id, conversation_space, slug, name, description,
+        tags_json, capability_ids_json, status, auto_improve, created_by,
+        created_at, updated_at
+      )
+      SELECT
+        'legacy-owned-' || legacy.id,
+        legacy.character_id,
+        legacy.conversation_space,
+        'general-working-method',
+        characters.name || '的通用工作方法',
+        COALESCE(NULLIF(character_function_profiles.public_role, ''),
+          '从旧版角色工作方法迁移的专属 Skill。'),
+        '["legacy"]',
+        '[]',
+        'active',
+        0,
+        'migration',
+        legacy.created_at,
+        COALESCE(legacy.activated_at, legacy.created_at)
+      FROM character_skill_versions legacy
+      JOIN characters ON characters.id = legacy.character_id
+      LEFT JOIN character_function_profiles
+        ON character_function_profiles.character_id = legacy.character_id
+      WHERE legacy.status = 'active'
+        AND NOT EXISTS (
+          SELECT 1 FROM character_owned_skill_packages package
+          WHERE package.character_id = legacy.character_id
+            AND package.conversation_space = legacy.conversation_space
+        );
+
+      INSERT INTO character_owned_skill_versions(
+        id, package_id, character_id, conversation_space, version, status,
+        markdown, change_summary, source, source_task_id, content_hash,
+        created_at, activated_at, superseded_at
+      )
+      SELECT
+        'legacy-owned-version-' || legacy.id,
+        'legacy-owned-' || legacy.id,
+        legacy.character_id,
+        legacy.conversation_space,
+        1,
+        'active',
+        legacy.markdown,
+        '从旧版角色 SKILL.md 迁移',
+        'legacy_migration',
+        NULL,
+        legacy.content_hash,
+        legacy.created_at,
+        COALESCE(legacy.activated_at, legacy.created_at),
+        NULL
+      FROM character_skill_versions legacy
+      WHERE legacy.status = 'active'
+        AND EXISTS (
+          SELECT 1 FROM character_owned_skill_packages package
+          WHERE package.id = 'legacy-owned-' || legacy.id
+        );
+
+      DROP TABLE character_capability_evidence;
+      DROP TABLE character_capabilities;
+      DROP TABLE character_skill_versions;
+      DROP TABLE character_function_profiles;
+    `,
+  },
+  {
+    version: 43,
+    sql: `
+      ALTER TABLE character_relationship_states
+        RENAME TO character_relationship_states_v42;
+
+      CREATE TABLE character_relationship_states (
+        character_id TEXT PRIMARY KEY REFERENCES characters(id) ON DELETE CASCADE,
+        trust INTEGER NOT NULL DEFAULT 35 CHECK (trust BETWEEN 0 AND 100),
+        bond INTEGER NOT NULL DEFAULT 25 CHECK (bond BETWEEN 0 AND 100),
+        tension INTEGER NOT NULL DEFAULT 0 CHECK (tension BETWEEN 0 AND 100),
+        bond_facets_json TEXT NOT NULL DEFAULT '[]',
+        romance_status TEXT NOT NULL DEFAULT 'none'
+          CHECK (romance_status IN (
+            'none', 'user_interest', 'character_interest', 'mutual_interest',
+            'dating', 'committed', 'former_partners'
+          )),
+        semantic_updated_at TEXT,
+        affect_valence REAL NOT NULL DEFAULT 0 CHECK (affect_valence BETWEEN -1 AND 1),
+        affect_arousal REAL NOT NULL DEFAULT 0.2 CHECK (affect_arousal BETWEEN 0 AND 1),
+        affect_control REAL NOT NULL DEFAULT 0.8 CHECK (affect_control BETWEEN 0 AND 1),
+        affect_labels_json TEXT NOT NULL DEFAULT '[]',
+        affect_updated_at TEXT NOT NULL,
+        version INTEGER NOT NULL DEFAULT 1 CHECK (version >= 1),
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      );
+
+      INSERT INTO character_relationship_states(
+        character_id, trust, bond, tension,
+        bond_facets_json, romance_status, semantic_updated_at,
+        affect_valence, affect_arousal, affect_control, affect_labels_json,
+        affect_updated_at, version, created_at, updated_at
+      )
+      SELECT
+        character_id,
+        trust,
+        CAST(ROUND(closeness * 0.5 + affection * 0.4 + respect * 0.1) AS INTEGER),
+        tension,
+        bond_facets_json,
+        romance_status,
+        semantic_updated_at,
+        affect_valence,
+        affect_arousal,
+        affect_control,
+        affect_labels_json,
+        affect_updated_at,
+        version,
+        created_at,
+        updated_at
+      FROM character_relationship_states_v42;
+
+      DROP TABLE character_relationship_states_v42;
+
+      UPDATE relationship_events
+      SET delta_json = CASE
+        WHEN json_valid(delta_json) THEN json_object(
+          'trust', CAST(COALESCE(json_extract(delta_json, '$.trust'), 0) AS INTEGER),
+          'bond', CAST(ROUND(
+            CASE
+              WHEN json_extract(delta_json, '$.bond') IS NOT NULL
+                THEN CAST(json_extract(delta_json, '$.bond') AS REAL)
+              ELSE
+                COALESCE(CAST(json_extract(delta_json, '$.closeness') AS REAL), 0) * 0.5 +
+                COALESCE(CAST(json_extract(delta_json, '$.affection') AS REAL), 0) * 0.4 +
+                COALESCE(CAST(json_extract(delta_json, '$.respect') AS REAL), 0) * 0.1
+            END
+          ) AS INTEGER),
+          'tension', CAST(COALESCE(json_extract(delta_json, '$.tension'), 0) AS INTEGER)
+        )
+        ELSE json_object('trust', 0, 'bond', 0, 'tension', 0)
+      END;
+    `,
+  },
+  {
+    version: 44,
+    sql: `
+      CREATE TABLE world_attribute_definitions (
+        id TEXT PRIMARY KEY,
+        world_id TEXT NOT NULL REFERENCES role_worlds(id) ON DELETE CASCADE,
+        attribute_key TEXT NOT NULL,
+        name TEXT NOT NULL,
+        description TEXT NOT NULL DEFAULT '',
+        min_value INTEGER NOT NULL CHECK (min_value BETWEEN -10000 AND 10000),
+        max_value INTEGER NOT NULL CHECK (max_value BETWEEN -10000 AND 10000),
+        default_value INTEGER NOT NULL,
+        agent_mutable INTEGER NOT NULL DEFAULT 0 CHECK (agent_mutable IN (0, 1)),
+        agent_can_increase INTEGER NOT NULL DEFAULT 1 CHECK (agent_can_increase IN (0, 1)),
+        agent_can_decrease INTEGER NOT NULL DEFAULT 1 CHECK (agent_can_decrease IN (0, 1)),
+        agent_max_delta INTEGER NOT NULL DEFAULT 5 CHECK (agent_max_delta BETWEEN 1 AND 1000),
+        visible_to_agent INTEGER NOT NULL DEFAULT 1 CHECK (visible_to_agent IN (0, 1)),
+        status TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active', 'archived')),
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        CHECK (min_value < max_value),
+        CHECK (default_value BETWEEN min_value AND max_value),
+        UNIQUE(world_id, attribute_key),
+        UNIQUE(id, world_id)
+      );
+      CREATE INDEX world_attribute_definitions_world_idx
+        ON world_attribute_definitions(world_id, status, name, id);
+
+      CREATE TABLE character_world_attribute_values (
+        world_id TEXT NOT NULL REFERENCES role_worlds(id) ON DELETE CASCADE,
+        character_id TEXT NOT NULL REFERENCES characters(id) ON DELETE CASCADE,
+        attribute_id TEXT NOT NULL,
+        value INTEGER NOT NULL,
+        updated_at TEXT NOT NULL,
+        PRIMARY KEY(world_id, character_id, attribute_id),
+        FOREIGN KEY(attribute_id, world_id)
+          REFERENCES world_attribute_definitions(id, world_id) ON DELETE CASCADE
+      );
+      CREATE INDEX character_world_attribute_values_character_idx
+        ON character_world_attribute_values(character_id, world_id, attribute_id);
+
+      CREATE TABLE world_attribute_events (
+        id TEXT PRIMARY KEY,
+        world_id TEXT NOT NULL REFERENCES role_worlds(id) ON DELETE CASCADE,
+        character_id TEXT NOT NULL REFERENCES characters(id) ON DELETE CASCADE,
+        attribute_id TEXT NOT NULL,
+        source TEXT NOT NULL CHECK (source IN ('user_control', 'agent_tool', 'system')),
+        requested_delta INTEGER NOT NULL,
+        applied_delta INTEGER NOT NULL,
+        before_value INTEGER NOT NULL,
+        after_value INTEGER NOT NULL,
+        summary TEXT NOT NULL DEFAULT '',
+        idempotency_key TEXT NOT NULL UNIQUE,
+        created_at TEXT NOT NULL,
+        FOREIGN KEY(attribute_id, world_id)
+          REFERENCES world_attribute_definitions(id, world_id) ON DELETE CASCADE
+      );
+      CREATE INDEX world_attribute_events_character_idx
+        ON world_attribute_events(character_id, world_id, created_at DESC, id DESC);
+    `,
+  },
+  {
+    version: 45,
+    sql: `
+      ALTER TABLE world_attribute_definitions
+        ADD COLUMN analysis_enabled INTEGER NOT NULL DEFAULT 0
+          CHECK (analysis_enabled IN (0, 1));
+      ALTER TABLE world_attribute_definitions
+        ADD COLUMN increase_rule TEXT NOT NULL DEFAULT ''
+          CHECK (length(increase_rule) <= 800);
+      ALTER TABLE world_attribute_definitions
+        ADD COLUMN increase_delta INTEGER NOT NULL DEFAULT 1
+          CHECK (increase_delta BETWEEN 1 AND 1000);
+      ALTER TABLE world_attribute_definitions
+        ADD COLUMN decrease_rule TEXT NOT NULL DEFAULT ''
+          CHECK (length(decrease_rule) <= 800);
+      ALTER TABLE world_attribute_definitions
+        ADD COLUMN decrease_delta INTEGER NOT NULL DEFAULT 1
+          CHECK (decrease_delta BETWEEN 1 AND 1000);
+
+      DROP INDEX world_attribute_events_character_idx;
+      ALTER TABLE world_attribute_events RENAME TO world_attribute_events_v44;
+      CREATE TABLE world_attribute_events (
+        id TEXT PRIMARY KEY,
+        world_id TEXT NOT NULL REFERENCES role_worlds(id) ON DELETE CASCADE,
+        character_id TEXT NOT NULL REFERENCES characters(id) ON DELETE CASCADE,
+        attribute_id TEXT NOT NULL,
+        source TEXT NOT NULL CHECK (source IN (
+          'user_control', 'post_turn_analysis', 'world_turn_analysis', 'agent_tool', 'system'
+        )),
+        requested_delta INTEGER NOT NULL,
+        applied_delta INTEGER NOT NULL,
+        before_value INTEGER NOT NULL,
+        after_value INTEGER NOT NULL,
+        summary TEXT NOT NULL DEFAULT '',
+        idempotency_key TEXT NOT NULL UNIQUE,
+        analysis_direction TEXT CHECK (analysis_direction IN ('increase', 'decrease')),
+        rule_snapshot TEXT NOT NULL DEFAULT '',
+        evidence TEXT NOT NULL DEFAULT '',
+        confidence REAL CHECK (confidence IS NULL OR (confidence >= 0 AND confidence <= 1)),
+        source_reference_id TEXT,
+        created_at TEXT NOT NULL,
+        FOREIGN KEY(attribute_id, world_id)
+          REFERENCES world_attribute_definitions(id, world_id) ON DELETE CASCADE
+      );
+      INSERT INTO world_attribute_events(
+        id, world_id, character_id, attribute_id, source,
+        requested_delta, applied_delta, before_value, after_value,
+        summary, idempotency_key, created_at
+      )
+      SELECT
+        id, world_id, character_id, attribute_id, source,
+        requested_delta, applied_delta, before_value, after_value,
+        summary, idempotency_key, created_at
+      FROM world_attribute_events_v44;
+      DROP TABLE world_attribute_events_v44;
+      CREATE INDEX world_attribute_events_character_idx
+        ON world_attribute_events(character_id, world_id, created_at DESC, id DESC);
+      CREATE INDEX world_attribute_events_source_reference_idx
+        ON world_attribute_events(source_reference_id, character_id, attribute_id);
+    `,
+  },
+  {
+    version: 46,
+    sql: `
+      ALTER TABLE world_attribute_definitions
+        ADD COLUMN value_scope TEXT NOT NULL DEFAULT 'character'
+          CHECK (value_scope IN ('world', 'character'));
+
+      CREATE TRIGGER world_attribute_definition_scope_immutable
+      BEFORE UPDATE OF value_scope ON world_attribute_definitions
+      FOR EACH ROW WHEN NEW.value_scope <> OLD.value_scope
+      BEGIN
+        SELECT RAISE(ABORT, 'world attribute scope is immutable');
+      END;
+
+      CREATE TABLE world_attribute_values (
+        world_id TEXT NOT NULL REFERENCES role_worlds(id) ON DELETE CASCADE,
+        attribute_id TEXT NOT NULL,
+        value INTEGER NOT NULL,
+        updated_at TEXT NOT NULL,
+        PRIMARY KEY(world_id, attribute_id),
+        FOREIGN KEY(attribute_id, world_id)
+          REFERENCES world_attribute_definitions(id, world_id) ON DELETE CASCADE
+      );
+      CREATE INDEX world_attribute_values_world_idx
+        ON world_attribute_values(world_id, attribute_id);
+
+      CREATE TRIGGER world_attribute_values_require_world_scope_insert
+      BEFORE INSERT ON world_attribute_values
+      FOR EACH ROW
+      WHEN COALESCE((
+        SELECT value_scope FROM world_attribute_definitions
+        WHERE id = NEW.attribute_id AND world_id = NEW.world_id
+      ), '') <> 'world'
+      BEGIN
+        SELECT RAISE(ABORT, 'world attribute value requires world scope');
+      END;
+      CREATE TRIGGER world_attribute_values_require_world_scope_update
+      BEFORE UPDATE OF world_id, attribute_id ON world_attribute_values
+      FOR EACH ROW
+      WHEN COALESCE((
+        SELECT value_scope FROM world_attribute_definitions
+        WHERE id = NEW.attribute_id AND world_id = NEW.world_id
+      ), '') <> 'world'
+      BEGIN
+        SELECT RAISE(ABORT, 'world attribute value requires world scope');
+      END;
+      CREATE TRIGGER character_world_attribute_values_require_character_scope_insert
+      BEFORE INSERT ON character_world_attribute_values
+      FOR EACH ROW
+      WHEN COALESCE((
+        SELECT value_scope FROM world_attribute_definitions
+        WHERE id = NEW.attribute_id AND world_id = NEW.world_id
+      ), '') <> 'character'
+      BEGIN
+        SELECT RAISE(ABORT, 'character attribute value requires character scope');
+      END;
+      CREATE TRIGGER character_world_attribute_values_require_character_scope_update
+      BEFORE UPDATE OF world_id, attribute_id ON character_world_attribute_values
+      FOR EACH ROW
+      WHEN COALESCE((
+        SELECT value_scope FROM world_attribute_definitions
+        WHERE id = NEW.attribute_id AND world_id = NEW.world_id
+      ), '') <> 'character'
+      BEGIN
+        SELECT RAISE(ABORT, 'character attribute value requires character scope');
+      END;
+
+      DROP INDEX world_attribute_events_character_idx;
+      DROP INDEX world_attribute_events_source_reference_idx;
+      ALTER TABLE world_attribute_events RENAME TO world_attribute_events_v45;
+      CREATE TABLE world_attribute_events (
+        id TEXT PRIMARY KEY,
+        world_id TEXT NOT NULL REFERENCES role_worlds(id) ON DELETE CASCADE,
+        character_id TEXT REFERENCES characters(id) ON DELETE CASCADE,
+        attribute_id TEXT NOT NULL,
+        source TEXT NOT NULL CHECK (source IN (
+          'user_control', 'post_turn_analysis', 'world_turn_analysis', 'agent_tool', 'system'
+        )),
+        requested_delta INTEGER NOT NULL,
+        applied_delta INTEGER NOT NULL,
+        before_value INTEGER NOT NULL,
+        after_value INTEGER NOT NULL,
+        summary TEXT NOT NULL DEFAULT '',
+        idempotency_key TEXT NOT NULL UNIQUE,
+        analysis_direction TEXT CHECK (analysis_direction IN ('increase', 'decrease')),
+        rule_snapshot TEXT NOT NULL DEFAULT '',
+        evidence TEXT NOT NULL DEFAULT '',
+        confidence REAL CHECK (confidence IS NULL OR (confidence >= 0 AND confidence <= 1)),
+        source_reference_id TEXT,
+        created_at TEXT NOT NULL,
+        FOREIGN KEY(attribute_id, world_id)
+          REFERENCES world_attribute_definitions(id, world_id) ON DELETE CASCADE
+      );
+      INSERT INTO world_attribute_events(
+        id, world_id, character_id, attribute_id, source,
+        requested_delta, applied_delta, before_value, after_value,
+        summary, idempotency_key, analysis_direction, rule_snapshot,
+        evidence, confidence, source_reference_id, created_at
+      )
+      SELECT
+        id, world_id, character_id, attribute_id, source,
+        requested_delta, applied_delta, before_value, after_value,
+        summary, idempotency_key, analysis_direction, rule_snapshot,
+        evidence, confidence, source_reference_id, created_at
+      FROM world_attribute_events_v45;
+      DROP TABLE world_attribute_events_v45;
+      CREATE INDEX world_attribute_events_character_idx
+        ON world_attribute_events(character_id, world_id, created_at DESC, id DESC);
+      CREATE INDEX world_attribute_events_world_idx
+        ON world_attribute_events(world_id, created_at DESC, id DESC);
+      CREATE INDEX world_attribute_events_source_reference_idx
+        ON world_attribute_events(source_reference_id, character_id, attribute_id);
+      CREATE TRIGGER world_attribute_events_require_character_actor_insert
+      BEFORE INSERT ON world_attribute_events
+      FOR EACH ROW
+      WHEN NEW.character_id IS NULL AND COALESCE((
+        SELECT value_scope FROM world_attribute_definitions
+        WHERE id = NEW.attribute_id AND world_id = NEW.world_id
+      ), '') = 'character'
+      BEGIN
+        SELECT RAISE(ABORT, 'character attribute event requires character');
+      END;
+      CREATE TRIGGER world_attribute_events_require_character_actor_update
+      BEFORE UPDATE OF world_id, character_id, attribute_id ON world_attribute_events
+      FOR EACH ROW
+      WHEN NEW.character_id IS NULL AND COALESCE((
+        SELECT value_scope FROM world_attribute_definitions
+        WHERE id = NEW.attribute_id AND world_id = NEW.world_id
+      ), '') = 'character'
+      BEGIN
+        SELECT RAISE(ABORT, 'character attribute event requires character');
+      END;
+    `,
+  },
 ];
 
 export class AppDatabase {
   readonly connection: DatabaseSync;
 
-  constructor(path: string, options: { maxMigrationVersion?: number } = {}) {
+  constructor(
+    path: string,
+    options: { maxMigrationVersion?: number; tempStoreMemory?: boolean } = {},
+  ) {
     if (path !== ":memory:") {
       mkdirSync(dirname(path), { recursive: true });
     }
     this.connection = new DatabaseSync(path);
+    if (options.tempStoreMemory) {
+      this.connection.exec("PRAGMA temp_store = MEMORY");
+      const row = this.connection.prepare("PRAGMA temp_store").get() as { temp_store?: number } | undefined;
+      if (Number(row?.temp_store) !== 2) {
+        this.connection.close();
+        throw new Error("failed to confine SQLite temporary state to memory");
+      }
+    }
     this.connection.exec("PRAGMA foreign_keys = ON");
     this.connection.exec("PRAGMA busy_timeout = 5000");
     if (path !== ":memory:") {
@@ -2223,6 +2812,7 @@ export class AppDatabase {
     ) staleVersions.push(37);
     if (
       maxMigrationVersion >= 38 && applied.has(38) &&
+      !applied.has(42) &&
       !this.columnExists("character_skill_versions", "conversation_space")
     ) staleVersions.push(38);
     if (!staleVersions.length) return;

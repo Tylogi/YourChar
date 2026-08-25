@@ -64,7 +64,6 @@ test("characters use their bound model profile and fall back after deletion", as
     kernel = new CompanionKernel({
       stateDir,
       startScheduler: false,
-      characterFunctionInferer: false,
       characterSkillReflector: false,
     });
     kernel.patchModelApiConfig({ enabled: true, baseUrl, model: "default-model" });

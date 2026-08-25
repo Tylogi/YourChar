@@ -11,7 +11,7 @@ import { DatabaseSync } from "node:sqlite";
 import { parseDocument } from "yaml";
 
 export const BACKUP_SCHEMA_VERSION = 3;
-export const MAX_DATABASE_SCHEMA_VERSION = 39;
+export const MAX_DATABASE_SCHEMA_VERSION = 46;
 const V1_FRONTMATTER_KEYS = [
   "schemaVersion", "id", "kind", "realm", "scope", "type", "characterId", "sessionId",
   "validity", "confirmed", "sourceSessionId", "sourceMessageId", "createdAt", "updatedAt",
@@ -116,6 +116,28 @@ export function validateBackupDirectory(root, manifest) {
   }
   const imRuntimePresent = actualFiles.some((file) => file.path.startsWith("im-runtime/"));
   const imCredentialsPresent = existsSync(join(root, "im-runtime", "credentials.json"));
+  const mineruConfigPresent = existsSync(join(root, "mineru.json"));
+  const gitRegistryPresent = actualFiles.some((file) => file.path === "git/registry.json");
+  const gitAccessConfigPresent = actualFiles.some((file) => file.path === "git/access.json");
+  const gitCredentialsPresent = actualFiles.some((file) => file.path.startsWith("git/credentials/"));
+  const gitWorkItemsPresent = actualFiles.some((file) => file.path === "git-work-items.json");
+  const gitRepositoryConfigPresent = actualFiles.some((file) => file.path === "git-repository.json");
+  const gitWorkspaceRepositoriesPresent = actualFiles.some(
+    (file) => file.path === "workspace/repos" || file.path.startsWith("workspace/repos/"),
+  );
+  if (
+    manifest.excludesGitWorkspaceRepositories !== undefined &&
+    (manifest.excludesGitWorkspaceRepositories !== true ||
+      gitWorkspaceRepositoriesPresent)
+  ) {
+    throw new Error("backup Git Workspace-repository exclusion metadata does not match payload");
+  }
+  if (
+    manifest.containsGitAccessConfig !== undefined &&
+    Boolean(manifest.containsGitAccessConfig) !== gitAccessConfigPresent
+  ) {
+    throw new Error("backup Git access-config metadata does not match payload");
+  }
   if (
     manifest.containsImRuntime !== undefined &&
     Boolean(manifest.containsImRuntime) !== imRuntimePresent
@@ -133,6 +155,42 @@ export function validateBackupDirectory(root, manifest) {
     Boolean(manifest.credentials.imRuntimeCredentialsPresent) !== imCredentialsPresent
   ) {
     throw new Error("backup IM credential manifest does not match payload");
+  }
+  if (
+    manifest.containsMineruCredentials !== undefined &&
+    Boolean(manifest.containsMineruCredentials) !== mineruConfigPresent
+  ) {
+    throw new Error("backup MinerU credential metadata does not match payload");
+  }
+  if (
+    manifest.credentials?.mineruConfigPresent !== undefined &&
+    Boolean(manifest.credentials.mineruConfigPresent) !== mineruConfigPresent
+  ) {
+    throw new Error("backup MinerU credential manifest does not match payload");
+  }
+  if (
+    manifest.containsGitRegistry !== undefined &&
+    Boolean(manifest.containsGitRegistry) !== gitRegistryPresent
+  ) {
+    throw new Error("backup Git registry metadata does not match payload");
+  }
+  if (
+    manifest.containsGitCredentials !== undefined &&
+    Boolean(manifest.containsGitCredentials) !== gitCredentialsPresent
+  ) {
+    throw new Error("backup managed Git credential metadata does not match payload");
+  }
+  if (
+    manifest.containsGitWorkItems !== undefined &&
+    Boolean(manifest.containsGitWorkItems) !== gitWorkItemsPresent
+  ) {
+    throw new Error("backup Git work-item metadata does not match payload");
+  }
+  if (
+    manifest.containsGitRepositoryConfig !== undefined &&
+    Boolean(manifest.containsGitRepositoryConfig) !== gitRepositoryConfigPresent
+  ) {
+    throw new Error("backup Git repository config metadata does not match payload");
   }
   const database = validateDatabase(join(root, "rp-agent.sqlite"));
   const vault = validateVault(root, database);

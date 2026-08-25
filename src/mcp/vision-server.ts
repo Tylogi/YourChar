@@ -32,9 +32,9 @@ export function createVisionMcpServer(context: VisionMcpContext): McpServer {
     {
       title: "Analyze uploaded image",
       description:
-        "Analyze one raster image inside workspace/uploads with an independent vision model. Returns a concise summary, observations, OCR text, and uncertainties.",
+        "Analyze one raster image inside workspace/uploads or a managed workspace/tmp/mineru artifact with an independent vision model. Returns a concise summary, observations, OCR text, and uncertainties.",
       inputSchema: z.object({
-        path: z.string().min(1).max(500).describe("Workspace-relative image path under uploads/."),
+        path: z.string().min(1).max(500).describe("Workspace-relative image path under uploads/ or a managed tmp/mineru document package."),
         question: z.string().min(1).max(4_000).describe("The exact visual question to answer."),
         detail: z.enum(["auto", "low", "high"]).optional(),
         features: z.array(z.enum(["caption", "ocr", "layout"])).min(1).max(3).optional(),

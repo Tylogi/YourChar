@@ -71,6 +71,10 @@ export class DataManagementRepository {
         DELETE FROM world_conversations;
         DELETE FROM world_event_participants;
         DELETE FROM world_events;
+        DELETE FROM world_attribute_events;
+        DELETE FROM world_attribute_values;
+        DELETE FROM character_world_attribute_values;
+        DELETE FROM world_attribute_definitions;
         DELETE FROM character_activity_plans;
         DELETE FROM character_runtime_states;
         DELETE FROM character_autonomy_policies;
@@ -84,10 +88,11 @@ export class DataManagementRepository {
         DELETE FROM private_message_inbox;
         DELETE FROM interaction_transition_events;
         DELETE FROM conversation_interaction_states;
-        DELETE FROM character_capability_evidence;
-        DELETE FROM character_skill_versions;
-        DELETE FROM character_capabilities;
-        DELETE FROM character_function_profiles;
+        DELETE FROM character_owned_skill_proposals;
+        DELETE FROM character_owned_skill_evaluations;
+        DELETE FROM character_owned_skill_versions;
+        DELETE FROM character_owned_skill_packages;
+        DELETE FROM character_collaboration_profiles;
         DELETE FROM rp_memories_fts;
         DELETE FROM rp_memories;
         DELETE FROM scene_states;

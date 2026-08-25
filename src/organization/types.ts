@@ -1,174 +1,32 @@
-import type { AgentModuleType } from "../modules/types.js";
 import type { ConversationSpace } from "../domain/types.js";
 
-export const characterCapabilityIds = [
-  "research.web",
-  "research.analysis",
-  "software.debug",
-  "software.implementation",
-  "planning.schedule",
-  "organization.coordination",
-  "communication.social",
-  "creative.writing",
-  "creative.visual",
-  "world.knowledge",
-] as const;
-
-export type CharacterCapabilityId = typeof characterCapabilityIds[number];
-export type CharacterCapabilityResponsibility = "primary" | "support";
-export type CharacterCapabilitySource = "inferred" | "manual";
-export type CharacterFunctionInferenceStatus =
-  | "uninitialized"
-  | "pending"
-  | "ready"
-  | "failed";
 export type CharacterCapabilityEvidenceOutcome =
   | "completed"
   | "declined"
   | "failed"
   | "cancelled";
 
-export type CharacterCapabilityDefinition = {
-  id: CharacterCapabilityId;
-  label: string;
-  description: string;
-  recommendedModuleIds: string[];
-};
-
-export type CharacterFunctionProfile = {
+export type CharacterCollaborationProfile = {
   characterId: string;
-  publicRole: string;
-  taskPreferences: string;
-  avoidedTasks: string;
+  introduction: string;
+  traits: string[];
   maxConcurrentTasks: number;
-  manualLocked: boolean;
-  inferenceStatus: CharacterFunctionInferenceStatus;
-  sourceSoulHash: string;
-  inferenceError: string;
-  inferenceStartedAt?: string;
-  inferredAt?: string;
   createdAt: string;
   updatedAt: string;
 };
 
-export type CharacterCapability = {
-  characterId: string;
-  capabilityId: CharacterCapabilityId;
-  level: number;
-  responsibility: CharacterCapabilityResponsibility;
-  autoAccept: boolean;
-  moduleIds: string[];
-  notes: string;
-  source: CharacterCapabilitySource;
-  confidence: number;
-  createdAt: string;
-  updatedAt: string;
-};
-
-export type CharacterCapabilityEvidence = {
-  id: string;
-  characterId: string;
-  capabilityId: CharacterCapabilityId;
-  sourceTaskId: string;
-  outcome: CharacterCapabilityEvidenceOutcome;
-  functionalScore?: number;
-  judgeScore?: number;
-  summary: string;
-  lesson: string;
-  createdAt: string;
-};
-
-export type CharacterCapabilityEvidenceSummary = {
-  capabilityId: CharacterCapabilityId;
-  total: number;
-  completed: number;
-  declined: number;
-  failed: number;
-  cancelled: number;
-  scored: number;
-  averageFunctionalScore?: number;
-  averageJudgeScore?: number;
-  averageQualityScore?: number;
-  lastOutcome?: CharacterCapabilityEvidenceOutcome;
-  lastCreatedAt?: string;
-};
-
-export type CharacterFunctionProfileUpdate = {
-  publicRole?: string;
-  taskPreferences?: string;
-  avoidedTasks?: string;
+export type CharacterCollaborationProfileUpdate = {
+  introduction?: string;
+  traits?: string[];
   maxConcurrentTasks?: number;
-  manualLocked?: boolean;
-  capabilities: Array<{
-    capabilityId: CharacterCapabilityId;
-    level: number;
-    responsibility: CharacterCapabilityResponsibility;
-    autoAccept: boolean;
-    moduleIds?: string[];
-    notes?: string;
-    source?: CharacterCapabilitySource;
-    confidence?: number;
-  }>;
-};
-
-export type CharacterFunctionInferenceInput = {
-  characterId: string;
-  conversationSpace: ConversationSpace;
-  characterName: string;
-  soulMarkdown: string;
-  catalog: CharacterCapabilityDefinition[];
-  signal?: AbortSignal;
-};
-
-export type CharacterFunctionInferenceCapability = {
-  capabilityId: CharacterCapabilityId;
-  level: number;
-  responsibility: CharacterCapabilityResponsibility;
-  confidence: number;
-  rationale: string;
-};
-
-export type CharacterFunctionInferenceResult = {
-  publicRole: string;
-  taskPreferences: string;
-  avoidedTasks: string;
-  capabilities: CharacterFunctionInferenceCapability[];
-  skillMarkdown: string;
-};
-
-export type CharacterFunctionInferer = (
-  input: CharacterFunctionInferenceInput,
-) => Promise<unknown>;
-
-export type CharacterSkillVersionStatus = "active" | "superseded" | "rejected";
-export type CharacterSkillVersionSource =
-  | "bootstrap"
-  | "character_reflection"
-  | "manual";
-
-export type CharacterSkillVersion = {
-  id: string;
-  characterId: string;
-  conversationSpace: ConversationSpace;
-  version: number;
-  status: CharacterSkillVersionStatus;
-  markdown: string;
-  changeSummary: string;
-  source: CharacterSkillVersionSource;
-  sourceTaskId?: string;
-  contentHash: string;
-  createdAt: string;
-  activatedAt?: string;
-  supersededAt?: string;
 };
 
 export type CharacterSkillReflectionInput = {
   characterId: string;
   characterName: string;
   soulMarkdown: string;
-  capabilities: CharacterCapability[];
-  capabilityDefinitions: CharacterCapabilityDefinition[];
-  currentSkill: CharacterSkillVersion;
+  currentSkill: Pick<CharacterOwnedSkillVersion, "conversationSpace" | "markdown">;
+  ownedSkillPackage?: CharacterOwnedSkillPackage;
   taskSummary: string;
   sourceTaskId: string;
   signal?: AbortSignal;
@@ -178,76 +36,145 @@ export type CharacterSkillReflectionResult = {
   shouldUpdate: boolean;
   markdown: string;
   changeSummary: string;
+  name?: string;
+  description?: string;
+  tags?: string[];
 };
 
 export type CharacterSkillReflector = (
   input: CharacterSkillReflectionInput,
 ) => Promise<unknown>;
 
-export type CharacterTaskSkill = {
+export type CharacterOwnedSkillStatus = "draft" | "active" | "disabled";
+export type CharacterOwnedSkillCreatedBy = "user" | "character" | "migration";
+export type CharacterOwnedSkillVersionStatus = "draft" | "active" | "superseded" | "rejected";
+export type CharacterOwnedSkillVersionSource =
+  | "manual"
+  | "character_created"
+  | "character_reflection"
+  | "legacy_migration";
+export type CharacterOwnedSkillProposalStatus = "pending" | "approved" | "rejected" | "stale";
+
+export type CharacterOwnedSkillVersion = {
+  id: string;
+  packageId: string;
+  characterId: string;
+  conversationSpace: ConversationSpace;
   version: number;
+  status: CharacterOwnedSkillVersionStatus;
   markdown: string;
+  changeSummary: string;
+  source: CharacterOwnedSkillVersionSource;
+  sourceTaskId?: string;
+  contentHash: string;
+  createdAt: string;
+  activatedAt?: string;
+  supersededAt?: string;
 };
 
-export type CharacterCapabilityEvolutionStage =
-  | "new"
-  | "practicing"
-  | "improving"
-  | "advanced"
-  | "needs_review";
-
-export type CharacterCapabilityEvolution = {
-  capabilityId: CharacterCapabilityId;
-  baseLevel: number;
-  effectiveLevel: number;
-  learnedAdjustment: number;
-  routingAdjustment: number;
-  stage: CharacterCapabilityEvolutionStage;
-  totalEvidence: number;
-  scoredEvidence: number;
-  completionRate?: number;
-  averageQualityScore?: number;
+export type CharacterOwnedSkillPackage = {
+  id: string;
+  characterId: string;
+  conversationSpace: ConversationSpace;
+  slug: string;
+  name: string;
+  description: string;
+  tags: string[];
+  status: CharacterOwnedSkillStatus;
+  autoImprove: boolean;
+  createdBy: CharacterOwnedSkillCreatedBy;
+  createdAt: string;
+  updatedAt: string;
+  activeVersion?: CharacterOwnedSkillVersion;
+  versionCount: number;
+  evaluationCount: number;
+  completedCount: number;
+  failedCount: number;
+  averageScore?: number;
+  pendingProposalCount: number;
 };
 
-export type CharacterCapabilityModuleStatus = {
+export type CharacterOwnedSkillEvaluation = {
+  id: string;
+  packageId: string;
+  versionId: string;
+  characterId: string;
+  conversationSpace: ConversationSpace;
+  sourceTaskId: string;
+  outcome: CharacterCapabilityEvidenceOutcome;
+  score?: number;
+  resultSummary: string;
+  lesson: string;
+  createdAt: string;
+};
+
+export type CharacterOwnedSkillProposal = {
+  id: string;
+  packageId: string;
+  baseVersionId: string;
+  characterId: string;
+  conversationSpace: ConversationSpace;
+  sourceTaskId: string;
+  status: CharacterOwnedSkillProposalStatus;
+  proposedMarkdown: string;
+  changeSummary: string;
+  contentHash: string;
+  createdAt: string;
+  reviewedAt?: string;
+  activatedVersionId?: string;
+};
+
+export type CharacterOwnedSkillCreateInput = {
+  name: string;
+  description?: string;
+  tags?: string[];
+  markdown: string;
+  autoImprove?: boolean;
+  activate?: boolean;
+  createdBy?: CharacterOwnedSkillCreatedBy;
+  sourceTaskId?: string;
+};
+
+export type CharacterOwnedSkillUpdateInput = {
+  name?: string;
+  description?: string;
+  tags?: string[];
+  autoImprove?: boolean;
+  status?: CharacterOwnedSkillStatus;
+};
+
+export type PublicCharacterOwnedSkill = {
   id: string;
   name: string;
-  type: AgentModuleType;
-  enabled: boolean;
-  estimatedTokens: number;
+  description: string;
+  tags: string[];
+  version: number;
+  executionCount: number;
+  successRate?: number;
+  averageScore?: number;
 };
 
-export type CharacterFunctionSnapshot = {
-  profile: CharacterFunctionProfile;
-  capabilities: CharacterCapability[];
-  catalog: CharacterCapabilityDefinition[];
-  modules: CharacterCapabilityModuleStatus[];
-  evidence: CharacterCapabilityEvidenceSummary[];
-  evolution: CharacterCapabilityEvolution[];
-  activeSkills: CharacterSkillVersion[];
-  soulOutdated: boolean;
+export type CharacterTaskSkill = {
+  packages: Array<{
+    id: string;
+    name: string;
+    description: string;
+    version: number;
+    markdown: string;
+  }>;
 };
 
-export type PublicCharacterCapability = {
-  id: CharacterCapabilityId;
-  label: string;
-  level: number;
-  baseLevel: number;
-  responsibility: CharacterCapabilityResponsibility;
-  autoAccept: boolean;
-  source: CharacterCapabilitySource;
-  evolutionStage: CharacterCapabilityEvolutionStage;
-};
-
-export type PublicCharacterFunctionSummary = {
-  publicRole?: string;
-  capabilities: PublicCharacterCapability[];
+export type PublicCharacterCollaborationSummary = {
+  introduction: string;
+  traits: string[];
+  skills: PublicCharacterOwnedSkill[];
 };
 
 export type CharacterTaskRouteCandidate = {
   characterId: string;
   characterName: string;
-  publicRole?: string;
+  introduction?: string;
+  traits: string[];
   eligible: boolean;
   score: number;
   activeTasks: number;
@@ -255,33 +182,21 @@ export type CharacterTaskRouteCandidate = {
   availability: string;
   reasons: string[];
   warnings: string[];
+  matchedSkillIds: string[];
 };
 
 export type CharacterTaskRoute = {
   sourceCharacterId: string;
   worldId: string;
   task: string;
-  requiredCapabilityIds: CharacterCapabilityId[];
+  requiredSkillIds: string[];
+  selectedSkillIds: string[];
   selectionMode: "automatic" | "explicit";
   selected?: CharacterTaskRouteCandidate;
   candidates: CharacterTaskRouteCandidate[];
 };
 
 export type CharacterTaskIdentity = {
-  publicRole?: string;
-  taskPreferences?: string;
-  avoidedTasks?: string;
-  capabilities: Array<{
-    id: CharacterCapabilityId;
-    label: string;
-    level: number;
-    baseLevel: number;
-    responsibility: CharacterCapabilityResponsibility;
-    evolutionStage: CharacterCapabilityEvolutionStage;
-  }>;
+  introduction: string;
+  traits: string[];
 };
-
-export function isCharacterCapabilityId(value: unknown): value is CharacterCapabilityId {
-  return typeof value === "string" &&
-    characterCapabilityIds.some((capabilityId) => capabilityId === value);
-}

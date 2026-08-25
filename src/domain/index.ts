@@ -14,3 +14,5 @@ export * from "../post-turn/index.js";
 export * from "../user-insight/index.js";
 export * from "../organization/index.js";
 export * from "../meeting-preset/index.js";
+export * from "../incognito/index.js";
+export * from "../document/index.js";

@@ -9,7 +9,6 @@ test("server serves chat UI and debug model traces", async () => {
   const kernel = new CompanionKernel({
     stateDir: false,
     clock: new VirtualClock("2026-07-09T12:00:00.000Z"),
-    characterFunctionInferer: false,
     characterSkillReflector: false,
   });
   const character = kernel.createCharacter({ name: "UI 测试角色" });
@@ -25,9 +24,923 @@ test("server serves chat UI and debug model traces", async () => {
     const page = await fetch(`${baseUrl}/`);
     assert.equal(page.status, 200);
     const html = await page.text();
+    assert.match(html, /id="gitSettingsTabBtn"/u);
+    assert.match(html, /id="gitSettingsPanel"/u);
+    assert.match(html, /id="gitCredentialMode"/u);
+    assert.match(html, /id="gitPrivateKeyPath"/u);
+    assert.match(html, /id="gitProxyMode"/u);
+    assert.match(html, /id="gitProxyPort"/u);
+    assert.match(html, /id="gitAccessPublicKey"/u);
+    assert.match(html, /\/api\/settings\/git-access/u);
+    assert.match(html, /\/api\/settings\/git-access\/generate-key/u);
+    assert.match(html, /\/api\/settings\/git-access\/public-key/u);
+    assert.doesNotMatch(html, /id="gitRemoteUrl"/u);
+    assert.doesNotMatch(html, /id="gitProjectSelect"/u);
+    assert.doesNotMatch(html, /id="gitRepositorySelect"/u);
+    assert.doesNotMatch(html, /id="gitIdentitySelect"/u);
+    assert.doesNotMatch(html, /id="gitSessionProjectSelect"/u);
+    assert.doesNotMatch(html, /\/api\/settings\/git-(?:registry|identities|projects|repositories|project-repositories)/u);
+    assert.doesNotMatch(html, /\/api\/v1\/diagnostics\/git-repositor/u);
+    assert.doesNotMatch(html, /\/api\/settings\/sessions\/[\s\S]{0,160}?\/git-project/u);
+    assert.ok(html.includes("把 <code>ssh://</code> 仓库 URL 直接发给普通模式角色"));
+    assert.match(html, /Workspace\/repos\//u);
+    assert.match(html, /无需预先登记项目、仓库或白名单/u);
+    assert.match(html, /托管 Key 会随完整状态备份/u);
     const inlineScript = [...html.matchAll(/<script>([\s\S]*?)<\/script>/gu)].at(-1)?.[1] ?? "";
     assert.ok(inlineScript.length > 1_000);
     assert.doesNotThrow(() => new Script(inlineScript, { filename: "rendered-rp-agent-ui.js" }));
+    const gitAccessSaveScript = inlineScript.match(
+      /async function saveGitAccess[\s\S]*?(?=\n    async function generateGitAccessKey)/,
+    )?.[0] ?? "";
+    assert.match(gitAccessSaveScript, /expectedRevision: access\.revision/u);
+    assert.match(gitAccessSaveScript, /controlPlaneFetch\("\/api\/settings\/git-access"/u);
+    assert.match(gitAccessSaveScript, /gitAccessScopeMatches\(scope\)/u);
+    assert.match(gitAccessSaveScript, /kind: "external-file"/u);
+    assert.match(gitAccessSaveScript, /kind: "unconfigured"/u);
+    assert.doesNotMatch(gitAccessSaveScript, /\{\s*kind: "managed-ed25519"/u);
+    assert.match(gitAccessSaveScript, /title: "更换 SSH 凭据"/u);
+    assert.doesNotMatch(gitAccessSaveScript, /fingerprint\s*:/u);
+    assert.doesNotMatch(gitAccessSaveScript, /keyRef\s*:/u);
+    assert.doesNotMatch(gitAccessSaveScript, /remoteUrl\s*:/u);
+    const gitGenerateScript = inlineScript.match(
+      /async function generateGitAccessKey[\s\S]*?(?=\n    async function loadGitAccessPublicKey)/,
+    )?.[0] ?? "";
+    assert.match(gitGenerateScript, /controlPlaneFetch\("\/api\/settings\/git-access\/generate-key"/u);
+    assert.match(gitGenerateScript, /expectedRevision: access\.revision/u);
+    const gitPublicKeyScript = inlineScript.match(
+      /async function loadGitAccessPublicKey[\s\S]*?(?=\n    function showGitAccessPublicKey)/,
+    )?.[0] ?? "";
+    assert.match(gitPublicKeyScript, /fetch\("\/api\/settings\/git-access\/public-key"\)/u);
+    assert.match(gitPublicKeyScript, /gitAccessScopeMatches\(scope\)/u);
+    const gitAccessScopeScript = inlineScript.match(
+      /function captureGitAccessScope[\s\S]*?(?=\n    async function loadGitSettings)/,
+    )?.[0] ?? "";
+    assert.match(gitAccessScopeScript, /scope\.requestId === state\.gitAccessRequestId/u);
+    assert.match(gitAccessScopeScript, /spaceEpoch: state\.conversationSpaceEpoch/u);
+    assert.match(gitAccessScopeScript, /viewEpoch: state\.conversationViewEpoch/u);
+    assert.match(gitAccessScopeScript, /scope\.sessionId === state\.activeSessionId/u);
+    const gitScopeState: Record<string, any> = {
+      uiMode: "settings",
+      settingsTab: "git",
+      conversationSpace: "normal",
+      conversationSpaceEpoch: 3,
+      conversationViewEpoch: 8,
+      activeConversationKind: "direct",
+      activeSessionId: "session-git-a",
+      selectedCharacterId: character.id,
+      gitAccessRequestId: 5,
+    };
+    const gitScopeContext: Record<string, any> = { state: gitScopeState };
+    new Script(
+      gitAccessScopeScript +
+      "\nthis.captureGitAccessScopeForTest = captureGitAccessScope;" +
+      "\nthis.gitAccessScopeMatchesForTest = gitAccessScopeMatches;",
+    ).runInNewContext(gitScopeContext);
+    const currentGitScope = gitScopeContext.captureGitAccessScopeForTest(5);
+    assert.equal(gitScopeContext.gitAccessScopeMatchesForTest(currentGitScope), true);
+    gitScopeState.gitAccessRequestId += 1;
+    assert.equal(gitScopeContext.gitAccessScopeMatchesForTest(currentGitScope), false, "superseded Git response is stale");
+    gitScopeState.gitAccessRequestId = 5;
+    gitScopeState.conversationViewEpoch += 1;
+    assert.equal(gitScopeContext.gitAccessScopeMatchesForTest(currentGitScope), false, "late Git GET cannot cross views");
+    gitScopeState.conversationViewEpoch = 8;
+    gitScopeState.conversationSpace = "secret";
+    assert.equal(gitScopeContext.gitAccessScopeMatchesForTest(currentGitScope), false, "Git settings response cannot cross spaces");
+    gitScopeState.conversationSpace = "normal";
+    gitScopeState.activeSessionId = "session-git-b";
+    assert.equal(gitScopeContext.gitAccessScopeMatchesForTest(currentGitScope), false, "late Git response cannot cross sessions");
+    const conversationNavigationScript = inlineScript.match(
+      /function conversationViewIsCurrent[\s\S]*?(?=\n    async function applySession)/,
+    )?.[0] ?? "";
+    assert.match(conversationNavigationScript, /state\.messages = \[\]/);
+    assert.match(conversationNavigationScript, /\+\+state\.conversationViewEpoch/);
+    const navigationState = {
+      activeConversationKind: "direct",
+      activeSessionId: "session-b",
+      activeWorldId: "",
+      activeGroupId: "",
+      conversationViewEpoch: 4,
+      conversationViewLoading: false,
+      messages: [{ text: "B sentinel" }],
+      privateTypingHeartbeatTimer: null,
+      privateInboxMessages: [{ id: "old-inbox" }],
+      privateInboxRunning: true,
+      activeProactiveMessages: [{ id: "old-proactive" }],
+      contextBudget: { remainingTokens: 1 },
+      characterLiveState: { presence: "old" },
+      lastTurnStatus: "completed",
+      lastTurnCanRetry: true,
+      pendingAttachments: [{ path: "old.txt" }],
+      attachmentUploadQueue: [{ file: "old.txt", viewEpoch: 4 }],
+    };
+    let clearedConversationScenes = 0;
+    const navigationContext: Record<string, any> = {
+      state: navigationState,
+      window: { clearTimeout() {} },
+      closePrivateInboxEvents() {},
+      clearInteractionState() {},
+      clearConversationScene() { clearedConversationScenes += 1; },
+      closeMessageEditDialog() {},
+      renderAttachmentQueue() {},
+      updateContextBudgetChrome() {},
+      updateRetryState() {},
+    };
+    new Script(
+      conversationNavigationScript +
+      "\nthis.beginConversationViewForTest = beginConversationView;" +
+      "\nthis.conversationViewIsCurrentForTest = conversationViewIsCurrent;",
+    ).runInNewContext(navigationContext);
+    const firstAView = navigationContext.beginConversationViewForTest("direct", "session-a");
+    assert.equal(navigationState.messages.length, 0, "switching to A synchronously removes B's messages");
+    assert.equal(navigationState.pendingAttachments.length, 0, "view-scoped attachments do not cross sessions");
+    assert.equal(clearedConversationScenes, 1, "switching conversations synchronously clears the old scene");
+    assert.equal(navigationState.activeSessionId, "session-a");
+    navigationContext.beginConversationViewForTest("direct", "session-b");
+    const latestAView = navigationContext.beginConversationViewForTest("direct", "session-a");
+    assert.equal(
+      navigationContext.conversationViewIsCurrentForTest("direct", "session-a", firstAView.epoch),
+      false,
+      "an A response from before an A-B-A navigation is stale",
+    );
+    assert.equal(
+      navigationContext.conversationViewIsCurrentForTest("direct", "session-a", latestAView.epoch),
+      true,
+    );
+    const directRefreshScript = inlineScript.match(
+      /async function refreshSessionMessages[\s\S]*?(?=\n    async function uploadChatAttachments)/,
+    )?.[0] ?? "";
+    assert.match(directRefreshScript, /expectedViewEpoch = state\.conversationViewEpoch/);
+    assert.match(directRefreshScript, /directConversationScopeMatches\(scope\)/);
+    assert.match(directRefreshScript, /scope\.characterId[\s\S]*?\/interaction/);
+    assert.doesNotMatch(
+      directRefreshScript,
+      /sharedStateEnabled\s*\?[\s\S]{0,240}?\/interaction/,
+      "secret conversations fetch their isolated interaction state",
+    );
+    assert.match(
+      directRefreshScript,
+      /sharedStateEnabled\s*\?[\s\S]*?\/proactive-messages[\s\S]*?sharedStateEnabled\s*\?[\s\S]*?\/character-collaborations/,
+      "proactive messages and collaboration remain normal-space only",
+    );
+    const directScopeScript = inlineScript.match(
+      /function captureDirectConversationScope[\s\S]*?(?=\n    async function applySession)/,
+    )?.[0] ?? "";
+    assert.match(directScopeScript, /spaceEpoch: state\.conversationSpaceEpoch/);
+    assert.match(directScopeScript, /viewEpoch: state\.conversationViewEpoch/);
+    assert.match(directScopeScript, /scope\.characterId !== state\.selectedCharacterId/);
+    assert.match(directScopeScript, /conversationViewIsCurrent\("direct", scope\.sessionId, scope\.viewEpoch\)/);
+    const interactionActionScript = inlineScript.match(
+      /async function runInteractionAction[\s\S]*?(?=\n    function updateScheduleHeaderContext)/,
+    )?.[0] ?? "";
+    assert.match(interactionActionScript, /captureDirectConversationScope\(\)/);
+    assert.match(interactionActionScript, /scope\.conversationSpace,[\s\S]*?scope\.characterId/);
+    assert.match(interactionActionScript, /directConversationScopeMatches\(scope\)/);
+    assert.match(interactionActionScript, /refreshSessionMessages\(true, scope\.spaceEpoch, scope\.viewEpoch\)/);
+    const conversationViewGuardScript = inlineScript.match(
+      /function conversationViewIsCurrent[\s\S]*?(?=\n    function beginConversationView)/,
+    )?.[0] ?? "";
+    let resolveActionFetch: (value: unknown) => void = () => undefined;
+    const actionFetch = new Promise((resolve) => { resolveActionFetch = resolve; });
+    let requestedInteractionUrl = "";
+    let actionChromeUpdates = 0;
+    let actionRefreshes = 0;
+    const actionState: Record<string, any> = {
+      activeConversationKind: "direct",
+      activeSessionId: "secret-session",
+      activeWorldId: "",
+      activeGroupId: "",
+      selectedCharacterId: character.id,
+      conversationSpace: "secret",
+      conversationSpaceEpoch: 3,
+      conversationViewEpoch: 8,
+      sessionDraft: false,
+      sessions: [{
+        id: "secret-session",
+        characterId: character.id,
+        conversationSpace: "secret",
+      }],
+      busy: false,
+      privateInboxRunning: false,
+      interactionState: { presence: "remote" },
+      interactionEvents: [],
+      interactionCanUndo: false,
+      interactionLocations: [],
+      characterLiveState: null,
+    };
+    const staleActionContext: Record<string, any> = {
+      state: actionState,
+      fetch(path: string) {
+        requestedInteractionUrl = path;
+        return actionFetch;
+      },
+      withConversationSpace(path: string, conversationSpace: string, characterId: string) {
+        return path + "?conversationSpace=" + conversationSpace + "&characterId=" + characterId;
+      },
+      updateInteractionChrome() { actionChromeUpdates += 1; },
+      async refreshSessionMessages() { actionRefreshes += 1; },
+      async refreshConversationMetadata() { actionRefreshes += 1; },
+      setStatus() { throw new Error("stale interaction action must not update status"); },
+    };
+    new Script(
+      conversationViewGuardScript + "\n" + directScopeScript + "\n" + interactionActionScript +
+      "\nthis.runInteractionActionForTest = runInteractionAction;",
+    ).runInNewContext(staleActionContext);
+    const staleAction = staleActionContext.runInteractionActionForTest("begin", { userConfirmed: true });
+    assert.equal(actionState.busy, true);
+    assert.match(requestedInteractionUrl, /conversationSpace=secret&characterId=/);
+    actionState.conversationViewEpoch += 1;
+    resolveActionFetch({
+      ok: true,
+      async json() {
+        return { state: { presence: "co_present", location: "不应写入当前视图" } };
+      },
+    });
+    await staleAction;
+    assert.equal(actionState.busy, false);
+    assert.equal(actionState.interactionState.presence, "remote");
+    assert.equal(actionRefreshes, 0);
+    assert.equal(actionChromeUpdates, 1, "stale completion does not repaint the replacement view");
+
+    const interactionChromeScript = inlineScript.match(
+      /function updateInteractionChrome[\s\S]*?(?=\n    async function openInteractionControl)/,
+    )?.[0] ?? "";
+    const control = () => ({
+      hidden: true,
+      disabled: false,
+      textContent: "",
+      title: "",
+      innerHTML: "",
+      attributes: {} as Record<string, string>,
+      setAttribute(name: string, value: string) { this.attributes[name] = value; },
+    });
+    const interactionNodes = {
+      interactionToggleBtn: control(),
+      interactionUndoBtn: control(),
+      textInput: { placeholder: "" },
+      modeSelect: { value: "sms" },
+      conversationMode: { textContent: "" },
+      conversationScene: { textContent: "", title: "", hidden: true },
+      sceneInfoBtn: { hidden: false },
+    };
+    const interactionState: Record<string, any> = {
+      uiMode: "normal",
+      activeConversationKind: "direct",
+      activeSessionId: "secret-session",
+      conversationSpace: "secret",
+      incognitoConversation: null,
+      sessionDraft: false,
+      interactionState: { presence: "remote" },
+      interactionCanUndo: false,
+      characterLiveState: { place: "普通空间地点哨兵", activity: "普通空间活动哨兵" },
+      busy: false,
+      privateInboxRunning: false,
+    };
+    const interactionContext: Record<string, any> = {
+      state: interactionState,
+      nodes: interactionNodes,
+      refreshIcons() {},
+    };
+    new Script(
+      interactionChromeScript + "\nthis.updateInteractionChromeForTest = updateInteractionChrome;",
+    ).runInNewContext(interactionContext);
+    interactionContext.updateInteractionChromeForTest();
+    assert.equal(interactionNodes.interactionToggleBtn.hidden, false);
+    assert.equal(interactionNodes.interactionToggleBtn.title, "发起见面");
+    assert.equal(interactionNodes.conversationMode.textContent, "私密对话");
+    assert.equal(interactionNodes.conversationScene.hidden, true, "normal live state is hidden in secret mode");
+    assert.equal(interactionNodes.sceneInfoBtn.hidden, true, "secret meeting does not expose scene controls");
+    interactionState.interactionState = { presence: "meeting_pending", location: "私密地点" };
+    interactionState.interactionCanUndo = true;
+    interactionContext.updateInteractionChromeForTest();
+    assert.equal(interactionNodes.conversationMode.textContent, "私密·约好见面");
+    assert.equal(interactionNodes.conversationScene.textContent, "约好见面 · 私密地点");
+    assert.equal(interactionNodes.interactionUndoBtn.hidden, false);
+    interactionState.interactionState = { presence: "co_present", location: "私密地点" };
+    interactionContext.updateInteractionChromeForTest();
+    assert.equal(interactionNodes.conversationMode.textContent, "私密见面中");
+    assert.equal(interactionNodes.interactionToggleBtn.title, "结束见面");
+    interactionState.conversationSpace = "normal";
+    interactionState.activeSessionId = "incognito-session";
+    interactionState.incognitoConversation = { id: "incognito-session", incognito: true };
+    interactionContext.updateInteractionChromeForTest();
+    assert.equal(interactionNodes.conversationMode.textContent, "无痕见面中");
+    const worldRefreshScript = inlineScript.match(
+      /async function refreshWorldMessages[\s\S]*?(?=\n    function normalizeWorldMessage)/,
+    )?.[0] ?? "";
+    assert.match(worldRefreshScript, /conversationViewIsCurrent\("world", requestedWorldId, expectedViewEpoch\)/);
+    const groupRefreshScript = inlineScript.match(
+      /async function refreshGroupMessages[\s\S]*?(?=\n    function renderSessionOptions)/,
+    )?.[0] ?? "";
+    assert.match(groupRefreshScript, /const requestedGroupId = state\.activeGroupId/);
+    assert.match(groupRefreshScript, /conversationViewIsCurrent\("group", requestedGroupId, expectedViewEpoch\)/);
+    const retryScript = inlineScript.match(
+      /async function retryMessage[\s\S]*?(?=\n    function pushMessage)/,
+    )?.[0] ?? "";
+    assert.match(retryScript, /retryLocalId/);
+    assert.match(retryScript, /conversationViewIsCurrent\("direct", requestedSessionId, expectedViewEpoch\)/);
+    const inboxEventScript = inlineScript.match(
+      /function openPrivateInboxEvents[\s\S]*?(?=\n    function captureInsightReceiptBaseline)/,
+    )?.[0] ?? "";
+    assert.match(inboxEventScript, /expectedViewEpoch = state\.conversationViewEpoch/);
+    assert.match(inboxEventScript, /handlePrivateInboxEvent\([\s\S]*?expectedViewEpoch/);
+    assert.match(inboxEventScript, /refreshSessionMessages\(true, expectedEpoch, expectedViewEpoch\)/);
+    const loadSessionsScript = inlineScript.match(
+      /async function loadSessions\(\)[\s\S]*?(?=\n    function startNewSession)/,
+    )?.[0] ?? "";
+    assert.match(loadSessionsScript, /const expectedViewEpoch = state\.conversationViewEpoch/);
+    assert.match(loadSessionsScript, /expectedViewEpoch !== state\.conversationViewEpoch/);
+    const attachmentUploadScript = inlineScript.match(
+      /async function queueChatAttachments[\s\S]*?(?=\n    function renderAttachmentQueue)/,
+    )?.[0] ?? "";
+    assert.match(attachmentUploadScript, /viewEpoch: enqueueViewEpoch/);
+    assert.match(attachmentUploadScript, /queuedUpload\.viewEpoch !== state\.conversationViewEpoch/);
+    const conversationHeaderBeforeMenu = html.match(
+      /<div class="conversation-header-actions">[\s\S]*?(?=<div class="mobile-session-actions">)/,
+    )?.[0] ?? "";
+    const sessionActionsMenuMarkup = html.match(
+      /<div id="sessionActionsMenu"[\s\S]*?id="mobileArchivedSessionsBtn"[\s\S]*?<\/div>/,
+    )?.[0] ?? "";
+    assert.doesNotMatch(conversationHeaderBeforeMenu, /id="(?:private|incognito)ModeToggle"/);
+    assert.match(sessionActionsMenuMarkup, /id="privateModeToggle"[\s\S]*?role="menuitemcheckbox"/);
+    assert.match(sessionActionsMenuMarkup, /id="incognitoModeToggle"[\s\S]*?role="menuitemcheckbox"/);
+    assert.match(sessionActionsMenuMarkup, /id="privacyModeMenuSeparator"/);
+    assert.match(inlineScript, /runSessionMenuAction\(togglePrivateMode\)/);
+    assert.match(inlineScript, /runSessionMenuAction\(toggleIncognitoMode\)/);
+    assert.match(inlineScript, /button:not\(\[hidden\]\):not\(:disabled\)/);
+    assert.match(html, /id="incognitoModeToggle"/);
+    assert.match(html, /id="incognitoNotice"/);
+    assert.match(html, /无痕会话仅保存在 YourChar 内存盘/);
+    const incognitoToggleScript = inlineScript.match(
+      /async function toggleIncognitoMode[\s\S]*?(?=\n    async function togglePrivateMode)/,
+    )?.[0] ?? "";
+    assert.match(incognitoToggleScript, /controlPlaneFetch\("\/api\/v1\/incognito-conversations"/);
+    assert.match(incognitoToggleScript, /method: "POST"/);
+    assert.match(incognitoToggleScript, /普通对话的关系、记忆、角色设定、Skill、见面状态与对话快照/);
+    assert.match(incognitoToggleScript, /模型提供商仍可能保留请求/);
+    assert.match(incognitoToggleScript, /conversation\.incognito/);
+    assert.match(incognitoToggleScript, /const requestId = \+\+state\.incognitoOpenRequestId/);
+    assert.match(incognitoToggleScript, /incognitoOpeningScopeMatches\(openingScope\)/);
+    assert.match(incognitoToggleScript, /discardReturnedIncognitoConversation\(conversation\)/);
+    const privateToggleScript = inlineScript.match(
+      /async function togglePrivateMode[\s\S]*?(?=\n\s*async function initializeChat)/,
+    )?.[0] ?? "";
+    assert.match(privateToggleScript, /state\.privateModeTransitioning = true/);
+    assert.match(privateToggleScript, /closeSessionActionsMenu\(\)/);
+    assert.match(privateToggleScript, /finally[\s\S]*?state\.privateModeTransitioning = false/);
+    const sendMessageScript = inlineScript.match(
+      /async function sendMessage\(\)[\s\S]*?(?=\n    async function sendIncognitoMessage)/,
+    )?.[0] ?? "";
+    assert.match(sendMessageScript, /state\.incognitoTransitioning \|\| state\.privateModeTransitioning/);
+    const sessionActionStateScript = inlineScript.match(
+      /function updateSessionActionState[\s\S]*?(?=\n    async function renameCurrentSession)/,
+    )?.[0] ?? "";
+    let activeIncognitoForMenu = true;
+    const menuState: Record<string, any> = {
+      activeConversationKind: "direct",
+      sessionDraft: false,
+      incognitoTransitioning: false,
+      privateModeTransitioning: false,
+      activeSessionId: "incognito-00000000-0000-4000-8000-000000000001",
+      activeWorldId: "",
+      uiMode: "normal",
+      selectedCharacterId: character.id,
+      privateInboxRunning: false,
+      privateInboxMessages: [],
+      busy: false,
+    };
+    const menuControl = () => ({
+      hidden: false,
+      disabled: false,
+      querySelector() { return { textContent: "" }; },
+    });
+    const menuNodes: Record<string, any> = {
+      renameSessionBtn: menuControl(),
+      archiveSessionBtn: menuControl(),
+      deleteSessionBtn: menuControl(),
+      mobileRenameSessionBtn: menuControl(),
+      mobileArchiveSessionBtn: menuControl(),
+      mobileDeleteSessionBtn: menuControl(),
+      resetWorldConversationBtn: menuControl(),
+      privacyModeMenuSeparator: menuControl(),
+      sessionActionsMenuBtn: menuControl(),
+    };
+    const menuContext: Record<string, any> = {
+      state: menuState,
+      nodes: menuNodes,
+      incognitoConversationIsActive: () => activeIncognitoForMenu,
+      closeSessionActionsMenu() {},
+    };
+    new Script(
+      sessionActionStateScript + "\nthis.updateSessionActionStateForTest = updateSessionActionState;",
+    ).runInNewContext(menuContext);
+    menuContext.updateSessionActionStateForTest();
+    assert.equal(menuNodes.sessionActionsMenuBtn.hidden, false, "incognito keeps the overflow exit available");
+    assert.equal(menuNodes.mobileRenameSessionBtn.hidden, true, "persistent actions stay hidden in incognito");
+    activeIncognitoForMenu = false;
+    menuState.sessionDraft = true;
+    menuState.activeSessionId = "local-draft";
+    menuContext.updateSessionActionStateForTest();
+    assert.equal(menuNodes.sessionActionsMenuBtn.hidden, false, "a character-bound draft keeps privacy actions available");
+    const incognitoDestroyScript = inlineScript.match(
+      /async function destroyIncognitoConversation[\s\S]*?(?=\n    function discardIncognitoConversationOnPageHide)/,
+    )?.[0] ?? "";
+    assert.match(incognitoDestroyScript, /controlPlaneFetch\(/);
+    assert.match(incognitoDestroyScript, /method: "DELETE", body: "\{\}"/);
+    assert.match(incognitoDestroyScript, /clearConversationSpaceTransientState\(\)/);
+    const incognitoPageHideScript = inlineScript.match(
+      /function discardIncognitoConversationOnPageHide[\s\S]*?(?=\n    async function restoreConversationAfterIncognito)/,
+    )?.[0] ?? "";
+    assert.match(incognitoPageHideScript, /controlPlaneFetch\(/);
+    assert.match(incognitoPageHideScript, /method: "DELETE", body: "\{\}", keepalive: true/);
+    const incognitoRestoreScript = inlineScript.match(
+      /async function restoreConversationAfterIncognito[\s\S]*?(?=\n    async function toggleIncognitoMode)/,
+    )?.[0] ?? "";
+    assert.match(incognitoRestoreScript, /const targetSpace = returnView\.conversationSpace === "secret"/);
+    assert.match(incognitoRestoreScript, /await refreshConversationMetadata\(epoch\)/);
+    assert.match(incognitoRestoreScript, /sourceArchivedAt/);
+    assert.doesNotMatch(incognitoRestoreScript, /openPersistentDirectConversation|direct-conversations|method:\s*"POST"/);
+    const applySessionScript = inlineScript.match(
+      /async function applySession[\s\S]*?(?=\n    async function applyWorldConversation)/,
+    )?.[0] ?? "";
+    assert.match(applySessionScript, /!scope\.incognito\) openPrivateInboxEvents/);
+    assert.match(applySessionScript, /!scope\.incognito && isConversationVisible/);
+    assert.match(retryScript, /incognitoConversationIsActive\(\)/);
+    const messageActionChromeScript = inlineScript.match(
+      /function renderMessageActions[\s\S]*?(?=\n    function proactiveFeedbackButton)/,
+    )?.[0] ?? "";
+    assert.match(messageActionChromeScript, /if \(incognitoConversationIsActive\(\)\) return ""/);
+    const workspaceAvailabilityScript = inlineScript.match(
+      /function updateWorkspaceManagerAvailability[\s\S]*?(?=\n\s*async function loadWorkspaceFiles)/,
+    )?.[0] ?? "";
+    assert.match(workspaceAvailabilityScript, /!incognitoConversationIsActive\(\)/);
+    async function runIncognitoRestoreCase(input: {
+      discarded: Record<string, any>;
+      sessions: Array<Record<string, any>>;
+    }) {
+      const restoredSessionIds: string[] = [];
+      const refreshedSpaces: string[] = [];
+      let drafts = 0;
+      const restoreState: Record<string, any> = {
+        selectedCharacterId: character.id,
+        conversationSpace: "normal",
+        conversationSpaceEpoch: 3,
+        conversationViewEpoch: 7,
+        incognitoTransitioning: false,
+        incognitoOpenRequestId: 0,
+        sessions: [],
+        activeConversationKind: "direct",
+        activeSessionId: "",
+      };
+      const restoreContext: Record<string, any> = {
+        state: restoreState,
+        nodes: { chatCharacterSelect: { value: "" } },
+        updatePrivateModeChrome() {},
+        updateWorkspaceManagerAvailability() {},
+        updateChatIdentity() {},
+        setStatus() {},
+        async refreshConversationMetadata() {
+          refreshedSpaces.push(restoreState.conversationSpace);
+          restoreState.sessions = input.sessions;
+        },
+        async applySession(session: Record<string, any>) {
+          restoredSessionIds.push(session.id);
+          restoreState.activeConversationKind = "direct";
+          restoreState.activeSessionId = session.id;
+        },
+        startNewSession() {
+          assert.equal(restoreState.incognitoTransitioning, false, "draft is prepared only after restore unlocks");
+          drafts += 1;
+          restoreState.activeConversationKind = "direct";
+          restoreState.activeSessionId = "local-draft";
+        },
+      };
+      new Script(
+        incognitoRestoreScript + "\nthis.restoreConversationAfterIncognitoForTest = restoreConversationAfterIncognito;",
+      ).runInNewContext(restoreContext);
+      await restoreContext.restoreConversationAfterIncognitoForTest(input.discarded);
+      return { restoreState, restoredSessionIds, refreshedSpaces, drafts };
+    }
+    const secretRestore = await runIncognitoRestoreCase({
+      discarded: {
+        conversation: { characterId: character.id, sourceSessionId: "normal-source" },
+        returnView: { conversationSpace: "secret", sessionId: "secret-source" },
+      },
+      sessions: [{
+        id: "secret-source",
+        characterId: character.id,
+        conversationSpace: "secret",
+      }],
+    });
+    assert.deepEqual(secretRestore.refreshedSpaces, ["secret"]);
+    assert.deepEqual(secretRestore.restoredSessionIds, ["secret-source"]);
+    assert.equal(secretRestore.drafts, 0);
+    const archivedRestore = await runIncognitoRestoreCase({
+      discarded: {
+        conversation: {
+          characterId: character.id,
+          sourceSessionId: "archived-normal-source",
+          sourceArchived: true,
+        },
+        returnView: { conversationSpace: "normal", sessionId: "archived-normal-source" },
+      },
+      sessions: [{
+        id: "archived-normal-source",
+        characterId: character.id,
+        conversationSpace: "normal",
+      }],
+    });
+    assert.deepEqual(archivedRestore.restoredSessionIds, [], "an archived source is never reopened");
+    assert.equal(archivedRestore.drafts, 1);
+    const deletedRestore = await runIncognitoRestoreCase({
+      discarded: {
+        conversation: { characterId: character.id, sourceSessionId: "deleted-normal-source" },
+        returnView: { conversationSpace: "normal", sessionId: "deleted-normal-source" },
+      },
+      sessions: [],
+    });
+    assert.deepEqual(deletedRestore.restoredSessionIds, []);
+    assert.equal(deletedRestore.drafts, 1, "a source deleted in another tab returns to a local draft");
+    let resolveIncognitoDelete: (value: unknown) => void = () => undefined;
+    const incognitoDeleteResponse = new Promise((resolve) => { resolveIncognitoDelete = resolve; });
+    const destroyState: Record<string, any> = {
+      incognitoConversation: {
+        id: "incognito-session",
+        characterId: character.id,
+        incognito: true,
+      },
+      incognitoReturnView: { sessionId: "normal-session" },
+      incognitoTransitioning: false,
+      incognitoAbortController: { abort() {} },
+      conversationSpace: "normal",
+      conversationSpaceEpoch: 2,
+      conversationViewEpoch: 5,
+      selectedCharacterId: character.id,
+      messages: [{ text: "must disappear" }],
+    };
+    const incognitoDeleteRequests: Array<{ path: string; options: Record<string, unknown> }> = [];
+    let incognitoClears = 0;
+    const destroyContext: Record<string, any> = {
+      state: destroyState,
+      nodes: { chatCharacterSelect: { value: "" } },
+      controlPlaneFetch(path: string, options: Record<string, unknown>) {
+        incognitoDeleteRequests.push({ path, options });
+        return incognitoDeleteResponse;
+      },
+      updatePrivateModeChrome() {},
+      setStatus() {},
+      clearConversationSpaceTransientState() {
+        incognitoClears += 1;
+        destroyState.messages = [];
+        destroyState.conversationViewEpoch += 1;
+      },
+      updateWorkspaceManagerAvailability() {},
+      updateChatIdentity() {},
+    };
+    new Script(
+      incognitoDestroyScript + "\nthis.destroyIncognitoConversationForTest = destroyIncognitoConversation;",
+    ).runInNewContext(destroyContext);
+    const destroyingIncognito = destroyContext.destroyIncognitoConversationForTest();
+    assert.equal(incognitoDeleteRequests[0]?.path, "/api/v1/incognito-conversations/incognito-session");
+    assert.equal(incognitoDeleteRequests[0]?.options.method, "DELETE");
+    assert.equal(destroyState.messages.length, 1, "the DELETE is initiated before replacing the view");
+    resolveIncognitoDelete({ ok: true, status: 204 });
+    const discardedIncognito = await destroyingIncognito;
+    assert.equal(discardedIncognito.conversation.id, "incognito-session");
+    assert.equal(destroyState.incognitoConversation, null);
+    assert.equal(destroyState.messages.length, 0, "leaving synchronously clears the discarded transcript");
+    assert.equal(incognitoClears, 1);
+
+    let resolveIncognitoCreate: (value: Record<string, any>) => void = () => undefined;
+    const incognitoCreateResponse = new Promise<Record<string, any>>((resolve) => {
+      resolveIncognitoCreate = resolve;
+    });
+    const openingState: Record<string, any> = {
+      activeConversationKind: "direct",
+      activeSessionId: "normal-a",
+      activeWorldId: "",
+      activeGroupId: "",
+      conversationSpace: "normal",
+      conversationSpaceEpoch: 4,
+      conversationViewEpoch: 8,
+      selectedCharacterId: character.id,
+      sessionDraft: false,
+      sessions: [{ id: "normal-a", characterId: character.id }],
+      incognitoConversation: null,
+      incognitoReturnView: null,
+      incognitoTransitioning: false,
+      incognitoOpenRequestId: 0,
+    };
+    const openingRequests: Array<{ path: string; options: Record<string, any> }> = [];
+    const openingStatuses: string[] = [];
+    let openingClears = 0;
+    let openingApplies = 0;
+    const openingContext: Record<string, any> = {
+      state: openingState,
+      nodes: { chatCharacterSelect: { value: character.id } },
+      conversationSpaceIdle() { return !openingState.incognitoTransitioning; },
+      incognitoConversationIsActive() { return false; },
+      async openActionDialog() { return true; },
+      captureIncognitoOpeningScope(requestId: number, characterId: string) {
+        return {
+          requestId,
+          spaceEpoch: openingState.conversationSpaceEpoch,
+          viewEpoch: openingState.conversationViewEpoch,
+          conversationSpace: openingState.conversationSpace,
+          conversationKind: openingState.activeConversationKind,
+          sessionId: openingState.activeSessionId,
+          worldId: openingState.activeWorldId,
+          groupId: openingState.activeGroupId,
+          characterId,
+        };
+      },
+      incognitoOpeningScopeMatches(scope: Record<string, any>) {
+        return scope.requestId === openingState.incognitoOpenRequestId &&
+          scope.spaceEpoch === openingState.conversationSpaceEpoch &&
+          scope.viewEpoch === openingState.conversationViewEpoch &&
+          scope.sessionId === openingState.activeSessionId &&
+          scope.characterId === openingState.selectedCharacterId;
+      },
+      incognitoActivationMatches() { return false; },
+      async controlPlaneFetch(path: string, options: Record<string, any>) {
+        openingRequests.push({ path, options });
+        if (options.method === "POST") return incognitoCreateResponse;
+        return { ok: true, status: 204, async json() { return {}; } };
+      },
+      async discardReturnedIncognitoConversation(conversation: Record<string, any>) {
+        await openingContext.controlPlaneFetch(
+          "/api/v1/incognito-conversations/" + encodeURIComponent(conversation.id),
+          { method: "DELETE", body: "{}" },
+        );
+      },
+      updatePrivateModeChrome() {},
+      updateWorkspaceManagerAvailability() {},
+      clearConversationSpaceTransientState() { openingClears += 1; },
+      async applySession() { openingApplies += 1; },
+      setStatus(message: string) { openingStatuses.push(message); },
+    };
+    new Script(
+      incognitoToggleScript + "\nthis.toggleIncognitoModeForTest = toggleIncognitoMode;",
+    ).runInNewContext(openingContext);
+    const lateOpening = openingContext.toggleIncognitoModeForTest();
+    while (!openingRequests.some((request) => request.options.method === "POST")) {
+      await new Promise((resolve) => setImmediate(resolve));
+    }
+    openingState.conversationViewEpoch += 1;
+    openingState.activeSessionId = "normal-b";
+    openingState.selectedCharacterId = "character-b";
+    resolveIncognitoCreate({
+      ok: true,
+      status: 201,
+      async json() {
+        return {
+          conversation: {
+            id: "late-incognito",
+            characterId: character.id,
+            conversationSpace: "normal",
+            incognito: true,
+          },
+        };
+      },
+    });
+    await lateOpening;
+    assert.equal(openingClears, 0, "a late POST never replaces the newer conversation view");
+    assert.equal(openingApplies, 0);
+    assert.equal(openingState.activeSessionId, "normal-b");
+    assert.equal(openingState.selectedCharacterId, "character-b");
+    const lateDelete = openingRequests.find((request) => request.options.method === "DELETE");
+    assert.equal(lateDelete?.path, "/api/v1/incognito-conversations/late-incognito");
+    assert.equal(lateDelete?.options.body, "{}");
+    assert.equal(openingStatuses.includes("无痕会话已开启；退出或重启后内容会丢弃"), false);
+
+    const incognitoRecoveryScript = inlineScript.match(
+      /async function recoverIncognitoConversation[\s\S]*?(?=\n    async function togglePrivateMode)/,
+    )?.[0] ?? "";
+    assert.match(incognitoRecoveryScript, /fetch\("\/api\/v1\/incognito-conversations", \{ credentials: "same-origin" \}\)/);
+    assert.match(incognitoRecoveryScript, /incognitoOpeningScopeMatches\(openingScope\)/);
+    const initializeChatScript = inlineScript.match(
+      /async function initializeChat[\s\S]*?(?=\n    async function refreshConversationMetadata)/,
+    )?.[0] ?? "";
+    assert.match(
+      initializeChatScript,
+      /await loadCharacters\(\)[\s\S]*?await recoverIncognitoConversation\(\)[\s\S]*?if \(!recoveredIncognito\)[\s\S]*?await loadSessions\(\)/,
+    );
+    const initializationCalls: string[] = [];
+    const initializeContext: Record<string, any> = {
+      async loadModelProfiles() { initializationCalls.push("models"); },
+      async loadMeetingPresetCatalog() { initializationCalls.push("presets"); },
+      async loadUserAvatarState() { initializationCalls.push("avatar"); },
+      async loadCharacters() { initializationCalls.push("characters"); },
+      async recoverIncognitoConversation() {
+        initializationCalls.push("recover");
+        return true;
+      },
+      async loadSessions() { initializationCalls.push("sessions"); },
+      async pollIncomingMessages() { initializationCalls.push("poll"); },
+    };
+    new Script(
+      initializeChatScript + "\nthis.initializeChatForTest = initializeChat;",
+    ).runInNewContext(initializeContext);
+    await initializeContext.initializeChatForTest();
+    assert.ok(initializationCalls.indexOf("characters") < initializationCalls.indexOf("recover"));
+    assert.equal(initializationCalls.includes("sessions"), false, "active overlay skips persistent session loading");
+    assert.equal(initializationCalls.includes("poll"), false, "active overlay skips persistent unread polling");
+    const recoveryState: Record<string, any> = {
+      incognitoConversation: null,
+      incognitoReturnView: null,
+      incognitoTransitioning: false,
+      incognitoOpenRequestId: 0,
+      activeConversationKind: "direct",
+      activeSessionId: "normal-source",
+      activeWorldId: "",
+      activeGroupId: "",
+      conversationSpace: "normal",
+      conversationSpaceEpoch: 2,
+      conversationViewEpoch: 3,
+      selectedCharacterId: character.id,
+      sessions: [],
+    };
+    const recoveredConversation: Record<string, any> = {
+      id: "recovered-incognito",
+      characterId: character.id,
+      conversationSpace: "normal",
+      incognito: true,
+      sourceSessionId: "normal-source",
+    };
+    const recoveryFetches: Array<{ path: string; options: Record<string, any> }> = [];
+    const recoveryApplies: string[] = [];
+    const recoveryContext: Record<string, any> = {
+      state: recoveryState,
+      nodes: { chatCharacterSelect: { value: "" } },
+      captureIncognitoOpeningScope(requestId: number) {
+        return {
+          requestId,
+          spaceEpoch: recoveryState.conversationSpaceEpoch,
+          viewEpoch: recoveryState.conversationViewEpoch,
+          conversationSpace: recoveryState.conversationSpace,
+          conversationKind: recoveryState.activeConversationKind,
+          sessionId: recoveryState.activeSessionId,
+          worldId: recoveryState.activeWorldId,
+          groupId: recoveryState.activeGroupId,
+          characterId: recoveryState.selectedCharacterId,
+        };
+      },
+      incognitoOpeningScopeMatches(scope: Record<string, any>) {
+        return scope.requestId === recoveryState.incognitoOpenRequestId &&
+          scope.spaceEpoch === recoveryState.conversationSpaceEpoch &&
+          scope.viewEpoch === recoveryState.conversationViewEpoch &&
+          scope.sessionId === recoveryState.activeSessionId;
+      },
+      incognitoActivationMatches(requestId: number, conversationId: string, characterId: string) {
+        return requestId === recoveryState.incognitoOpenRequestId &&
+          recoveryState.incognitoConversation?.id === conversationId &&
+          recoveryState.activeSessionId === conversationId &&
+          recoveryState.selectedCharacterId === characterId;
+      },
+      async fetch(path: string, options: Record<string, any>) {
+        recoveryFetches.push({ path, options });
+        return {
+          ok: true,
+          async json() { return { conversations: [recoveredConversation] }; },
+        };
+      },
+      clearConversationSpaceTransientState() {
+        recoveryState.conversationViewEpoch += 1;
+        recoveryState.activeSessionId = "";
+        recoveryState.sessions = [];
+      },
+      updatePrivateModeChrome() {},
+      updateWorkspaceManagerAvailability() {},
+      async applySession(conversation: Record<string, any>) {
+        recoveryApplies.push(conversation.id);
+        recoveryState.activeConversationKind = "direct";
+        recoveryState.activeSessionId = conversation.id;
+      },
+      async discardReturnedIncognitoConversation() {
+        assert.fail("a current recovery must not discard the active overlay");
+      },
+      setStatus() {},
+    };
+    new Script(
+      incognitoRecoveryScript + "\nthis.recoverIncognitoConversationForTest = recoverIncognitoConversation;",
+    ).runInNewContext(recoveryContext);
+    assert.equal(await recoveryContext.recoverIncognitoConversationForTest(), true);
+    assert.equal(recoveryFetches.length, 1);
+    assert.equal(recoveryFetches[0]?.path, "/api/v1/incognito-conversations");
+    assert.equal(recoveryFetches[0]?.options.credentials, "same-origin");
+    assert.deepEqual(recoveryApplies, ["recovered-incognito"]);
+    assert.equal(recoveryState.incognitoConversation.id, "recovered-incognito");
+    assert.equal(recoveryState.incognitoReturnView.conversationSpace, "normal");
+    assert.equal(recoveryState.incognitoReturnView.sessionId, "normal-source");
+    assert.equal(recoveryState.incognitoTransitioning, false);
+    recoveredConversation.sourceArchived = true;
+    recoveryState.incognitoConversation = null;
+    recoveryState.incognitoReturnView = null;
+    recoveryState.incognitoTransitioning = false;
+    recoveryState.activeConversationKind = "direct";
+    recoveryState.activeSessionId = "normal-source";
+    recoveryState.conversationSpace = "normal";
+    recoveryState.sessions = [];
+    assert.equal(await recoveryContext.recoverIncognitoConversationForTest(), true);
+    assert.equal(recoveryState.incognitoReturnView.sessionId, "");
+    assert.equal(recoveryState.incognitoReturnView.sessionDraft, true);
+
+    assert.match(directRefreshScript, /const sharedStateEnabled = requestedSpace === "normal" && !scope\.incognito/);
+    assert.match(directRefreshScript, /scope\.incognito\s*\? Promise\.resolve\(null\)[\s\S]*?\/inbox/);
+    assert.match(directRefreshScript, /if \(scope\.incognito\)[\s\S]*?message\.attachments = \[\]/);
+    const incognitoSendScript = inlineScript.match(
+      /async function sendIncognitoMessage[\s\S]*?(?=\n    async function sendWorldChatMessage)/,
+    )?.[0] ?? "";
+    assert.match(incognitoSendScript, /\/messages\/stream/);
+    assert.doesNotMatch(incognitoSendScript, /\/inbox/);
+    assert.match(incognitoSendScript, /directConversationScopeMatches\(scope\)/);
+    let releaseIncognitoStream = () => undefined;
+    let incognitoStreamReady = false;
+    let streamedIncognitoUrl = "";
+    const streamedIncognitoBodies: Array<Record<string, any>> = [];
+    let appliedIncognitoEvents = 0;
+    let refreshedIncognitoMessages = 0;
+    const streamState: Record<string, any> = {
+      activeConversationKind: "direct",
+      activeSessionId: "incognito-session",
+      conversationSpace: "normal",
+      conversationSpaceEpoch: 4,
+      conversationViewEpoch: 9,
+      selectedCharacterId: character.id,
+      busy: false,
+      lastTurnStatus: null,
+      lastTurnCanRetry: false,
+      incognitoAbortController: null,
+      messages: [],
+    };
+    const streamScope = {
+      sessionId: "incognito-session",
+      characterId: character.id,
+      conversationSpace: "normal",
+      incognito: true,
+      spaceEpoch: 4,
+      viewEpoch: 9,
+    };
+    const streamContext: Record<string, any> = {
+      state: streamState,
+      nodes: {
+        textInput: { value: "", focus() {} },
+        sendBtn: { disabled: false },
+        cancelMessageBtn: { disabled: true },
+      },
+      AbortController: class {
+        signal = {};
+        abort() {}
+      },
+      captureDirectConversationScope() { return streamScope; },
+      directConversationScopeMatches(scope: Record<string, any>) {
+        return scope.viewEpoch === streamState.conversationViewEpoch &&
+          scope.sessionId === streamState.activeSessionId;
+      },
+      generateClientMessageId() { return "client-id"; },
+      closeEmojiPicker() {},
+      pushMessage(role: string, text: string, extra: Record<string, any>) {
+        streamState.messages.push({ role, text, ...extra });
+      },
+      ensurePrivateBurstMessage() { return 1; },
+      renderMessages() {},
+      updateInteractionChrome() {},
+      updatePrivateModeChrome() {},
+      setStatus() {},
+      async fetch(path: string, options: Record<string, any>) {
+        streamedIncognitoUrl = path;
+        streamedIncognitoBodies.push(JSON.parse(options.body));
+        return { ok: true, body: {} };
+      },
+      consumeEventStream(_body: unknown, onEvent: (event: Record<string, any>) => void) {
+        return new Promise<void>((resolve) => {
+          incognitoStreamReady = true;
+          releaseIncognitoStream = () => {
+            onEvent({ type: "delta", delta: "must not leak" });
+            onEvent({ type: "done", response: { reply: "must not leak", status: "completed" } });
+            resolve();
+          };
+        });
+      },
+      applyPrivateAgentEvent() { appliedIncognitoEvents += 1; },
+      finishPrivateBurst() { appliedIncognitoEvents += 1; },
+      applyTurnOutcome() { appliedIncognitoEvents += 1; },
+      async refreshSessionMessages() { refreshedIncognitoMessages += 1; },
+      privateBurstIndex() { return -1; },
+      updateDirectGenerationControls() {},
+    };
+    new Script(
+      incognitoSendScript + "\nthis.sendIncognitoMessageForTest = sendIncognitoMessage;",
+    ).runInNewContext(streamContext);
+    const staleIncognitoSend = streamContext.sendIncognitoMessageForTest("hello");
+    while (!incognitoStreamReady) await new Promise((resolve) => setImmediate(resolve));
+    assert.equal(streamedIncognitoUrl, "/api/v1/sessions/incognito-session/messages/stream");
+    assert.equal(streamedIncognitoBodies[0]?.conversationSpace, "normal");
+    assert.deepEqual(streamedIncognitoBodies[0]?.attachments, []);
+    streamState.conversationViewEpoch += 1;
+    releaseIncognitoStream();
+    await staleIncognitoSend;
+    assert.equal(appliedIncognitoEvents, 0, "a late incognito stream cannot refill a replacement view");
+    assert.equal(refreshedIncognitoMessages, 0);
     assert.match(html, /YourChar/);
     assert.match(html, /上下文调试/);
     assert.match(html, /Provider Trace/);
@@ -205,17 +1118,24 @@ test("server serves chat UI and debug model traces", async () => {
     assert.match(html, /id="characterMemoryPanel"/);
     assert.match(html, /id="characterFunctionTabBtn"/);
     assert.match(html, /id="characterFunctionPanel"/);
-    assert.match(html, /id="characterCapabilityList"/);
-    assert.match(html, /id="characterFunctionAutomatic"/);
-    assert.match(html, /id="refreshCharacterFunctionBtn"/);
-    assert.match(html, /id="characterSkillVersionSelect"/);
-    assert.match(html, /id="characterSkillMarkdown"/);
+    assert.match(html, /协作介绍/);
+    assert.match(html, /特点标签/);
+    assert.match(html, /协作与技能/);
+    assert.match(html, /id="characterOwnedSkillList"/);
+    assert.match(html, /id="newCharacterOwnedSkillBtn"/);
+    assert.match(html, /id="characterOwnedSkillDialog"/);
+    assert.match(html, /执行后生成改进提案/);
+    assert.match(html, /function renderCharacterOwnedSkills/);
+    assert.match(html, /function reviewCharacterOwnedSkillProposal/);
+    assert.match(html, /controlPlaneFetch\(withConversationSpace\(/);
     assert.match(html, /id="characterFunctionAdvanced"/);
     assert.match(html, /function loadCharacterFunction/);
     assert.match(html, /function saveCharacterFunction/);
-    assert.match(html, /function renderCharacterSkillDocument/);
-    assert.match(html, /api\/v1\/characters\/.*\/function-profile/);
-    assert.match(html, /skill-versions/);
+    assert.match(html, /collaboration-profile/);
+    assert.doesNotMatch(html, /function-profile/);
+    assert.doesNotMatch(html, /skill-versions/);
+    assert.doesNotMatch(html, /自动更新档案/);
+    assert.doesNotMatch(html, /id="characterCapabilityList"/);
     assert.match(html, /id="characterLifePanel"/);
     assert.match(html, /id="lifeProactiveCooldown"/);
     assert.match(html, /id="lifeSocialEnabled"/);
@@ -223,6 +1143,24 @@ test("server serves chat UI and debug model traces", async () => {
     assert.match(html, /id="lifeSocialCooldown"/);
     assert.match(html, /id="lifeProactiveList"/);
     assert.match(html, /id="lifeTopicPolicyList"/);
+    assert.match(html, /id="lifeWorldAttributeList"/);
+    assert.match(html, /id="saveLifeWorldAttributesBtn"/);
+    assert.match(html, /id="worldAttributesSection"/);
+    assert.match(html, /id="worldAttributeForm"/);
+    assert.match(html, /id="worldAttributeScope"/);
+    assert.match(html, /id="saveWorldSharedAttributesBtn"/);
+    assert.match(html, /id="worldAttributeAnalysisEnabled"/);
+    assert.match(html, /id="worldAttributeIncreaseRule"/);
+    assert.match(html, /id="worldAttributeIncreaseDelta"/);
+    assert.match(html, /id="worldAttributeDecreaseRule"/);
+    assert.match(html, /id="worldAttributeDecreaseDelta"/);
+    assert.match(html, /function saveWorldAttribute/);
+    assert.match(html, /function saveWorldSharedAttributes/);
+    assert.match(html, /function saveLifeWorldAttributes/);
+    assert.match(html, /每次固定增加/);
+    assert.match(html, /每次固定减少/);
+    assert.match(html, /controlPlaneFetch\(\s*"\/api\/v1\/characters\/" \+ encodeURIComponent\(state\.workspaceCharacterId\) \+ "\/life\/attributes"/);
+    assert.match(html, /"\/api\/v1\/world-attributes\/" \+ encodeURIComponent\(editing\)/);
     assert.match(html, /id="resumeProactiveBtn"/);
     assert.match(html, /id="memoryEditorDialog"/);
     assert.match(html, /尚未建立浪漫关系/);
@@ -254,6 +1192,9 @@ test("server serves chat UI and debug model traces", async () => {
     assert.match(html, /\/assets\/marked\.umd\.js/);
     assert.match(html, /\/assets\/purify\.min\.js/);
     assert.match(html, /\/assets\/noto-emoji\/400\.css/);
+    assert.match(html, /\/assets\/twemoji\.min\.js/);
+    assert.match(html, /callback: \(icon\) => "\/assets\/twemoji\/svg\/" \+ icon \+ "\.svg"/);
+    assert.match(html, /renderTwemoji\(template\.content\)/);
     assert.match(html, /rel="manifest" href="\/manifest\.webmanifest"/);
     assert.match(html, /rel="apple-touch-icon" sizes="180x180"/);
     assert.match(html, /name="theme-color" content="#07c160"/);
@@ -455,11 +1396,20 @@ test("server serves chat UI and debug model traces", async () => {
     assert.match(html, /clearWorkspaceManagerState\(\);/);
     assert.match(html, /id="visionSettingsTabBtn"/);
     assert.match(html, /id="visionSettingsPanel"/);
+    assert.match(html, /id="documentSettingsTabBtn"/);
+    assert.match(html, /id="documentSettingsPanel"/);
+    assert.match(html, /id="mineruBaseUrl"/);
+    assert.match(html, /id="mineruTimeoutSeconds"[^>]*value="600"/);
+    assert.match(html, /CPU 服务解析较长 PDF/);
+    assert.match(html, /MinerU Document MCP/);
+    assert.match(html, /controlPlaneFetch\("\/api\/settings\/mineru"/);
+    assert.match(html, /controlPlaneFetch\("\/api\/v1\/diagnostics\/mineru\/test"/);
+    assert.match(html, /parse_document_with_mineru: "MinerU 深度解析文档"/);
     assert.match(html, /id="apiVisionInputEnabled"/);
     assert.match(html, /请先选择角色；如果还没有角色/);
     assert.doesNotMatch(html, /thinking_delta/);
 
-    for (const asset of ["marked.umd.js", "purify.min.js", "lucide.min.js"]) {
+    for (const asset of ["marked.umd.js", "purify.min.js", "lucide.min.js", "twemoji.min.js"]) {
       const response = await fetch(`${baseUrl}/assets/${asset}`);
       assert.equal(response.status, 200);
       assert.match(response.headers.get("content-type") ?? "", /text\/javascript/);
@@ -473,6 +1423,12 @@ test("server serves chat UI and debug model traces", async () => {
     assert.equal(emojiFont.status, 200);
     assert.equal(emojiFont.headers.get("content-type"), "font/woff2");
     assert.ok((await emojiFont.arrayBuffer()).byteLength > 50_000);
+    const twemojiSvg = await fetch(`${baseUrl}/assets/twemoji/svg/1f60a.svg`);
+    assert.equal(twemojiSvg.status, 200);
+    assert.match(twemojiSvg.headers.get("content-type") ?? "", /image\/svg\+xml/);
+    assert.match(await twemojiSvg.text(), /<svg/);
+    const rejectedTwemojiPath = await fetch(`${baseUrl}/assets/twemoji/svg/..%2fpackage.json.svg`);
+    assert.doesNotMatch(rejectedTwemojiPath.headers.get("content-type") ?? "", /image\/svg\+xml/);
 
     const manifestResponse = await fetch(`${baseUrl}/manifest.webmanifest`);
     assert.equal(manifestResponse.status, 200);

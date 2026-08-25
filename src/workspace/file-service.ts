@@ -154,10 +154,10 @@ export class WorkspaceFileService {
   visionImage(inputPath: string): WorkspaceVisionImage {
     const path = this.regularFile(inputPath);
     const workspacePath = this.relativePath(path);
-    if (!workspacePath.startsWith("uploads/")) {
+    if (!workspacePath.startsWith("uploads/") && !isManagedMineruImagePath(workspacePath)) {
       throw new WorkspaceFileError(
         "WORKSPACE_PATH_INVALID",
-        "vision can only read images stored under workspace/uploads",
+        "vision can only read images under workspace/uploads or a managed MinerU artifact",
       );
     }
     const stats = statSync(path);
@@ -308,6 +308,10 @@ export class WorkspaceFileService {
   }
 }
 
+function isManagedMineruImagePath(path: string): boolean {
+  return /^tmp\/mineru\/mineru-[a-f0-9]{12}-[a-f0-9]{12}-[a-f0-9]{8}\/images\/[A-Za-z0-9][A-Za-z0-9._-]*\.(?:png|jpe?g|gif|webp)$/iu.test(path);
+}
+
 function safeFileName(input: string): string {
   const name = String(input ?? "").trim();
   if (
@@ -340,6 +344,7 @@ const MIME_TYPES: Record<string, string> = {
   ".avif": "image/avif",
   ".bmp": "image/bmp",
   ".csv": "text/csv; charset=utf-8",
+  ".docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
   ".gif": "image/gif",
   ".htm": "text/html; charset=utf-8",
   ".html": "text/html; charset=utf-8",
@@ -348,10 +353,13 @@ const MIME_TYPES: Record<string, string> = {
   ".json": "application/json; charset=utf-8",
   ".md": "text/markdown; charset=utf-8",
   ".pdf": "application/pdf",
+  ".pptx": "application/vnd.openxmlformats-officedocument.presentationml.presentation",
   ".png": "image/png",
   ".svg": "image/svg+xml",
   ".txt": "text/plain; charset=utf-8",
   ".webp": "image/webp",
+  ".xls": "application/vnd.ms-excel",
+  ".xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
   ".yaml": "text/yaml; charset=utf-8",
   ".yml": "text/yaml; charset=utf-8",
 };

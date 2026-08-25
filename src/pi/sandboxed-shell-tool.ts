@@ -20,6 +20,8 @@ export type SandboxedShellContext = {
   workspaceDir: string;
   workspaceAccess: WorkspaceAccess;
   networkEnabled: boolean;
+  /** Runtime isolation gate; unlike the persisted preference this is checked for every command. */
+  networkAllowed?: () => boolean;
   store: CompanionStore;
   sessionId: string;
   actions: () => ActionRecord[];
@@ -28,21 +30,24 @@ export type SandboxedShellContext = {
 export function createSandboxedShellTool(
   context: SandboxedShellContext,
 ): ToolDefinition<typeof bashParameters, unknown> {
+  const networkEnabledAtCreation = effectiveNetworkEnabled(context);
   return defineTool({
     name: "bash",
     label: "Run sandboxed shell",
     description:
       `Run a Bash command in an OS sandbox. Only /workspace is exposed (${context.workspaceAccess}); ` +
-      `host files are hidden and network is ${context.networkEnabled ? "enabled" : "disabled"}.`,
+      `host files are hidden and network is ${networkEnabledAtCreation ? "enabled" : "disabled"}.`,
     parameters: bashParameters,
     executionMode: "sequential",
     async execute(_toolCallId, input, signal) {
       const startedAt = performance.now();
+      const networkEnabled = effectiveNetworkEnabled(context);
       const result = await runSandboxedCommand(
         context,
         input.command,
         Math.round((input.timeoutSeconds ?? defaultTimeoutMs / 1000) * 1000),
         signal,
+        networkEnabled,
       );
       const durationMs = Math.round(performance.now() - startedAt);
       context.actions().push(context.store.addAction("workspace_shell", result.exitCode === 0 ? "completed" : "failed", {
@@ -55,7 +60,7 @@ export function createSandboxedShellTool(
         timedOut: result.timedOut,
         aborted: result.aborted,
         outputTruncated: result.truncated,
-        networkEnabled: context.networkEnabled,
+        networkEnabled,
       }));
       const status = result.timedOut
         ? "Command timed out"
@@ -75,6 +80,7 @@ async function runSandboxedCommand(
   command: string,
   timeoutMs: number,
   signal?: AbortSignal,
+  networkEnabled = effectiveNetworkEnabled(context),
 ): Promise<{
   output: string;
   exitCode: number | null;
@@ -82,7 +88,7 @@ async function runSandboxedCommand(
   aborted: boolean;
   truncated: boolean;
 }> {
-  const args = sandboxArguments(context, command);
+  const args = sandboxArguments(context, command, networkEnabled);
   const child = spawn(bubblewrapPath, args, {
     detached: true,
     stdio: ["ignore", "pipe", "pipe"],
@@ -142,13 +148,17 @@ async function runSandboxedCommand(
   }
 }
 
-function sandboxArguments(context: SandboxedShellContext, command: string): string[] {
+function sandboxArguments(
+  context: SandboxedShellContext,
+  command: string,
+  networkEnabled = effectiveNetworkEnabled(context),
+): string[] {
   const args = [
     "--die-with-parent",
     "--new-session",
     "--unshare-all",
   ];
-  if (context.networkEnabled) args.push("--share-net");
+  if (networkEnabled) args.push("--share-net");
   args.push(
     "--ro-bind", "/usr", "/usr",
     "--symlink", "usr/bin", "/bin",
@@ -166,7 +176,7 @@ function sandboxArguments(context: SandboxedShellContext, command: string): stri
   } else {
     args.push("--dir", "/workspace");
   }
-  if (context.networkEnabled) {
+  if (networkEnabled) {
     for (const path of [
       "/etc/resolv.conf",
       "/etc/hosts",
@@ -187,4 +197,8 @@ function sandboxArguments(context: SandboxedShellContext, command: string): stri
     "/usr/bin/bash", "--noprofile", "--norc", "-c", command,
   );
   return args;
+}
+
+function effectiveNetworkEnabled(context: SandboxedShellContext): boolean {
+  return context.networkEnabled && (context.networkAllowed?.() ?? true);
 }

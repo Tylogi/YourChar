@@ -25,11 +25,13 @@ import {
   WorldConversationValidationError,
   CharacterInteractionExecutionError,
   CharacterCapabilityValidationError,
-  CharacterFunctionInferenceUnavailableError,
   CharacterTaskRoutingError,
   InteractionValidationError,
   PrivateInboxMutationError,
   ModelApiConfigValidationError,
+  IncognitoConversationNotFoundError,
+  IncognitoOperationUnsupportedError,
+  IncognitoUnavailableError,
 } from "../domain/index.js";
 import type {
   ConversationSpace,
@@ -37,8 +39,8 @@ import type {
   ModelApiConfigPatch,
   ModelApiProfilePatch,
   PrivateInboxEvent,
-  CharacterCapabilityId,
-  CharacterFunctionProfileUpdate,
+  CharacterOwnedSkillCreateInput,
+  CharacterOwnedSkillUpdateInput,
   ModelContextTraceScope,
 } from "../domain/index.js";
 import type {
@@ -62,6 +64,7 @@ import type {
   UpdateSceneInput,
 } from "../rp/index.js";
 import { RP_MEMORY_REALM, RP_MEMORY_SCOPE } from "../rp/index.js";
+import type { InteractionScope } from "../interaction/index.js";
 import { TestRunRegistry, type ScriptedModelResponse } from "../testing/index.js";
 import { renderAppHtml } from "./ui.js";
 import {
@@ -81,6 +84,15 @@ import { TavilyApiError, TavilyConfigurationError } from "../tavily/service.js";
 import type { TavilyApiConfigPatch } from "../tavily/types.js";
 import { VisionApiError, VisionConfigurationError } from "../vision/service.js";
 import type { VisionApiConfigPatch } from "../vision/types.js";
+import { MineruApiError, MineruConfigurationError } from "../mineru/service.js";
+import type { MineruApiConfigPatch } from "../mineru/types.js";
+import {
+  GitIdentityKeyError,
+  GitRepositoryConfigurationError,
+  GitRepositoryOperationError,
+  type GitAccessConfigPatch,
+} from "../git/index.js";
+import { gitMcpModuleId, mineruMcpModuleId } from "../modules/catalog.js";
 import { browserAsset } from "./browser-assets.js";
 import type { AgentMessage } from "@earendil-works/pi-agent-core";
 import { MemoryVaultError } from "../memory-vault/errors.js";
@@ -107,8 +119,10 @@ import type {
   CharacterRuntimePatch,
   CharacterWorldAssignmentInput,
   CreatePlaceInput,
+  CreateWorldAttributeDefinitionInput,
   CreateWorldInput,
   UpdatePlaceInput,
+  UpdateWorldAttributeDefinitionInput,
   UpdateWorldInput,
   ProactiveFeedbackType,
   ProactiveMessageStatus,
@@ -189,6 +203,12 @@ export function createHttpServer(options: HttpServerOptions = {}) {
         sendJson(response, 409, { code: "SESSION_ARCHIVED", error: error.message });
       } else if (error instanceof ConversationNotFoundError) {
         sendJson(response, 404, { code: "SESSION_NOT_FOUND", error: error.message });
+      } else if (error instanceof IncognitoConversationNotFoundError) {
+        sendJson(response, 404, { code: error.code, error: error.message });
+      } else if (error instanceof IncognitoOperationUnsupportedError) {
+        sendJson(response, 409, { code: error.code, error: error.message });
+      } else if (error instanceof IncognitoUnavailableError) {
+        sendJson(response, 503, { code: error.code, error: error.message });
       } else if (error instanceof ConversationTitleValidationError) {
         sendJson(response, 400, { code: "SESSION_TITLE_INVALID", error: error.message });
       } else if (error instanceof ConversationDeletionConfirmationError) {
@@ -225,8 +245,6 @@ export function createHttpServer(options: HttpServerOptions = {}) {
         });
       } else if (error instanceof CharacterCapabilityValidationError) {
         sendJson(response, 400, { code: error.code, error: error.message });
-      } else if (error instanceof CharacterFunctionInferenceUnavailableError) {
-        sendJson(response, 409, { code: error.code, error: error.message });
       } else if (error instanceof CharacterTaskRoutingError) {
         sendJson(response, 409, {
           code: error.code,
@@ -293,6 +311,16 @@ export function createHttpServer(options: HttpServerOptions = {}) {
         sendJson(response, 400, { code: "VISION_CONFIG_INVALID", error: error.message });
       } else if (error instanceof VisionApiError) {
         sendJson(response, 502, { code: "VISION_API_ERROR", upstreamStatus: error.status, error: error.message });
+      } else if (error instanceof MineruConfigurationError) {
+        sendJson(response, 400, { code: "MINERU_CONFIG_INVALID", error: error.message });
+      } else if (error instanceof MineruApiError) {
+        sendJson(response, 502, { code: "MINERU_API_ERROR", upstreamStatus: error.status, error: error.message });
+      } else if (error instanceof GitIdentityKeyError) {
+        sendJson(response, 409, { code: error.code, error: error.message });
+      } else if (error instanceof GitRepositoryConfigurationError) {
+        sendJson(response, 400, { code: error.code, error: error.message });
+      } else if (error instanceof GitRepositoryOperationError) {
+        sendJson(response, 409, { code: error.code, error: error.message });
       } else {
         sendJson(response, 500, {
           error: error instanceof Error ? error.message : String(error),
@@ -421,6 +449,7 @@ async function route(input: {
       ui: "/ui",
       messageEndpoint: "POST /api/v1/sessions/{id}/messages",
       directConversation: "POST /api/v1/direct-conversations",
+      incognitoConversations: "GET/POST/DELETE /api/v1/incognito-conversations/{id}",
       conversationUnread: "GET /api/v1/conversation-unread",
       markConversationRead: "POST /api/v1/sessions/{id}/read",
       debugContextLogs: "GET /api/debug/context-logs",
@@ -434,8 +463,11 @@ async function route(input: {
       modelApiSettings: "GET/PATCH /api/settings/model-api",
       tavilySettings: "GET/PATCH /api/settings/tavily",
       visionSettings: "GET/PATCH /api/settings/vision",
+      mineruSettings: "GET/PATCH /api/settings/mineru",
+      gitAccessSettings: "GET/PATCH /api/settings/git-access; POST /api/settings/git-access/generate-key; GET /api/settings/git-access/public-key",
       traceArchiveSettings: "GET/PATCH /api/settings/trace-archive",
       interactionState: "GET/POST /api/v1/sessions/{id}/interaction",
+      worldAttributes: "POST/PATCH /api/v1/worlds/{id}/attributes; PATCH/DELETE /api/v1/world-attributes/{id}; PATCH /api/v1/characters/{id}/life/attributes",
       characterCollaborations: "GET /api/v1/sessions/{id}/character-collaborations",
       contextBudget: "GET /api/v1/sessions/{id}/context-budget",
       compactContext: "POST /api/v1/sessions/{id}/compact",
@@ -703,9 +735,25 @@ async function route(input: {
         ...(conversationSpace === "normal" ? {
           sleepState: metadata.get(record.id)?.sleepState ?? "awake",
           sleepCheckpointAt: metadata.get(record.id)?.sleepCheckpointAt,
-          interactionPresence: kernel.interactionService.get(record.id)?.presence,
-          interactionLocation: kernel.interactionService.get(record.id)?.location,
         } : {}),
+        interactionPresence: metadata.get(record.id)?.characterId
+          ? kernel.interactionService.get(
+              record.id,
+              interactionScopeForConversation(
+                conversationSpace,
+                metadata.get(record.id)!.characterId!,
+              ),
+            )?.presence
+          : undefined,
+        interactionLocation: metadata.get(record.id)?.characterId
+          ? kernel.interactionService.get(
+              record.id,
+              interactionScopeForConversation(
+                conversationSpace,
+                metadata.get(record.id)!.characterId!,
+              ),
+            )?.location
+          : undefined,
         messageCount: visibleConversationMessages(record.messages).length,
         preview: latestConversationPreview(record.messages),
         createdAt: record.createdAt,
@@ -733,6 +781,33 @@ async function route(input: {
       requiredConversationSpace(body.conversationSpace ?? "normal"),
     );
     sendJson(input.response, 200, { session });
+    return;
+  }
+
+  if (pathname === "/api/v1/incognito-conversations") {
+    if (method === "GET") {
+      sendJson(input.response, 200, { conversations: kernel.listIncognitoConversations() });
+      return;
+    }
+    if (method === "POST") {
+      assertLocalControlPlaneMutation(input.request);
+      const body = asRecord(await readJson(input.request));
+      const conversation = await kernel.openIncognitoConversation(
+        requiredString(body.characterId, "characterId"),
+      );
+      sendJson(input.response, 201, { conversation });
+      return;
+    }
+  }
+
+  const incognitoConversationMatch = pathname.match(
+    /^\/api\/v1\/incognito-conversations\/([^/]+)$/,
+  );
+  if (incognitoConversationMatch && method === "DELETE") {
+    assertLocalControlPlaneMutation(input.request);
+    await kernel.closeIncognitoConversation(decodeURIComponent(incognitoConversationMatch[1]));
+    input.response.writeHead(204, { "cache-control": "no-store" });
+    input.response.end();
     return;
   }
 
@@ -908,8 +983,7 @@ async function route(input: {
   const interactionMatch = pathname.match(/^\/api\/v1\/sessions\/([^/]+)\/interaction$/);
   if (interactionMatch) {
     const sessionId = decodeURIComponent(interactionMatch[1]);
-    const conversationSpace = assertRequestedSessionConversationSpace(kernel, sessionId, url);
-    if (conversationSpace === "secret") throw new ConversationNotFoundError(sessionId);
+    assertRequestedSessionConversationSpace(kernel, sessionId, url);
     assertCharacterBoundSession(kernel, sessionId);
     if (method === "GET") {
       sendJson(input.response, 200, kernel.getConversationInteraction(sessionId));
@@ -1166,6 +1240,9 @@ async function route(input: {
   if (messageMatch && method === "POST") {
     const sessionId = decodeURIComponent(messageMatch[1]);
     const body = requireCharacterBoundMessage(kernel, sessionId, await readJson(input.request));
+    if (kernel.isIncognitoConversation(sessionId) && body.attachments?.length) {
+      throw new IncognitoOperationUnsupportedError("message attachments");
+    }
     const targetSessionId = await kernel.resolveConversationTarget(sessionId, body);
     const result = await kernel.sendMessage(targetSessionId, body);
     sendJson(input.response, 200, { ...result, sessionId: targetSessionId });
@@ -1219,6 +1296,9 @@ async function route(input: {
   if (streamMatch && method === "POST") {
     const sessionId = decodeURIComponent(streamMatch[1]);
     const body = requireCharacterBoundMessage(kernel, sessionId, await readJson(input.request));
+    if (kernel.isIncognitoConversation(sessionId) && body.attachments?.length) {
+      throw new IncognitoOperationUnsupportedError("message attachments");
+    }
     const targetSessionId = await kernel.resolveConversationTarget(sessionId, body);
     const abortController = new AbortController();
     input.response.on("close", () => {
@@ -1604,7 +1684,7 @@ async function route(input: {
   if (moduleMatch && method === "PATCH") {
     const moduleId = decodeURIComponent(moduleMatch[1]);
     const targetModule = kernel.listAgentModules().find((module) => module.id === moduleId);
-    if (targetModule?.type === "skill") {
+    if (targetModule?.type === "skill" || moduleId === mineruMcpModuleId || moduleId === gitMcpModuleId) {
       assertLocalControlPlaneMutation(input.request);
     }
     const body = asRecord(await readJson(input.request));
@@ -1791,8 +1871,11 @@ async function route(input: {
   ) {
     const mode = requiredMode(url.searchParams.get("mode"));
     const sessionId = requiredString(url.searchParams.get("sessionId"), "sessionId");
+    if (kernel.isIncognitoConversation(sessionId)) {
+      throw new IncognitoOperationUnsupportedError("context-plan preview");
+    }
     const conversationSpace = requestedConversationSpace(url);
-    const metadata = kernel.listConversationMetadata().find((entry) => entry.id === sessionId);
+    const metadata = kernel.getConversationMetadata(sessionId);
     if (metadata) {
       assertRequestedSessionConversationSpace(kernel, sessionId, url);
     } else if (conversationSpace === "secret") {
@@ -1988,12 +2071,10 @@ async function route(input: {
       sendJson(input.response, 200, await kernel.requestCharacterCollaboration({
         sourceCharacterId,
         ...(targetCharacterId ? { targetCharacterId } : {}),
-        ...(body.requiredCapabilityIds === undefined
+        ...(body.requiredSkillIds === undefined
           ? {}
           : {
-              requiredCapabilityIds: optionalStringArray(
-                body.requiredCapabilityIds,
-              ) as CharacterCapabilityId[],
+              requiredSkillIds: optionalStringArray(body.requiredSkillIds),
             }),
         task: requiredString(body.task, "task"),
         ...(optionalString(body.context) ? { context: optionalString(body.context) } : {}),
@@ -2167,6 +2248,57 @@ async function route(input: {
     sendJson(input.response, 201, { place });
     return;
   }
+  const worldAttributesMatch = pathname.match(/^\/api\/v1\/worlds\/([^/]+)\/attributes$/);
+  if (worldAttributesMatch && method === "POST") {
+    assertLocalControlPlaneMutation(input.request);
+    const body = asRecord(await readJson(input.request));
+    const attribute = kernel.createWorldAttribute({
+      worldId: decodeURIComponent(worldAttributesMatch[1]),
+      key: requiredString(body.key, "key"),
+      name: requiredString(body.name, "name"),
+      scope: body.scope === undefined ? undefined : requiredWorldAttributeScope(body.scope),
+      description: optionalDocumentString(body.description, "description"),
+      minValue: requiredNumber(body.minValue, "minValue"),
+      maxValue: requiredNumber(body.maxValue, "maxValue"),
+      defaultValue: requiredNumber(body.defaultValue, "defaultValue"),
+      analysisEnabled: body.analysisEnabled === undefined
+        ? undefined
+        : requiredBoolean(body.analysisEnabled, "analysisEnabled"),
+      increaseRule: body.increaseRule === undefined
+        ? undefined
+        : optionalDocumentString(body.increaseRule, "increaseRule"),
+      increaseDelta: body.increaseDelta === undefined
+        ? undefined
+        : requiredNumber(body.increaseDelta, "increaseDelta"),
+      decreaseRule: body.decreaseRule === undefined
+        ? undefined
+        : optionalDocumentString(body.decreaseRule, "decreaseRule"),
+      decreaseDelta: body.decreaseDelta === undefined
+        ? undefined
+        : requiredNumber(body.decreaseDelta, "decreaseDelta"),
+      visibleToAgent: body.visibleToAgent === undefined
+        ? undefined
+        : requiredBoolean(body.visibleToAgent, "visibleToAgent"),
+    } satisfies CreateWorldAttributeDefinitionInput);
+    sendJson(input.response, 201, { attribute });
+    return;
+  }
+  if (worldAttributesMatch && method === "PATCH") {
+    assertLocalControlPlaneMutation(input.request);
+    const body = asRecord(await readJson(input.request));
+    const rawValues = asRecord(body.values);
+    const values = Object.fromEntries(Object.entries(rawValues).map(([key, value]) => [
+      key,
+      requiredNumber(value, `values.${key}`),
+    ]));
+    sendJson(input.response, 200, {
+      worldAttributes: kernel.updateWorldSharedAttributes(
+        decodeURIComponent(worldAttributesMatch[1]),
+        values,
+      ),
+    });
+    return;
+  }
 
   const worldMatch = pathname.match(/^\/api\/v1\/worlds\/([^/]+)$/);
   if (worldMatch) {
@@ -2222,6 +2354,58 @@ async function route(input: {
     }
     if (method === "DELETE") {
       sendJson(input.response, 200, { deleted: kernel.deleteWorldPlace(id) });
+      return;
+    }
+  }
+
+  const worldAttributeMatch = pathname.match(/^\/api\/v1\/world-attributes\/([^/]+)$/);
+  if (worldAttributeMatch) {
+    const id = decodeURIComponent(worldAttributeMatch[1]);
+    if (method === "PATCH") {
+      assertLocalControlPlaneMutation(input.request);
+      const body = asRecord(await readJson(input.request));
+      if (body.scope !== undefined) {
+        const requestedScope = requiredWorldAttributeScope(body.scope);
+        if (requestedScope !== kernel.worldService.getAttributeDefinition(id).scope) {
+          throw new WorldValidationError("world attribute scope is immutable");
+        }
+      }
+      const patch: UpdateWorldAttributeDefinitionInput = {
+        ...(body.name === undefined ? {} : { name: requiredString(body.name, "name") }),
+        ...(body.description === undefined
+          ? {}
+          : { description: optionalDocumentString(body.description, "description")! }),
+        ...(body.minValue === undefined ? {} : { minValue: requiredNumber(body.minValue, "minValue") }),
+        ...(body.maxValue === undefined ? {} : { maxValue: requiredNumber(body.maxValue, "maxValue") }),
+        ...(body.defaultValue === undefined
+          ? {}
+          : { defaultValue: requiredNumber(body.defaultValue, "defaultValue") }),
+        ...(body.analysisEnabled === undefined
+          ? {}
+          : { analysisEnabled: requiredBoolean(body.analysisEnabled, "analysisEnabled") }),
+        ...(body.increaseRule === undefined
+          ? {}
+          : { increaseRule: optionalDocumentString(body.increaseRule, "increaseRule")! }),
+        ...(body.increaseDelta === undefined
+          ? {}
+          : { increaseDelta: requiredNumber(body.increaseDelta, "increaseDelta") }),
+        ...(body.decreaseRule === undefined
+          ? {}
+          : { decreaseRule: optionalDocumentString(body.decreaseRule, "decreaseRule")! }),
+        ...(body.decreaseDelta === undefined
+          ? {}
+          : { decreaseDelta: requiredNumber(body.decreaseDelta, "decreaseDelta") }),
+        ...(body.visibleToAgent === undefined
+          ? {}
+          : { visibleToAgent: requiredBoolean(body.visibleToAgent, "visibleToAgent") }),
+      };
+      sendJson(input.response, 200, { attribute: kernel.updateWorldAttribute(id, patch) });
+      return;
+    }
+    if (method === "DELETE") {
+      assertLocalControlPlaneMutation(input.request);
+      await readJson(input.request);
+      sendJson(input.response, 200, { attribute: kernel.archiveWorldAttribute(id) });
       return;
     }
   }
@@ -2360,6 +2544,9 @@ async function route(input: {
                   ? body.promptOrderCharacterId
                   : requiredString(body.promptOrderCharacterId, "promptOrderCharacterId"),
             }),
+        ...(body.requiredSkillIds === undefined
+          ? {}
+          : { requiredSkillIds: optionalStringArray(body.requiredSkillIds) }),
       }),
     });
     return;
@@ -2413,141 +2600,209 @@ async function route(input: {
         ...(optionalString(body.targetCharacterId)
           ? { targetCharacterId: optionalString(body.targetCharacterId) }
           : {}),
-        ...(body.requiredCapabilityIds === undefined
+        ...(body.requiredSkillIds === undefined
           ? {}
           : {
-              requiredCapabilityIds: optionalStringArray(
-                body.requiredCapabilityIds,
-              ) as CharacterCapabilityId[],
+              requiredSkillIds: optionalStringArray(body.requiredSkillIds),
             }),
       }),
     });
     return;
   }
 
-  const characterFunctionInferMatch = pathname.match(
-    /^\/api\/v1\/characters\/([^/]+)\/function-profile\/infer$/,
+  const characterOwnedSkillsMatch = pathname.match(
+    /^\/api\/v1\/characters\/([^/]+)\/owned-skills$/,
   );
-  if (characterFunctionInferMatch && method === "POST") {
-    const characterId = decodeURIComponent(characterFunctionInferMatch[1]);
-    const conversationSpace = requestedCharacterWorkspaceSpace(url, characterId);
-    sendJson(input.response, 200, {
-      functionProfile: await kernel.inferCharacterFunctionProfile(
-        characterId,
-        conversationSpace,
-      ),
-    });
-    return;
-  }
-
-  const characterFunctionAutomationMatch = pathname.match(
-    /^\/api\/v1\/characters\/([^/]+)\/function-profile\/automation$/,
-  );
-  if (characterFunctionAutomationMatch && method === "PATCH") {
-    const characterId = decodeURIComponent(characterFunctionAutomationMatch[1]);
-    const conversationSpace = requestedCharacterWorkspaceSpace(url, characterId);
-    const body = asRecord(await readJson(input.request));
-    sendJson(input.response, 200, {
-      functionProfile: await kernel.setCharacterFunctionAutomatic(
-        characterId,
-        requiredBoolean(body.automatic, "automatic"),
-        conversationSpace,
-      ),
-    });
-    return;
-  }
-
-  const characterSkillVersionsMatch = pathname.match(
-    /^\/api\/v1\/characters\/([^/]+)\/skill-versions$/,
-  );
-  if (characterSkillVersionsMatch && method === "GET") {
-    const characterId = decodeURIComponent(characterSkillVersionsMatch[1]);
-    const conversationSpace = requestedCharacterWorkspaceSpace(url, characterId);
-    sendJson(input.response, 200, {
-      skillVersions: kernel.listCharacterSkillVersions(
-        characterId,
-        optionalPositiveInteger(url.searchParams.get("limit")) ?? 50,
-        conversationSpace,
-      ),
-    });
-    return;
-  }
-
-  const characterSkillActivateMatch = pathname.match(
-    /^\/api\/v1\/characters\/([^/]+)\/skill-versions\/([^/]+)\/activate$/,
-  );
-  if (characterSkillActivateMatch && method === "POST") {
-    const characterId = decodeURIComponent(characterSkillActivateMatch[1]);
-    const version = Number(decodeURIComponent(characterSkillActivateMatch[2]));
-    if (!Number.isInteger(version) || version < 1) {
-      throw new SyntaxError("skill version must be a positive integer");
-    }
-    const conversationSpace = requestedCharacterWorkspaceSpace(url, characterId);
-    sendJson(input.response, 200, {
-      activeSkill: kernel.rollbackCharacterSkill(characterId, version, conversationSpace),
-      functionProfile: kernel.getCharacterFunctionProfile(characterId, conversationSpace),
-    });
-    return;
-  }
-
-  const characterFunctionMatch = pathname.match(
-    /^\/api\/v1\/characters\/([^/]+)\/function-profile$/,
-  );
-  if (characterFunctionMatch) {
-    const characterId = decodeURIComponent(characterFunctionMatch[1]);
+  if (characterOwnedSkillsMatch) {
+    const characterId = decodeURIComponent(characterOwnedSkillsMatch[1]);
     const conversationSpace = requestedCharacterWorkspaceSpace(url, characterId);
     if (method === "GET") {
       sendJson(input.response, 200, {
-        functionProfile: kernel.getCharacterFunctionProfile(characterId, conversationSpace),
+        skills: kernel.listCharacterOwnedSkills(characterId, conversationSpace),
       });
       return;
     }
-    if (method === "PUT") {
+    if (method === "POST") {
+      assertLocalControlPlaneMutation(input.request);
       const body = asRecord(await readJson(input.request));
-      if (!Array.isArray(body.capabilities)) {
-        throw new SyntaxError("capabilities must be an array");
-      }
-      const update: CharacterFunctionProfileUpdate = {
-        publicRole: body.publicRole === undefined ? undefined : String(body.publicRole),
-        taskPreferences: body.taskPreferences === undefined
-          ? undefined
-          : String(body.taskPreferences),
-        avoidedTasks: body.avoidedTasks === undefined ? undefined : String(body.avoidedTasks),
-        maxConcurrentTasks: body.maxConcurrentTasks === undefined
-          ? undefined
-          : requiredNumber(body.maxConcurrentTasks, "maxConcurrentTasks"),
-        manualLocked: body.manualLocked === undefined
-          ? undefined
-          : requiredBoolean(body.manualLocked, "manualLocked"),
-        capabilities: body.capabilities.map((raw, index) => {
-          const capability = asRecord(raw);
-          return {
-            capabilityId: requiredString(
-              capability.capabilityId,
-              `capabilities[${index}].capabilityId`,
-            ) as CharacterCapabilityId,
-            level: requiredNumber(capability.level, `capabilities[${index}].level`),
-            responsibility: requiredString(
-              capability.responsibility,
-              `capabilities[${index}].responsibility`,
-            ) as "primary" | "support",
-            autoAccept: requiredBoolean(
-              capability.autoAccept,
-              `capabilities[${index}].autoAccept`,
-            ),
-            moduleIds: capability.moduleIds === undefined
-              ? []
-              : optionalStringArray(capability.moduleIds),
-            notes: capability.notes === undefined ? "" : String(capability.notes),
-          };
-        }),
+      const createInput: CharacterOwnedSkillCreateInput = {
+        name: requiredString(body.name, "name"),
+        description: optionalString(body.description),
+        tags: body.tags === undefined ? [] : optionalStringArray(body.tags),
+        markdown: requiredString(body.markdown, "markdown"),
+        autoImprove: body.autoImprove === undefined
+          ? true
+          : requiredBoolean(body.autoImprove, "autoImprove"),
+        activate: body.activate === undefined
+          ? true
+          : requiredBoolean(body.activate, "activate"),
+        createdBy: "user",
       };
+      sendJson(input.response, 201, {
+        skill: kernel.createCharacterOwnedSkill(characterId, createInput, conversationSpace),
+      });
+      return;
+    }
+  }
+
+  const characterOwnedSkillMatch = pathname.match(
+    /^\/api\/v1\/characters\/([^/]+)\/owned-skills\/([^/]+)$/,
+  );
+  if (characterOwnedSkillMatch && method === "PATCH") {
+    assertLocalControlPlaneMutation(input.request);
+    const characterId = decodeURIComponent(characterOwnedSkillMatch[1]);
+    const packageId = decodeURIComponent(characterOwnedSkillMatch[2]);
+    const conversationSpace = requestedCharacterWorkspaceSpace(url, characterId);
+    const body = asRecord(await readJson(input.request));
+    const patch: CharacterOwnedSkillUpdateInput = {
+      ...(body.name === undefined ? {} : { name: requiredString(body.name, "name") }),
+      ...(body.description === undefined
+        ? {}
+        : { description: optionalString(body.description) ?? "" }),
+      ...(body.tags === undefined ? {} : { tags: optionalStringArray(body.tags) }),
+      ...(body.autoImprove === undefined
+        ? {}
+        : { autoImprove: requiredBoolean(body.autoImprove, "autoImprove") }),
+      ...(body.status === undefined
+        ? {}
+        : { status: requiredString(body.status, "status") as CharacterOwnedSkillUpdateInput["status"] }),
+    };
+    sendJson(input.response, 200, {
+      skill: kernel.updateCharacterOwnedSkill(
+        characterId,
+        packageId,
+        patch,
+        conversationSpace,
+      ),
+    });
+    return;
+  }
+
+  const characterOwnedSkillReviewMatch = pathname.match(
+    /^\/api\/v1\/characters\/([^/]+)\/owned-skills\/([^/]+)\/review$/,
+  );
+  if (characterOwnedSkillReviewMatch && method === "GET") {
+    const characterId = decodeURIComponent(characterOwnedSkillReviewMatch[1]);
+    const packageId = decodeURIComponent(characterOwnedSkillReviewMatch[2]);
+    const conversationSpace = requestedCharacterWorkspaceSpace(url, characterId);
+    sendJson(input.response, 200, {
+      skill: kernel.listCharacterOwnedSkills(characterId, conversationSpace)
+        .find((entry) => entry.id === packageId),
+      ...kernel.getCharacterOwnedSkillReview(characterId, packageId, conversationSpace),
+    });
+    return;
+  }
+
+  const characterOwnedSkillVersionsMatch = pathname.match(
+    /^\/api\/v1\/characters\/([^/]+)\/owned-skills\/([^/]+)\/versions$/,
+  );
+  if (characterOwnedSkillVersionsMatch) {
+    const characterId = decodeURIComponent(characterOwnedSkillVersionsMatch[1]);
+    const packageId = decodeURIComponent(characterOwnedSkillVersionsMatch[2]);
+    const conversationSpace = requestedCharacterWorkspaceSpace(url, characterId);
+    if (method === "GET") {
       sendJson(input.response, 200, {
-        functionProfile: kernel.updateCharacterFunctionProfile(
+        versions: kernel.listCharacterOwnedSkillVersions(
           characterId,
-          update,
+          packageId,
           conversationSpace,
         ),
+      });
+      return;
+    }
+    if (method === "POST") {
+      assertLocalControlPlaneMutation(input.request);
+      const body = asRecord(await readJson(input.request));
+      sendJson(input.response, 201, {
+        version: kernel.createCharacterOwnedSkillVersion(
+          characterId,
+          packageId,
+          {
+            markdown: requiredString(body.markdown, "markdown"),
+            changeSummary: optionalString(body.changeSummary),
+            activate: body.activate === undefined
+              ? true
+              : requiredBoolean(body.activate, "activate"),
+            source: "manual",
+          },
+          conversationSpace,
+        ),
+      });
+      return;
+    }
+  }
+
+  const characterOwnedSkillActivateMatch = pathname.match(
+    /^\/api\/v1\/characters\/([^/]+)\/owned-skills\/([^/]+)\/versions\/([^/]+)\/activate$/,
+  );
+  if (characterOwnedSkillActivateMatch && method === "POST") {
+    assertLocalControlPlaneMutation(input.request);
+    const characterId = decodeURIComponent(characterOwnedSkillActivateMatch[1]);
+    const packageId = decodeURIComponent(characterOwnedSkillActivateMatch[2]);
+    const versionId = decodeURIComponent(characterOwnedSkillActivateMatch[3]);
+    const conversationSpace = requestedCharacterWorkspaceSpace(url, characterId);
+    sendJson(input.response, 200, {
+      version: kernel.activateCharacterOwnedSkillVersion(
+        characterId,
+        packageId,
+        versionId,
+        conversationSpace,
+      ),
+    });
+    return;
+  }
+
+  const characterOwnedSkillProposalMatch = pathname.match(
+    /^\/api\/v1\/characters\/([^/]+)\/owned-skills\/([^/]+)\/proposals\/([^/]+)\/(approve|reject)$/,
+  );
+  if (characterOwnedSkillProposalMatch && method === "POST") {
+    assertLocalControlPlaneMutation(input.request);
+    const characterId = decodeURIComponent(characterOwnedSkillProposalMatch[1]);
+    const packageId = decodeURIComponent(characterOwnedSkillProposalMatch[2]);
+    const proposalId = decodeURIComponent(characterOwnedSkillProposalMatch[3]);
+    const decision = characterOwnedSkillProposalMatch[4] as "approve" | "reject";
+    const conversationSpace = requestedCharacterWorkspaceSpace(url, characterId);
+    sendJson(input.response, 200, {
+      result: kernel.reviewCharacterOwnedSkillProposal(
+        characterId,
+        packageId,
+        proposalId,
+        decision,
+        conversationSpace,
+      ),
+    });
+    return;
+  }
+
+  const characterCollaborationProfileMatch = pathname.match(
+    /^\/api\/v1\/characters\/([^/]+)\/collaboration-profile$/,
+  );
+  if (characterCollaborationProfileMatch) {
+    const characterId = decodeURIComponent(characterCollaborationProfileMatch[1]);
+    if (method === "GET") {
+      sendJson(input.response, 200, {
+        collaborationProfile: kernel.getCharacterCollaborationProfile(characterId),
+      });
+      return;
+    }
+    if (method === "PATCH") {
+      assertLocalControlPlaneMutation(input.request);
+      const body = asRecord(await readJson(input.request));
+      sendJson(input.response, 200, {
+        collaborationProfile: kernel.updateCharacterCollaborationProfile(characterId, {
+          ...(body.introduction === undefined
+            ? {}
+            : { introduction: String(body.introduction) }),
+          ...(body.traits === undefined ? {} : { traits: optionalStringArray(body.traits) }),
+          ...(body.maxConcurrentTasks === undefined
+            ? {}
+            : {
+                maxConcurrentTasks: requiredNumber(
+                  body.maxConcurrentTasks,
+                  "maxConcurrentTasks",
+                ),
+              }),
+        }),
       });
       return;
     }
@@ -2589,6 +2844,26 @@ async function route(input: {
       topicPolicy: kernel.resetCharacterProactiveTopic(
         decodeURIComponent(characterLifeTopicResetMatch[1]),
         decodeURIComponent(characterLifeTopicResetMatch[2]),
+      ),
+    });
+    return;
+  }
+
+  const characterLifeAttributesMatch = pathname.match(
+    /^\/api\/v1\/characters\/([^/]+)\/life\/attributes$/,
+  );
+  if (characterLifeAttributesMatch && method === "PATCH") {
+    assertLocalControlPlaneMutation(input.request);
+    const body = asRecord(await readJson(input.request));
+    const rawValues = asRecord(body.values);
+    const values = Object.fromEntries(Object.entries(rawValues).map(([key, value]) => [
+      key,
+      requiredNumber(value, `values.${key}`),
+    ]));
+    sendJson(input.response, 200, {
+      life: kernel.updateCharacterWorldAttributes(
+        decodeURIComponent(characterLifeAttributesMatch[1]),
+        values,
       ),
     });
     return;
@@ -3042,6 +3317,56 @@ async function route(input: {
     }
   }
 
+  if (pathname === "/api/settings/mineru") {
+    if (method === "GET") {
+      sendJson(input.response, 200, kernel.getMineruConfig());
+      return;
+    }
+    if (method === "PATCH") {
+      assertLocalControlPlaneMutation(input.request);
+      const patch = (await readJson(input.request)) as MineruApiConfigPatch;
+      sendJson(input.response, 200, kernel.patchMineruConfig(patch));
+      return;
+    }
+  }
+
+  if (pathname === "/api/settings/git-access") {
+    if (method === "GET") {
+      sendJson(input.response, 200, kernel.getGitAccessConfig());
+      return;
+    }
+    if (method === "PATCH") {
+      assertLocalControlPlaneMutation(input.request);
+      const body = asRecord(await readJson(input.request));
+      assertOnlyKeys(body, ["expectedRevision", "credential", "proxyMode", "proxyPort"], "Git access settings");
+      const patch: GitAccessConfigPatch = {
+        ...(body.credential === undefined ? {} : { credential: requiredBrowserGitAccessCredential(body.credential) }),
+        ...(body.proxyMode === undefined ? {} : { proxyMode: requiredGitProxyMode(body.proxyMode) }),
+        ...(body.proxyPort === undefined ? {} : { proxyPort: requiredGitProxyPort(body.proxyPort) }),
+      };
+      sendJson(input.response, 200, kernel.patchGitAccessConfig(
+        patch,
+        requiredGitAccessRevision(body.expectedRevision),
+      ));
+      return;
+    }
+  }
+
+  if (pathname === "/api/settings/git-access/generate-key" && method === "POST") {
+    assertLocalControlPlaneMutation(input.request);
+    const body = asRecord(await readJson(input.request));
+    assertOnlyKeys(body, ["expectedRevision"], "Git access key generation");
+    sendJson(input.response, 200, await kernel.generateGitAccessKey(
+      requiredGitAccessRevision(body.expectedRevision),
+    ));
+    return;
+  }
+
+  if (pathname === "/api/settings/git-access/public-key" && method === "GET") {
+    sendJson(input.response, 200, kernel.getGitAccessPublicKey());
+    return;
+  }
+
   if (pathname === "/api/settings/trace-archive") {
     if (method === "GET") {
       sendJson(input.response, 200, kernel.getTraceArchiveStatus());
@@ -3082,6 +3407,12 @@ async function route(input: {
 
   if (pathname === "/api/v1/diagnostics/vision/models" && method === "GET") {
     sendJson(input.response, 200, { models: await kernel.discoverVisionModels() });
+    return;
+  }
+
+  if (pathname === "/api/v1/diagnostics/mineru/test" && method === "POST") {
+    assertLocalControlPlaneMutation(input.request);
+    sendJson(input.response, 200, await kernel.testMineruConnection());
     return;
   }
 
@@ -3378,7 +3709,7 @@ function requireCharacterBoundMessage(
   value: unknown,
 ): MessageRequest {
   const body = asRecord(value);
-  const metadata = kernel.listConversationMetadata().find((entry) => entry.id === sessionId);
+  const metadata = kernel.getConversationMetadata(sessionId);
   const conversationSpace = requiredConversationSpace(body.conversationSpace ?? "normal");
   const requestedCharacterId = optionalString(body.characterId);
   const secretCharacterId = requiredSecretConversationCharacterId(body, conversationSpace);
@@ -3448,7 +3779,7 @@ function requireMessageAttachments(value: unknown): NonNullable<MessageRequest["
 }
 
 function assertCharacterBoundSession(kernel: CompanionKernel, sessionId: string): void {
-  const metadata = kernel.listConversationMetadata().find((entry) => entry.id === sessionId);
+  const metadata = kernel.getConversationMetadata(sessionId);
   if (!metadata) throw new ConversationNotFoundError(sessionId);
   if (metadata?.archivedAt) throw new ConversationArchivedError(sessionId);
   if (!metadata?.characterId) {
@@ -3460,6 +3791,15 @@ function assertCharacterBoundSession(kernel: CompanionKernel, sessionId: string)
 
 function requestedConversationSpace(url: URL): ConversationSpace {
   return requiredConversationSpace(url.searchParams.get("conversationSpace") ?? "normal");
+}
+
+function interactionScopeForConversation(
+  conversationSpace: ConversationSpace,
+  characterId: string,
+): InteractionScope {
+  return conversationSpace === "secret"
+    ? { conversationSpace: "secret", secretOwnerCharacterId: characterId }
+    : { conversationSpace: "normal" };
 }
 
 function requestedConversationCharacterId(
@@ -3490,7 +3830,7 @@ function assertSessionConversationSpace(
   conversationSpace: ConversationSpace,
   characterId?: string,
 ): void {
-  const metadata = kernel.listConversationMetadata().find((entry) => entry.id === sessionId);
+  const metadata = kernel.getConversationMetadata(sessionId);
   if (
     !metadata || metadata.conversationSpace !== conversationSpace ||
     (characterId !== undefined && metadata.characterId !== characterId)
@@ -3520,7 +3860,7 @@ function assertSessionWorkspaceScope(
   url: URL,
 ): ConversationSpace {
   const conversationSpace = assertRequestedSessionConversationSpace(kernel, sessionId, url);
-  const metadata = kernel.listConversationMetadata().find((entry) => entry.id === sessionId);
+  const metadata = kernel.getConversationMetadata(sessionId);
   if (conversationSpace === "secret" && !metadata?.characterId) {
     throw new CharacterBindingRequiredError(
       `Session ${sessionId} has no selected character; secret Workspace is unavailable`,
@@ -3669,6 +4009,62 @@ function optionalString(value: unknown): string | undefined {
   return typeof value === "string" && value.trim() ? value.trim() : undefined;
 }
 
+function assertOnlyKeys(
+  value: Record<string, unknown>,
+  allowed: readonly string[],
+  subject: string,
+): void {
+  const allowedKeys = new Set(allowed);
+  const unexpected = Object.keys(value).find((key) => !allowedKeys.has(key));
+  if (unexpected) throw new SyntaxError(`${subject} contains unsupported field: ${unexpected}`);
+}
+
+function requiredGitAccessRevision(value: unknown): number {
+  if (typeof value !== "number" || !Number.isSafeInteger(value) || value < 0) {
+    throw new SyntaxError("expectedRevision must be a non-negative integer");
+  }
+  return value;
+}
+
+function requiredBrowserGitAccessCredential(
+  value: unknown,
+): NonNullable<GitAccessConfigPatch["credential"]> {
+  const credential = asRecord(value);
+  if (credential.kind === "unconfigured") {
+    assertOnlyKeys(credential, ["kind"], "Git identity credential");
+    return { kind: "unconfigured" };
+  }
+  if (credential.kind === "external-file") {
+    assertOnlyKeys(credential, ["kind", "privateKeyPath"], "Git identity credential");
+    return {
+      kind: "external-file",
+      privateKeyPath: requiredString(credential.privateKeyPath, "privateKeyPath"),
+    };
+  }
+  throw new SyntaxError("credential.kind must be unconfigured or external-file");
+}
+
+function requiredStringValue(value: unknown, field: string, allowEmpty = false): string {
+  if (typeof value !== "string") throw new SyntaxError(`${field} must be a string`);
+  const normalized = value.trim();
+  if (!allowEmpty && !normalized) throw new SyntaxError(`${field} is required`);
+  return normalized;
+}
+
+function requiredGitProxyMode(value: unknown): "direct" | "hclient" {
+  if (value !== "direct" && value !== "hclient") {
+    throw new SyntaxError("proxyMode must be direct or hclient");
+  }
+  return value;
+}
+
+function requiredGitProxyPort(value: unknown): number {
+  if (typeof value !== "number" || !Number.isInteger(value) || value < 1 || value > 65_535) {
+    throw new SyntaxError("proxyPort must be an integer between 1 and 65535");
+  }
+  return value;
+}
+
 function requiredString(value: unknown, field: string): string {
   const result = optionalString(value);
   if (!result) {
@@ -3795,6 +4191,11 @@ function requiredInteractionAction(value: unknown): "propose" | "begin" | "end" 
     return value;
   }
   throw new SyntaxError("interaction action must be propose, begin, end, cancel, or undo");
+}
+
+function requiredWorldAttributeScope(value: unknown): "world" | "character" {
+  if (value === "world" || value === "character") return value;
+  throw new SyntaxError("scope must be world or character");
 }
 
 function contextPlannerBudgets(search: URLSearchParams) {

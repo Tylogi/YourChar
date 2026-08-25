@@ -1,5 +1,15 @@
 import type { Mode } from "../domain/types.js";
 
+export type InteractionScope =
+  | {
+      conversationSpace: "normal";
+      secretOwnerCharacterId?: never;
+    }
+  | {
+      conversationSpace: "secret";
+      secretOwnerCharacterId: string;
+    };
+
 export type InteractionContinuity = "canonical" | "sandbox";
 export type InteractionPresence = "remote" | "meeting_pending" | "co_present";
 export type NarrativeLens = "message" | "observable_scene" | "close_third";
@@ -25,7 +35,7 @@ export type InteractionWorldRuntimeSnapshot = {
   expectedUntil?: string;
 };
 
-export type InteractionState = {
+export type InteractionState = InteractionScope & {
   sessionId: string;
   characterId: string;
   continuity: InteractionContinuity;
@@ -45,7 +55,7 @@ export type InteractionStateSnapshot = Pick<
   "continuity" | "presence" | "lens" | "placeId" | "location" | "meetingNote"
 > & { worldRuntimeBeforeMeeting?: InteractionWorldRuntimeSnapshot };
 
-export type InteractionEvent = {
+export type InteractionEvent = InteractionScope & {
   id: string;
   sessionId: string;
   characterId: string;
@@ -75,4 +85,4 @@ export type InteractionSessionDescriptor = {
   sessionId: string;
   characterId: string;
   mode: Mode;
-};
+} & InteractionScope;

@@ -6,6 +6,7 @@
   "description": "Local-first runtime for persistent AI characters and digital lives.",
   "scripts": {
     "build": "tsc -p tsconfig.json",
+    "setup:markitdown": "uv sync --project services/markitdown --frozen --python /usr/bin/python3",
     "dev": "npm run build && node --disable-warning=ExperimentalWarning dist/src/server.js",
     "start": "node --disable-warning=ExperimentalWarning dist/src/server.js",
     "test": "npm run build && node --disable-warning=ExperimentalWarning --test dist/test/*.test.js",
@@ -41,6 +42,7 @@
     "@larksuiteoapi/node-sdk": "^1.71.1",
     "@modelcontextprotocol/sdk": "1.29.0",
     "@mozilla/readability": "^0.6.0",
+    "@twemoji/api": "^17.0.3",
     "dompurify": "^3.4.12",
     "fflate": "^0.8.2",
     "ipaddr.js": "^2.4.0",
@@ -48,6 +50,7 @@
     "lucide": "^1.24.0",
     "marked": "^18.0.6",
     "qrcode": "^1.5.4",
+    "twemoji-svg": "^17.0.2",
     "typebox": "1.1.38",
     "undici": "8.5.0",
     "yaml": "2.9.0",

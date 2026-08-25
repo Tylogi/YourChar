@@ -257,18 +257,24 @@ test("secret conversations ignore meeting presets and shared profile even with s
     const secret = await runtime.kernel.openCanonicalPrivateConversation(character.id, "secret");
 
     // Simulate stale data from before the route-level secret-space guard.
-    runtime.kernel.interactionService.ensure(secret.id, character.id, "sms");
+    const secretScope = {
+      conversationSpace: "secret" as const,
+      secretOwnerCharacterId: character.id,
+    };
+    runtime.kernel.interactionService.ensure(secret.id, character.id, "sms", secretScope);
     runtime.kernel.interactionService.proposeMeeting({
       sessionId: secret.id,
       characterId: character.id,
       mode: "sms",
-      location: "NORMAL_WORLD_LOCATION_SENTINEL",
+      scope: secretScope,
+      location: "SECRET_INTERACTION_LOCATION_SENTINEL",
       source: "user_control",
     });
     runtime.kernel.interactionService.beginMeeting({
       sessionId: secret.id,
       characterId: character.id,
       mode: "sms",
+      scope: secretScope,
       source: "user_control",
       userConfirmed: true,
     });
@@ -288,7 +294,7 @@ test("secret conversations ignore meeting presets and shared profile even with s
     const serializedPayload = JSON.stringify(providerPayload);
     assert.doesNotMatch(serializedPayload, /PRESET_(?:BEFORE|AFTER)/);
     assert.doesNotMatch(serializedPayload, /NORMAL_PROFILE_SENTINEL/);
-    assert.doesNotMatch(serializedPayload, /NORMAL_WORLD_LOCATION_SENTINEL/);
+    assert.match(serializedPayload, /SECRET_INTERACTION_LOCATION_SENTINEL/);
     assert.doesNotMatch(request.systemPrompt, /NORMAL_PROFILE_SENTINEL/);
     assert.equal(providerPayload.top_p, undefined);
     assert.equal(providerPayload.frequency_penalty, undefined);

@@ -51,6 +51,11 @@ Vision configuration is stored in private `vision.json`. HTTP responses expose
 only the masked Key. Operational backup includes this file and marks the backup
 manifest as containing Vision credentials.
 
+Model discovery requires only the Base URL and, when required by the provider,
+the API Key. A model does not need to be entered before selecting **读取模型**.
+Connection testing and image analysis remain fail-closed until an exact model
+ID from the provider is selected; model IDs are treated as case-sensitive.
+
 ## Cache and limits
 
 Analysis cache keys include prompt version, image SHA-256, model, question,

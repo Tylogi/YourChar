@@ -2,8 +2,8 @@
 
 ## Purpose
 
-Relationship State adds slow, persistent relationship development and short-lived
-affect to each user-character pair. It complements, but does not replace:
+Relationship State adds slow, persistent relationship development, short-lived
+tension, and affect to each user-character pair. It complements, but does not replace:
 
 - `SOUL.md`: stable character identity and behavioral rules;
 - RP memory: durable facts and story continuity;
@@ -16,18 +16,20 @@ identifies a user-character relationship. A future multi-user version must add a
 
 ## State Model
 
-Long-term dimensions are integer values in `[0, 100]`:
+Two long-term dimensions are integer values in `[0, 100]`:
 
 | Dimension | Initial | Meaning |
 |---|---:|---|
 | trust | 35 | confidence in the user's honesty and reliability |
-| closeness | 20 | familiarity, openness, and interpersonal distance |
-| affection | 25 | fondness and positive attachment |
-| respect | 50 | regard for the user's judgment and boundaries |
-| tension | 5 | unresolved conflict, wariness, or discomfort |
+| bond | 25 | accumulated familiarity, attachment, and interpersonal closeness |
+
+`tension` is a separate short-term value in `[0, 100]`, initially `0`. It tracks
+unresolved conflict, wariness, or discomfort and decays toward zero with a
+12-hour half-life. Trust and bond do not decay automatically.
 
 The stage (`stranger`, `acquaintance`, `familiar`, `close`, `intimate`, or
-`strained`) is derived from those dimensions and is never independently written.
+`strained`) is derived from trust, bond, and current tension and is never
+independently written.
 It describes interpersonal distance only. `intimate` does not mean that the user
 and character are dating.
 
@@ -39,8 +41,8 @@ Explicit relationship semantics are stored separately:
   `mutual_interest`, `dating`, `committed`, or `former_partners`.
 
 Bond facets may coexist. Romantic status follows a trusted state machine rather
-than a score threshold. High affection, flirting, physical affection, jealousy,
-or an `intimate` stage can never promote `romance_status` on their own.
+than a score threshold. A high bond, flirting, physical affection, jealousy, or
+an `intimate` stage can never promote `romance_status` on their own.
 
 Short-term affect uses valence `[-1, 1]`, arousal `[0, 1]`, control `[0, 1]`, and
 up to three finite labels. It decays toward `(0, 0.2, 0.8)` with a six-hour
@@ -147,8 +149,8 @@ The user control plane is:
 - `GET /api/v1/post-turn-coordinator/status`
 - `POST /api/v1/post-turn-coordinator/jobs/{id}/retry`
 
-Reset requires the exact character name or ID. The character page shows raw
-dimensions, decayed affect, and the event ledger because it is a user-facing
+Reset requires the exact character name or ID. The character page shows trust,
+bond, decayed tension and affect, and the event ledger because it is a user-facing
 management surface. Reset also invalidates outstanding extractor leases so an
 older in-flight result cannot recreate cleared state. It also fences old quiet
 turns from later periodic reviews while retaining their audit rows. Chat does
@@ -167,11 +169,17 @@ expands the trusted event enum, and migrates every existing character to empty
 bond facets with romantic status `none`. Existing scores and event history are
 preserved.
 
+Schema 43 simplifies the numeric relationship model. Existing `closeness`,
+`affection`, and `respect` values are folded into `bond` using weights of 50%,
+40%, and 10%. Trust, tension, semantic bond facets, romantic status, affect,
+versions, timestamps, and event evidence are preserved. Historical event deltas
+are normalized to `trust`, `bond`, and `tension` with the same weighting.
+
 Schema 22 adds Post-turn consumer and per-consumer result metadata to the
 compatibility job table. See [post-turn-coordinator.md](./post-turn-coordinator.md).
 
 All three use `ON DELETE CASCADE` from `characters`. Operational backup supports
-database schema 17, and the normal user-data export includes snapshots, events,
+the current database schema, and the normal user-data export includes snapshots, events,
 and Coordinator status. Relationship state is SQLite runtime data in this version;
 it is not yet projected into the Markdown Memory Vault or OKF exports.
 
@@ -183,7 +191,7 @@ Automated tests must preserve these invariants:
 - every completed private turn is analyzed when Relationship State is enabled;
 - relationship and eligible departure analysis share one model call;
 - injected score/delta fields are ignored and policy limits still apply;
-- affection and intimacy never imply a romantic status;
+- bond strength and intimacy never imply a romantic status;
 - formal romantic milestones require source-verifiable evidence from the
   required participants;
 - breakup and reunion transitions preserve an auditable semantic ledger;

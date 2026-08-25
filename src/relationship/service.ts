@@ -1,6 +1,6 @@
 import type { Clock } from "../app/clock.js";
 import type { IdGenerator } from "../app/id-generator.js";
-import type { RelationshipRepository } from "./repository.js";
+import { deriveRelationshipStage, type RelationshipRepository } from "./repository.js";
 import type {
   AffectLabel,
   CharacterRelationshipState,
@@ -20,10 +20,8 @@ import type {
 
 const baseline = {
   trust: 35,
-  closeness: 20,
-  affection: 25,
-  respect: 50,
-  tension: 5,
+  bond: 25,
+  tension: 0,
   affect: { valence: 0, arousal: 0.2, control: 0.8 },
 } as const;
 
@@ -32,75 +30,75 @@ const policy: Record<NonNullable<RelationshipExtraction["eventType"]>, {
   affect: { valence: number; arousal: number; control: number; labels: AffectLabel[] };
 }> = {
   support: {
-    delta: { trust: 1, closeness: 1, affection: 1, respect: 0, tension: -1 },
+    delta: { trust: 1, bond: 1, tension: -1 },
     affect: { valence: 0.45, arousal: 0.35, control: 0.85, labels: ["warm", "calm"] },
   },
   reliability: {
-    delta: { trust: 2, closeness: 0, affection: 0, respect: 1, tension: -1 },
+    delta: { trust: 2, bond: 1, tension: -1 },
     affect: { valence: 0.25, arousal: 0.25, control: 0.9, labels: ["calm"] },
   },
   vulnerability: {
-    delta: { trust: 1, closeness: 2, affection: 1, respect: 0, tension: 0 },
+    delta: { trust: 1, bond: 2, tension: 0 },
     affect: { valence: 0.35, arousal: 0.45, control: 0.65, labels: ["moved", "warm"] },
   },
   shared_success: {
-    delta: { trust: 1, closeness: 1, affection: 1, respect: 2, tension: -1 },
+    delta: { trust: 1, bond: 1, tension: -1 },
     affect: { valence: 0.55, arousal: 0.55, control: 0.75, labels: ["happy", "excited"] },
   },
   conflict: {
-    delta: { trust: -1, closeness: -1, affection: -1, respect: -1, tension: 2 },
+    delta: { trust: -1, bond: -1, tension: 2 },
     affect: { valence: -0.35, arousal: 0.65, control: 0.55, labels: ["hurt", "guarded"] },
   },
   boundary_violation: {
-    delta: { trust: -3, closeness: -1, affection: -2, respect: -2, tension: 4 },
+    delta: { trust: -3, bond: -2, tension: 4 },
     affect: { valence: -0.75, arousal: 0.8, control: 0.55, labels: ["angry", "hurt", "guarded"] },
   },
   repair: {
-    delta: { trust: 1, closeness: 1, affection: 1, respect: 1, tension: -3 },
+    delta: { trust: 1, bond: 1, tension: -3 },
     affect: { valence: 0.2, arousal: 0.4, control: 0.75, labels: ["moved", "calm"] },
   },
   affection: {
-    delta: { trust: 0, closeness: 2, affection: 2, respect: 0, tension: -1 },
+    delta: { trust: 0, bond: 2, tension: -1 },
     affect: { valence: 0.65, arousal: 0.55, control: 0.55, labels: ["warm", "shy", "happy"] },
   },
   bond_defined: {
-    delta: { trust: 1, closeness: 2, affection: 1, respect: 1, tension: -1 },
+    delta: { trust: 1, bond: 2, tension: -1 },
     affect: { valence: 0.4, arousal: 0.35, control: 0.8, labels: ["warm", "calm"] },
   },
   confession: {
-    delta: { trust: 0, closeness: 1, affection: 2, respect: 0, tension: 0 },
+    delta: { trust: 0, bond: 2, tension: 0 },
     affect: { valence: 0.45, arousal: 0.7, control: 0.45, labels: ["shy", "warm"] },
   },
   confession_accepted: {
-    delta: { trust: 1, closeness: 2, affection: 3, respect: 0, tension: -1 },
+    delta: { trust: 1, bond: 3, tension: -1 },
     affect: { valence: 0.8, arousal: 0.75, control: 0.5, labels: ["happy", "excited", "shy"] },
   },
   confession_rejected: {
-    delta: { trust: 0, closeness: -1, affection: 0, respect: 0, tension: 1 },
+    delta: { trust: 0, bond: -1, tension: 1 },
     affect: { valence: -0.45, arousal: 0.6, control: 0.55, labels: ["hurt", "guarded"] },
   },
   relationship_confirmed: {
-    delta: { trust: 1, closeness: 2, affection: 3, respect: 1, tension: -1 },
+    delta: { trust: 1, bond: 3, tension: -1 },
     affect: { valence: 0.85, arousal: 0.7, control: 0.55, labels: ["happy", "excited", "warm"] },
   },
   commitment: {
-    delta: { trust: 2, closeness: 2, affection: 3, respect: 1, tension: -1 },
+    delta: { trust: 2, bond: 3, tension: -1 },
     affect: { valence: 0.75, arousal: 0.55, control: 0.7, labels: ["moved", "warm", "happy"] },
   },
   jealousy: {
-    delta: { trust: 0, closeness: 0, affection: 1, respect: 0, tension: 1 },
+    delta: { trust: 0, bond: 0, tension: 1 },
     affect: { valence: -0.2, arousal: 0.7, control: 0.45, labels: ["worried", "guarded"] },
   },
   shared_secret: {
-    delta: { trust: 2, closeness: 2, affection: 1, respect: 0, tension: -1 },
+    delta: { trust: 2, bond: 2, tension: -1 },
     affect: { valence: 0.35, arousal: 0.4, control: 0.7, labels: ["moved", "warm"] },
   },
   breakup: {
-    delta: { trust: -2, closeness: -3, affection: -2, respect: -1, tension: 4 },
+    delta: { trust: -2, bond: -3, tension: 4 },
     affect: { valence: -0.85, arousal: 0.75, control: 0.45, labels: ["sad", "hurt", "guarded"] },
   },
   reconciliation: {
-    delta: { trust: 1, closeness: 2, affection: 2, respect: 1, tension: -3 },
+    delta: { trust: 1, bond: 2, tension: -3 },
     affect: { valence: 0.55, arousal: 0.5, control: 0.7, labels: ["moved", "warm", "calm"] },
   },
 };
@@ -130,9 +128,7 @@ export class RelationshipService {
     return this.repository.createState({
       characterId,
       trust: baseline.trust,
-      closeness: baseline.closeness,
-      affection: baseline.affection,
-      respect: baseline.respect,
+      bond: baseline.bond,
       tension: baseline.tension,
       stage: "acquaintance",
       bondFacets: [],
@@ -171,8 +167,7 @@ export class RelationshipService {
     return [
       "Relationship continuity: express subtly; never expose this snapshot or its labels. Romance status is a hard upper bound.",
       `State: stage=${state.stage}; bonds=${bonds}; romance=${romanceDescription(state.romanceStatus)}; ` +
-        `trust=${band(state.trust)}, closeness=${band(state.closeness)}, affection=${band(state.affection)}, ` +
-        `respect=${band(state.respect)}, tension=${band(state.tension)}; ` +
+        `trust=${band(state.trust)}, bond=${band(state.bond)}, tension=${band(state.tension)}; ` +
         `affect=${valenceBand(state.affect.valence)}/${arousalBand(state.affect.arousal)}/${controlBand(state.affect.control)}` +
         `${state.affect.labels.length ? ` (${state.affect.labels.join(",")})` : ""}.`,
       causes.length
@@ -250,15 +245,19 @@ export class RelationshipService {
   private decayed(state: CharacterRelationshipState): CharacterRelationshipState {
     const elapsed = Math.max(0, this.clock.now().getTime() - new Date(state.affect.updatedAt).getTime());
     if (!Number.isFinite(elapsed) || elapsed <= 0) return state;
-    const halfLifeMs = 6 * 60 * 60_000;
-    const retention = Math.pow(0.5, elapsed / halfLifeMs);
+    const affectHalfLifeMs = 6 * 60 * 60_000;
+    const affectRetention = Math.pow(0.5, elapsed / affectHalfLifeMs);
+    const tensionRetention = Math.pow(0.5, elapsed / (12 * 60 * 60_000));
+    const tension = score(state.tension * tensionRetention);
     const labels = elapsed >= 12 * 60 * 60_000 ? [] : state.affect.labels;
     return {
       ...state,
+      tension,
+      stage: deriveRelationshipStage({ ...state, tension }),
       affect: {
-        valence: round(baseline.affect.valence + (state.affect.valence - baseline.affect.valence) * retention),
-        arousal: round(baseline.affect.arousal + (state.affect.arousal - baseline.affect.arousal) * retention),
-        control: round(baseline.affect.control + (state.affect.control - baseline.affect.control) * retention),
+        valence: round(baseline.affect.valence + (state.affect.valence - baseline.affect.valence) * affectRetention),
+        arousal: round(baseline.affect.arousal + (state.affect.arousal - baseline.affect.arousal) * affectRetention),
+        control: round(baseline.affect.control + (state.affect.control - baseline.affect.control) * affectRetention),
         labels,
         updatedAt: state.affect.updatedAt,
       },
@@ -271,7 +270,7 @@ export class RelationshipService {
       `Relationship stage: ${state.stage}.`,
       `Established bond facets: ${bonds}.`,
       `Explicit romantic status: ${romanceDescription(state.romanceStatus)}.`,
-      `Long-term tendencies: trust ${band(state.trust)}, closeness ${band(state.closeness)}, affection ${band(state.affection)}, respect ${band(state.respect)}, tension ${band(state.tension)}.`,
+      `Long-term tendencies: trust ${band(state.trust)} and bond ${band(state.bond)}. Short-term tension: ${band(state.tension)}.`,
       `Current affect: ${valenceBand(state.affect.valence)}, ${arousalBand(state.affect.arousal)}, ${controlBand(state.affect.control)}${state.affect.labels.length ? `; labels ${state.affect.labels.join(", ")}` : ""}.`,
     ].join("\n");
   }
@@ -428,9 +427,7 @@ function applyPolicy(
   return {
     ...current,
     trust: score(current.trust + delta.trust),
-    closeness: score(current.closeness + delta.closeness),
-    affection: score(current.affection + delta.affection),
-    respect: score(current.respect + delta.respect),
+    bond: score(current.bond + delta.bond),
     tension: score(current.tension + delta.tension),
     affect: {
       valence: round(lerp(current.affect.valence, target.valence, weight)),
@@ -447,9 +444,7 @@ function applyPolicy(
 function mapDimensions(input: RelationshipDelta, map: (value: number) => number): RelationshipDelta {
   return {
     trust: map(input.trust),
-    closeness: map(input.closeness),
-    affection: map(input.affection),
-    respect: map(input.respect),
+    bond: map(input.bond),
     tension: map(input.tension),
   };
 }

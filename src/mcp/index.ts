@@ -5,6 +5,8 @@ export * from "./schedule-server.js";
 export * from "./tavily-server.js";
 export * from "./memory-server.js";
 export * from "./vision-server.js";
+export * from "./mineru-server.js";
+export * from "./git-server.js";
 export * from "./subagent-server.js";
 export * from "./relationship-server.js";
 export * from "./web-reader-server.js";

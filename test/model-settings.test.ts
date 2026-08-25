@@ -96,7 +96,6 @@ test("model API reasoning effort validates, exposes safe values, and can return 
   const kernel = new CompanionKernel({
     stateDir: false,
     startScheduler: false,
-    characterFunctionInferer: false,
     characterSkillReflector: false,
   });
   const server = createHttpServer({ kernel });
@@ -200,7 +199,6 @@ test("MLX reasoning none disables template thinking without an unsupported top-l
     startWorldCoordinator: false,
     startPrivateInboxCoordinator: false,
     memoryExtractor: async () => ({ candidates: [] }),
-    characterFunctionInferer: false,
     characterSkillReflector: false,
   });
   try {

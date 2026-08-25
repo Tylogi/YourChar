@@ -22,15 +22,19 @@ and adds the RP companion domain on top:
 - optional SSRF-restricted Web Reader MCP for readable public URL contents;
 - direct or independent Vision MCP image understanding for text-only primary models;
 - optional isolated private-chat subagents for bounded work, research, planning, and review;
-- automatic SOUL-derived functional roles, fixed capabilities, one visible versioned Skill per character, and trusted same-world specialist routing;
-- optional per-character relationship and decaying affect state with trusted bounded updates;
+- automatic SOUL-derived functional roles, multiple exclusive versioned Skills per character, Skill-aware same-world delegation, and reviewed self-improvement proposals;
+- optional per-character trust/bond state, decaying tension and affect, with trusted bounded updates;
 - a 2000-character profile summary plus durable reality/global memory;
 - persistent, retryable post-turn Memory Coordinator jobs with trusted review;
 - permission-gated workspace file tools and a Bubblewrap-isolated shell;
+- optional SSH Git access that keeps cloned repositories in a fixed Workspace tree;
+- a network-isolated MarkItDown worker for bounded PDF and Office document reading;
+- optional MinerU API parsing for richer document layout, formulas, tables, and OCR, behind a separate MCP switch;
 - independently authorized User Profile and character SOUL editing;
 - collapsible per-message execution progress without exposing hidden model reasoning;
 - collapsed-by-default tool results and MCP/Skill token-impact estimates;
 - one canonical private SMS thread per character and one shared timeline per world;
+- a durable per-character private partition plus disposable incognito snapshots for testing without committing the resulting turns;
 - optional single-owner WeChat and Feishu/Lark channels, each routed to a selected character's normal conversation;
 - world-level narrative/Analyzer profiles; World turns never invoke character-bound chat models;
 - event-scoped fixed World prompts with restart-safe append-only history and KV-cache metrics;
@@ -43,6 +47,7 @@ and adds the RP companion domain on top:
 
 ```bash
 npm install
+npm run setup:markitdown
 npm test
 npm run test:browser
 npm run build
@@ -50,6 +55,9 @@ npm run dev
 ```
 
 Pi runtime packages require Node `>=22.19.0`.
+Structured document reading additionally requires `uv`, Python 3.11 or newer,
+and Bubblewrap. `npm run setup:markitdown` creates only the project-local
+`services/markitdown/.venv`; it never installs packages into system Python.
 
 The repository pins Node `22.19.0` in `.nvmrc`. The target product architecture,
 development milestones, and Agent-oriented test contracts are documented in
@@ -70,6 +78,9 @@ Workspace, shell, and protected-document permissions are documented in
 Per-character private-mode isolation, shared boundaries, backup behavior, and
 the non-encryption threat model are documented in
 [`docs/private-mode.md`](docs/private-mode.md).
+Disposable normal-state snapshots, local no-retention boundaries, disabled
+side-effect capabilities, and model-provider caveats are documented in
+[`docs/incognito-mode.md`](docs/incognito-mode.md).
 Single-owner WeChat and Feishu/Lark setup, normal-only routing, attachment,
 credential, and backup boundaries are documented in
 [`docs/im-channels.md`](docs/im-channels.md).
@@ -79,9 +90,14 @@ Read-only URL extraction, network boundaries, TUN behavior, and test contracts
 are documented in [`docs/web-reader-mcp.md`](docs/web-reader-mcp.md).
 Vision routing, upload boundaries, caching, and test contracts are documented in
 [`docs/vision-mcp.md`](docs/vision-mcp.md).
+MinerU endpoint setup, document-upload boundaries, and module gating are documented in
+[`docs/mineru-mcp.md`](docs/mineru-mcp.md).
+The single-identity Git settings, fixed repository Workspace, repository lock,
+commit/push safeguards, and normal-only module gating are documented in
+[`docs/git-repository-mcp.md`](docs/git-repository-mcp.md).
 Private-chat delegation, child isolation, budgets, and test contracts are
 documented in [`docs/subagent-delegation.md`](docs/subagent-delegation.md).
-Per-character relationship dimensions, affect decay, trusted update policy, MCP
+Per-character trust/bond state, tension and affect decay, trusted update policy, MCP
 boundaries, and test contracts are documented in
 [`docs/relationship-affect.md`](docs/relationship-affect.md).
 The current memory retrieval, context budget, resident snapshot, cache, and
@@ -102,8 +118,8 @@ Deterministic functional completeness, independent LLM-as-Judge quality scoring,
 target-model sandbox routing, aggregate labels, and report interpretation are
 documented in
 [`docs/model-adaptation-evaluation.md`](docs/model-adaptation-evaluation.md).
-Character organization, specialist workbench boundaries, capability routing,
-task evidence, and gated Skill improvement are documented in
+Character collaboration profiles, Skill-only routing, exclusive Skill packages,
+task evaluation, and reviewed Skill improvement are documented in
 [`docs/character-organization-v2.md`](docs/character-organization-v2.md).
 
 The deterministic Agent test control API is disabled by default. Start a
@@ -155,7 +171,8 @@ history and no external command is executed.
 The scheduling API is rooted at `/api/v1/schedule-items`; notification history
 and retry use `/api/v1/notifications`. Character, scene, and memory APIs use
 `/api/v1/characters`, `/api/v1/sessions/{id}/scene`, and `/api/v1/memories`.
-Canonical private chat opens through `/api/v1/direct-conversations`; World
+Canonical private chat opens through `/api/v1/direct-conversations`; disposable
+test overlays open through `/api/v1/incognito-conversations`; World
 timelines use `/api/v1/world-conversations` and
 `/api/v1/worlds/{id}/conversation/*`.
 WeChat and Feishu/Lark status, per-platform character routes, QR binding, and
@@ -178,6 +195,12 @@ Read-only retrieval evaluation uses `/api/v1/context-plan/preview` and
 `/api/v1/memory-vault/health` and `/api/v1/memory-vault/recovery`.
 Tavily Key and optional HTTPS proxy status use `/api/settings/tavily`; its
 connection diagnostic uses `POST /api/v1/diagnostics/tavily/test`.
+MinerU endpoint and optional Bearer token settings use `/api/settings/mineru`;
+its connection diagnostic uses `POST /api/v1/diagnostics/mineru/test`.
+The one host-side Git identity is managed from **Settings → Repository** through
+`/api/settings/git-access`. Repository URLs are supplied in normal character
+conversation instead of being pre-registered as Projects or application
+whitelists; checkouts stay below `.yourchar/workspace/repos/`.
 In test mode, create an isolated run at
 `POST /api/_test/v1/runs`, then send normal `/api/v1` requests with
 `X-RP-Test-Run-Id`. The run exposes virtual clock, scripted model, scheduler

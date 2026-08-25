@@ -86,6 +86,102 @@ export type CharacterWorldMembership = {
   updatedAt: string;
 };
 
+export type WorldAttributeDefinitionStatus = "active" | "archived";
+export type WorldAttributeScope = "world" | "character";
+export type WorldAttributeEventSource =
+  | "user_control"
+  | "post_turn_analysis"
+  | "world_turn_analysis"
+  | "agent_tool"
+  | "system";
+
+export type WorldAttributeAnalysisDirection = "increase" | "decrease";
+
+export type WorldAttributeDefinition = {
+  id: string;
+  worldId: string;
+  key: string;
+  name: string;
+  scope: WorldAttributeScope;
+  description: string;
+  minValue: number;
+  maxValue: number;
+  defaultValue: number;
+  analysisEnabled: boolean;
+  increaseRule: string;
+  increaseDelta: number;
+  decreaseRule: string;
+  decreaseDelta: number;
+  visibleToAgent: boolean;
+  status: WorldAttributeDefinitionStatus;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type CharacterWorldAttribute = WorldAttributeDefinition & {
+  scope: "character";
+  characterId: string;
+  value: number;
+  valueUpdatedAt?: string;
+};
+
+export type WorldSharedAttribute = WorldAttributeDefinition & {
+  scope: "world";
+  value: number;
+  valueUpdatedAt?: string;
+};
+
+export type WorldAttributeEvent = {
+  id: string;
+  worldId: string;
+  attributeScope: WorldAttributeScope;
+  characterId?: string;
+  attributeId: string;
+  attributeKey: string;
+  source: WorldAttributeEventSource;
+  requestedDelta: number;
+  appliedDelta: number;
+  beforeValue: number;
+  afterValue: number;
+  summary: string;
+  idempotencyKey: string;
+  analysisDirection?: WorldAttributeAnalysisDirection;
+  ruleSnapshot?: string;
+  evidence?: string;
+  confidence?: number;
+  sourceReferenceId?: string;
+  createdAt: string;
+};
+
+export type WorldAttributeAnalysisRule = {
+  attributeId: string;
+  key: string;
+  name: string;
+  scope: WorldAttributeScope;
+  description: string;
+  currentValue: number;
+  definitionUpdatedAt: string;
+  increaseRule?: string;
+  increaseDelta: number;
+  decreaseRule?: string;
+  decreaseDelta: number;
+};
+
+export type WorldAttributeAnalysisContext = {
+  worldId: string;
+  characterId: string;
+  attributes: WorldAttributeAnalysisRule[];
+};
+
+export type WorldAttributeAnalysisDecision = {
+  characterId: string;
+  key: string;
+  direction: WorldAttributeAnalysisDirection;
+  summary: string;
+  evidence: string;
+  confidence: number;
+};
+
 export type CharacterAutonomyPolicy = {
   characterId: string;
   enabled: boolean;
@@ -191,9 +287,38 @@ export type CharacterLifeSnapshot = {
   policy: CharacterAutonomyPolicy;
   plans: CharacterActivityPlan[];
   events: WorldEvent[];
+  attributes: CharacterWorldAttribute[];
+  worldAttributes: WorldSharedAttribute[];
+  attributeEvents: WorldAttributeEvent[];
   proactiveMessages: ProactiveMessage[];
   proactiveTopicPolicies: ProactiveTopicPolicy[];
 };
+
+export type CreateWorldAttributeDefinitionInput = {
+  worldId: string;
+  key: string;
+  name: string;
+  scope?: WorldAttributeScope;
+  description?: string;
+  minValue: number;
+  maxValue: number;
+  defaultValue: number;
+  analysisEnabled?: boolean;
+  increaseRule?: string;
+  increaseDelta?: number;
+  decreaseRule?: string;
+  decreaseDelta?: number;
+  visibleToAgent?: boolean;
+};
+
+export type UpdateWorldAttributeDefinitionInput = Partial<
+  Pick<
+    WorldAttributeDefinition,
+    "name" | "description" | "minValue" | "maxValue" | "defaultValue" |
+      "analysisEnabled" | "increaseRule" | "increaseDelta" | "decreaseRule" | "decreaseDelta" |
+      "visibleToAgent"
+  >
+>;
 
 export type CreateWorldInput = {
   name: string;
@@ -385,6 +510,7 @@ export type WorldAnalysis = {
     summary: string;
     confidence: number;
   }>;
+  attributeChanges: WorldAttributeAnalysisDecision[];
 };
 
 export type WorldTurnEvent =
@@ -495,6 +621,7 @@ export type WorldPlannerInput = {
   }>;
   now: string;
   localDate: string;
+  localDateTime: string;
 };
 
 export type WorldPlanner = (input: WorldPlannerInput) => Promise<unknown>;

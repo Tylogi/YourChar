@@ -44,18 +44,26 @@ test("Vision service restricts image paths, validates signatures, masks credenti
   });
 
   try {
+    const discoveryConfig = service.patchConfig({
+      baseUrl: "https://vision.example.test/v1/chat/completions",
+      apiKey: "vision-secret-key",
+    });
+    assert.equal(discoveryConfig.model, "");
+    assert.deepEqual(await service.discoverModels(), ["vision-a", "vision-b"]);
+    await assert.rejects(
+      service.testConnection(),
+      (error: unknown) => error instanceof Error && error.message === "Vision model is required",
+    );
+
     const config = service.patchConfig({
       mode: "mcp",
-      baseUrl: "https://vision.example.test/v1/chat/completions",
       model: "vision-a",
-      apiKey: "vision-secret-key",
       detail: "high",
       maxImages: 3,
     });
     assert.equal(config.apiKeyMasked, "visi...-key");
     assert.equal(JSON.stringify(config).includes("vision-secret-key"), false);
     assert.match(readFileSync(join(root, "vision.json"), "utf8"), /vision-secret-key/);
-    assert.deepEqual(await service.discoverModels(), ["vision-a", "vision-b"]);
 
     const first = await service.analyzePath(
       { path: image.path, question: "What is visible?" },

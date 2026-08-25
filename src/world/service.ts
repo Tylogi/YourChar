@@ -13,6 +13,7 @@ import {
   type CharacterRuntimeState,
   type CharacterWorldAssignmentInput,
   type CreatePlaceInput,
+  type CreateWorldAttributeDefinitionInput,
   type CreateWorldInput,
   type PerformWorldActionInput,
   type ProactiveFeedbackType,
@@ -20,7 +21,13 @@ import {
   type ProactiveTopicPolicy,
   type RoleWorld,
   type UpdatePlaceInput,
+  type UpdateWorldAttributeDefinitionInput,
   type UpdateWorldInput,
+  type WorldAttributeDefinition,
+  type WorldAttributeAnalysisContext,
+  type WorldAttributeAnalysisDecision,
+  type WorldAttributeEvent,
+  type WorldAttributeEventSource,
   type WorldCapabilityId,
   type WorldCharacterDirectoryEntry,
   type WorldEvent,
@@ -32,6 +39,7 @@ const MAX_WORLD_DESCRIPTION = 1_200;
 const MAX_WORLD_RULES = 6_000;
 const MAX_PLACE_NAME = 80;
 const MAX_PLACE_DESCRIPTION = 800;
+const MAX_WORLD_ATTRIBUTES = 8;
 
 export class WorldNotFoundError extends Error {
   constructor(kind: "world" | "place" | "character world", id: string) {
@@ -184,6 +192,353 @@ export class WorldService {
       if (deleted) this.bumpWorldRevision(world);
       return deleted;
     });
+  }
+
+  createAttributeDefinition(input: CreateWorldAttributeDefinitionInput): WorldAttributeDefinition {
+    const world = this.requireActiveWorld(input.worldId);
+    if (this.repository.listAttributeDefinitions(world.id).length >= MAX_WORLD_ATTRIBUTES) {
+      throw new WorldValidationError(`a world can contain at most ${MAX_WORLD_ATTRIBUTES} active attributes`);
+    }
+    const key = validAttributeKey(input.key);
+    if (this.repository.getAttributeDefinitionByKey(world.id, key)) {
+      throw new WorldValidationError(`world attribute key already exists: ${key}`);
+    }
+    const range = validAttributeRange(input.minValue, input.maxValue, input.defaultValue);
+    const now = this.clock.now().toISOString();
+    const definition: WorldAttributeDefinition = {
+      id: this.idGenerator.next("world-attribute"),
+      worldId: world.id,
+      key,
+      name: requiredText(input.name, "attribute name", 40),
+      scope: validAttributeScope(input.scope),
+      description: optionalText(input.description, 240),
+      ...range,
+      analysisEnabled: input.analysisEnabled ?? false,
+      increaseRule: optionalText(input.increaseRule, 800),
+      increaseDelta: boundedInteger(input.increaseDelta ?? 1, 1, 1_000, "increase delta"),
+      decreaseRule: optionalText(input.decreaseRule, 800),
+      decreaseDelta: boundedInteger(input.decreaseDelta ?? 1, 1, 1_000, "decrease delta"),
+      visibleToAgent: input.visibleToAgent ?? true,
+      status: "active",
+      createdAt: now,
+      updatedAt: now,
+    };
+    assertAttributePolicy(definition);
+    return this.repository.transaction(() => {
+      const created = this.repository.createAttributeDefinition(definition);
+      this.bumpWorldRevision(world);
+      return created;
+    });
+  }
+
+  listAttributeDefinitions(worldId: string, includeArchived = false): WorldAttributeDefinition[] {
+    this.getWorld(worldId);
+    return this.repository.listAttributeDefinitions(worldId, includeArchived);
+  }
+
+  getAttributeDefinition(id: string): WorldAttributeDefinition {
+    const definition = this.repository.getAttributeDefinition(id);
+    if (!definition) throw new WorldValidationError(`world attribute not found: ${id}`);
+    return definition;
+  }
+
+  updateAttributeDefinition(
+    id: string,
+    patch: UpdateWorldAttributeDefinitionInput,
+  ): WorldAttributeDefinition {
+    const current = this.getAttributeDefinition(id);
+    if (current.status !== "active") throw new WorldValidationError("archived world attributes cannot be changed");
+    const world = this.requireActiveWorld(current.worldId);
+    const range = validAttributeRange(
+      patch.minValue ?? current.minValue,
+      patch.maxValue ?? current.maxValue,
+      patch.defaultValue ?? current.defaultValue,
+    );
+    if (this.repository.hasAttributeValuesOutsideRange(id, range.minValue, range.maxValue)) {
+      throw new WorldValidationError("existing character values fall outside the requested range");
+    }
+    const next: WorldAttributeDefinition = {
+      ...current,
+      name: patch.name === undefined ? current.name : requiredText(patch.name, "attribute name", 40),
+      description: patch.description === undefined
+        ? current.description
+        : optionalText(patch.description, 240),
+      ...range,
+      analysisEnabled: patch.analysisEnabled ?? current.analysisEnabled,
+      increaseRule: patch.increaseRule === undefined
+        ? current.increaseRule
+        : optionalText(patch.increaseRule, 800),
+      increaseDelta: patch.increaseDelta === undefined
+        ? current.increaseDelta
+        : boundedInteger(patch.increaseDelta, 1, 1_000, "increase delta"),
+      decreaseRule: patch.decreaseRule === undefined
+        ? current.decreaseRule
+        : optionalText(patch.decreaseRule, 800),
+      decreaseDelta: patch.decreaseDelta === undefined
+        ? current.decreaseDelta
+        : boundedInteger(patch.decreaseDelta, 1, 1_000, "decrease delta"),
+      visibleToAgent: patch.visibleToAgent ?? current.visibleToAgent,
+      updatedAt: this.clock.now().toISOString(),
+    };
+    assertAttributePolicy(next);
+    return this.repository.transaction(() => {
+      const updated = this.repository.updateAttributeDefinition(next);
+      this.bumpWorldRevision(world);
+      return updated;
+    });
+  }
+
+  archiveAttributeDefinition(id: string): WorldAttributeDefinition {
+    const current = this.getAttributeDefinition(id);
+    if (current.status === "archived") return current;
+    const world = this.getWorld(current.worldId);
+    const next = { ...current, status: "archived" as const, updatedAt: this.clock.now().toISOString() };
+    return this.repository.transaction(() => {
+      const updated = this.repository.updateAttributeDefinition(next);
+      this.bumpWorldRevision(world);
+      return updated;
+    });
+  }
+
+  getCharacterAttributes(characterId: string) {
+    this.rpService.getCharacter(characterId);
+    const membership = this.repository.getMembership(characterId);
+    return membership
+      ? this.repository.listCharacterAttributes(membership.worldId, characterId)
+      : [];
+  }
+
+  getWorldAttributes(worldId: string) {
+    this.getWorld(worldId);
+    return this.repository.listWorldAttributes(worldId);
+  }
+
+  attributeAnalysisContext(characterId: string): WorldAttributeAnalysisContext | undefined {
+    this.rpService.getCharacter(characterId);
+    const membership = this.repository.getMembership(characterId);
+    if (!membership) return undefined;
+    const attributes = [
+      ...this.repository.listWorldAttributes(membership.worldId),
+      ...this.repository.listCharacterAttributes(membership.worldId, characterId),
+    ]
+      .filter((attribute) => attribute.analysisEnabled && (attribute.increaseRule || attribute.decreaseRule))
+      .map((attribute) => ({
+        attributeId: attribute.id,
+        key: attribute.key,
+        name: attribute.name,
+        scope: attribute.scope,
+        description: attribute.description,
+        currentValue: attribute.value,
+        definitionUpdatedAt: attribute.updatedAt,
+        increaseDelta: attribute.increaseDelta,
+        decreaseDelta: attribute.decreaseDelta,
+        ...(attribute.increaseRule
+          ? { increaseRule: attribute.increaseRule }
+          : {}),
+        ...(attribute.decreaseRule
+          ? { decreaseRule: attribute.decreaseRule }
+          : {}),
+      }));
+    return attributes.length ? { worldId: membership.worldId, characterId, attributes } : undefined;
+  }
+
+  worldAttributeAnalysisContexts(
+    worldId: string,
+    characterIds: readonly string[],
+  ): WorldAttributeAnalysisContext[] {
+    this.getWorld(worldId);
+    return [...new Set(characterIds)].flatMap((characterId) => {
+      const context = this.attributeAnalysisContext(characterId);
+      return context?.worldId === worldId ? [context] : [];
+    });
+  }
+
+  setCharacterAttributeValues(characterId: string, values: Record<string, number>): CharacterLifeSnapshot {
+    this.rpService.getCharacter(characterId);
+    const membership = this.repository.getMembership(characterId);
+    if (!membership) throw new WorldValidationError("assign the character to a world before setting attributes");
+    const changes = Object.entries(values).map(([rawKey, rawValue]) => {
+      const key = validAttributeKey(rawKey);
+      const definition = this.repository.getAttributeDefinitionByKey(membership.worldId, key);
+      if (!definition || definition.status !== "active") {
+        throw new WorldValidationError(`active world attribute not found: ${key}`);
+      }
+      if (definition.scope !== "character") {
+        throw new WorldValidationError(`world-shared attribute must be changed from the World Card: ${key}`);
+      }
+      const value = boundedInteger(rawValue, definition.minValue, definition.maxValue, definition.name);
+      const current = this.repository.listCharacterAttributes(membership.worldId, characterId)
+        .find((entry) => entry.id === definition.id)!;
+      return { definition, current, value };
+    });
+    const now = this.clock.now().toISOString();
+    this.repository.transaction(() => {
+      for (const change of changes) {
+        if (change.value === change.current.value) continue;
+        this.repository.upsertCharacterAttributeValue(
+          membership.worldId,
+          characterId,
+          change.definition.id,
+          change.value,
+          now,
+        );
+        this.repository.createAttributeEvent({
+          id: this.idGenerator.next("world-attribute-event"),
+          worldId: membership.worldId,
+          attributeScope: "character",
+          characterId,
+          attributeId: change.definition.id,
+          attributeKey: change.definition.key,
+          source: "user_control",
+          requestedDelta: change.value - change.current.value,
+          appliedDelta: change.value - change.current.value,
+          beforeValue: change.current.value,
+          afterValue: change.value,
+          summary: "用户在角色生活设置中调整",
+          idempotencyKey: this.idGenerator.next("world-attribute-control"),
+          createdAt: now,
+        });
+      }
+    });
+    return this.getCharacterLife(characterId);
+  }
+
+  setWorldAttributeValues(worldId: string, values: Record<string, number>) {
+    this.requireActiveWorld(worldId);
+    const currentAttributes = this.repository.listWorldAttributes(worldId);
+    const changes = Object.entries(values).map(([rawKey, rawValue]) => {
+      const key = validAttributeKey(rawKey);
+      const definition = this.repository.getAttributeDefinitionByKey(worldId, key);
+      if (!definition || definition.status !== "active") {
+        throw new WorldValidationError(`active world attribute not found: ${key}`);
+      }
+      if (definition.scope !== "world") {
+        throw new WorldValidationError(`character attribute must be changed from a character panel: ${key}`);
+      }
+      const value = boundedInteger(rawValue, definition.minValue, definition.maxValue, definition.name);
+      const current = currentAttributes.find((entry) => entry.id === definition.id)!;
+      return { definition, current, value };
+    });
+    const now = this.clock.now().toISOString();
+    this.repository.transaction(() => {
+      for (const change of changes) {
+        if (change.value === change.current.value) continue;
+        this.repository.upsertWorldAttributeValue(worldId, change.definition.id, change.value, now);
+        this.repository.createAttributeEvent({
+          id: this.idGenerator.next("world-attribute-event"),
+          worldId,
+          attributeScope: "world",
+          attributeId: change.definition.id,
+          attributeKey: change.definition.key,
+          source: "user_control",
+          requestedDelta: change.value - change.current.value,
+          appliedDelta: change.value - change.current.value,
+          beforeValue: change.current.value,
+          afterValue: change.value,
+          summary: "用户在世界卡中调整",
+          idempotencyKey: this.idGenerator.next("world-attribute-control"),
+          createdAt: now,
+        });
+      }
+    });
+    return {
+      attributes: this.repository.listWorldAttributes(worldId),
+      attributeEvents: this.repository.listWorldAttributeEvents(worldId, 20),
+    };
+  }
+
+  applyAttributeAnalysis(input: {
+    context: WorldAttributeAnalysisContext;
+    decisions: readonly WorldAttributeAnalysisDecision[];
+    source: Extract<WorldAttributeEventSource, "post_turn_analysis" | "world_turn_analysis">;
+    sourceReferenceId: string;
+    evidenceTexts: readonly string[];
+  }): WorldAttributeEvent[] {
+    const membership = this.repository.getMembership(input.context.characterId);
+    if (!membership || membership.worldId !== input.context.worldId) return [];
+    const evidenceCorpus = input.evidenceTexts.map(normalizeEvidenceText).filter(Boolean);
+    const seen = new Set<string>();
+    const events: WorldAttributeEvent[] = [];
+    for (const decision of input.decisions) {
+      if (decision.characterId !== input.context.characterId || seen.has(decision.key)) continue;
+      seen.add(decision.key);
+      if (!Number.isFinite(decision.confidence) || decision.confidence < 0.7 || decision.confidence > 1) continue;
+      const snapshot = input.context.attributes.find((attribute) => attribute.key === decision.key);
+      if (!snapshot) continue;
+      const definition = this.repository.getAttributeDefinitionByKey(input.context.worldId, decision.key);
+      if (
+        !definition || definition.status !== "active" || !definition.analysisEnabled ||
+        definition.id !== snapshot.attributeId || definition.updatedAt !== snapshot.definitionUpdatedAt ||
+        definition.increaseRule !== (snapshot.increaseRule ?? "") ||
+        definition.increaseDelta !== snapshot.increaseDelta ||
+        definition.decreaseRule !== (snapshot.decreaseRule ?? "") ||
+        definition.decreaseDelta !== snapshot.decreaseDelta
+      ) continue;
+      const evidence = optionalText(decision.evidence, 240);
+      if (!evidence || !evidenceCorpus.some((text) => text.includes(normalizeEvidenceText(evidence)))) continue;
+      const direction = decision.direction;
+      const rule = direction === "increase" ? definition.increaseRule : definition.decreaseRule;
+      const magnitude = direction === "increase" ? definition.increaseDelta : definition.decreaseDelta;
+      if (!rule) continue;
+      const delta = direction === "increase" ? magnitude : -magnitude;
+      const idempotencyTarget = definition.scope === "world"
+        ? "world"
+        : input.context.characterId;
+      const idempotencyKey = [
+        "world-attribute-analysis",
+        input.source,
+        input.sourceReferenceId,
+        idempotencyTarget,
+        definition.id,
+      ].join(":");
+      const existing = this.repository.findAttributeEventByIdempotencyKey(idempotencyKey);
+      if (existing) {
+        events.push(existing);
+        continue;
+      }
+      const current = (definition.scope === "world"
+        ? this.repository.listWorldAttributes(input.context.worldId)
+        : this.repository.listCharacterAttributes(input.context.worldId, input.context.characterId))
+        .find((entry) => entry.id === definition.id);
+      if (!current) continue;
+      const nextValue = Math.max(definition.minValue, Math.min(definition.maxValue, current.value + delta));
+      const now = this.clock.now().toISOString();
+      events.push(this.repository.transaction(() => {
+        if (definition.scope === "world") {
+          this.repository.upsertWorldAttributeValue(input.context.worldId, definition.id, nextValue, now);
+        } else {
+          this.repository.upsertCharacterAttributeValue(
+            input.context.worldId,
+            input.context.characterId,
+            definition.id,
+            nextValue,
+            now,
+          );
+        }
+        return this.repository.createAttributeEvent({
+          id: this.idGenerator.next("world-attribute-event"),
+          worldId: input.context.worldId,
+          characterId: input.context.characterId,
+          attributeScope: definition.scope,
+          attributeId: definition.id,
+          attributeKey: definition.key,
+          source: input.source,
+          requestedDelta: delta,
+          appliedDelta: nextValue - current.value,
+          beforeValue: current.value,
+          afterValue: nextValue,
+          summary: optionalText(decision.summary, 240),
+          idempotencyKey,
+          analysisDirection: direction,
+          ruleSnapshot: rule,
+          evidence,
+          confidence: decision.confidence,
+          sourceReferenceId: input.sourceReferenceId,
+          createdAt: now,
+        });
+      }));
+    }
+    return events;
   }
 
   assignCharacter(characterId: string, input: CharacterWorldAssignmentInput): CharacterLifeSnapshot {
@@ -419,6 +774,9 @@ export class WorldService {
         policy: this.repository.getPolicy(characterId) ?? defaultPolicy(characterId, now),
         plans: [],
         events: [],
+        attributes: [],
+        worldAttributes: [],
+        attributeEvents: [],
         proactiveMessages: this.repository.listProactiveMessages({ characterId, limit: 20 }),
         proactiveTopicPolicies: this.repository.listProactiveTopicPolicies(characterId),
       };
@@ -432,6 +790,9 @@ export class WorldService {
       policy: this.repository.getPolicy(characterId) ?? defaultPolicy(characterId, now),
       plans: this.repository.listActivityPlans(characterId, 30),
       events: this.repository.listEventsForCharacter(characterId, 20),
+      attributes: this.repository.listCharacterAttributes(world.id, characterId),
+      worldAttributes: this.repository.listWorldAttributes(world.id),
+      attributeEvents: this.repository.listAttributeEvents(characterId, world.id, 20),
       proactiveMessages: this.repository.listProactiveMessages({ characterId, limit: 20 }),
       proactiveTopicPolicies: this.repository.listProactiveTopicPolicies(characterId),
     };
@@ -490,6 +851,10 @@ export class WorldService {
     const runtime = this.repository.getRuntime(characterId) ?? this.initialRuntime(membership, world);
     const place = runtime.placeId ? this.repository.getPlace(runtime.placeId) : undefined;
     const events = this.repository.listEventsForCharacter(characterId, 2);
+    const characterAttributes = this.repository.listCharacterAttributes(world.id, characterId)
+      .filter((attribute) => attribute.visibleToAgent);
+    const worldAttributes = this.repository.listWorldAttributes(world.id)
+      .filter((attribute) => attribute.visibleToAgent);
     const now = this.clock.now().getTime();
     const upcoming = this.repository.listActivityPlans(characterId, 20).flatMap((plan) => {
       if (plan.status !== "planned") return [];
@@ -512,6 +877,20 @@ export class WorldService {
       `Current activity: ${contextText(runtime.activity)}`,
       `Availability: ${runtime.availability}`,
       `Energy: ${runtime.energy}/100`,
+      worldAttributes.length ? "World-shared attributes (one value shared by every character):" : "",
+      ...worldAttributes.map((attribute) => {
+        const policy = attribute.analysisEnabled
+          ? "updated only by trusted post-turn rule analysis"
+          : "changed only by user control";
+        return `- ${contextText(attribute.name)} (${xml(attribute.key)}): ${attribute.value} [${attribute.minValue}..${attribute.maxValue}; ${policy}]${attribute.description ? ` — ${contextText(sliceText(attribute.description, 120))}` : ""}`;
+      }),
+      characterAttributes.length ? "Character-specific attributes:" : "",
+      ...characterAttributes.map((attribute) => {
+        const policy = attribute.analysisEnabled
+          ? "updated only by trusted post-turn rule analysis"
+          : "changed only by user control";
+        return `- ${contextText(attribute.name)} (${xml(attribute.key)}): ${attribute.value} [${attribute.minValue}..${attribute.maxValue}; ${policy}]${attribute.description ? ` — ${contextText(sliceText(attribute.description, 120))}` : ""}`;
+      }),
       runtime.expectedUntil ? `Expected until: ${runtime.expectedUntil}` : "",
       events.length ? "Recent world events:" : "",
       ...events.map((event) => `- ${event.startsAt}: ${contextText(event.summary)}`),
@@ -713,6 +1092,46 @@ function optionalText(value: string | undefined, max: number): string {
   const text = String(value ?? "").trim();
   if ([...text].length > max) throw new WorldValidationError(`text exceeds ${max} characters`);
   return text;
+}
+
+function validAttributeKey(value: string): string {
+  const key = String(value ?? "").trim().toLowerCase();
+  if (!/^[a-z][a-z0-9_.-]{0,39}$/.test(key)) {
+    throw new WorldValidationError("attribute key must start with a-z and contain at most 40 lowercase letters, digits, '.', '_' or '-'");
+  }
+  return key;
+}
+
+function validAttributeScope(value: CreateWorldAttributeDefinitionInput["scope"]): "world" | "character" {
+  if (value === undefined || value === "character") return "character";
+  if (value === "world") return "world";
+  throw new WorldValidationError("attribute scope must be world or character");
+}
+
+function validAttributeRange(minValue: number, maxValue: number, defaultValue: number) {
+  const min = boundedInteger(minValue, -10_000, 10_000, "attribute minimum");
+  const max = boundedInteger(maxValue, -10_000, 10_000, "attribute maximum");
+  if (min >= max) throw new WorldValidationError("attribute minimum must be lower than maximum");
+  const initial = boundedInteger(defaultValue, min, max, "attribute default");
+  return { minValue: min, maxValue: max, defaultValue: initial };
+}
+
+function assertAttributePolicy(definition: Pick<
+  WorldAttributeDefinition,
+  "analysisEnabled" | "increaseRule" | "increaseDelta" | "decreaseRule" | "decreaseDelta" |
+    "minValue" | "maxValue"
+>): void {
+  if (definition.analysisEnabled && !definition.increaseRule && !definition.decreaseRule) {
+    throw new WorldValidationError("automatic attribute analysis requires an increase or decrease rule");
+  }
+  const range = definition.maxValue - definition.minValue;
+  if (definition.increaseDelta > range || definition.decreaseDelta > range) {
+    throw new WorldValidationError("attribute analysis delta cannot exceed the attribute range");
+  }
+}
+
+function normalizeEvidenceText(value: string): string {
+  return String(value ?? "").replace(/[\r\n\t]+/gu, " ").replace(/\s+/gu, " ").trim();
 }
 
 function optionalIdentifier(value: string | undefined): string | undefined {

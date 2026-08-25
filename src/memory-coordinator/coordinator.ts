@@ -23,6 +23,7 @@ export class MemoryCoordinator {
   private scheduled = false;
   private processing?: Promise<void>;
   private disposed = false;
+  private readonly enabled: boolean;
 
   constructor(
     readonly repository: MemoryCoordinatorRepository,
@@ -33,7 +34,10 @@ export class MemoryCoordinator {
     private readonly extractor: MemoryExtractor,
     private readonly autoCaptureRealityEnabled: () => boolean = () => false,
     private readonly observeTrustedReality?: TrustedRealityMemoryObserver,
+    options: { enabled?: boolean } = {},
   ) {
+    this.enabled = options.enabled !== false;
+    if (!this.enabled) return;
     this.repository.recoverExpired(this.now());
     this.schedule();
   }
@@ -42,6 +46,7 @@ export class MemoryCoordinator {
     log: ContextLogEntry,
     context: { characterId?: string; conversationSpace?: ConversationSpace },
   ): MemoryExtractionJob | undefined {
+    if (!this.enabled) return undefined;
     if (log.status !== "completed") return undefined;
     return this.enqueue(log, context);
   }
@@ -50,6 +55,7 @@ export class MemoryCoordinator {
     log: ContextLogEntry,
     context: { characterId?: string; conversationSpace?: ConversationSpace },
   ): MemoryExtractionJob | undefined {
+    if (!this.enabled) return undefined;
     if (log.status !== "failed" || log.mode !== "sms") return undefined;
     if (!explicitCapture(log.requestText) && !explicitForget(log.requestText)) return undefined;
     return this.enqueue(log, context, "output_guard_exhausted");
@@ -153,6 +159,7 @@ export class MemoryCoordinator {
   }
 
   async drain(): Promise<void> {
+    if (!this.enabled) return;
     this.schedule();
     while (this.scheduled || this.processing) {
       await this.processing;
@@ -167,7 +174,7 @@ export class MemoryCoordinator {
   }
 
   private schedule(): void {
-    if (this.disposed || this.scheduled) return;
+    if (!this.enabled || this.disposed || this.scheduled) return;
     this.scheduled = true;
     setTimeout(() => {
       this.scheduled = false;

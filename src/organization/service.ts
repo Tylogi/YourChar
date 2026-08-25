@@ -1,58 +1,51 @@
 import type { Clock } from "../app/clock.js";
 import type { IdGenerator } from "../app/id-generator.js";
 import type { ConversationSpace } from "../domain/types.js";
-import type { AgentModule } from "../modules/types.js";
 import type { RpService } from "../rp/service.js";
 import type { WorldConversationService } from "../world/conversation-service.js";
 import type { WorldService } from "../world/service.js";
 import {
-  characterCapabilityCatalog,
-  characterCapabilityDefinition,
-} from "./catalog.js";
-import {
   characterSkillContentHash,
-  characterSoulHash,
-  parseCharacterFunctionInference,
   parseCharacterSkillReflection,
   validateCharacterSkillMarkdown,
 } from "./inference.js";
 import type { CharacterCapabilityRepository } from "./repository.js";
 import {
-  isCharacterCapabilityId,
-  type CharacterCapability,
-  type CharacterCapabilityEvidence,
   type CharacterCapabilityEvidenceOutcome,
-  type CharacterCapabilityEvidenceSummary,
-  type CharacterCapabilityEvolution,
-  type CharacterCapabilityId,
-  type CharacterFunctionInferer,
-  type CharacterFunctionProfile,
-  type CharacterFunctionProfileUpdate,
-  type CharacterFunctionSnapshot,
+  type CharacterCollaborationProfile,
+  type CharacterCollaborationProfileUpdate,
+  type CharacterOwnedSkillCreateInput,
+  type CharacterOwnedSkillEvaluation,
+  type CharacterOwnedSkillPackage,
+  type CharacterOwnedSkillProposal,
+  type CharacterOwnedSkillUpdateInput,
+  type CharacterOwnedSkillVersion,
   type CharacterSkillReflector,
-  type CharacterSkillVersion,
   type CharacterTaskIdentity,
   type CharacterTaskRoute,
   type CharacterTaskRouteCandidate,
   type CharacterTaskSkill,
-  type PublicCharacterFunctionSummary,
+  type PublicCharacterCollaborationSummary,
 } from "./types.js";
 
-const PUBLIC_ROLE_LIMIT = 120;
-const TASK_BOUNDARY_LIMIT = 1_000;
-const CAPABILITY_NOTES_LIMIT = 500;
+const COLLABORATION_INTRODUCTION_LIMIT = 600;
+const COLLABORATION_TRAIT_LIMIT = 32;
+const COLLABORATION_TRAITS_MAX = 12;
 const TASK_LIMIT = 2_000;
 const EVIDENCE_SUMMARY_LIMIT = 1_000;
-const MAX_MODULES_PER_CAPABILITY = 12;
-const SKILL_REFLECTION_MILESTONES = new Set([1, 3, 6, 10]);
+const OWNED_SKILL_NAME_LIMIT = 80;
+const OWNED_SKILL_DESCRIPTION_LIMIT = 600;
+const OWNED_SKILL_TAG_LIMIT = 32;
+const OWNED_SKILL_TAGS_MAX = 12;
+const OWNED_SKILL_SELECTED_MAX = 3;
+const OWNED_SKILLS_PER_CHARACTER_MAX = 12;
 
 type OrganizationActionStatus = "completed" | "failed" | "blocked";
 
 export type CharacterCapabilityServiceOptions = {
-  listModules: () => AgentModule[];
   modelAvailable: (characterId: string) => boolean;
-  inferer?: CharacterFunctionInferer;
   skillReflector?: CharacterSkillReflector;
+  ownedSkillCreator?: CharacterSkillReflector;
   onAction?: (
     actionType: string,
     status: OrganizationActionStatus,
@@ -78,20 +71,9 @@ export class CharacterTaskRoutingError extends Error {
   }
 }
 
-export class CharacterFunctionInferenceUnavailableError extends Error {
-  readonly code = "CHARACTER_FUNCTION_INFERENCE_UNAVAILABLE";
-
-  constructor(message: string) {
-    super(message);
-    this.name = "CharacterFunctionInferenceUnavailableError";
-  }
-}
-
 export class CharacterCapabilityService {
-  private readonly inferenceJobs = new Map<string, Promise<CharacterFunctionSnapshot>>();
-  private readonly skillJobs = new Map<string, Promise<CharacterSkillVersion | undefined>>();
+  private readonly ownedSkillJobs = new Map<string, Promise<CharacterOwnedSkillProposal | CharacterOwnedSkillPackage | undefined>>();
   private readonly controllers = new Set<AbortController>();
-  private inferenceTail: Promise<unknown> = Promise.resolve();
   private skillTail: Promise<unknown> = Promise.resolve();
   private disposed = false;
 
@@ -107,16 +89,7 @@ export class CharacterCapabilityService {
 
   start(): void {
     for (const character of this.rpService.listCharacters()) {
-      const profile = this.ensureProfile(character.id);
-      if (!profile.manualLocked && profile.inferenceStatus === "pending") {
-        this.repository.upsertProfile({
-          ...profile,
-          inferenceStatus: "uninitialized",
-          inferenceError: "上次自动分析未完成，已重新排队。",
-          updatedAt: this.clock.now().toISOString(),
-        });
-      }
-      this.scheduleInference(character.id, "startup");
+      this.ensureCollaborationProfile(character.id);
     }
   }
 
@@ -131,375 +104,430 @@ export class CharacterCapabilityService {
   }
 
   async waitForIdle(): Promise<void> {
-    while (this.inferenceJobs.size || this.skillJobs.size) {
-      await Promise.allSettled([
-        ...this.inferenceJobs.values(),
-        ...this.skillJobs.values(),
-      ]);
+    while (this.ownedSkillJobs.size) {
+      await Promise.allSettled(this.ownedSkillJobs.values());
     }
   }
 
-  ensureProfile(characterId: string): CharacterFunctionProfile {
+  ensureCollaborationProfile(characterId: string): CharacterCollaborationProfile {
     const character = this.rpService.getCharacter(characterId);
-    const existing = this.repository.getProfile(characterId);
+    const existing = this.repository.getCollaborationProfile(characterId);
     if (existing) return existing;
     const now = this.clock.now().toISOString();
-    return this.repository.upsertProfile({
+    return this.repository.upsertCollaborationProfile({
       characterId,
-      publicRole: "",
-      taskPreferences: "",
-      avoidedTasks: "",
+      introduction: "",
+      traits: [],
       maxConcurrentTasks: 1,
-      manualLocked: false,
-      inferenceStatus: "uninitialized",
-      sourceSoulHash: "",
-      inferenceError: "",
       createdAt: character.createdAt || now,
       updatedAt: now,
     });
   }
 
-  getSnapshot(
+  updateCollaborationProfile(
     characterId: string,
-    conversationSpace: ConversationSpace = "normal",
-  ): CharacterFunctionSnapshot {
-    const character = this.rpService.getCharacter(characterId);
-    const profile = this.ensureProfile(characterId);
-    const capabilities = this.repository.listCapabilities(characterId);
-    const evidence = conversationSpace === "normal"
-      ? this.repository.summarizeEvidence(characterId)
-      : [];
-    const activeSkill = conversationSpace === "secret"
-      ? this.ensureStarterSkill(characterId, "bootstrap", conversationSpace)
-      : this.repository.getActiveSkill(characterId, conversationSpace);
-    const evolution = capabilities.map((capability) =>
-      capabilityEvolution(
-        capability,
-        evidence.find((entry) => entry.capabilityId === capability.capabilityId),
-        activeSkill,
-      ));
-    const snapshot: CharacterFunctionSnapshot = {
-      profile,
-      capabilities,
-      catalog: characterCapabilityCatalog.map((entry) => ({
-        ...entry,
-        recommendedModuleIds: [...entry.recommendedModuleIds],
-      })),
-      modules: this.options.listModules().map((module) => ({
-        id: module.id,
-        name: module.name,
-        type: module.type,
-        enabled: module.type === "skill"
-          ? Boolean(module.enabledSpaces?.includes(conversationSpace))
-          : module.enabled,
-        estimatedTokens: module.estimatedTokens,
-      })),
-      evidence,
-      evolution,
-      activeSkills: activeSkill ? [activeSkill] : [],
-      soulOutdated: Boolean(
-        profile.sourceSoulHash &&
-        profile.sourceSoulHash !== characterSoulHash(character.name, character.soulMarkdown),
-      ),
-    };
-    if (
-      conversationSpace === "normal" &&
-      !profile.manualLocked && profile.inferenceStatus === "uninitialized"
-    ) {
-      this.scheduleInference(characterId, "snapshot");
-    }
-    return snapshot;
-  }
-
-  updateProfile(
-    characterId: string,
-    update: CharacterFunctionProfileUpdate,
-    conversationSpace: ConversationSpace = "normal",
-  ): CharacterFunctionSnapshot {
-    if (conversationSpace === "secret") {
-      throw new CharacterCapabilityValidationError(
-        "character function profile and capabilities are shared role attributes and can only be edited in normal mode",
-      );
-    }
-    const character = this.rpService.getCharacter(characterId);
-    const current = this.ensureProfile(characterId);
-    const now = this.clock.now().toISOString();
-    const knownModules = new Set(this.options.listModules().map((module) => module.id));
-    const existingCapabilities = new Map(
-      this.repository.listCapabilities(characterId)
-        .map((capability) => [capability.capabilityId, capability]),
-    );
-    const seen = new Set<CharacterCapabilityId>();
-    const capabilities = update.capabilities.map((entry) => {
-      if (!isCharacterCapabilityId(entry.capabilityId)) {
-        throw new CharacterCapabilityValidationError(
-          `unknown character capability: ${String(entry.capabilityId)}`,
-        );
-      }
-      if (seen.has(entry.capabilityId)) {
-        throw new CharacterCapabilityValidationError(
-          `duplicate character capability: ${entry.capabilityId}`,
-        );
-      }
-      seen.add(entry.capabilityId);
-      const level = boundedInteger(entry.level, 1, 5, `${entry.capabilityId} level`);
-      if (entry.responsibility !== "primary" && entry.responsibility !== "support") {
-        throw new CharacterCapabilityValidationError(
-          `${entry.capabilityId} responsibility must be primary or support`,
-        );
-      }
-      if (typeof entry.autoAccept !== "boolean") {
-        throw new CharacterCapabilityValidationError(
-          `${entry.capabilityId} autoAccept must be boolean`,
-        );
-      }
-      const moduleIds = uniqueStrings(entry.moduleIds ?? [], MAX_MODULES_PER_CAPABILITY);
-      const unknownModule = moduleIds.find((moduleId) => !knownModules.has(moduleId));
-      if (unknownModule) {
-        throw new CharacterCapabilityValidationError(`unknown agent module: ${unknownModule}`);
-      }
-      const existing = existingCapabilities.get(entry.capabilityId);
-      return {
-        characterId,
-        capabilityId: entry.capabilityId,
-        level,
-        responsibility: entry.responsibility,
-        autoAccept: entry.autoAccept,
-        moduleIds,
-        notes: boundedText(entry.notes, CAPABILITY_NOTES_LIMIT),
-        source: entry.source ?? "manual",
-        confidence: optionalConfidence(entry.confidence) ?? existing?.confidence ?? 1,
-        createdAt: existing?.createdAt ?? now,
-        updatedAt: now,
-      } satisfies CharacterCapability;
-    });
-    const profile: CharacterFunctionProfile = {
+    input: CharacterCollaborationProfileUpdate,
+  ): CharacterCollaborationProfile {
+    const current = this.ensureCollaborationProfile(characterId);
+    const updated = this.repository.upsertCollaborationProfile({
       ...current,
-      publicRole: boundedText(update.publicRole, PUBLIC_ROLE_LIMIT),
-      taskPreferences: boundedText(update.taskPreferences, TASK_BOUNDARY_LIMIT),
-      avoidedTasks: boundedText(update.avoidedTasks, TASK_BOUNDARY_LIMIT),
-      maxConcurrentTasks: boundedInteger(
-        update.maxConcurrentTasks ?? current.maxConcurrentTasks,
-        1,
-        5,
-        "maxConcurrentTasks",
-      ),
-      manualLocked: update.manualLocked ?? true,
-      inferenceStatus: "ready",
-      sourceSoulHash: characterSoulHash(character.name, character.soulMarkdown),
-      inferenceError: "",
-      updatedAt: now,
-    };
-    this.repository.transaction(() => {
-      this.repository.upsertProfile(profile);
-      this.repository.replaceCapabilities(characterId, capabilities);
-    });
-    this.ensureStarterSkill(characterId, "manual", conversationSpace);
-    return this.getSnapshot(characterId, conversationSpace);
-  }
-
-  async setAutomaticManagement(
-    characterId: string,
-    automatic: boolean,
-    conversationSpace: ConversationSpace = "normal",
-  ): Promise<CharacterFunctionSnapshot> {
-    if (conversationSpace === "secret") {
-      throw new CharacterCapabilityValidationError(
-        "character function automation is a shared role attribute and can only be changed in normal mode",
-      );
-    }
-    const current = this.ensureProfile(characterId);
-    const now = this.clock.now().toISOString();
-    this.repository.upsertProfile({
-      ...current,
-      manualLocked: !automatic,
-      inferenceStatus: automatic ? "uninitialized" : current.inferenceStatus,
-      inferenceError: automatic ? "" : current.inferenceError,
-      updatedAt: now,
-    });
-    if (!automatic) {
-      this.options.onAction?.("character_function_automation", "completed", {
-        characterId,
-        automatic: false,
-      });
-      return this.getSnapshot(characterId, conversationSpace);
-    }
-    return this.requestInference(characterId, {
-      reason: "automation_enabled",
-      force: true,
-      conversationSpace,
-    });
-  }
-
-  notifyCharacterChanged(characterId: string): void {
-    const character = this.rpService.getCharacter(characterId);
-    const current = this.ensureProfile(characterId);
-    const currentHash = characterSoulHash(character.name, character.soulMarkdown);
-    if (current.sourceSoulHash === currentHash) return;
-    if (current.manualLocked) return;
-    this.repository.upsertProfile({
-      ...current,
-      inferenceStatus: "uninitialized",
-      inferenceError: "",
+      introduction: input.introduction === undefined
+        ? current.introduction
+        : boundedText(input.introduction, COLLABORATION_INTRODUCTION_LIMIT),
+      traits: input.traits === undefined
+        ? current.traits
+        : collaborationTraits(input.traits),
+      maxConcurrentTasks: input.maxConcurrentTasks === undefined
+        ? current.maxConcurrentTasks
+        : boundedInteger(input.maxConcurrentTasks, 1, 5, "maxConcurrentTasks"),
       updatedAt: this.clock.now().toISOString(),
     });
-    this.scheduleInference(characterId, "soul_changed");
+    this.options.onAction?.("character_collaboration_profile_updated", "completed", {
+      characterId,
+      maxConcurrentTasks: updated.maxConcurrentTasks,
+    });
+    return updated;
   }
 
-  retryAutomaticInferences(): void {
-    for (const character of this.rpService.listCharacters()) {
-      const profile = this.ensureProfile(character.id);
-      if (profile.manualLocked || profile.inferenceStatus === "ready") continue;
-      this.scheduleInference(character.id, "model_configuration_changed");
-    }
-  }
-
-  requestInference(
+  listOwnedSkills(
     characterId: string,
-    input: {
-      reason: string;
-      force?: boolean;
-      conversationSpace?: ConversationSpace;
-    },
-  ): Promise<CharacterFunctionSnapshot> {
-    if (this.disposed) {
-      return Promise.reject(new CharacterFunctionInferenceUnavailableError(
-        "character function inference service is disposed",
-      ));
-    }
-    const conversationSpace = input.conversationSpace ?? "normal";
-    if (conversationSpace === "secret") {
-      return Promise.reject(new CharacterCapabilityValidationError(
-        "character function inference updates shared role attributes and is unavailable in secret mode",
-      ));
-    }
-    const jobKey = `${conversationSpace}:${characterId}`;
-    const existing = this.inferenceJobs.get(jobKey);
-    if (existing) return existing;
-    if (!this.options.inferer || !this.options.modelAvailable(characterId)) {
-      return Promise.reject(new CharacterFunctionInferenceUnavailableError(
-        "character function inference model is unavailable",
-      ));
-    }
-    const profile = this.ensureProfile(characterId);
-    if (profile.manualLocked && !input.force) {
-      return Promise.resolve(this.getSnapshot(characterId, conversationSpace));
-    }
-    const job = this.inferenceTail
-      .catch(() => undefined)
-      .then(() => this.performInference(
-        characterId,
-        input.reason,
-        Boolean(input.force),
-        conversationSpace,
-      ));
-    this.inferenceTail = job.catch(() => undefined);
-    this.inferenceJobs.set(jobKey, job);
-    void job.finally(() => {
-      if (this.inferenceJobs.get(jobKey) === job) this.inferenceJobs.delete(jobKey);
-    }).catch(() => undefined);
-    return job;
-  }
-
-  listSkillVersions(
-    characterId: string,
-    limit?: number,
     conversationSpace: ConversationSpace = "normal",
-  ): CharacterSkillVersion[] {
+  ): CharacterOwnedSkillPackage[] {
     this.rpService.getCharacter(characterId);
-    return this.repository.listSkillVersions(characterId, limit, conversationSpace);
+    return this.repository.listOwnedSkills(characterId, conversationSpace);
   }
 
-  rollbackSkill(
+  getOwnedSkill(
     characterId: string,
-    version: number,
+    packageId: string,
     conversationSpace: ConversationSpace = "normal",
-  ): CharacterSkillVersion {
+  ): CharacterOwnedSkillPackage {
+    const skill = this.listOwnedSkills(characterId, conversationSpace)
+      .find((entry) => entry.id === packageId);
+    if (!skill) {
+      throw new CharacterCapabilityValidationError("character-owned Skill was not found in this space");
+    }
+    return skill;
+  }
+
+  createOwnedSkill(
+    characterId: string,
+    input: CharacterOwnedSkillCreateInput,
+    conversationSpace: ConversationSpace = "normal",
+  ): CharacterOwnedSkillPackage {
     this.rpService.getCharacter(characterId);
-    const target = this.repository.listSkillVersions(characterId, 200, conversationSpace)
-      .find((entry) => entry.version === version);
-    if (!target || target.status === "rejected") {
+    if (this.repository.listOwnedSkills(characterId, conversationSpace).length >= OWNED_SKILLS_PER_CHARACTER_MAX) {
       throw new CharacterCapabilityValidationError(
-        `character Skill version is unavailable: ${version}`,
+        `a character can own at most ${OWNED_SKILLS_PER_CHARACTER_MAX} Skills in one space`,
       );
     }
-    if (target.status === "active") return target;
+    const name = requiredText(input.name, OWNED_SKILL_NAME_LIMIT, "Skill name");
+    const markdown = validateCharacterSkillMarkdown(input.markdown);
     const now = this.clock.now().toISOString();
-    this.repository.transaction(() => {
-      this.repository.supersedeActiveSkill(characterId, now, conversationSpace);
-      this.repository.activateSkillVersion(characterId, target.id, now, conversationSpace);
-    });
-    this.options.onAction?.("character_skill_rollback", "completed", {
+    const slug = this.availableOwnedSkillSlug(characterId, conversationSpace, name);
+    const activate = input.activate !== false;
+    const createdBy = input.createdBy ?? "user";
+    if (!(["user", "character", "migration"] as const).includes(createdBy)) {
+      throw new CharacterCapabilityValidationError("invalid character-owned Skill creator");
+    }
+    const skill: CharacterOwnedSkillPackage = {
+      id: this.idGenerator.next("character-owned-skill"),
       characterId,
       conversationSpace,
-      version,
+      slug,
+      name,
+      description: boundedText(input.description, OWNED_SKILL_DESCRIPTION_LIMIT),
+      tags: ownedSkillTags(input.tags),
+      status: activate ? "active" : "draft",
+      autoImprove: input.autoImprove !== false,
+      createdBy,
+      createdAt: now,
+      updatedAt: now,
+      versionCount: 1,
+      evaluationCount: 0,
+      completedCount: 0,
+      failedCount: 0,
+      pendingProposalCount: 0,
+    };
+    const version: CharacterOwnedSkillVersion = {
+      id: this.idGenerator.next("character-owned-skill-version"),
+      packageId: skill.id,
+      characterId,
+      conversationSpace,
+      version: 1,
+      status: activate ? "active" : "draft",
+      markdown,
+      changeSummary: createdBy === "character" ? "角色根据任务经验创建了新 Skill 草稿" : "创建专属 Skill",
+      source: createdBy === "character"
+        ? "character_created"
+        : createdBy === "migration"
+          ? "legacy_migration"
+          : "manual",
+      ...(input.sourceTaskId ? { sourceTaskId: input.sourceTaskId } : {}),
+      contentHash: characterSkillContentHash(markdown),
+      createdAt: now,
+      ...(activate ? { activatedAt: now } : {}),
+    };
+    this.repository.transaction(() => {
+      this.repository.insertOwnedSkillPackage(skill);
+      this.repository.insertOwnedSkillVersion(version);
     });
-    return this.repository.getActiveSkill(characterId, conversationSpace)!;
+    this.options.onAction?.("character_owned_skill_created", "completed", {
+      characterId,
+      conversationSpace,
+      packageId: skill.id,
+      activated: activate,
+      createdBy,
+    });
+    return this.getOwnedSkill(characterId, skill.id, conversationSpace);
   }
 
-  getPublicSummary(characterId: string): PublicCharacterFunctionSummary {
-    const profile = this.ensureProfile(characterId);
-    const evolution = evolutionMap(
-      this.repository.listCapabilities(characterId),
-      this.repository.summarizeEvidence(characterId),
-      this.repository.getActiveSkill(characterId),
+  updateOwnedSkill(
+    characterId: string,
+    packageId: string,
+    input: CharacterOwnedSkillUpdateInput,
+    conversationSpace: ConversationSpace = "normal",
+  ): CharacterOwnedSkillPackage {
+    const current = this.getOwnedSkill(characterId, packageId, conversationSpace);
+    const status = input.status ?? current.status;
+    if (!(["draft", "active", "disabled"] as const).includes(status)) {
+      throw new CharacterCapabilityValidationError("invalid character-owned Skill status");
+    }
+    if (status === "active" && !current.activeVersion) {
+      throw new CharacterCapabilityValidationError("a Skill needs an active version before it can be enabled");
+    }
+    const updated: CharacterOwnedSkillPackage = {
+      ...current,
+      name: input.name === undefined
+        ? current.name
+        : requiredText(input.name, OWNED_SKILL_NAME_LIMIT, "Skill name"),
+      description: input.description === undefined
+        ? current.description
+        : boundedText(input.description, OWNED_SKILL_DESCRIPTION_LIMIT),
+      tags: input.tags === undefined ? current.tags : ownedSkillTags(input.tags),
+      autoImprove: input.autoImprove ?? current.autoImprove,
+      status,
+      updatedAt: this.clock.now().toISOString(),
+    };
+    this.repository.updateOwnedSkillPackage(updated);
+    this.options.onAction?.("character_owned_skill_updated", "completed", {
+      characterId,
+      conversationSpace,
+      packageId,
+      status,
+    });
+    return this.getOwnedSkill(characterId, packageId, conversationSpace);
+  }
+
+  listOwnedSkillVersions(
+    characterId: string,
+    packageId: string,
+    conversationSpace: ConversationSpace = "normal",
+  ): CharacterOwnedSkillVersion[] {
+    this.getOwnedSkill(characterId, packageId, conversationSpace);
+    return this.repository.listOwnedSkillVersions(packageId);
+  }
+
+  createOwnedSkillVersion(
+    characterId: string,
+    packageId: string,
+    input: {
+      markdown: string;
+      changeSummary?: string;
+      activate?: boolean;
+      source?: CharacterOwnedSkillVersion["source"];
+      sourceTaskId?: string;
+    },
+    conversationSpace: ConversationSpace = "normal",
+  ): CharacterOwnedSkillVersion {
+    const skill = this.getOwnedSkill(characterId, packageId, conversationSpace);
+    const markdown = validateCharacterSkillMarkdown(input.markdown);
+    const contentHash = characterSkillContentHash(markdown);
+    if (input.sourceTaskId) {
+      const existing = this.repository.findOwnedSkillVersionBySourceTask(packageId, input.sourceTaskId);
+      if (existing) return existing;
+    }
+    const active = this.repository.getActiveOwnedSkillVersion(packageId);
+    if (active?.contentHash === contentHash && input.activate !== false) return active;
+    const now = this.clock.now().toISOString();
+    const activate = input.activate !== false;
+    const source = input.source ?? "manual";
+    if (!(["manual", "character_created", "character_reflection", "legacy_migration"] as const).includes(source)) {
+      throw new CharacterCapabilityValidationError("invalid character-owned Skill version source");
+    }
+    const version: CharacterOwnedSkillVersion = {
+      id: this.idGenerator.next("character-owned-skill-version"),
+      packageId,
+      characterId,
+      conversationSpace,
+      version: this.repository.nextOwnedSkillVersion(packageId),
+      status: activate ? "active" : "draft",
+      markdown,
+      changeSummary: boundedText(input.changeSummary, 300),
+      source,
+      ...(input.sourceTaskId ? { sourceTaskId: input.sourceTaskId } : {}),
+      contentHash,
+      createdAt: now,
+      ...(activate ? { activatedAt: now } : {}),
+    };
+    this.repository.transaction(() => {
+      if (activate) this.repository.supersedeActiveOwnedSkillVersion(packageId, now);
+      this.repository.insertOwnedSkillVersion(version);
+      this.repository.updateOwnedSkillPackage({
+        ...skill,
+        status: activate ? "active" : skill.status,
+        updatedAt: now,
+      });
+    });
+    this.options.onAction?.("character_owned_skill_version_created", "completed", {
+      characterId,
+      conversationSpace,
+      packageId,
+      version: version.version,
+      activated: activate,
+    });
+    return this.repository.getOwnedSkillVersion(packageId, version.id)!;
+  }
+
+  activateOwnedSkillVersion(
+    characterId: string,
+    packageId: string,
+    versionId: string,
+    conversationSpace: ConversationSpace = "normal",
+  ): CharacterOwnedSkillVersion {
+    const skill = this.getOwnedSkill(characterId, packageId, conversationSpace);
+    const target = this.repository.getOwnedSkillVersion(packageId, versionId);
+    if (!target || target.status === "rejected") {
+      throw new CharacterCapabilityValidationError("character-owned Skill version is unavailable");
+    }
+    const now = this.clock.now().toISOString();
+    this.repository.transaction(() => {
+      this.repository.supersedeActiveOwnedSkillVersion(packageId, now);
+      this.repository.activateOwnedSkillVersion(packageId, versionId, now);
+      this.repository.updateOwnedSkillPackage({ ...skill, status: "active", updatedAt: now });
+    });
+    return this.repository.getOwnedSkillVersion(packageId, versionId)!;
+  }
+
+  listOwnedSkillEvaluations(
+    characterId: string,
+    packageId: string,
+    conversationSpace: ConversationSpace = "normal",
+  ): CharacterOwnedSkillEvaluation[] {
+    this.getOwnedSkill(characterId, packageId, conversationSpace);
+    return this.repository.listOwnedSkillEvaluations(packageId);
+  }
+
+  listOwnedSkillProposals(
+    characterId: string,
+    packageId: string,
+    conversationSpace: ConversationSpace = "normal",
+  ): CharacterOwnedSkillProposal[] {
+    this.getOwnedSkill(characterId, packageId, conversationSpace);
+    return this.repository.listOwnedSkillProposals(packageId);
+  }
+
+  approveOwnedSkillProposal(
+    characterId: string,
+    packageId: string,
+    proposalId: string,
+    conversationSpace: ConversationSpace = "normal",
+  ): CharacterOwnedSkillVersion {
+    const skill = this.getOwnedSkill(characterId, packageId, conversationSpace);
+    const proposal = this.repository.getOwnedSkillProposal(packageId, proposalId);
+    if (!proposal || proposal.status !== "pending") {
+      throw new CharacterCapabilityValidationError("Skill improvement proposal is not pending");
+    }
+    const active = this.repository.getActiveOwnedSkillVersion(packageId);
+    if (!active || active.id !== proposal.baseVersionId) {
+      this.repository.updateOwnedSkillProposal(
+        packageId,
+        proposalId,
+        "stale",
+        this.clock.now().toISOString(),
+      );
+      throw new CharacterCapabilityValidationError(
+        "Skill improvement proposal is stale because the active version changed",
+      );
+    }
+    const now = this.clock.now().toISOString();
+    const created: CharacterOwnedSkillVersion = {
+      id: this.idGenerator.next("character-owned-skill-version"),
+      packageId,
+      characterId,
+      conversationSpace,
+      version: this.repository.nextOwnedSkillVersion(packageId),
+      status: "active",
+      markdown: proposal.proposedMarkdown,
+      changeSummary: proposal.changeSummary,
+      source: "character_reflection",
+      sourceTaskId: proposal.sourceTaskId,
+      contentHash: proposal.contentHash,
+      createdAt: now,
+      activatedAt: now,
+    };
+    this.repository.transaction(() => {
+      this.repository.supersedeActiveOwnedSkillVersion(packageId, now);
+      this.repository.insertOwnedSkillVersion(created);
+      this.repository.updateOwnedSkillPackage({ ...skill, status: "active", updatedAt: now });
+      this.repository.updateOwnedSkillProposal(
+        packageId,
+        proposalId,
+        "approved",
+        now,
+        created.id,
+      );
+    });
+    this.options.onAction?.("character_owned_skill_proposal_approved", "completed", {
+      characterId,
+      conversationSpace,
+      packageId,
+      proposalId,
+      version: created.version,
+    });
+    return created;
+  }
+
+  rejectOwnedSkillProposal(
+    characterId: string,
+    packageId: string,
+    proposalId: string,
+    conversationSpace: ConversationSpace = "normal",
+  ): CharacterOwnedSkillProposal {
+    this.getOwnedSkill(characterId, packageId, conversationSpace);
+    const proposal = this.repository.getOwnedSkillProposal(packageId, proposalId);
+    if (!proposal || proposal.status !== "pending") {
+      throw new CharacterCapabilityValidationError("Skill improvement proposal is not pending");
+    }
+    this.repository.updateOwnedSkillProposal(
+      packageId,
+      proposalId,
+      "rejected",
+      this.clock.now().toISOString(),
     );
-    return {
-      ...(profile.publicRole ? { publicRole: profile.publicRole } : {}),
-      capabilities: this.repository.listCapabilities(characterId).map((capability) => {
-        const learned = evolution.get(capability.capabilityId)!;
+    return this.repository.getOwnedSkillProposal(packageId, proposalId)!;
+  }
+
+  getPublicSummary(characterId: string): PublicCharacterCollaborationSummary {
+    const profile = this.ensureCollaborationProfile(characterId);
+    const skills = this.repository.listOwnedSkills(characterId, "normal")
+      .filter((skill) => skill.status === "active" && skill.activeVersion)
+      .map((skill) => {
+        const operational = skill.completedCount + skill.failedCount;
         return {
-          id: capability.capabilityId,
-          label: characterCapabilityDefinition(capability.capabilityId).label,
-          level: learned.effectiveLevel,
-          baseLevel: capability.level,
-          responsibility: capability.responsibility,
-          autoAccept: capability.autoAccept,
-          source: capability.source,
-          evolutionStage: learned.stage,
+          id: skill.id,
+          name: skill.name,
+          description: skill.description,
+          tags: [...skill.tags],
+          version: skill.activeVersion!.version,
+          executionCount: skill.evaluationCount,
+          ...(operational
+            ? { successRate: skill.completedCount / operational }
+            : {}),
+          ...(skill.averageScore === undefined ? {} : { averageScore: skill.averageScore }),
         };
-      }),
+      });
+    return {
+      introduction: profile.introduction,
+      traits: [...profile.traits],
+      skills,
     };
   }
 
   getTaskIdentity(characterId: string): CharacterTaskIdentity {
-    const profile = this.ensureProfile(characterId);
-    const capabilities = this.repository.listCapabilities(characterId);
-    const evolution = evolutionMap(
-      capabilities,
-      this.repository.summarizeEvidence(characterId),
-      this.repository.getActiveSkill(characterId),
-    );
+    const profile = this.ensureCollaborationProfile(characterId);
     return {
-      ...(profile.publicRole ? { publicRole: profile.publicRole } : {}),
-      ...(profile.taskPreferences ? { taskPreferences: profile.taskPreferences } : {}),
-      ...(profile.avoidedTasks ? { avoidedTasks: profile.avoidedTasks } : {}),
-      capabilities: capabilities.map((capability) => {
-        const learned = evolution.get(capability.capabilityId)!;
-        return {
-          id: capability.capabilityId,
-          label: characterCapabilityDefinition(capability.capabilityId).label,
-          level: learned.effectiveLevel,
-          baseLevel: capability.level,
-          responsibility: capability.responsibility,
-          evolutionStage: learned.stage,
-        };
-      }),
+      introduction: profile.introduction,
+      traits: [...profile.traits],
     };
   }
 
   getTaskSkill(
     characterId: string,
     conversationSpace: ConversationSpace = "normal",
+    selectedSkillIds: string[] = [],
   ): CharacterTaskSkill | undefined {
-    const skill = this.repository.getActiveSkill(characterId, conversationSpace);
-    return skill ? { version: skill.version, markdown: skill.markdown } : undefined;
+    const requestedIds = new Set(uniqueSkillIds(selectedSkillIds));
+    const packages = this.listOwnedSkills(characterId, conversationSpace)
+      .filter((entry) => entry.status === "active" && entry.activeVersion)
+      .filter((entry) => requestedIds.size
+        ? requestedIds.has(entry.id)
+        : true)
+      .slice(0, OWNED_SKILL_SELECTED_MAX)
+      .map((entry) => ({
+        id: entry.id,
+        name: entry.name,
+        description: entry.description,
+        version: entry.activeVersion!.version,
+        markdown: entry.activeVersion!.markdown,
+      }));
+    return packages.length ? { packages } : undefined;
   }
 
   routeTask(input: {
     sourceCharacterId: string;
     task: string;
-    requiredCapabilityIds?: CharacterCapabilityId[];
+    requiredSkillIds?: string[];
     targetCharacterId?: string;
   }): CharacterTaskRoute {
     const source = this.rpService.getCharacter(input.sourceCharacterId);
@@ -508,16 +536,18 @@ export class CharacterCapabilityService {
       throw new CharacterTaskRoutingError("source character is not assigned to a shared world");
     }
     const task = requiredText(input.task, TASK_LIMIT, "task");
-    const requiredCapabilityIds = uniqueCapabilityIds(input.requiredCapabilityIds ?? []);
+    const requiredSkillIds = uniqueSkillIds(input.requiredSkillIds ?? []);
     const selectionMode = input.targetCharacterId ? "explicit" as const : "automatic" as const;
-    if (selectionMode === "automatic" && requiredCapabilityIds.length === 0) {
+    if (
+      selectionMode === "automatic" && requiredSkillIds.length === 0
+    ) {
       throw new CharacterCapabilityValidationError(
-        "automatic character routing requires at least one required capability",
+        "automatic character routing requires at least one public Skill id",
       );
     }
-    if (requiredCapabilityIds.length > 3) {
+    if (requiredSkillIds.length > OWNED_SKILL_SELECTED_MAX) {
       throw new CharacterCapabilityValidationError(
-        "character routing accepts at most three required capabilities",
+        `character routing accepts at most ${OWNED_SKILL_SELECTED_MAX} required Skills`,
       );
     }
     const directory = this.worldService.listWorldCharacters(source.id)
@@ -539,27 +569,33 @@ export class CharacterCapabilityService {
       characterId: entry.characterId,
       characterName: entry.name,
       availability: entry.availability,
-      requiredCapabilityIds,
+      requiredSkillIds,
       explicit: entry.characterId === input.targetCharacterId,
     })).sort((left, right) =>
       Number(right.eligible) - Number(left.eligible) ||
       right.score - left.score ||
       left.characterId.localeCompare(right.characterId));
-    const selected = input.targetCharacterId
+    const explicitCandidate = input.targetCharacterId
       ? candidates.find((candidate) => candidate.characterId === input.targetCharacterId)
+      : undefined;
+    const selected = input.targetCharacterId
+      ? requiredSkillIds.length && !explicitCandidate?.eligible
+        ? undefined
+        : explicitCandidate
       : candidates.find((candidate) => candidate.eligible);
     const route: CharacterTaskRoute = {
       sourceCharacterId: source.id,
       worldId: membership.worldId,
       task,
-      requiredCapabilityIds,
+      requiredSkillIds,
+      selectedSkillIds: selected?.matchedSkillIds ?? [],
       selectionMode,
       ...(selected ? { selected } : {}),
       candidates,
     };
     if (!selected) {
       throw new CharacterTaskRoutingError(
-        "no same-world character is currently eligible for the requested capabilities",
+        "no same-world character is currently eligible for the requested capabilities or Skills",
         route,
       );
     }
@@ -568,282 +604,224 @@ export class CharacterCapabilityService {
 
   recordTaskEvidence(input: {
     characterId: string;
-    capabilityIds: CharacterCapabilityId[];
+    skillPackageIds?: string[];
+    conversationSpace?: ConversationSpace;
     sourceTaskId: string;
     outcome: CharacterCapabilityEvidenceOutcome;
     summary: string;
     functionalScore?: number;
     judgeScore?: number;
-  }): CharacterCapabilityEvidence[] {
-    const declared = new Set(
-      this.repository.listCapabilities(input.characterId)
-        .map((capability) => capability.capabilityId),
-    );
-    const capabilityIds = uniqueCapabilityIds(input.capabilityIds)
-      .filter((capabilityId) => declared.has(capabilityId));
+  }): void {
+    this.rpService.getCharacter(input.characterId);
     const functionalScore = optionalScore(input.functionalScore, "functionalScore");
     const judgeScore = optionalScore(input.judgeScore, "judgeScore");
     const sourceTaskId = requiredText(input.sourceTaskId, 300, "sourceTaskId");
     const summary = boundedText(input.summary, EVIDENCE_SUMMARY_LIMIT);
     const createdAt = this.clock.now().toISOString();
-    const evidence = capabilityIds.map((capabilityId) => this.repository.createEvidence({
-      id: this.idGenerator.next("character-capability-evidence"),
-      characterId: input.characterId,
-      capabilityId,
-      sourceTaskId,
-      outcome: input.outcome,
-      ...(functionalScore === undefined ? {} : { functionalScore }),
-      ...(judgeScore === undefined ? {} : { judgeScore }),
-      summary,
-      lesson: "",
-      createdAt,
-    }));
-    if (input.outcome === "completed" && evidence.length) {
-      const completedTasks = this.repository.countCompletedTasks(input.characterId);
-      if (shouldReflectAt(completedTasks)) {
-        this.scheduleSkillReflection(input.characterId, sourceTaskId, summary);
+    const conversationSpace = input.conversationSpace ?? "normal";
+    const requestedSkillIds = new Set(uniqueSkillIds(input.skillPackageIds ?? []));
+    const selectedPackages = this.listOwnedSkills(input.characterId, conversationSpace)
+      .filter((skill) => skill.status === "active" && skill.activeVersion)
+      .filter((skill) => requestedSkillIds.has(skill.id))
+      .slice(0, OWNED_SKILL_SELECTED_MAX);
+    const score = functionalScore !== undefined && judgeScore !== undefined
+      ? (functionalScore + judgeScore) / 2
+      : functionalScore ?? judgeScore ?? defaultOwnedSkillScore(input.outcome);
+    for (const skill of selectedPackages) {
+      this.repository.createOwnedSkillEvaluation({
+        id: this.idGenerator.next("character-owned-skill-evaluation"),
+        packageId: skill.id,
+        versionId: skill.activeVersion!.id,
+        characterId: input.characterId,
+        conversationSpace,
+        sourceTaskId,
+        outcome: input.outcome,
+        ...(score === undefined ? {} : { score }),
+        resultSummary: summary,
+        lesson: "",
+        createdAt,
+      });
+      if ((input.outcome === "completed" || input.outcome === "failed") && skill.autoImprove) {
+        this.scheduleOwnedSkillReflection(skill, sourceTaskId, summary);
       }
     }
-    return evidence;
+    if (
+      input.outcome === "completed" &&
+      conversationSpace === "normal" &&
+      selectedPackages.length === 0
+    ) {
+      this.scheduleOwnedSkillCreation(
+        input.characterId,
+        sourceTaskId,
+        summary,
+      );
+    }
   }
 
-  enabledBindings(characterId: string): string[] {
-    const enabled = new Set(
-      this.options.listModules().filter((module) => module.enabled).map((module) => module.id),
-    );
-    return [...new Set(
-      this.repository.listCapabilities(characterId)
-        .flatMap((capability) => capability.moduleIds)
-        .filter((moduleId) => enabled.has(moduleId)),
-    )].sort();
-  }
-
-  private scheduleInference(
+  private availableOwnedSkillSlug(
     characterId: string,
-    reason: string,
-    conversationSpace: ConversationSpace = "normal",
+    conversationSpace: ConversationSpace,
+    name: string,
+  ): string {
+    const base = slugifyOwnedSkillName(name) || "skill";
+    let candidate = base;
+    let suffix = 2;
+    while (this.repository.findOwnedSkillBySlug(characterId, conversationSpace, candidate)) {
+      candidate = `${base}-${suffix}`;
+      suffix += 1;
+    }
+    return candidate;
+  }
+
+  private scheduleOwnedSkillReflection(
+    skill: CharacterOwnedSkillPackage,
+    sourceTaskId: string,
+    taskSummary: string,
   ): void {
-    const profile = this.ensureProfile(characterId);
     if (
       this.disposed ||
-      profile.manualLocked ||
-      profile.inferenceStatus === "pending" ||
-      !this.options.inferer ||
-      !this.options.modelAvailable(characterId)
+      !skill.activeVersion ||
+      !this.options.skillReflector ||
+      !this.options.modelAvailable(skill.characterId) ||
+      this.repository.findOwnedSkillProposalBySourceTask(skill.id, sourceTaskId)
     ) return;
-    void this.requestInference(characterId, { reason, conversationSpace }).catch(() => undefined);
+    const key = `improve:${skill.id}:${sourceTaskId}`;
+    if (this.ownedSkillJobs.has(key)) return;
+    const job = this.skillTail
+      .catch(() => undefined)
+      .then(() => this.performOwnedSkillReflection(skill, sourceTaskId, taskSummary));
+    this.skillTail = job.catch(() => undefined);
+    this.ownedSkillJobs.set(key, job);
+    void job.finally(() => {
+      if (this.ownedSkillJobs.get(key) === job) this.ownedSkillJobs.delete(key);
+    }).catch(() => undefined);
   }
 
-  private async performInference(
+  private scheduleOwnedSkillCreation(
     characterId: string,
-    reason: string,
-    force: boolean,
-    conversationSpace: ConversationSpace,
-  ): Promise<CharacterFunctionSnapshot> {
-    const character = this.rpService.getCharacter(characterId);
-    const startHash = characterSoulHash(character.name, character.soulMarkdown);
-    const current = this.ensureProfile(characterId);
-    if (current.manualLocked && !force) return this.getSnapshot(characterId, conversationSpace);
-    const startedAt = this.clock.now().toISOString();
-    this.repository.upsertProfile({
-      ...current,
-      manualLocked: force ? false : current.manualLocked,
-      inferenceStatus: "pending",
-      inferenceError: "",
-      inferenceStartedAt: startedAt,
-      updatedAt: startedAt,
-    });
+    sourceTaskId: string,
+    taskSummary: string,
+  ): void {
+    if (
+      this.disposed ||
+      !this.options.ownedSkillCreator ||
+      !this.options.modelAvailable(characterId)
+    ) return;
+    const key = `create:${characterId}:${sourceTaskId}`;
+    if (this.ownedSkillJobs.has(key)) return;
+    const job = this.skillTail
+      .catch(() => undefined)
+      .then(() => this.performOwnedSkillCreation(
+        characterId,
+        sourceTaskId,
+        taskSummary,
+      ));
+    this.skillTail = job.catch(() => undefined);
+    this.ownedSkillJobs.set(key, job);
+    void job.finally(() => {
+      if (this.ownedSkillJobs.get(key) === job) this.ownedSkillJobs.delete(key);
+    }).catch(() => undefined);
+  }
+
+  private async performOwnedSkillReflection(
+    skill: CharacterOwnedSkillPackage,
+    sourceTaskId: string,
+    taskSummary: string,
+  ): Promise<CharacterOwnedSkillProposal | undefined> {
+    const latest = this.repository.getOwnedSkill(
+      skill.characterId,
+      skill.conversationSpace,
+      skill.id,
+    );
+    const active = latest?.activeVersion;
+    if (!latest || !active || latest.status !== "active" || !latest.autoImprove) return undefined;
+    const character = this.rpService.getCharacter(skill.characterId);
     const controller = new AbortController();
     this.controllers.add(controller);
     try {
-      const raw = await this.options.inferer!({
-        characterId,
-        conversationSpace,
+      const raw = await this.options.skillReflector!({
+        characterId: skill.characterId,
         characterName: character.name,
         soulMarkdown: character.soulMarkdown,
-        catalog: characterCapabilityCatalog,
+        currentSkill: active,
+        ownedSkillPackage: latest,
+        taskSummary,
+        sourceTaskId,
         signal: controller.signal,
       });
-      if (this.disposed || controller.signal.aborted) {
-        throw new CharacterFunctionInferenceUnavailableError("character function inference was cancelled");
-      }
-      const inferred = parseCharacterFunctionInference(raw);
-      const latestCharacter = this.rpService.getCharacter(characterId);
-      const latestProfile = this.ensureProfile(characterId);
-      const latestHash = characterSoulHash(latestCharacter.name, latestCharacter.soulMarkdown);
-      if (latestProfile.manualLocked || latestHash !== startHash) {
-        this.repository.upsertProfile({
-          ...latestProfile,
-          inferenceStatus: latestProfile.manualLocked ? "ready" : "uninitialized",
-          inferenceError: "",
-          updatedAt: this.clock.now().toISOString(),
-        });
-        if (!latestProfile.manualLocked) {
-          queueMicrotask(() => this.scheduleInference(
-            characterId,
-            "stale_retry",
-            conversationSpace,
-          ));
-        }
-        return this.getSnapshot(characterId, conversationSpace);
-      }
-      const now = this.clock.now().toISOString();
-      const knownModules = new Set(this.options.listModules().map((module) => module.id));
-      const existingCapabilities = new Map(
-        this.repository.listCapabilities(characterId)
-          .map((capability) => [capability.capabilityId, capability]),
-      );
-      const capabilities = inferred.capabilities.map((entry) => ({
-        characterId,
-        capabilityId: entry.capabilityId,
-        level: entry.level,
-        responsibility: entry.responsibility,
-        autoAccept: entry.confidence >= 0.65,
-        moduleIds: characterCapabilityDefinition(entry.capabilityId).recommendedModuleIds
-          .filter((moduleId) => knownModules.has(moduleId)),
-        notes: entry.rationale,
-        source: "inferred" as const,
-        confidence: entry.confidence,
-        createdAt: existingCapabilities.get(entry.capabilityId)?.createdAt ?? now,
-        updatedAt: now,
-      }));
-      this.repository.transaction(() => {
-        this.repository.upsertProfile({
-          ...latestProfile,
-          publicRole: boundedText(inferred.publicRole, PUBLIC_ROLE_LIMIT),
-          taskPreferences: boundedText(inferred.taskPreferences, TASK_BOUNDARY_LIMIT),
-          avoidedTasks: boundedText(inferred.avoidedTasks, TASK_BOUNDARY_LIMIT),
-          maxConcurrentTasks: 1,
-          manualLocked: false,
-          inferenceStatus: "ready",
-          sourceSoulHash: latestHash,
-          inferenceError: "",
-          inferenceStartedAt: startedAt,
-          inferredAt: now,
-          updatedAt: now,
-        });
-        this.repository.replaceCapabilities(characterId, capabilities);
+      if (this.disposed || controller.signal.aborted) return undefined;
+      const reflection = parseCharacterSkillReflection(raw);
+      if (!reflection.shouldUpdate) return undefined;
+      const contentHash = characterSkillContentHash(reflection.markdown);
+      if (contentHash === active.contentHash) return undefined;
+      const existing = this.repository.findOwnedSkillProposalBySourceTask(skill.id, sourceTaskId);
+      if (existing) return existing;
+      const proposal: CharacterOwnedSkillProposal = {
+        id: this.idGenerator.next("character-owned-skill-proposal"),
+        packageId: skill.id,
+        baseVersionId: active.id,
+        characterId: skill.characterId,
+        conversationSpace: skill.conversationSpace,
+        sourceTaskId,
+        status: "pending",
+        proposedMarkdown: reflection.markdown,
+        changeSummary: reflection.changeSummary || "角色根据执行结果提出改进",
+        contentHash,
+        createdAt: this.clock.now().toISOString(),
+      };
+      this.repository.insertOwnedSkillProposal(proposal);
+      this.options.onAction?.("character_owned_skill_improvement_proposed", "completed", {
+        characterId: skill.characterId,
+        conversationSpace: skill.conversationSpace,
+        packageId: skill.id,
+        proposalId: proposal.id,
+        sourceTaskId,
       });
-      const activeSkill = this.repository.getActiveSkill(characterId, conversationSpace);
-      if (
-        !activeSkill ||
-        activeSkill.source === "bootstrap" ||
-        activeSkill.source === "manual"
-      ) {
-        this.activateSkillVersion({
-          characterId,
-          conversationSpace,
-          markdown: inferred.skillMarkdown,
-          changeSummary: activeSkill ? "根据更新后的人设重建初始工作方法" : "根据人设生成初始工作方法",
-          source: "bootstrap",
-        });
-      }
-      this.options.onAction?.("character_function_inference", "completed", {
-        characterId,
-        conversationSpace,
-        reason,
-        capabilityIds: capabilities.map((entry) => entry.capabilityId),
-        skillVersion: this.repository.getActiveSkill(characterId, conversationSpace)?.version,
-      });
-      return this.getSnapshot(characterId, conversationSpace);
+      return proposal;
     } catch (error) {
       if (!this.disposed && !controller.signal.aborted) {
-        const profile = this.ensureProfile(characterId);
-        this.repository.upsertProfile({
-          ...profile,
-          inferenceStatus: "failed",
-          inferenceError: boundedText(errorText(error), 500),
-          updatedAt: this.clock.now().toISOString(),
-        });
-        this.options.onAction?.("character_function_inference", "failed", {
-          characterId,
-          conversationSpace,
-          reason,
+        this.options.onAction?.("character_owned_skill_reflection", "failed", {
+          characterId: skill.characterId,
+          conversationSpace: skill.conversationSpace,
+          packageId: skill.id,
+          sourceTaskId,
           error: errorText(error),
         });
       }
-      throw error;
+      return undefined;
     } finally {
       this.controllers.delete(controller);
     }
   }
 
-  private ensureStarterSkill(
+  private async performOwnedSkillCreation(
     characterId: string,
-    source: "manual" | "bootstrap",
-    conversationSpace: ConversationSpace = "normal",
-  ): CharacterSkillVersion {
-    const active = this.repository.getActiveSkill(characterId, conversationSpace);
-    if (active) return active;
+    sourceTaskId: string,
+    taskSummary: string,
+  ): Promise<CharacterOwnedSkillPackage | undefined> {
     const character = this.rpService.getCharacter(characterId);
-    const profile = this.ensureProfile(characterId);
-    const capabilities = this.repository.listCapabilities(characterId);
-    const labels = capabilities.map((entry) =>
-      characterCapabilityDefinition(entry.capabilityId).label);
-    const markdown = [
-      `# ${character.name} 的 SKILL.md`,
+    const now = this.clock.now().toISOString();
+    const starterMarkdown = [
+      "# 新 Skill 草稿",
       "",
-      "## 当前职责",
-      profile.publicRole || "在明确边界内完成被委托的任务。",
+      "## 目标",
+      "从刚完成的任务中提炼一个边界清晰、可重复执行的专业工作方法。",
       "",
-      "## 工作方法",
-      labels.length
-        ? `- 围绕${labels.join("、")}先确认目标、约束和可验证的交付结果。`
-        : "- 先确认目标、约束和可验证的交付结果。",
-      "- 不声称未实际执行的工具调用或外部操作。",
-      "- 完成后检查遗漏、不确定性和下一步。",
+      "## 约束",
+      "- 只描述方法，不声称拥有任何未配置的工具或权限。",
+      "- 写明适用场景、执行步骤、验证方式和失败处理。",
     ].join("\n");
-    return this.activateSkillVersion({
-      characterId,
-      conversationSpace,
-      markdown,
-      changeSummary: source === "manual" ? "根据手动职能生成初始工作方法" : "生成初始工作方法",
-      source,
-    });
-  }
-
-  private scheduleSkillReflection(
-    characterId: string,
-    sourceTaskId: string,
-    taskSummary: string,
-  ): void {
-    if (
-      this.disposed ||
-      !this.options.skillReflector ||
-      !this.options.modelAvailable(characterId) ||
-      this.repository.findSkillBySourceTask(characterId, sourceTaskId)
-    ) return;
-    const key = `${characterId}:${sourceTaskId}`;
-    if (this.skillJobs.has(key)) return;
-    const job = this.skillTail
-      .catch(() => undefined)
-      .then(() => this.performSkillReflection(characterId, sourceTaskId, taskSummary));
-    this.skillTail = job.catch(() => undefined);
-    this.skillJobs.set(key, job);
-    void job.finally(() => {
-      if (this.skillJobs.get(key) === job) this.skillJobs.delete(key);
-    }).catch(() => undefined);
-  }
-
-  private async performSkillReflection(
-    characterId: string,
-    sourceTaskId: string,
-    taskSummary: string,
-  ): Promise<CharacterSkillVersion | undefined> {
-    const character = this.rpService.getCharacter(characterId);
-    const capabilities = this.repository.listCapabilities(characterId);
-    if (!capabilities.length) return undefined;
-    const currentSkill = this.ensureStarterSkill(characterId, "bootstrap");
+    const currentSkill = {
+      conversationSpace: "normal",
+      markdown: starterMarkdown,
+    } as const;
     const controller = new AbortController();
     this.controllers.add(controller);
     try {
-      const raw = await this.options.skillReflector!({
+      const raw = await this.options.ownedSkillCreator!({
         characterId,
         characterName: character.name,
         soulMarkdown: character.soulMarkdown,
-        capabilities,
-        capabilityDefinitions: capabilities.map((entry) =>
-          characterCapabilityDefinition(entry.capabilityId)),
         currentSkill,
         taskSummary,
         sourceTaskId,
@@ -851,35 +829,27 @@ export class CharacterCapabilityService {
       });
       if (this.disposed || controller.signal.aborted) return undefined;
       const reflection = parseCharacterSkillReflection(raw);
-      if (!reflection.shouldUpdate) {
-        this.repository.setEvidenceLesson(
-          sourceTaskId,
-          boundedText(reflection.changeSummary || "本轮没有形成可复用的工作方法。", 300),
-        );
-        this.options.onAction?.("character_skill_reflection", "blocked", {
-          characterId,
-          sourceTaskId,
-          reason: "no_reusable_change",
-        });
-        return undefined;
-      }
-      const next = this.activateSkillVersion({
-        characterId,
+      if (!reflection.shouldUpdate) return undefined;
+      const created = this.createOwnedSkill(characterId, {
+        name: reflection.name || "新任务工作法",
+        description: reflection.description ||
+          `由${character.name}在完成实际任务后总结的专属工作方法，启用前需要审核。`,
+        tags: reflection.tags?.length ? reflection.tags : ["character-created"],
         markdown: reflection.markdown,
-        changeSummary: reflection.changeSummary || "角色根据任务复盘更新了工作方法",
-        source: "character_reflection",
+        autoImprove: true,
+        activate: false,
+        createdBy: "character",
         sourceTaskId,
-      });
-      this.repository.setEvidenceLesson(sourceTaskId, next.changeSummary);
-      this.options.onAction?.("character_skill_reflection", "completed", {
+      }, "normal");
+      this.options.onAction?.("character_owned_skill_draft_created", "completed", {
         characterId,
+        packageId: created.id,
         sourceTaskId,
-        version: next.version,
       });
-      return next;
+      return created;
     } catch (error) {
       if (!this.disposed && !controller.signal.aborted) {
-        this.options.onAction?.("character_skill_reflection", "failed", {
+        this.options.onAction?.("character_owned_skill_creation", "failed", {
           characterId,
           sourceTaskId,
           error: errorText(error),
@@ -891,94 +861,41 @@ export class CharacterCapabilityService {
     }
   }
 
-  private activateSkillVersion(input: {
-    characterId: string;
-    conversationSpace?: ConversationSpace;
-    markdown: string;
-    changeSummary: string;
-    source: CharacterSkillVersion["source"];
-    sourceTaskId?: string;
-  }): CharacterSkillVersion {
-    const conversationSpace = input.conversationSpace ?? "normal";
-    const markdown = validateCharacterSkillMarkdown(input.markdown);
-    const contentHash = characterSkillContentHash(markdown);
-    const active = this.repository.getActiveSkill(input.characterId, conversationSpace);
-    if (active?.contentHash === contentHash) return active;
-    if (input.sourceTaskId) {
-      const existing = this.repository.findSkillBySourceTask(
-        input.characterId,
-        input.sourceTaskId,
-        conversationSpace,
-      );
-      if (existing) return existing;
-    }
-    const now = this.clock.now().toISOString();
-    let created: CharacterSkillVersion | undefined;
-    this.repository.transaction(() => {
-      this.repository.supersedeActiveSkill(input.characterId, now, conversationSpace);
-      created = this.repository.insertSkillVersion({
-        id: this.idGenerator.next("character-skill-version"),
-        characterId: input.characterId,
-        conversationSpace,
-        version: this.repository.nextSkillVersion(input.characterId, conversationSpace),
-        status: "active",
-        markdown,
-        changeSummary: boundedText(input.changeSummary, 300),
-        source: input.source,
-        ...(input.sourceTaskId ? { sourceTaskId: input.sourceTaskId } : {}),
-        contentHash,
-        createdAt: now,
-        activatedAt: now,
-      });
-    });
-    return created!;
-  }
-
   private scoreCandidate(input: {
     sourceCharacterId: string;
     worldId: string;
     characterId: string;
     characterName: string;
     availability: string;
-    requiredCapabilityIds: CharacterCapabilityId[];
+    requiredSkillIds: string[];
     explicit: boolean;
   }): CharacterTaskRouteCandidate {
-    const profile = this.ensureProfile(input.characterId);
-    const capabilityList = this.repository.listCapabilities(input.characterId);
-    const capabilities = new Map(
-      capabilityList.map((capability) => [capability.capabilityId, capability]),
-    );
-    const evolution = evolutionMap(
-      capabilityList,
-      this.repository.summarizeEvidence(input.characterId),
-      this.repository.getActiveSkill(input.characterId),
-    );
+    const profile = this.ensureCollaborationProfile(input.characterId);
     const activeTasks = this.repository.countActiveTasks(input.characterId);
     const reasons: string[] = [];
     const warnings: string[] = [];
+    const publicSkills = this.repository.listOwnedSkills(input.characterId, "normal")
+      .filter((skill) => skill.status === "active" && skill.activeVersion);
+    const matchedSkillIds = input.requiredSkillIds.filter((skillId) =>
+      publicSkills.some((skill) => skill.id === skillId));
     let eligible = true;
     let score = 0;
-    for (const required of input.requiredCapabilityIds) {
-      const capability = capabilities.get(required);
-      if (!capability) {
-        eligible = false;
-        warnings.push(`未声明${characterCapabilityDefinition(required).label}`);
-        continue;
-      }
-      if (!capability.autoAccept && !input.explicit) {
-        eligible = false;
-        warnings.push(`${characterCapabilityDefinition(required).label}未开放自动分派`);
-      }
-      const learned = evolution.get(required)!;
-      score += learned.effectiveLevel * 20 + learned.routingAdjustment;
-      score += capability.responsibility === "primary" ? 12 : 5;
-      reasons.push(
-        `${characterCapabilityDefinition(required).label} ${learned.effectiveLevel}级` +
-        (capability.responsibility === "primary" ? "主责" : "协助") +
-        (learned.learnedAdjustment
-          ? `（成长${learned.learnedAdjustment > 0 ? "+" : ""}${learned.learnedAdjustment}）`
-          : ""),
-      );
+    if (matchedSkillIds.length !== input.requiredSkillIds.length) {
+      eligible = false;
+      warnings.push("未拥有请求的专属 Skill");
+    }
+    for (const skillId of matchedSkillIds) {
+      const skill = publicSkills.find((entry) => entry.id === skillId)!;
+      const completed = skill.completedCount + skill.failedCount;
+      const reliabilityBonus = completed
+        ? Math.round((skill.completedCount / completed) * 10)
+        : 0;
+      const qualityBonus = skill.averageScore === undefined
+        ? 0
+        : Math.round(skill.averageScore / 10);
+      score += 45 + Math.min(20, skill.activeVersion!.version * 2) +
+        reliabilityBonus + qualityBonus;
+      reasons.push(`拥有专属 Skill「${skill.name}」v${skill.activeVersion!.version}`);
     }
     if (!this.options.modelAvailable(input.characterId)) {
       eligible = false;
@@ -1017,13 +934,15 @@ export class CharacterCapabilityService {
       }
     }
     if (input.explicit) {
-      eligible = true;
+      eligible = matchedSkillIds.length === input.requiredSkillIds.length &&
+        this.options.modelAvailable(input.characterId);
       reasons.unshift("调用方明确指定");
     }
     return {
       characterId: input.characterId,
       characterName: input.characterName,
-      ...(profile.publicRole ? { publicRole: profile.publicRole } : {}),
+      ...(profile.introduction ? { introduction: profile.introduction } : {}),
+      traits: [...profile.traits],
       eligible,
       score,
       activeTasks,
@@ -1031,129 +950,78 @@ export class CharacterCapabilityService {
       availability: input.availability,
       reasons,
       warnings,
+      matchedSkillIds,
     };
   }
 }
 
-function evolutionMap(
-  capabilities: CharacterCapability[],
-  evidence: CharacterCapabilityEvidenceSummary[],
-  activeSkill?: CharacterSkillVersion,
-): Map<CharacterCapabilityId, CharacterCapabilityEvolution> {
-  return new Map(capabilities.map((capability) => [
-    capability.capabilityId,
-    capabilityEvolution(
-      capability,
-      evidence.find((entry) => entry.capabilityId === capability.capabilityId),
-      activeSkill,
-    ),
-  ]));
-}
-
-function capabilityEvolution(
-  capability: CharacterCapability,
-  evidence: CharacterCapabilityEvidenceSummary | undefined,
-  activeSkill: CharacterSkillVersion | undefined,
-): CharacterCapabilityEvolution {
-  const completed = evidence?.completed ?? 0;
-  const failed = evidence?.failed ?? 0;
-  const operational = completed + failed;
-  const completionRate = operational ? completed / operational : undefined;
-  const quality = evidence?.averageQualityScore;
-  let learnedAdjustment = 0;
-  if (
-    (evidence?.scored ?? 0) >= 8 &&
-    (quality ?? 0) >= 92 &&
-    (completionRate ?? 0) >= 0.8
-  ) {
-    learnedAdjustment = 2;
-  } else if (
-    ((evidence?.scored ?? 0) >= 3 && (quality ?? 0) >= 82 && (completionRate ?? 0) >= 0.75) ||
-    (completed >= 3 && (activeSkill?.version ?? 0) >= 3 && (completionRate ?? 0) >= 0.7)
-  ) {
-    learnedAdjustment = 1;
-  }
-  if (
-    ((evidence?.scored ?? 0) >= 3 && quality !== undefined && quality < 45) ||
-    (operational >= 4 && (completionRate ?? 1) < 0.4)
-  ) {
-    learnedAdjustment = -1;
-  }
-  if (
-    learnedAdjustment > 0 &&
-    completed >= 8 &&
-    (activeSkill?.version ?? 0) >= 5 &&
-    (completionRate ?? 0) >= 0.8
-  ) {
-    learnedAdjustment = Math.max(learnedAdjustment, 2);
-  }
-  const reliability = operational
-    ? (completed + 2) / (operational + 3)
-    : 2 / 3;
-  const sampleConfidence = Math.min(1, operational / 8);
-  const routingAdjustment = clamp(
-    Math.round((reliability - 2 / 3) * 12 * sampleConfidence),
-    -6,
-    6,
-  );
-  const effectiveLevel = clamp(capability.level + learnedAdjustment, 1, 5);
-  const stage = learnedAdjustment < 0
-    ? "needs_review" as const
-    : learnedAdjustment >= 2
-      ? "advanced" as const
-      : learnedAdjustment === 1
-        ? "improving" as const
-        : (evidence?.total ?? 0) > 0
-          ? "practicing" as const
-          : "new" as const;
-  return {
-    capabilityId: capability.capabilityId,
-    baseLevel: capability.level,
-    effectiveLevel,
-    learnedAdjustment,
-    routingAdjustment,
-    stage,
-    totalEvidence: evidence?.total ?? 0,
-    scoredEvidence: evidence?.scored ?? 0,
-    ...(completionRate === undefined ? {} : { completionRate }),
-    ...(quality === undefined ? {} : { averageQualityScore: quality }),
-  };
-}
-
-function shouldReflectAt(completedTasks: number): boolean {
-  return SKILL_REFLECTION_MILESTONES.has(completedTasks) ||
-    (completedTasks > 10 && completedTasks % 5 === 0);
-}
-
-function uniqueCapabilityIds(values: CharacterCapabilityId[]): CharacterCapabilityId[] {
-  const result: CharacterCapabilityId[] = [];
-  for (const value of values) {
-    if (!isCharacterCapabilityId(value)) {
-      throw new CharacterCapabilityValidationError(
-        `unknown character capability: ${String(value)}`,
-      );
-    }
-    if (!result.includes(value)) result.push(value);
-  }
-  return result;
-}
-
-function uniqueStrings(values: string[], maximum: number): string[] {
+function uniqueSkillIds(values: string[]): string[] {
   if (!Array.isArray(values)) {
-    throw new CharacterCapabilityValidationError("moduleIds must be an array");
+    throw new CharacterCapabilityValidationError("requiredSkillIds must be an array");
   }
   const result: string[] = [];
   for (const raw of values) {
     const value = String(raw ?? "").trim();
     if (!value || result.includes(value)) continue;
+    if ([...value].length > 200) {
+      throw new CharacterCapabilityValidationError("character Skill id is too long");
+    }
     result.push(value);
   }
-  if (result.length > maximum) {
+  return result;
+}
+
+function ownedSkillTags(values: string[] | undefined): string[] {
+  if (values === undefined) return [];
+  if (!Array.isArray(values)) {
+    throw new CharacterCapabilityValidationError("Skill tags must be an array");
+  }
+  const result: string[] = [];
+  for (const raw of values) {
+    const value = boundedText(raw, OWNED_SKILL_TAG_LIMIT);
+    if (!value || result.includes(value)) continue;
+    result.push(value);
+  }
+  if (result.length > OWNED_SKILL_TAGS_MAX) {
     throw new CharacterCapabilityValidationError(
-      `a capability accepts at most ${maximum} module bindings`,
+      `a character-owned Skill accepts at most ${OWNED_SKILL_TAGS_MAX} tags`,
     );
   }
   return result;
+}
+
+function collaborationTraits(values: string[]): string[] {
+  if (!Array.isArray(values)) {
+    throw new CharacterCapabilityValidationError("traits must be an array");
+  }
+  const result: string[] = [];
+  for (const raw of values) {
+    const value = boundedText(raw, COLLABORATION_TRAIT_LIMIT);
+    if (!value || result.includes(value)) continue;
+    result.push(value);
+  }
+  if (result.length > COLLABORATION_TRAITS_MAX) {
+    throw new CharacterCapabilityValidationError(
+      `a collaboration profile accepts at most ${COLLABORATION_TRAITS_MAX} traits`,
+    );
+  }
+  return result;
+}
+
+function slugifyOwnedSkillName(name: string): string {
+  return name.normalize("NFKC")
+    .toLowerCase()
+    .replace(/[^\p{Letter}\p{Number}]+/gu, "-")
+    .replace(/^-+|-+$/gu, "")
+    .slice(0, 80);
+}
+
+function defaultOwnedSkillScore(
+  outcome: CharacterCapabilityEvidenceOutcome,
+): number | undefined {
+  if (outcome === "completed") return 80;
+  if (outcome === "failed") return 20;
+  return undefined;
 }
 
 function requiredText(value: unknown, maximum: number, field: string): string {

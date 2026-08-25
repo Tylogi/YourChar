@@ -300,16 +300,17 @@ async function runDesktopWorkflow(browser, baseUrl, outputDir) {
   await planningSpaces.selectOption("normal");
   await page.locator("#status").filter({ hasText: "daily-planning 可用空间已更新" }).waitFor();
   assert.equal(await planningModule.locator("select[data-module-spaces]").inputValue(), "normal");
-  assert.equal(await page.locator(".module-row").count(), 12);
+  assert.equal(await page.locator(".module-row").count(), 14);
   await page.locator(".module-row").filter({ hasText: "Tavily Search MCP" }).waitFor();
-  assert.equal(await page.locator(".module-token").count(), 12);
+  assert.equal(await page.locator(".module-token").count(), 14);
+  await page.locator(".module-row").filter({ hasText: "Git MCP" }).locator(".module-token").filter({ hasText: "约 620 tokens/轮" }).waitFor();
   await page.locator(".module-row").filter({ hasText: "Memory Coordinator MCP" }).locator(".module-token").filter({ hasText: "约 430 tokens/轮" }).waitFor();
   await page.locator(".module-row").filter({ hasText: "Subagent Delegation MCP" }).locator(".module-token").filter({ hasText: "约 390 tokens/轮" }).waitFor();
   await page.locator(".module-row").filter({ hasText: "Relationship State MCP" }).locator(".module-token").filter({ hasText: "约 230 tokens/轮" }).waitFor();
   await page.locator(".module-row").filter({ hasText: "Tavily Search MCP" }).locator(".module-token").filter({ hasText: "约 350 tokens/轮" }).waitFor();
   await page.locator(".module-row").filter({ hasText: "Vision MCP" }).locator(".module-token").filter({ hasText: "约 420 tokens/轮" }).waitFor();
   await page.locator(".module-row").filter({ hasText: "Web Reader MCP" }).locator(".module-token").filter({ hasText: "约 260 tokens/轮" }).waitFor();
-  await page.locator(".module-row").filter({ hasText: "World State MCP" }).locator(".module-token").filter({ hasText: "约 860 tokens/轮" }).waitFor();
+  await page.locator(".module-row").filter({ hasText: "World State MCP" }).locator(".module-token").filter({ hasText: "约 960 tokens/轮" }).waitFor();
   await page.locator(".module-row").filter({ hasText: "Interaction State MCP" }).locator(".module-token").filter({ hasText: "约 650 tokens/轮" }).waitFor();
   await planningModule.locator(".module-token").filter({ hasText: /索引约 .*全文约 .*tokens\/调用/ }).waitFor();
   await page.locator("#permissionRuntime").filter({ hasText: "Bubblewrap 可用" }).waitFor();
@@ -469,29 +470,25 @@ async function runDesktopWorkflow(browser, baseUrl, outputDir) {
   await assertInteractiveBounds(page);
   await page.locator("#charactersPage").evaluate((element) => { element.scrollTop = 0; });
   await page.screenshot({ path: resolve(outputDir, "characters-cards.png"), fullPage: false });
-  await page.getByRole("tab", { name: "职责能力", exact: true }).click();
+  await page.getByRole("tab", { name: "协作与技能", exact: true }).click();
   await page.locator("#characterFunctionAdvanced > summary").click();
-  await page.locator("#characterCapabilityList .capability-row").first().waitFor();
-  assert.equal(await page.locator("#characterCapabilityList .capability-row").count(), 10);
   await page.locator("#characterPublicRole").fill("研究与规划负责人");
   await page.locator("#characterMaxConcurrentTasks").selectOption("2");
-  await page.locator("#characterTaskPreferences").fill("优先处理来源清晰、结果可验证的任务。");
-  const webResearchCapability = page.locator(
-    '#characterCapabilityList [data-capability-id="research.web"]',
+  await page.locator("#characterTaskPreferences").fill("严谨, 重视来源, 结果可验证");
+  await page.getByRole("button", { name: "保存协作介绍", exact: true }).click();
+  await page.locator("#characterFunctionState").filter({ hasText: "协作介绍已保存" }).waitFor();
+  await page.getByRole("button", { name: "新建 Skill", exact: true }).click();
+  await page.locator("#characterOwnedSkillDialog").waitFor({ state: "visible" });
+  await page.locator("#characterOwnedSkillFormName").fill("来源核验");
+  await page.locator("#characterOwnedSkillFormTags").fill("研究, 核验");
+  await page.locator("#characterOwnedSkillFormDescription").fill("核对公开资料的出处、日期和证据链。");
+  await page.locator("#characterOwnedSkillFormMarkdown").fill(
+    "# 来源核验工作方法\n\n- 拆分事实主张。\n- 对照一手来源。\n- 标注证据和不确定性。",
   );
-  await webResearchCapability.locator("[data-capability-enabled]").check();
-  await webResearchCapability.locator("[data-capability-level]").selectOption("4");
-  await webResearchCapability.getByRole("button", { name: "主责", exact: true }).click();
-  await webResearchCapability.locator("[data-capability-auto]").check();
-  await webResearchCapability.locator("summary").click();
-  await webResearchCapability.locator(".capability-module-option")
-    .filter({ hasText: "Tavily Search MCP" })
-    .locator("input")
-    .check();
-  await page.getByRole("button", { name: "保存高级设置", exact: true }).click();
-  await page.locator("#characterFunctionState").filter({ hasText: "已保存" }).waitFor();
-  await page.locator("#characterCapabilityCount").filter({ hasText: "1 项" }).waitFor();
-  await page.locator("#characterSkillMarkdown").filter({ hasText: "工作方法" }).waitFor();
+  await page.getByRole("button", { name: "保存 Skill", exact: true }).click();
+  await page.locator("#characterOwnedSkillDialog").waitFor({ state: "hidden" });
+  await page.locator("#characterOwnedSkillList .owned-skill-card").filter({ hasText: "来源核验" }).waitFor();
+  await page.locator("#characterOwnedSkillMarkdown").filter({ hasText: "对照一手来源" }).waitFor();
   await page.locator("#characterFunctionPanel").evaluate((element) =>
     element.scrollIntoView({ block: "start" }));
   await assertInteractiveBounds(page);
@@ -530,10 +527,10 @@ async function runDesktopWorkflow(browser, baseUrl, outputDir) {
   await page.locator("#relationshipOverview").filter({ hasText: "初识" }).waitFor();
   await page.locator("#relationshipOverview").filter({ hasText: "尚未建立浪漫关系" }).waitFor();
   await page.locator("#relationshipOverview").filter({ hasText: "尚未明确关系身份" }).waitFor();
-  assert.equal(await page.locator("#relationshipOverview .relationship-metric").count(), 5);
+  assert.equal(await page.locator("#relationshipOverview .relationship-metric").count(), 3);
   assert.deepEqual(
     await page.locator("#relationshipOverview .relationship-metric > strong").allTextContents(),
-    ["35", "20", "25", "50", "5"],
+    ["35", "25", "0"],
   );
   await page.locator("#relationshipEventList").filter({ hasText: "还没有明确的关系变化记录" }).waitFor();
   await captureValidatedScreenshot(page, resolve(outputDir, "characters-relationship.png"));
@@ -751,10 +748,10 @@ async function runDesktopWorkflow(browser, baseUrl, outputDir) {
   await page.getByRole("tab", { name: "爱心与关系", exact: true }).click();
   await page.getByRole("button", { name: "插入表情 ❤️‍🔥", exact: true }).click();
   assert.equal(await page.locator("#textInput").inputValue(), "今晚见😊❤️‍🔥");
-  assert.equal(await page.evaluate(async () => {
-    await document.fonts.load('400 23px "Noto Emoji"', "😊❤️‍🔥");
-    return document.fonts.check('400 23px "Noto Emoji"', "😊❤️‍🔥");
-  }), true);
+  const renderedEmoji = page.locator("#emojiPicker img.emoji");
+  assert.ok(await renderedEmoji.count() > 10);
+  assert.equal(await renderedEmoji.first().evaluate((image) => image.complete && image.naturalWidth > 0), true);
+  assert.match(await renderedEmoji.first().getAttribute("src"), /^\/assets\/twemoji\/svg\/[0-9a-f-]+\.svg$/);
   await captureValidatedScreenshot(page, resolve(outputDir, "chat-emoji-picker.png"));
   await page.keyboard.press("Escape");
   await page.locator("#emojiPicker").waitFor({ state: "hidden" });
@@ -896,6 +893,27 @@ async function runDesktopWorkflow(browser, baseUrl, outputDir) {
   await smsSystemEvent.getByRole("button", { name: "前往模型设置" }).click();
   await page.locator("#settingsPage").waitFor({ state: "visible" });
   await page.getByRole("button", { name: "聊天", exact: true }).click();
+  assert.equal(await page.locator("#privateModeToggle").isVisible(), false);
+  assert.equal(await page.locator("#incognitoModeToggle").isVisible(), false);
+  await page.getByRole("button", { name: "会话操作" }).click();
+  await page.getByRole("menuitemcheckbox", { name: "进入私密模式", exact: true }).waitFor({ state: "visible" });
+  await page.getByRole("menuitemcheckbox", { name: "进入无痕模式", exact: true }).waitFor({ state: "visible" });
+  await assertElementUnclipped(page, "#privateModeToggle");
+  await assertElementUnclipped(page, "#incognitoModeToggle");
+  await captureValidatedScreenshot(page, resolve(outputDir, "session-privacy-menu.png"));
+  await page.getByRole("menuitemcheckbox", { name: "进入无痕模式", exact: true }).click();
+  await page.locator("#sessionActionDialog").filter({ hasText: "开启无痕会话" }).waitFor({ state: "visible" });
+  await page.getByRole("button", { name: "进入无痕会话", exact: true }).click();
+  await page.locator("#incognitoNotice").waitFor({ state: "visible" });
+  await page.getByRole("button", { name: "会话操作" }).waitFor({ state: "visible" });
+  await page.getByRole("button", { name: "会话操作" }).click();
+  await page.getByRole("menuitemcheckbox", { name: "退出无痕模式", exact: true }).click();
+  await page.locator("#incognitoNotice").waitFor({ state: "hidden" });
+  await page.waitForFunction(
+    (expected) => document.querySelector("#sessionSelect")?.value === expected,
+    smsSessionId,
+  );
+  assert.equal(await page.locator("#sessionSelect").inputValue(), smsSessionId);
   await page.getByRole("button", { name: "会话操作" }).click();
   await page.getByRole("menuitem", { name: "重命名会话", exact: true }).click();
   await page.locator("#sessionActionDialog").waitFor({ state: "visible" });
@@ -1659,10 +1677,14 @@ async function runMobileWorkflow(browser, baseUrl, outputDir) {
   await page.waitForFunction(() => !document.body.classList.contains("keyboard-open"));
   await page.getByRole("button", { name: "会话操作" }).click();
   await page.getByRole("menu").waitFor({ state: "visible" });
+  await page.getByRole("menuitemcheckbox", { name: "进入私密模式", exact: true }).waitFor({ state: "visible" });
+  await page.getByRole("menuitemcheckbox", { name: "进入无痕模式", exact: true }).waitFor({ state: "visible" });
   await page.getByRole("menuitem", { name: "重命名会话", exact: true }).waitFor({ state: "visible" });
   await page.getByRole("menuitem", { name: "归档会话", exact: true }).waitFor({ state: "visible" });
   await page.getByRole("menuitem", { name: "永久删除会话", exact: true }).waitFor({ state: "visible" });
   await assertElementUnclipped(page, "#sessionActionsMenu");
+  await assertElementUnclipped(page, "#privateModeToggle");
+  await assertElementUnclipped(page, "#incognitoModeToggle");
   await assertElementUnclipped(page, "#mobileRenameSessionBtn");
   await assertElementUnclipped(page, "#mobileArchiveSessionBtn");
   await assertElementUnclipped(page, "#mobileDeleteSessionBtn");
@@ -1839,9 +1861,9 @@ async function runMobileWorkflow(browser, baseUrl, outputDir) {
   await page.waitForFunction(() => document.querySelector("#characterSoulMarkdown")?.value.includes("长期信任"));
   const mobileSoul = await page.locator("#characterSoulMarkdown").inputValue();
   assert.equal(await page.locator("#characterSoulCount").textContent(), `${[...mobileSoul].length} / 8000`);
-  await page.getByRole("tab", { name: "职责能力", exact: true }).click();
+  await page.getByRole("tab", { name: "协作与技能", exact: true }).click();
   await page.locator("#characterFunctionRole").filter({ hasText: "研究与规划负责人" }).waitFor();
-  await page.locator("#characterSkillMarkdown").filter({ hasText: "工作方法" }).waitFor();
+  await page.locator("#characterOwnedSkillMarkdown").filter({ hasText: "工作方法" }).waitFor();
   await assertPanelInsideMain(page, "#charactersPage");
   await assertInteractiveBounds(page);
   await page.screenshot({ path: resolve(outputDir, "mobile-character-skill.png"), fullPage: false });
@@ -1850,14 +1872,15 @@ async function runMobileWorkflow(browser, baseUrl, outputDir) {
   await page.waitForFunction(() =>
     document.querySelector("#characterPublicRole")?.value === "研究与规划负责人");
   assert.equal(await page.locator("#characterPublicRole").inputValue(), "研究与规划负责人");
-  await page.locator('#characterCapabilityList [data-capability-id="research.web"].enabled').waitFor();
+  await page.locator("#characterTaskPreferences").waitFor();
+  assert.equal(await page.locator("#characterTaskPreferences").inputValue(), "严谨, 重视来源, 结果可验证");
   await assertPanelInsideMain(page, "#charactersPage");
   await assertInteractiveBounds(page);
   await page.screenshot({ path: resolve(outputDir, "mobile-character-capabilities.png"), fullPage: false });
   await page.getByRole("tab", { name: "关系", exact: true }).click();
   await page.locator("#relationshipOverview").filter({ hasText: "初识" }).waitFor();
   await page.locator("#relationshipOverview").filter({ hasText: "尚未建立浪漫关系" }).waitFor();
-  assert.equal(await page.locator("#relationshipOverview .relationship-metric").count(), 5);
+  assert.equal(await page.locator("#relationshipOverview .relationship-metric").count(), 3);
   await page.getByRole("tab", { name: "生活", exact: true }).click();
   await page.locator("#characterLifeContent").waitFor({ state: "visible" });
   await page.locator("#lifeCurrentPlace").filter({ hasText: "河岸书店" }).waitFor();

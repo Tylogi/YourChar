@@ -5,6 +5,7 @@ import * as z from "zod/v4";
 import type { CompanionStore } from "../domain/store.js";
 import type { ActionRecord } from "../domain/types.js";
 import type { InteractionService } from "../interaction/service.js";
+import type { InteractionScope } from "../interaction/types.js";
 import { connectMcpServerToPi, type McpPiBridge } from "./pi-adapter.js";
 
 export const interactionMcpToolNames = [
@@ -18,11 +19,14 @@ export type InteractionMcpContext = {
   store: CompanionStore;
   sessionId: string;
   characterId: string;
+  scope: InteractionScope;
   currentUserText: () => string;
   actions: () => ActionRecord[];
 };
 
 export function createInteractionMcpServer(context: InteractionMcpContext): McpServer {
+  assertBoundScope(context.scope, context.characterId);
+  const secret = context.scope.conversationSpace === "secret";
   const server = new McpServer(
     { name: "rp-agent-interaction", version: "1.0.0" },
     {
@@ -32,6 +36,9 @@ export function createInteractionMcpServer(context: InteractionMcpContext): McpS
         "Opening a door to the arriving character, seeing each other at the meeting place, and returning to the shared scene can be valid semantic evidence. " +
         "Never call propose_meeting and begin_meeting together or probe transition state through expected tool errors. " +
         "Never decide the user's location, movement, speech, choice, sensation, or inner state. " +
+        (secret
+          ? "This is an isolated private interaction: use a human-readable location, never a normal-space World place ID. "
+          : "") +
         "Use semantic context when deciding whether co-presence really ends; end_meeting takes effect only after the farewell reply.",
     },
   );
@@ -54,6 +61,7 @@ export function createInteractionMcpServer(context: InteractionMcpContext): McpS
         sessionId: context.sessionId,
         characterId: context.characterId,
         mode: "sms",
+        scope: context.scope,
         ...(input.placeId ? { placeId: input.placeId } : {}),
         ...(input.location ? { location: input.location } : {}),
         ...(input.note ? { note: input.note } : {}),
@@ -85,6 +93,7 @@ export function createInteractionMcpServer(context: InteractionMcpContext): McpS
         sessionId: context.sessionId,
         characterId: context.characterId,
         mode: "sms",
+        scope: context.scope,
         ...(input.placeId ? { placeId: input.placeId } : {}),
         ...(input.location ? { location: input.location } : {}),
         source: "agent_tool",
@@ -119,6 +128,7 @@ export function createInteractionMcpServer(context: InteractionMcpContext): McpS
         sessionId: context.sessionId,
         characterId: context.characterId,
         mode: "sms",
+        scope: context.scope,
         source: "agent_tool",
         initiator: input.initiator,
         ...(input.summary ? { summary: input.summary } : {}),
@@ -152,6 +162,10 @@ function actionPayload(result: ReturnType<InteractionService["proposeMeeting"]>)
     mcpServer: "rp-agent-interaction",
     sessionId: result.state.sessionId,
     characterId: result.state.characterId,
+    conversationSpace: result.state.conversationSpace,
+    ...(result.state.secretOwnerCharacterId
+      ? { secretOwnerCharacterId: result.state.secretOwnerCharacterId }
+      : {}),
     interactionEventId: result.event.id,
     presence: result.state.presence,
     location: result.state.location,
@@ -166,4 +180,13 @@ function transitionResult(
     content: [{ type: "text" as const, text }],
     structuredContent: JSON.parse(JSON.stringify({ state: result.state, event: result.event })) as Record<string, unknown>,
   };
+}
+
+function assertBoundScope(scope: InteractionScope, characterId: string): void {
+  if (
+    scope.conversationSpace === "secret" &&
+    scope.secretOwnerCharacterId !== characterId
+  ) {
+    throw new Error("private interaction MCP scope does not match its bound character");
+  }
 }

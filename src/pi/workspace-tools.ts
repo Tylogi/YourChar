@@ -51,6 +51,7 @@ export type WorkspaceToolContext = {
   sessionId: string;
   actions: () => ActionRecord[];
   sharePaths?: () => string[];
+  assertWriteAllowed?: (additionalBytes: number) => void;
 };
 
 export function createWorkspaceTools(context: WorkspaceToolContext): ToolDefinition[] {
@@ -165,7 +166,7 @@ function createWriteTool(context: WorkspaceToolContext): ToolDefinition<typeof w
     async execute(_toolCallId, input) {
       const path = writableWorkspacePath(context.workspaceDir, input.path);
       try {
-        atomicWrite(path, input.content);
+        atomicWrite(path, input.content, context.assertWriteAllowed);
         recordFileAction(context, "workspace_write", "completed", input.path, input.content);
         return {
           content: [{ type: "text", text: `Wrote ${Buffer.byteLength(input.content, "utf8")} bytes to ${input.path}` }],
@@ -199,7 +200,7 @@ function createEditTool(context: WorkspaceToolContext): ToolDefinition<typeof ed
         const next = input.replaceAll
           ? current.split(input.oldText).join(input.newText)
           : current.replace(input.oldText, input.newText);
-        atomicWrite(path, next);
+        atomicWrite(path, next, context.assertWriteAllowed);
         recordFileAction(context, "workspace_edit", "completed", input.path, next, occurrences);
         return {
           content: [{ type: "text", text: `Edited ${input.path}; replaced ${input.replaceAll ? occurrences : 1} occurrence(s)` }],
@@ -249,10 +250,17 @@ function lexicalWorkspacePath(workspaceDir: string, inputPath: string): string {
   return path;
 }
 
-function atomicWrite(path: string, content: string): void {
+function atomicWrite(
+  path: string,
+  content: string,
+  assertWriteAllowed?: (additionalBytes: number) => void,
+): void {
   const bytes = Buffer.byteLength(content, "utf8");
   if (bytes > maxFileBytes) throw new Error("workspace files must not exceed 1 MiB");
   if (content.includes("\0")) throw new Error("workspace tools only support text files");
+  // Atomic replacement temporarily needs space for the complete new file even
+  // when an older destination will be removed by rename.
+  assertWriteAllowed?.(bytes);
   const temporaryPath = `${path}.${process.pid}.${Date.now()}.tmp`;
   try {
     writeFileSync(temporaryPath, content, { encoding: "utf8", mode: 0o600 });

@@ -365,6 +365,92 @@ test("private state fails closed against shell access to the loopback HTTP API",
   }
 });
 
+test("active incognito mode dynamically removes loopback shell network without persisting a permission change", async () => {
+  const stateDir = mkdtempSync(join(tmpdir(), "yourchar-incognito-shell-network-"));
+  const runtime = createTestRuntime({
+    stateDir,
+    seed: "incognito-shell-network",
+    workspaceDir: join(stateDir, "workspace"),
+  });
+  let app: ReturnType<typeof createHttpServer> | undefined;
+  try {
+    const character = runtime.kernel.createCharacter({ name: "无痕网络边界" });
+    const normal = await runtime.kernel.openCanonicalPrivateConversation(character.id);
+    runtime.kernel.patchAgentPermissions({
+      workspaceAccess: "read_write",
+      shellEnabled: true,
+      networkEnabled: true,
+    });
+    app = createHttpServer({ kernel: runtime.kernel });
+    await new Promise<void>((resolve) => app!.listen(0, "127.0.0.1", resolve));
+    const address = app.address();
+    assert.ok(address && typeof address === "object");
+    const baseUrl = `http://127.0.0.1:${address.port}`;
+    const incognitoListUrl = `${baseUrl}/api/v1/incognito-conversations`;
+
+    runtime.model.enqueue([{ kind: "assistant_text", text: "普通会话仍在运行", delayMs: 300 }]);
+    const activeTurn = runtime.kernel.sendMessage(normal.id, { text: "保持联网会话运行" });
+    await waitUntil(() => runtime.model.requests.length === 1);
+    await assert.rejects(
+      runtime.kernel.openIncognitoConversation(character.id),
+      /finish active Agent turns before opening incognito mode with shell network enabled/,
+    );
+    await activeTurn;
+
+    const incognito = await runtime.kernel.openIncognitoConversation(character.id);
+    assert.equal(runtime.kernel.getAgentPermissions().networkEnabled, true);
+    assert.throws(
+      () => runtime.kernel.patchAgentPermissions({ networkEnabled: true }),
+      /incognito mode is active/,
+    );
+    runtime.model.enqueue([
+      {
+        kind: "tool_call",
+        name: "bash",
+        arguments: {
+          command:
+            `if /usr/bin/curl -fsS --max-time 2 '${incognitoListUrl}' >/dev/null 2>&1; ` +
+            "then printf INCOGNITO_LOOPBACK_REACHABLE; else printf INCOGNITO_LOOPBACK_BLOCKED; fi",
+        },
+      },
+      { kind: "assistant_text", text: "无痕期间本机接口不可达" },
+    ]);
+    await runtime.kernel.sendMessage(normal.id, { text: "无痕期间尝试访问本机接口" });
+    assert.match(JSON.stringify(runtime.model.requests[2].messages), /INCOGNITO_LOOPBACK_BLOCKED/);
+    const isolatedShellAction = [...runtime.kernel.store.actions].reverse().find((action) =>
+      action.actionType === "workspace_shell"
+    );
+    assert.ok(isolatedShellAction);
+    assert.equal(isolatedShellAction.payload.networkEnabled, false);
+
+    await runtime.kernel.closeIncognitoConversation(incognito.id);
+    assert.equal(runtime.kernel.getAgentPermissions().networkEnabled, true);
+    runtime.model.enqueue([
+      {
+        kind: "tool_call",
+        name: "bash",
+        arguments: {
+          command:
+            `if /usr/bin/curl -fsS --max-time 2 '${incognitoListUrl}' >/dev/null 2>&1; ` +
+            "then printf NORMAL_LOOPBACK_REACHABLE; else printf NORMAL_LOOPBACK_BLOCKED; fi",
+        },
+      },
+      { kind: "assistant_text", text: "退出无痕后恢复原网络偏好" },
+    ]);
+    await runtime.kernel.sendMessage(normal.id, { text: "退出无痕后再次访问" });
+    assert.match(JSON.stringify(runtime.model.requests[4].messages), /NORMAL_LOOPBACK_REACHABLE/);
+    const restoredShellAction = [...runtime.kernel.store.actions].reverse().find((action) =>
+      action.actionType === "workspace_shell"
+    );
+    assert.ok(restoredShellAction);
+    assert.equal(restoredShellAction.payload.networkEnabled, true);
+  } finally {
+    if (app) await new Promise<void>((resolve) => app!.close(() => resolve()));
+    runtime.dispose();
+    rmSync(stateDir, { recursive: true, force: true });
+  }
+});
+
 test("Workspace configuration cannot overlap protected state or Agent Skill roots", () => {
   const root = mkdtempSync(join(tmpdir(), "rp-agent-workspace-config-boundary-"));
   try {
@@ -411,6 +497,11 @@ test("operational backup and restore include normal/secret Workspaces and servic
       baseUrl: "https://vision.example.test/v1",
       model: "vision-backup",
       apiKey: "vision-backup-secret",
+    });
+    kernel.patchMineruConfig({
+      baseUrl: "https://mineru.example.test",
+      apiKey: "mineru-backup-secret",
+      backend: "pipeline",
     });
     writeFileSync(join(stateDir, "workspace", "project.txt"), "workspace-data", "utf8");
     const secretWorkspace = kernel.workspaceRegistry.resolve({
@@ -463,15 +554,18 @@ test("operational backup and restore include normal/secret Workspaces and servic
     assert.equal(readFileSync(join(restoredDir, "avatars", `character-${character.id}.png`)).byteLength > 0, true);
     assert.match(readFileSync(join(restoredDir, "tavily.json"), "utf8"), /tvly-backup-secret/);
     assert.match(readFileSync(join(restoredDir, "vision.json"), "utf8"), /vision-backup-secret/);
+    assert.match(readFileSync(join(restoredDir, "mineru.json"), "utf8"), /mineru-backup-secret/);
     const manifest = JSON.parse(readFileSync(join(backupDir, "backup-manifest.json"), "utf8"));
     assert.equal(
       manifest.containsTavilyCredentials,
       true,
     );
     assert.equal(manifest.containsVisionCredentials, true);
+    assert.equal(manifest.containsMineruCredentials, true);
     assert.equal(manifest.containsSecretWorkspace, true);
     assert.equal(manifest.containsInstalledSkills, true);
     assert.equal(manifest.credentials.visionConfigPresent, true);
+    assert.equal(manifest.credentials.mineruConfigPresent, true);
   } finally {
     rmSync(root, { recursive: true, force: true });
   }

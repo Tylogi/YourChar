@@ -2,12 +2,16 @@
 
 ## Managed user service
 
-Sandboxed Agent shell execution requires Bubblewrap at `/usr/bin/bwrap`. On
-Debian or Ubuntu install it before the service:
+Sandboxed Agent shell and structured document conversion require Bubblewrap at
+`/usr/bin/bwrap`. The MarkItDown worker also requires `uv` and Python 3.11 or
+newer. On Debian or Ubuntu install Bubblewrap before the service, install `uv`
+for the service user, and synchronize the project-local worker environment:
 
 ```bash
 sudo apt-get install bubblewrap
 /usr/bin/bwrap --version
+uv --version
+npm run setup:markitdown
 ```
 
 The scheduler is reliable only while the process is running. Install the user
@@ -18,7 +22,8 @@ chmod +x scripts/install-user-service.sh
 scripts/install-user-service.sh
 ```
 
-The installer builds the current checkout, writes
+The installer first performs a frozen `uv sync` for
+`services/markitdown`, builds the current checkout, writes
 `~/.config/systemd/user/rp-agent.service`, enables it, and starts it on
 `127.0.0.1:8765`. It preflights the state paths before creating anything. When
 only `.rp-agent` exists, the installer stops the old unit, verifies the Vault
@@ -97,14 +102,22 @@ systemctl --user start rp-agent.service
 
 The backup script uses SQLite's online backup API and copies Pi transcripts,
 conversation metadata, the complete Memory Vault, its projection/migration
-state, the R1 profile/SOUL compatibility mirrors, Pi agent state, and both the
-normal Workspace and per-character secret Workspaces, plus packages installed
-under `<stateDir>/skills` and the bundled Channel Runtime state under
-`<stateDir>/im-runtime`. Vault Markdown is copied byte-for-byte, preserving
-its frontmatter revisions and hashes. Backup schema v3 records every payload file's
-SHA-256 and size, SQLite schema and `integrity_check`, Vault hashes, and
-Vault-to-SQLite projection consistency. The destination is staged, fully
-validated, and only then published by rename.
+state, the R1 profile/SOUL compatibility mirrors, Pi agent state, the normal
+Workspace **except `workspace/repos/`**, and per-character secret Workspaces,
+plus packages installed under `<stateDir>/skills` and the bundled Channel
+Runtime state under `<stateDir>/im-runtime`. Git state includes
+`git/access.json` and YourChar-managed credentials under `git/credentials/`.
+Older `git/registry.json`, `git-work-items.json`, `git-worktrees/`,
+`git-repository.json`, and `git-runtime/` data is still copied when present as
+migration/rollback history; those files are no longer the active Git model.
+The active approved-commit ledger at `git/access-approved-commits.json` and
+isolated Git runtime data under `git/access-runtime/` are included as part of
+the `git/` tree.
+Vault Markdown is copied byte-for-byte, preserving its frontmatter revisions
+and hashes. Backup schema v3 records every payload file's SHA-256 and size,
+SQLite schema and `integrity_check`, Vault hashes, and Vault-to-SQLite
+projection consistency. The destination is staged, fully validated, and only
+then published by rename.
 With no state-directory argument it uses `YOURCHAR_STATE_DIR`, then the legacy
 `RP_AGENT_STATE_DIR`, then the sole existing `.yourchar` or `.rp-agent` sibling.
 If both sibling directories exist and neither environment variable chooses one,
@@ -117,17 +130,47 @@ node --disable-warning=ExperimentalWarning scripts/backup-state.mjs .yourchar /s
 ```
 
 Backups have directory mode `0700`. They may include `model-api.json`,
-`tavily.json`, and `im-runtime/credentials.json`, all of which can contain API
-keys, platform tokens, refresh credentials, or App Secrets, so backup storage must be
-treated as secret. The backup manifest records credential-file presence without
-copying any Key or token into the manifest. IM credentials are indicated by
+`tavily.json`, `vision.json`, `mineru.json`, `git/access.json`,
+`git/credentials/`, legacy `git-repository.json`, and
+`im-runtime/credentials.json`. API configuration, managed Git private keys, and
+IM credentials can contain keys, platform tokens, refresh credentials, or App
+Secrets, so backup storage must be treated as secret. The backup manifest
+records credential-file presence without copying any key or token into the
+manifest. IM credentials are indicated by
 `containsImCredentials` and `credentials.imRuntimeCredentialsPresent`;
-`containsImRuntime` also records a credential-free spool directory.
+`containsImRuntime` also records the Channel Runtime payload.
+MinerU credentials are indicated by `containsMineruCredentials` and
+`credentials.mineruConfigPresent`; `mineru.json` may contain a Bearer token for
+the configured document-processing endpoint.
+`containsGitAccessConfig` reports `git/access.json`, while
+`containsGitCredentials` reports the managed credential payload.
+`excludesGitWorkspaceRepositories: true` records that `workspace/repos/` was
+deliberately omitted. The optional fields preserve compatibility with earlier
+schema-v3 manifests: an older valid manifest without the exclusion marker may
+still describe repository files and remains verifiable/restorable.
+`containsGitRegistry`, `containsGitWorkItems`, and
+`containsGitRepositoryConfig` now describe legacy migration artifacts only.
+External Git private-key bytes are never copied: `git/access.json`, an older
+registry, and legacy configuration record only their absolute host paths, and
+the backup filter excludes a declared external key even if it is located below
+another selected state tree. Restore external key files separately with
+owner-only permissions or Git access remains unavailable.
+Managed Ed25519 keys are stored at
+`git/credentials/default/id_ed25519` and are copied, so
+`containsGitCredentials: true` makes the backup credential-bearing and highly
+sensitive.
 `tavily.json` may also contain an authenticated proxy URL and must be protected
 even when no Tavily Key is present. Backups are not encrypted by YourChar and
 contain private-mode transcripts, memories, Workspace files, and private-only
 Skill bodies. `im-runtime/spool.json` can additionally contain pending external
 message text and delivery receipts; store or encrypt the backup accordingly.
+
+Cloned repositories are working data, not YourChar application state. The
+entire `workspace/repos/` tree is excluded before traversal, including tracked
+symlinks, `.git`, object databases, and uncommitted changes. Push commits that
+must survive to their remote, or back up that repository tree separately with a
+Git-aware or filesystem backup procedure. A YourChar state restore does not
+restore or automatically reclone those repositories.
 
 ## Restore
 
@@ -155,7 +198,10 @@ The restore script refuses to overwrite an existing state directory without
 `--force`. On startup YourChar replays pending Vault operations, validates the
 restored Vault, rebuilds SQLite/FTS, aligns profile/SOUL mirrors, and removes
 stale resident-memory versions before provider use. Keep the original backup
-until sessions, schedules, characters, and memories have been checked.
+until sessions, schedules, characters, memories, and Git access settings have
+been checked. Repositories and uncommitted repository changes are absent by
+design; reclone them from their remotes or restore them from their separate
+backup.
 
 Legacy backups remain valid: their payload still contains the compatibility
 database filename `rp-agent.sqlite`, and `sourceDirectoryName: ".rp-agent"` does

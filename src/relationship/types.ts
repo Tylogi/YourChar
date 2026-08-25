@@ -60,9 +60,7 @@ export type AffectLabel =
 
 export type RelationshipDimensions = {
   trust: number;
-  closeness: number;
-  affection: number;
-  respect: number;
+  bond: number;
   tension: number;
 };
 
@@ -161,7 +159,7 @@ export type RelationshipExtractionJob = {
   characterId: string;
   mode: Mode;
   triggerReason: string;
-  analysisKinds: Array<"relationship" | "interaction">;
+  analysisKinds: Array<"relationship" | "interaction" | "world_attributes">;
   interactionPresence?: "co_present";
   interactionRevision?: number;
   status: RelationshipJobStatus;
@@ -191,6 +189,7 @@ export type RelationshipCoordinatorStatus = {
   enabled: boolean;
   relationshipEnabled: boolean;
   interactionFallbackEnabled: boolean;
+  worldAttributeAnalysisEnabled: boolean;
   pendingCount: number;
   estimatedTokensLast24Hours: number;
   recentJobs: RelationshipExtractionJob[];

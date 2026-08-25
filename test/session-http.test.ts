@@ -384,12 +384,27 @@ test("HTTP conversation spaces are filtered by default and reject cross-space se
     const secretInteractionUrl =
       `${baseUrl}/api/v1/sessions/${encodeURIComponent(secret.id)}/interaction` +
       `?conversationSpace=secret&characterId=${encodeURIComponent(character.id)}`;
-    assert.equal((await fetch(secretInteractionUrl)).status, 404);
-    assert.equal((await fetch(secretInteractionUrl, {
+    const secretInteraction = await fetch(secretInteractionUrl);
+    assert.equal(secretInteraction.status, 200);
+    assert.equal((await secretInteraction.json() as {
+      state: { conversationSpace: string; secretOwnerCharacterId?: string; presence: string };
+      suggestedLocations: unknown[];
+    }).state.conversationSpace, "secret");
+    const secretProposal = await fetch(secretInteractionUrl, {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ action: "propose", location: "不应读取的普通世界地点" }),
-    })).status, 404);
+      body: JSON.stringify({ action: "propose", location: "私密空间的独立地点" }),
+    });
+    assert.equal(secretProposal.status, 200);
+    const secretProposalBody = await secretProposal.json() as {
+      state: { conversationSpace: string; secretOwnerCharacterId?: string; presence: string; location?: string };
+      suggestedLocations: unknown[];
+    };
+    assert.equal(secretProposalBody.state.conversationSpace, "secret");
+    assert.equal(secretProposalBody.state.secretOwnerCharacterId, character.id);
+    assert.equal(secretProposalBody.state.presence, "meeting_pending");
+    assert.equal(secretProposalBody.state.location, "私密空间的独立地点");
+    assert.deepEqual(secretProposalBody.suggestedLocations, []);
 
     const secretGroupBatch = await fetch(`${baseUrl}/api/v1/conversations/batch`, {
       method: "POST",

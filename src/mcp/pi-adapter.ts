@@ -16,7 +16,7 @@ export async function connectMcpServerToPi(
   clientName: string,
   options: {
     executionMode?: "sequential" | "parallel";
-    requestTimeoutMs?: number;
+    requestTimeoutMs?: number | (() => number);
   } = {},
 ): Promise<McpPiBridge> {
   const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
@@ -33,6 +33,9 @@ export async function connectMcpServerToPi(
         parameters: Type.Unsafe<Record<string, unknown>>(tool.inputSchema as TSchema),
         executionMode: options.executionMode ?? "sequential",
         async execute(toolCallId, input, signal) {
+          const requestTimeoutMs = typeof options.requestTimeoutMs === "function"
+            ? options.requestTimeoutMs()
+            : options.requestTimeoutMs;
           const result = await client.callTool(
             {
               name: tool.name,
@@ -42,11 +45,11 @@ export async function connectMcpServerToPi(
             undefined,
             {
               signal,
-              ...(options.requestTimeoutMs === undefined
+              ...(requestTimeoutMs === undefined
                 ? {}
                 : {
-                    timeout: options.requestTimeoutMs,
-                    maxTotalTimeout: options.requestTimeoutMs,
+                    timeout: requestTimeoutMs,
+                    maxTotalTimeout: requestTimeoutMs,
                   }),
             },
           );

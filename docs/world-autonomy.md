@@ -2,7 +2,7 @@
 
 Status: implemented trial baseline with controlled initiative
 Audience: maintainers, coding agents, reviewers, and test agents
-Last updated: 2026-07-24
+Last updated: 2026-08-24
 
 ## 1. Product Contract
 
@@ -11,6 +11,9 @@ This feature gives characters a small canonical life outside the current chat:
 - multiple characters may belong to one shared fictional world;
 - a world contains user-managed places with fixed functional capabilities;
 - each character has a home, current place, activity, availability, energy, and autonomy policy;
+- a world may define up to eight bounded numeric attributes. A definition is either
+  world-shared (one value for the whole world) or character-specific (one value
+  per character in that world);
 - the background Coordinator may create character calendar events, settle completed activities into world events and RP memories, and send a bounded proactive SMS;
 - same-world characters may use a persistent private channel for one-hop messages, bounded collaboration, and opt-in autonomous social exchanges;
 - the Agent can inspect and mutate its own fictional state through a fixed MCP.
@@ -68,6 +71,35 @@ SQLite migration 19 adds:
 | `world_event_participants` | character participants; supports future shared encounters |
 | `proactive_messages` | durable candidate score, topic, decision, delivery, retry and feedback record |
 | `proactive_topic_policies` | per-character normal, reduced or muted topic preference derived from direct feedback |
+
+Migration 44 adds world-scoped character attributes, migration 45 replaces
+direct Agent mutation with trusted post-turn rule analysis, and migration 46
+adds an immutable world-shared/character-specific scope:
+
+| Table | Ownership and purpose |
+|---|---|
+| `world_attribute_definitions` | up to eight owner-defined keys per world, with immutable value scope, integer range/default, visibility, and independent increase/decrease rules and fixed per-hit magnitudes |
+| `world_attribute_values` | the single current value for a world-shared definition; every character in the world sees this value |
+| `character_world_attribute_values` | the current value for one world, character, and attribute; values remain available when the character leaves and later returns to that world |
+| `world_attribute_events` | append-only requested/applied delta, before/after value, source, explanation, and idempotency key |
+
+The attribute key is immutable and an attribute is archived instead of deleted,
+so old values and events remain auditable. The control plane may set an exact
+in-range value. Characters have no direct attribute-mutation tool. Completed
+normal private turns and completed World narrative turns may be analyzed only
+when the owner enables analysis and supplies a direction rule. The model may
+classify direction with exact visible evidence but cannot choose a number; the
+service applies the separately configured fixed magnitude. The magnitude is a
+step for each accepted match, not a per-turn maximum: for example, `increase=4`
+requests exactly `+4`. Near the declared minimum or maximum, the applied delta
+is clamped and can therefore be smaller; the event ledger keeps both requested
+and applied deltas. Character-specific rules settle at most once per
+character/key/source turn, while a world-shared rule settles at most once per
+world/key/source turn even if several characters participated. Blank direction
+rules disable that direction. Failed, cancelled, secret, and incognito turns
+do not persist an automatic adjustment. Switching worlds changes both the
+active shared set and character-specific set without overwriting values in the
+previous world.
 
 Migration 26 adds the canonical shared timeline, story-event transitions,
 observer-scoped knowledge, and directional inter-character relationships. Its
@@ -134,6 +166,15 @@ schedule entries. Output is strict JSON and is validated against these rules:
 - no work, study, exercise, or creation plan while energy is below 25;
 - no travel whose destination is already the current place;
 - bounded title, summary, and salience.
+
+Planner time fields use the world's local wall clock, not UTC. The model receives
+an authoritative `currentLocalDateTime` and returns offset-free `startLocal` and
+`endLocal` values in `YYYY-MM-DDTHH:mm:ss` form. The Coordinator resolves those
+values through the world's IANA timezone before persisting UTC schedule instants.
+Values containing `Z`, a numeric offset, or a timezone name are rejected, as are
+ambiguous or nonexistent daylight-saving clock readings. Existing schedule and
+recent-event times are also presented to the planner in the same local clock so
+the model never has to calculate timezone offsets.
 
 Malformed, failed, unavailable, or entirely rejected model output creates no
 schedule. The Coordinator no longer samples place capabilities to fabricate a
@@ -252,7 +293,7 @@ as quoted, untrusted data; it cannot forge context markers or permissions.
 
 `world_core` includes world identity, compact place descriptions and capability
 IDs, then as much world-rule Markdown as fits. `world_runtime` includes only the
-current place/activity/availability/energy, optional expected end, the two
+current place/activity/availability/energy, visible world-defined attributes, optional expected end, the two
 latest events, and at most three upcoming linked plans. Past runtime snapshots
 are removed by the existing latest-only turn-context filter.
 

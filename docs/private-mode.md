@@ -26,13 +26,22 @@ resources are the isolated content boundary; audits retain only bounded
 provenance such as source host, immutable ref, digest, counts, and status.
 
 Private chat fails closed for shared context that could mix the two spaces.
-User Profile, schedules and reminders, worlds, relationship state,
-interaction/meeting state, scenes, character collaboration, proactive world
-messages, and SOUL writes are not available to the private Agent. Character
+User Profile, schedules and reminders, worlds, relationship state, scenes,
+character collaboration, proactive world messages, meeting presets, and SOUL
+writes are not available to the private Agent. Meeting interaction itself is
+available as a private, per-character state machine: it accepts only a
+human-readable private location, never reads a normal World place, and never
+projects the private meeting into normal World or Scene state. Character
 identity, SOUL, model selection, system prompts, module permissions, and the
 role's responsibility/capability profile remain shared configuration. Shared
 responsibility/capability fields are read-only while private mode is open; the
 private workbench Skill itself has an independent version history.
+
+Private mode remains durable and isolated. It is distinct from incognito mode:
+private transcripts, memories, Workspace files, Skills, interaction state, and
+observability survive restart inside the private partition. Incognito mode
+instead starts from a frozen normal-space snapshot and discards its temporary
+overlay when the user leaves it or YourChar restarts.
 
 Private mode is not disk encryption, a password vault, an operating-system user
 boundary, HTTP authentication, or end-to-end encryption. A local process or
@@ -56,8 +65,8 @@ that confirmation also applies the global shell-network fail-close before the
 package becomes discoverable.
 
 Operational backups include the database, private transcripts, private Vault
-documents, `workspace-secret`, and host-installed Agent Skill packages. RP
-Agent does not encrypt backup payloads.
+documents, `workspace-secret`, and host-installed Agent Skill packages.
+YourChar does not encrypt backup payloads.
 The JSON export is space- and character-scoped, but the operational backup is a
 complete recovery image and must be protected as sensitive data.
 

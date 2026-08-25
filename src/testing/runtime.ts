@@ -23,6 +23,9 @@ import type {
 import type { MemoryExtractor } from "../memory-coordinator/types.js";
 import type { RelationshipExtractor } from "../relationship/types.js";
 import type { VisionService } from "../vision/service.js";
+import type { DocumentConversionService } from "../document/service.js";
+import type { MineruService } from "../mineru/service.js";
+import type { GitAccessService } from "../git/index.js";
 import type { WebReaderService } from "../web-reader/service.js";
 import type {
   CharacterInteractionActor,
@@ -31,10 +34,7 @@ import type {
 } from "../world/types.js";
 import type { PrivateInboxCoordinatorOptions } from "../inbox/index.js";
 import type { PostTurnAnalyzer } from "../post-turn/index.js";
-import type {
-  CharacterFunctionInferer,
-  CharacterSkillReflector,
-} from "../organization/index.js";
+import type { CharacterSkillReflector } from "../organization/index.js";
 import type { ImGateway } from "../im/index.js";
 
 export type ScriptedModelResponse = (
@@ -71,9 +71,11 @@ export type CreateTestRuntimeOptions = {
   worldMessenger?: ProactiveMessenger;
   characterInteractionActor?: CharacterInteractionActor;
   characterCollaborationReporter?: CharacterCollaborationReporter;
-  characterFunctionInferer?: CharacterFunctionInferer | false;
   characterSkillReflector?: CharacterSkillReflector | false;
   visionService?: VisionService;
+  documentService?: DocumentConversionService;
+  mineruService?: MineruService;
+  gitService?: GitAccessService;
   webReaderService?: WebReaderService;
   conversationLifecycleThresholds?: Partial<ConversationLifecycleThresholds>;
   privateInboxOptions?: PrivateInboxCoordinatorOptions;
@@ -202,6 +204,9 @@ export class TestRuntime {
       workspaceDir: options.workspaceDir,
       tavilyBaseUrl: options.tavilyBaseUrl,
       visionService: options.visionService,
+      documentService: options.documentService,
+      mineruService: options.mineruService,
+      gitService: options.gitService,
       webReaderService: options.webReaderService,
       memoryExtractor: options.memoryExtractor ?? (async () => ({ candidates: [] })),
       postTurnAnalyzer: options.postTurnAnalyzer,
@@ -212,7 +217,6 @@ export class TestRuntime {
       worldMessenger: options.worldMessenger,
       characterInteractionActor: options.characterInteractionActor,
       characterCollaborationReporter: options.characterCollaborationReporter,
-      characterFunctionInferer: options.characterFunctionInferer ?? false,
       characterSkillReflector: options.characterSkillReflector ?? false,
       conversationLifecycleThresholds: options.conversationLifecycleThresholds,
       privateInboxOptions: options.privateInboxOptions,
@@ -244,7 +248,15 @@ export class TestRuntime {
     const conversations = this.kernel.sessionRuntime.getConversationMetadata();
     const interactionStates = conversations.flatMap((conversation) => {
       if (!conversation.characterId) return [];
-      const state = this.kernel.interactionService.get(conversation.id);
+      const state = this.kernel.interactionService.get(
+        conversation.id,
+        conversation.conversationSpace === "secret"
+          ? {
+              conversationSpace: "secret",
+              secretOwnerCharacterId: conversation.characterId,
+            }
+          : { conversationSpace: "normal" },
+      );
       return state ? [state] : [];
     });
     return {
@@ -273,7 +285,16 @@ export class TestRuntime {
       scenes: this.kernel.rpService.listScenes(),
       interactionStates,
       interactionEvents: interactionStates.flatMap((state) =>
-        this.kernel.interactionService.listEvents(state.sessionId, 200)),
+        this.kernel.interactionService.listEvents(
+          state.sessionId,
+          state.conversationSpace === "secret"
+            ? {
+                conversationSpace: "secret",
+                secretOwnerCharacterId: state.secretOwnerCharacterId,
+              }
+            : { conversationSpace: "normal" },
+          200,
+        )),
       memories: this.kernel.rpService.listAllMemories().sort(byId),
       userInsights: this.kernel.getUserInsightStatus(200),
       pendingRealMutations: this.kernel.rpService.repository.listPendingMutations(),

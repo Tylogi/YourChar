@@ -25,6 +25,7 @@ import {
   type WorldPlanner,
   type WorldStoryEvent,
 } from "./types.js";
+import { formatWorldLocalDateTime, worldLocalDateTimeToInstant } from "./local-time.js";
 
 type ConversationSnapshot = {
   sessionId: string;
@@ -235,7 +236,8 @@ export class WorldAutonomyCoordinator {
     }
     if (!life.policy.enabled) throw new WorldValidationError("character autonomy is disabled");
     if (!life.places.length) return { plans: [], fallbackUsed: true };
-    const localDate = localDateKey(this.clock.now(), life.world.timezone);
+    const planningNow = this.clock.now();
+    const localDate = localDateKey(planningNow, life.world.timezone);
     if (!force && life.policy.lastPlannedDate === localDate) {
       return { plans: life.plans.filter((plan) => plan.status === "planned"), fallbackUsed: false };
     }
@@ -291,8 +293,9 @@ export class WorldAutonomyCoordinator {
           })),
           ...(story?.activeEvent ? { activeStoryEvent: story.activeEvent } : {}),
           worldCharacters,
-          now: this.clock.now().toISOString(),
+          now: planningNow.toISOString(),
           localDate,
+          localDateTime: formatWorldLocalDateTime(planningNow, life.world.timezone),
         });
         const parsed = parsePlannerOutput(output);
         plannerOutputValid = parsed.valid;
@@ -300,9 +303,10 @@ export class WorldAutonomyCoordinator {
         proposals = validateProposals(
           parsed.activities,
           life.places,
-          this.clock.now(),
+          planningNow,
           existingSchedule,
           life.runtime,
+          life.world.timezone,
         );
       } catch {
         proposals = [];
@@ -879,6 +883,7 @@ function validateProposals(
   now: Date,
   existingSchedule: Array<{ title: string; startAt?: string; endAt?: string }>,
   currentState: { placeId?: string; energy: number },
+  timezone: string,
 ): WorldActivityProposal[] {
   const placeMap = new Map(places.map((place) => [place.id, place]));
   const horizon = now.getTime() + 30 * 60 * 60_000;
@@ -890,9 +895,9 @@ function validateProposals(
     const capabilityId = cleanString(item.capabilityId) as WorldCapabilityId;
     const place = placeId ? placeMap.get(placeId) : undefined;
     if (!place || (capabilityId !== "travel" && !place.capabilityIds.includes(capabilityId))) continue;
-    const start = new Date(cleanString(item.startAt));
-    const end = new Date(cleanString(item.endAt));
-    if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime())) continue;
+    const start = worldLocalDateTimeToInstant(cleanString(item.startLocal), timezone);
+    const end = worldLocalDateTimeToInstant(cleanString(item.endLocal), timezone);
+    if (!start || !end) continue;
     if (start.getTime() < now.getTime() + 5 * 60_000 || start.getTime() > horizon) continue;
     const duration = end.getTime() - start.getTime();
     if (duration < 15 * 60_000 || duration > 4 * 60 * 60_000) continue;

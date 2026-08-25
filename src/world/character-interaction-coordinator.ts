@@ -2,7 +2,6 @@ import { randomUUID } from "node:crypto";
 import type { Clock } from "../app/clock.js";
 import type { IdGenerator } from "../app/id-generator.js";
 import {
-  type CharacterCapabilityId,
   type CharacterTaskRoute,
   type CharacterCapabilityService,
 } from "../organization/index.js";
@@ -93,7 +92,7 @@ export class CharacterInteractionCoordinator {
   async requestCharacterHelp(input: {
     sourceCharacterId: string;
     targetCharacterId?: string;
-    requiredCapabilityIds?: CharacterCapabilityId[];
+    requiredSkillIds?: string[];
     task: string;
     context?: string;
     message?: string;
@@ -106,9 +105,7 @@ export class CharacterInteractionCoordinator {
       sourceCharacterId: source.id,
       task,
       ...(input.targetCharacterId ? { targetCharacterId: input.targetCharacterId } : {}),
-      ...(input.requiredCapabilityIds?.length
-        ? { requiredCapabilityIds: input.requiredCapabilityIds }
-        : {}),
+      ...(input.requiredSkillIds?.length ? { requiredSkillIds: input.requiredSkillIds } : {}),
     });
     const target = this.rpService.getCharacter(routing.selected!.characterId);
     const context = boundedOptional(input.context, 1_500);
@@ -138,7 +135,7 @@ export class CharacterInteractionCoordinator {
   async queueCharacterHelp(input: {
     sourceCharacterId: string;
     targetCharacterId?: string;
-    requiredCapabilityIds?: CharacterCapabilityId[];
+    requiredSkillIds?: string[];
     task: string;
     context?: string;
     message?: string;
@@ -178,9 +175,7 @@ export class CharacterInteractionCoordinator {
       sourceCharacterId: source.id,
       task,
       ...(input.targetCharacterId ? { targetCharacterId: input.targetCharacterId } : {}),
-      ...(input.requiredCapabilityIds?.length
-        ? { requiredCapabilityIds: input.requiredCapabilityIds }
-        : {}),
+      ...(input.requiredSkillIds?.length ? { requiredSkillIds: input.requiredSkillIds } : {}),
     });
     const target = this.rpService.getCharacter(routing.selected!.characterId);
     const context = boundedOptional(input.context, 1_500);
@@ -724,6 +719,7 @@ export class CharacterInteractionCoordinator {
         purpose,
         opening,
         signal,
+        routing,
       );
       const response = tracked.response;
       running = tracked.episode;
@@ -887,6 +883,7 @@ export class CharacterInteractionCoordinator {
     purpose: CharacterInteractionActorInput["purpose"],
     openingMessage?: string,
     signal?: AbortSignal,
+    routing?: CharacterTaskRoute,
   ): Promise<string> {
     const actor = this.rpService.getCharacter(actorCharacterId);
     const peerId = actorCharacterId === episode.initiatorCharacterId
@@ -925,7 +922,11 @@ export class CharacterInteractionCoordinator {
       ...(purpose === "collaboration_result"
         ? {
             taskIdentity: this.capabilities.getTaskIdentity(actor.id),
-            taskSkill: this.capabilities.getTaskSkill(actor.id),
+            taskSkill: this.capabilities.getTaskSkill(
+              actor.id,
+              "normal",
+              routing?.selectedSkillIds,
+            ),
           }
         : {}),
       currentTime: this.clock.now().toISOString(),
@@ -940,6 +941,7 @@ export class CharacterInteractionCoordinator {
     purpose: CharacterInteractionActorInput["purpose"],
     openingMessage?: string,
     signal?: AbortSignal,
+    routing?: CharacterTaskRoute,
   ): Promise<{ response: string; episode: CharacterChannelEpisode }> {
     let counted = episode;
     const executionStartedAt = performance.now();
@@ -950,6 +952,7 @@ export class CharacterInteractionCoordinator {
         purpose,
         openingMessage,
         signal,
+        routing,
       );
       if (!signal?.aborted) {
         counted = this.recordTargetExecutionDurationSafely(
@@ -1140,7 +1143,7 @@ export class CharacterInteractionCoordinator {
     episode: CharacterChannelEpisode,
     routing?: CharacterTaskRoute,
   ): void {
-    if (episode.kind !== "collaboration" || !routing?.requiredCapabilityIds.length) return;
+    if (episode.kind !== "collaboration") return;
     const outcome = episode.status === "completed"
       ? "completed"
       : episode.status === "declined"
@@ -1154,7 +1157,7 @@ export class CharacterInteractionCoordinator {
     try {
       this.capabilities.recordTaskEvidence({
         characterId: episode.targetCharacterId,
-        capabilityIds: routing.requiredCapabilityIds,
+        skillPackageIds: routing?.selectedSkillIds ?? [],
         sourceTaskId: episode.id,
         outcome,
         summary: [
@@ -1164,7 +1167,7 @@ export class CharacterInteractionCoordinator {
         ].filter(Boolean).join("\n"),
       });
     } catch (error) {
-      this.options.onAction?.("character_capability_evidence", "failed", {
+      this.options.onAction?.("character_skill_evaluation", "failed", {
         episodeId: episode.id,
         characterId: episode.targetCharacterId,
         error: errorText(error),

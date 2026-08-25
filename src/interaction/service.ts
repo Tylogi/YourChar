@@ -10,6 +10,7 @@ import type {
   InteractionEvent,
   InteractionEventSource,
   InteractionEvidenceKind,
+  InteractionScope,
   InteractionState,
   InteractionStateSnapshot,
   InteractionTransitionResult,
@@ -49,8 +50,14 @@ export class InteractionService {
     }) => void = () => undefined,
   ) {}
 
-  ensure(sessionId: string, characterId: string, mode: Mode): InteractionState {
-    const existing = this.repository.getState(sessionId);
+  ensure(
+    sessionId: string,
+    characterId: string,
+    mode: Mode,
+    scope: InteractionScope,
+  ): InteractionState {
+    assertScopeForCharacter(scope, characterId);
+    const existing = this.repository.getState(sessionId, scope);
     if (existing) {
       if (existing.characterId !== characterId) {
         throw new InteractionValidationError(
@@ -61,39 +68,52 @@ export class InteractionService {
       return existing;
     }
     const now = this.clock.now().toISOString();
-    return this.repository.upsertState(defaultState(sessionId, characterId, mode, now));
+    return this.repository.upsertState(defaultState(sessionId, characterId, mode, scope, now));
   }
 
-  peekOrDefault(sessionId: string, characterId: string, mode: Mode): InteractionState {
-    return this.repository.getState(sessionId) ?? defaultState(
+  peekOrDefault(
+    sessionId: string,
+    characterId: string,
+    mode: Mode,
+    scope: InteractionScope,
+  ): InteractionState {
+    assertScopeForCharacter(scope, characterId);
+    return this.repository.getState(sessionId, scope) ?? defaultState(
       sessionId,
       characterId,
       mode,
+      scope,
       this.clock.now().toISOString(),
     );
   }
 
-  get(sessionId: string): InteractionState | undefined {
-    return this.repository.getState(sessionId);
+  get(sessionId: string, scope: InteractionScope): InteractionState | undefined {
+    return this.repository.getState(sessionId, scope);
   }
 
-  listEvents(sessionId: string, limit = 50): InteractionEvent[] {
-    return this.repository.listEvents(sessionId, limit);
+  listEvents(sessionId: string, scope: InteractionScope, limit = 50): InteractionEvent[] {
+    return this.repository.listEvents(sessionId, scope, limit);
   }
 
-  listAllEvents(sessionId: string): InteractionEvent[] {
-    return this.repository.listAllEvents(sessionId);
+  listAllEvents(sessionId: string, scope: InteractionScope): InteractionEvent[] {
+    return this.repository.listAllEvents(sessionId, scope);
   }
 
-  canUndoLatest(sessionId: string): boolean {
-    const state = this.repository.getState(sessionId);
-    const event = this.repository.latestAppliedReversibleEvent(sessionId);
+  canUndoLatest(sessionId: string, scope: InteractionScope): boolean {
+    const state = this.repository.getState(sessionId, scope);
+    const event = this.repository.latestAppliedReversibleEvent(sessionId, scope);
     return Boolean(state && !state.pendingEventId && event && sameSnapshot(snapshot(state), event.afterState));
   }
 
-  runtimeContextFor(sessionId: string, characterId: string, mode: Mode): string {
-    const state = this.peekOrDefault(sessionId, characterId, mode);
+  runtimeContextFor(
+    sessionId: string,
+    characterId: string,
+    mode: Mode,
+    scope: InteractionScope,
+  ): string {
+    const state = this.peekOrDefault(sessionId, characterId, mode, scope);
     const attributes = [
+      `conversation_space="${state.conversationSpace}"`,
       `continuity="${state.continuity}"`,
       `presence="${state.presence}"`,
       `lens="${state.lens}"`,
@@ -111,7 +131,9 @@ export class InteractionService {
         `<interaction_state ${attributes}>`,
         `Physical co-presence is confirmed${state.location ? ` at: ${xml(state.location)}` : ""}.`,
         "Use observable-scene output: describe environment and the character's visible actions, expression, and dialogue. Never invent the user's actions, speech, decisions, sensations, or inner state.",
-        "Co-presence changes only the narrative lens. This remains a canonical private conversation: user reminders and user schedule requests still use calendar=user; character plans use calendar=character.",
+        state.conversationSpace === "secret"
+          ? "Co-presence changes only the narrative lens. Normal-space profile, relationship, schedule, world, scene, and collaboration state remain unavailable."
+          : "Co-presence changes only the narrative lens. This remains a canonical private conversation: user reminders and user schedule requests still use calendar=user; character plans use calendar=character.",
         "</interaction_state>",
       ].join("\n");
     }
@@ -134,15 +156,24 @@ export class InteractionService {
     sessionId: string;
     characterId: string;
     mode: Mode;
+    scope: InteractionScope;
     placeId?: string;
     location?: string;
     note?: string;
     source: InteractionEventSource;
     idempotencyKey?: string;
   }): InteractionTransitionResult {
-    const replay = input.idempotencyKey && this.repository.findEventByIdempotencyKey(input.idempotencyKey);
-    if (replay) return { state: this.ensure(input.sessionId, input.characterId, input.mode), event: replay };
-    const state = this.ensureCanonical(input.sessionId, input.characterId, input.mode);
+    const replay = input.idempotencyKey && this.repository.findEventByIdempotencyKey(
+      input.idempotencyKey,
+      input.scope,
+    );
+    if (replay) {
+      return {
+        state: this.ensure(input.sessionId, input.characterId, input.mode, input.scope),
+        event: replay,
+      };
+    }
+    const state = this.ensureCanonical(input.sessionId, input.characterId, input.mode, input.scope);
     this.assertNoPendingTransition(state);
     if (state.presence === "co_present") {
       throw new InteractionValidationError("the user and character are already together", "INTERACTION_TRANSITION_INVALID");
@@ -175,6 +206,7 @@ export class InteractionService {
     sessionId: string;
     characterId: string;
     mode: Mode;
+    scope: InteractionScope;
     placeId?: string;
     location?: string;
     source: InteractionEventSource;
@@ -182,9 +214,17 @@ export class InteractionService {
     userConfirmed?: boolean;
     idempotencyKey?: string;
   }): InteractionTransitionResult {
-    const replay = input.idempotencyKey && this.repository.findEventByIdempotencyKey(input.idempotencyKey);
-    if (replay) return { state: this.ensure(input.sessionId, input.characterId, input.mode), event: replay };
-    const state = this.ensureCanonical(input.sessionId, input.characterId, input.mode);
+    const replay = input.idempotencyKey && this.repository.findEventByIdempotencyKey(
+      input.idempotencyKey,
+      input.scope,
+    );
+    if (replay) {
+      return {
+        state: this.ensure(input.sessionId, input.characterId, input.mode, input.scope),
+        event: replay,
+      };
+    }
+    const state = this.ensureCanonical(input.sessionId, input.characterId, input.mode, input.scope);
     this.assertNoPendingTransition(state);
     if (state.presence === "co_present") {
       throw new InteractionValidationError("physical co-presence is already active", "INTERACTION_TRANSITION_INVALID");
@@ -218,7 +258,11 @@ export class InteractionService {
     if (input.source === "user_control" && input.userConfirmed !== true) {
       throw new InteractionValidationError("explicit UI confirmation is required", "INTERACTION_EVIDENCE_REQUIRED");
     }
-    const conflict = this.repository.findCanonicalCoPresentSession(input.characterId, input.sessionId);
+    const conflict = this.repository.findCanonicalCoPresentSession(
+      input.characterId,
+      input.scope,
+      input.sessionId,
+    );
     if (conflict) {
       throw new InteractionValidationError(
         `this character is already co-present in session ${conflict.sessionId}`,
@@ -226,7 +270,7 @@ export class InteractionService {
       );
     }
     const now = this.clock.now().toISOString();
-    const worldRuntimeBeforeMeeting = location.placeId
+    const worldRuntimeBeforeMeeting = state.conversationSpace === "normal" && location.placeId
       ? this.captureWorldRuntime(input.characterId)
       : undefined;
     const after: InteractionState = {
@@ -262,14 +306,20 @@ export class InteractionService {
     sessionId: string;
     characterId: string;
     mode: Mode;
+    scope: InteractionScope;
     source: "agent_tool";
     initiator: "user" | "character" | "mutual";
     summary?: string;
     idempotencyKey: string;
   }): InteractionTransitionResult {
-    const replay = this.repository.findEventByIdempotencyKey(input.idempotencyKey);
-    if (replay) return { state: this.ensure(input.sessionId, input.characterId, input.mode), event: replay };
-    const state = this.ensureCanonical(input.sessionId, input.characterId, input.mode);
+    const replay = this.repository.findEventByIdempotencyKey(input.idempotencyKey, input.scope);
+    if (replay) {
+      return {
+        state: this.ensure(input.sessionId, input.characterId, input.mode, input.scope),
+        event: replay,
+      };
+    }
+    const state = this.ensureCanonical(input.sessionId, input.characterId, input.mode, input.scope);
     this.assertNoPendingTransition(state);
     if (state.presence !== "co_present") {
       throw new InteractionValidationError("ending a meeting requires confirmed co-presence", "INTERACTION_TRANSITION_INVALID");
@@ -300,12 +350,13 @@ export class InteractionService {
     sessionId: string;
     characterId: string;
     mode: Mode;
+    scope: InteractionScope;
     source: "user_control" | "system";
     userConfirmed?: boolean;
     summary?: string;
     idempotencyKey?: string;
   }): InteractionTransitionResult {
-    const state = this.ensureCanonical(input.sessionId, input.characterId, input.mode);
+    const state = this.ensureCanonical(input.sessionId, input.characterId, input.mode, input.scope);
     this.assertNoPendingTransition(state);
     if (state.presence !== "co_present") {
       throw new InteractionValidationError("there is no active meeting to end", "INTERACTION_TRANSITION_INVALID");
@@ -314,7 +365,7 @@ export class InteractionService {
       throw new InteractionValidationError("explicit UI confirmation is required", "INTERACTION_EVIDENCE_REQUIRED");
     }
     const now = this.clock.now().toISOString();
-    const worldRuntimeBeforeMeeting = this.meetingWorldRuntimeBefore(input.sessionId);
+    const worldRuntimeBeforeMeeting = this.meetingWorldRuntimeBefore(input.sessionId, input.scope);
     const result = this.applyTransition({
       before: state,
       after: remoteState(state, now),
@@ -333,6 +384,7 @@ export class InteractionService {
     sessionId: string;
     characterId: string;
     mode: Mode;
+    scope: InteractionScope;
     sourceContextLogId: string;
     expectedRevision: number;
     userText: string;
@@ -340,13 +392,13 @@ export class InteractionService {
     decision: PostTurnInteractionDecision;
   }): InteractionTransitionResult | undefined {
     const idempotencyKey = `post-turn:end-meeting:${input.sourceContextLogId}`;
-    const replay = this.repository.findEventByIdempotencyKey(idempotencyKey);
+    const replay = this.repository.findEventByIdempotencyKey(idempotencyKey, input.scope);
     if (replay) {
-      const state = this.repository.getState(input.sessionId);
+      const state = this.repository.getState(input.sessionId, input.scope);
       return state ? { state, event: replay } : undefined;
     }
     if (!isTrustedPostTurnDeparture(input.decision, input.userText, input.assistantText)) return undefined;
-    const state = this.repository.getState(input.sessionId);
+    const state = this.repository.getState(input.sessionId, input.scope);
     if (
       input.mode !== "sms" ||
       !state ||
@@ -358,7 +410,7 @@ export class InteractionService {
       state.revision !== input.expectedRevision
     ) return undefined;
     const now = this.clock.now().toISOString();
-    const worldRuntimeBeforeMeeting = this.meetingWorldRuntimeBefore(input.sessionId);
+    const worldRuntimeBeforeMeeting = this.meetingWorldRuntimeBefore(input.sessionId, input.scope);
     const result = this.applyTransition({
       before: state,
       after: remoteState(state, now),
@@ -378,9 +430,10 @@ export class InteractionService {
     sessionId: string;
     characterId: string;
     mode: Mode;
+    scope: InteractionScope;
     source: "user_control" | "system";
   }): InteractionTransitionResult {
-    const state = this.ensureCanonical(input.sessionId, input.characterId, input.mode);
+    const state = this.ensureCanonical(input.sessionId, input.characterId, input.mode, input.scope);
     this.assertNoPendingTransition(state);
     if (state.presence !== "meeting_pending") {
       throw new InteractionValidationError("there is no pending meeting to cancel", "INTERACTION_TRANSITION_INVALID");
@@ -396,19 +449,23 @@ export class InteractionService {
     });
   }
 
-  finishPendingAfterTurn(sessionId: string, completed: boolean): InteractionTransitionResult | undefined {
-    const state = this.repository.getState(sessionId);
+  finishPendingAfterTurn(
+    sessionId: string,
+    scope: InteractionScope,
+    completed: boolean,
+  ): InteractionTransitionResult | undefined {
+    const state = this.repository.getState(sessionId, scope);
     if (!state?.pendingEventId) return undefined;
-    const event = this.repository.getEvent(state.pendingEventId);
+    const event = this.repository.getEvent(state.pendingEventId, scope);
     if (!event || event.status !== "pending") {
       this.repository.upsertState({ ...state, pendingEventId: undefined, updatedAt: this.clock.now().toISOString() });
       return undefined;
     }
     const now = this.clock.now().toISOString();
-    const worldRuntimeBeforeMeeting = this.meetingWorldRuntimeBefore(sessionId);
+    const worldRuntimeBeforeMeeting = this.meetingWorldRuntimeBefore(sessionId, scope);
     if (!completed) {
       this.repository.transaction(() => {
-        this.repository.updateEventStatus(event.id, "cancelled");
+        this.repository.updateEventStatus(event.id, scope, "cancelled");
         this.repository.upsertState({ ...state, pendingEventId: undefined, updatedAt: now });
       });
       return undefined;
@@ -422,32 +479,39 @@ export class InteractionService {
     };
     this.repository.transaction(() => {
       this.repository.upsertState(after);
-      this.repository.updateEventStatus(event.id, "applied", { appliedAt: now });
+      this.repository.updateEventStatus(event.id, scope, "applied", { appliedAt: now });
     });
     this.leaveMeetingScene(state, worldRuntimeBeforeMeeting);
     return { state: after, event: { ...event, status: "applied", appliedAt: now } };
   }
 
-  recoverPendingAfterInterruptedTurn(sessionId: string): void {
-    const state = this.repository.getState(sessionId);
+  recoverPendingAfterInterruptedTurn(sessionId: string, scope: InteractionScope): void {
+    const state = this.repository.getState(sessionId, scope);
     if (!state?.pendingEventId) return;
-    const event = this.repository.getEvent(state.pendingEventId);
+    const event = this.repository.getEvent(state.pendingEventId, scope);
     const now = this.clock.now().toISOString();
     this.repository.transaction(() => {
-      if (event?.status === "pending") this.repository.updateEventStatus(event.id, "cancelled");
+      if (event?.status === "pending") {
+        this.repository.updateEventStatus(event.id, scope, "cancelled");
+      }
       this.repository.upsertState({ ...state, pendingEventId: undefined, updatedAt: now });
     });
   }
 
-  undoLatest(sessionId: string, characterId: string, mode: Mode): InteractionTransitionResult {
-    const state = this.ensureCanonical(sessionId, characterId, mode);
+  undoLatest(
+    sessionId: string,
+    characterId: string,
+    mode: Mode,
+    scope: InteractionScope,
+  ): InteractionTransitionResult {
+    const state = this.ensureCanonical(sessionId, characterId, mode, scope);
     this.assertNoPendingTransition(state);
-    const previous = this.repository.latestAppliedReversibleEvent(sessionId);
+    const previous = this.repository.latestAppliedReversibleEvent(sessionId, scope);
     if (!previous || !sameSnapshot(snapshot(state), previous.afterState)) {
       throw new InteractionValidationError("the latest interaction transition can no longer be undone", "INTERACTION_UNDO_UNAVAILABLE");
     }
     if (previous.beforeState.presence === "co_present") {
-      const conflict = this.repository.findCanonicalCoPresentSession(characterId, sessionId);
+      const conflict = this.repository.findCanonicalCoPresentSession(characterId, scope, sessionId);
       if (conflict) throw new InteractionValidationError("another session is already co-present", "INTERACTION_CONFLICT");
     }
     const now = this.clock.now().toISOString();
@@ -474,7 +538,7 @@ export class InteractionService {
     });
     try {
       this.repository.transaction(() => {
-        this.repository.updateEventStatus(previous.id, "reverted", { revertedAt: now });
+        this.repository.updateEventStatus(previous.id, scope, "reverted", { revertedAt: now });
         this.repository.upsertState(restored);
         this.repository.createEvent(undo);
       });
@@ -486,8 +550,13 @@ export class InteractionService {
     return { state: restored, event: undo };
   }
 
-  private ensureCanonical(sessionId: string, characterId: string, mode: Mode): InteractionState {
-    const state = this.ensure(sessionId, characterId, mode);
+  private ensureCanonical(
+    sessionId: string,
+    characterId: string,
+    mode: Mode,
+    scope: InteractionScope,
+  ): InteractionState {
+    const state = this.ensure(sessionId, characterId, mode, scope);
     if (mode !== "sms" || state.continuity !== "canonical") {
       throw new InteractionValidationError(
         "meeting transitions are available only in canonical private conversations",
@@ -504,6 +573,16 @@ export class InteractionService {
   }
 
   private resolveLocation(state: InteractionState, input: LocationInput): { placeId?: string; location?: string } {
+    if (state.conversationSpace === "secret") {
+      if (input.placeId) {
+        throw new InteractionValidationError(
+          "private interaction locations cannot reference normal-space world places",
+          "INTERACTION_LOCATION_INVALID",
+        );
+      }
+      const location = optionalBounded(input.location, 120, "meeting location") ?? state.location;
+      return location ? { location } : {};
+    }
     const life = this.worldService.getCharacterLife(state.characterId);
     let placeId = optionalBounded(input.placeId, 160, "place id");
     let location = optionalBounded(input.location, 120, "meeting location");
@@ -571,6 +650,7 @@ export class InteractionService {
       id: this.idGenerator.next("interaction-event"),
       sessionId: input.before.sessionId,
       characterId: input.before.characterId,
+      ...interactionScopeOf(input.before),
       type: input.type,
       source: input.source,
       status: input.status,
@@ -592,6 +672,7 @@ export class InteractionService {
   }
 
   private enterMeetingScene(state: InteractionState): void {
+    if (state.conversationSpace === "secret") return;
     this.project("scene_enter", state, () => {
       const character = this.rpService.getCharacter(state.characterId);
       this.rpService.updateScene(state.sessionId, {
@@ -616,6 +697,7 @@ export class InteractionService {
     state: InteractionState,
     previousRuntime?: InteractionWorldRuntimeSnapshot,
   ): void {
+    if (state.conversationSpace === "secret") return;
     if (!previousRuntime) return;
     this.project("world_leave", state, () => {
       const life = this.worldService.getCharacterLife(state.characterId);
@@ -640,8 +722,13 @@ export class InteractionService {
     };
   }
 
-  private meetingWorldRuntimeBefore(sessionId: string): InteractionWorldRuntimeSnapshot | undefined {
-    return this.repository.latestAppliedBeginEvent(sessionId)?.beforeState.worldRuntimeBeforeMeeting;
+  private meetingWorldRuntimeBefore(
+    sessionId: string,
+    scope: InteractionScope,
+  ): InteractionWorldRuntimeSnapshot | undefined {
+    if (scope.conversationSpace === "secret") return undefined;
+    return this.repository.latestAppliedBeginEvent(sessionId, scope)
+      ?.beforeState.worldRuntimeBeforeMeeting;
   }
 
   private project(operation: string, state: InteractionState, projection: () => void): void {
@@ -666,9 +753,17 @@ export class InteractionService {
   }
 }
 
-function defaultState(sessionId: string, characterId: string, mode: Mode, now: string): InteractionState {
+function defaultState(
+  sessionId: string,
+  characterId: string,
+  mode: Mode,
+  scope: InteractionScope,
+  now: string,
+): InteractionState {
+  assertScopeForCharacter(scope, characterId);
   return mode === "rp"
     ? {
+        ...scope,
         sessionId,
         characterId,
         continuity: "sandbox",
@@ -679,6 +774,7 @@ function defaultState(sessionId: string, characterId: string, mode: Mode, now: s
         updatedAt: now,
       }
     : {
+        ...scope,
         sessionId,
         characterId,
         continuity: "canonical",
@@ -772,7 +868,8 @@ function xml(value: string): string {
 function throwCanonicalMeetingConflict(error: unknown): never {
   if (
     error instanceof Error &&
-    /UNIQUE constraint failed:\s*conversation_interaction_states\.character_id/iu.test(error.message)
+    /UNIQUE constraint failed:\s*conversation_interaction_states\.conversation_space,\s*conversation_interaction_states\.character_id/iu
+      .test(error.message)
   ) {
     throw new InteractionValidationError(
       "this character is already co-present in another session",
@@ -780,4 +877,32 @@ function throwCanonicalMeetingConflict(error: unknown): never {
     );
   }
   throw error;
+}
+
+function assertScopeForCharacter(scope: InteractionScope, characterId: string): void {
+  if (scope.conversationSpace === "normal") {
+    if ("secretOwnerCharacterId" in scope && scope.secretOwnerCharacterId !== undefined) {
+      throw new InteractionValidationError(
+        "normal interaction scope cannot have a secret owner",
+        "INTERACTION_CONFLICT",
+      );
+    }
+    return;
+  }
+  const owner = scope.secretOwnerCharacterId?.trim();
+  if (!owner || owner !== characterId) {
+    throw new InteractionValidationError(
+      "private interaction scope does not belong to this character",
+      "INTERACTION_CONFLICT",
+    );
+  }
+}
+
+function interactionScopeOf(state: InteractionState): InteractionScope {
+  return state.conversationSpace === "secret"
+    ? {
+        conversationSpace: "secret",
+        secretOwnerCharacterId: state.secretOwnerCharacterId,
+      }
+    : { conversationSpace: "normal" };
 }

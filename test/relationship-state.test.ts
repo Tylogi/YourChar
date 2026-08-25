@@ -8,6 +8,7 @@ import {
   relationshipExtractorSystemPrompt,
   stableRelationshipExtractorPrompt,
 } from "../src/relationship/index.js";
+import { AppDatabase } from "../src/storage/database.js";
 import { createTestRuntime } from "../src/testing/index.js";
 
 test("relationship extraction uses one stable prompt for every private turn", () => {
@@ -37,7 +38,7 @@ test("private relationship signals produce bounded state events and inject a qua
         impact: "moderate",
         summary: "用户感谢角色持续陪伴并表达信任",
         confidence: 1,
-        delta: { trust: 100, closeness: 100 },
+        delta: { trust: 100, bond: 100 },
       };
     },
   });
@@ -59,17 +60,14 @@ test("private relationship signals produce bounded state events and inject a qua
     const snapshot = runtime.kernel.getCharacterRelationship(character.id);
     assert.equal(extractionCalls, 1);
     assert.equal(snapshot.state.trust, 37);
-    assert.equal(snapshot.state.closeness, 22);
-    assert.equal(snapshot.state.affection, 27);
-    assert.equal(snapshot.state.tension, 3);
+    assert.equal(snapshot.state.bond, 27);
+    assert.equal(snapshot.state.tension, 0);
     assert.deepEqual(snapshot.state.bondFacets, []);
     assert.equal(snapshot.state.romanceStatus, "none");
     assert.equal(snapshot.recentEvents.length, 1);
     assert.deepEqual(snapshot.recentEvents[0].delta, {
       trust: 2,
-      closeness: 2,
-      affection: 2,
-      respect: 0,
+      bond: 2,
       tension: -2,
     });
     const exported = await runtime.kernel.exportUserData();
@@ -105,7 +103,7 @@ test("private relationship signals produce bounded state events and inject a qua
   }
 });
 
-test("romance requires evidenced milestones and never follows from affection scores alone", () => {
+test("romance requires evidenced milestones and never follows from bond scores alone", () => {
   const runtime = createTestRuntime({ seed: "relationship-romance-milestones" });
   try {
     const character = runtime.kernel.createCharacter({ name: "迟雾" });
@@ -451,11 +449,13 @@ test("relationship affect decays and group chat reads but never mutates characte
     const immediate = runtime.kernel.getCharacterRelationship(first.id);
     assert.ok(immediate.state.affect.valence < -0.4);
     assert.ok(immediate.state.affect.labels.includes("guarded"));
+    assert.equal(immediate.state.tension, 6);
 
     runtime.clock.advance(12 * 60 * 60_000);
     const decayed = runtime.kernel.getCharacterRelationship(first.id);
     assert.ok(decayed.state.affect.valence > immediate.state.affect.valence);
     assert.deepEqual(decayed.state.affect.labels, []);
+    assert.equal(decayed.state.tension, 3);
 
     runtime.model.enqueue([
       { kind: "assistant_text", text: '{"speak":false,"reasonCode":"none"}' },
@@ -474,6 +474,77 @@ test("relationship affect decays and group chat reads but never mutates characte
     assert.equal(runtime.kernel.getCharacterRelationship(second.id).recentEvents.length, 0);
   } finally {
     runtime.dispose();
+  }
+});
+
+test("schema 43 folds legacy relationship axes into bond without losing semantic state", () => {
+  const stateDir = mkdtempSync(join(tmpdir(), "yourchar-relationship-v43-"));
+  const databasePath = join(stateDir, "rp-agent.sqlite");
+  const legacy = new AppDatabase(databasePath, { maxMigrationVersion: 42 });
+  const now = "2026-08-23T00:00:00.000Z";
+  try {
+    legacy.connection.prepare(`
+      INSERT INTO characters(id, name, created_at, updated_at)
+      VALUES ('relationship-v43-character', '迁移角色', ?, ?)
+    `).run(now, now);
+    legacy.connection.prepare(`
+      INSERT INTO character_relationship_states(
+        character_id, trust, closeness, affection, respect, tension,
+        bond_facets_json, romance_status, semantic_updated_at,
+        affect_valence, affect_arousal, affect_control, affect_labels_json,
+        affect_updated_at, version, created_at, updated_at
+      ) VALUES (?, 72, 80, 60, 20, 35, '["confidant"]', 'dating', ?,
+        0.25, 0.4, 0.75, '["warm"]', ?, 7, ?, ?)
+    `).run("relationship-v43-character", now, now, now, now);
+    legacy.connection.prepare(`
+      INSERT INTO relationship_events(
+        id, character_id, source_session_id, source_context_log_id,
+        event_type, impact, summary, confidence, delta_json, created_at
+      ) VALUES (
+        'relationship-v43-event', 'relationship-v43-character', 'session-v43', 'context-v43',
+        'support', 'moderate', '旧五维事件', 1,
+        '{"trust":2,"closeness":4,"affection":2,"respect":-2,"tension":4}', ?
+      )
+    `).run(now);
+  } finally {
+    legacy.close();
+  }
+
+  const migrated = new AppDatabase(databasePath);
+  try {
+    const version = migrated.connection.prepare(
+      "SELECT MAX(version) AS version FROM schema_migrations",
+    ).get() as { version: number };
+    assert.equal(Number(version.version), 46);
+    const columns = (migrated.connection.prepare(
+      "PRAGMA table_info(character_relationship_states)",
+    ).all() as Array<{ name: string }>).map((entry) => entry.name);
+    assert.ok(columns.includes("bond"));
+    assert.equal(columns.includes("closeness"), false);
+    assert.equal(columns.includes("affection"), false);
+    assert.equal(columns.includes("respect"), false);
+    const state = migrated.connection.prepare(`
+      SELECT trust, bond, tension, bond_facets_json, romance_status,
+             affect_valence, version
+      FROM character_relationship_states
+      WHERE character_id = 'relationship-v43-character'
+    `).get() as Record<string, unknown>;
+    assert.deepEqual({ ...state }, {
+      trust: 72,
+      bond: 66,
+      tension: 35,
+      bond_facets_json: '["confidant"]',
+      romance_status: "dating",
+      affect_valence: 0.25,
+      version: 7,
+    });
+    const event = migrated.connection.prepare(`
+      SELECT delta_json FROM relationship_events WHERE id = 'relationship-v43-event'
+    `).get() as { delta_json: string };
+    assert.deepEqual(JSON.parse(event.delta_json), { trust: 2, bond: 3, tension: 4 });
+  } finally {
+    migrated.close();
+    rmSync(stateDir, { recursive: true, force: true });
   }
 });
 
@@ -579,7 +650,8 @@ test("relationship reset fences an in-flight extractor so old events cannot reap
     await runtime.kernel.relationshipCoordinator.drain();
     const snapshot = runtime.kernel.getCharacterRelationship(character.id);
     assert.equal(snapshot.recentEvents.length, 0);
-    assert.equal(snapshot.state.affection, 25);
+    assert.equal(snapshot.state.bond, 25);
+    assert.equal(snapshot.state.tension, 0);
     assert.equal(runtime.kernel.getRelationshipCoordinatorStatus().recentJobs[0].status, "skipped");
   } finally {
     release?.();

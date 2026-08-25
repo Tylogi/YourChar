@@ -42,7 +42,6 @@ test("readiness, model diagnostics, export, and confirmed deletion form a closed
   const kernel = new CompanionKernel({
     stateDir: false,
     clock: new VirtualClock("2026-07-12T09:00:00.000Z"),
-    characterFunctionInferer: false,
     characterSkillReflector: false,
   });
   kernel.patchModelApiConfig({

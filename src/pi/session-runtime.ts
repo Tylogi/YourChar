@@ -11,7 +11,7 @@ import {
   rmSync,
   writeFileSync,
 } from "node:fs";
-import { basename, isAbsolute, join, resolve } from "node:path";
+import { basename, dirname, isAbsolute, join, resolve } from "node:path";
 import type { AgentMessage } from "@earendil-works/pi-agent-core";
 import {
   AuthStorage,
@@ -52,6 +52,8 @@ import {
   interactionStateMcpModuleId,
   userProfileMcpModuleId,
   visionMcpModuleId,
+  mineruMcpModuleId,
+  gitMcpModuleId,
   type AgentModuleCatalog,
 } from "../modules/catalog.js";
 import type { AgentPermissionCatalog } from "../modules/permissions.js";
@@ -65,6 +67,8 @@ import {
   createWebReaderMcpBridge,
   createUserProfileMcpBridge,
   createVisionMcpBridge,
+  createMineruMcpBridge,
+  createGitMcpBridge,
   createWorldMcpBridge,
   createInteractionMcpBridge,
   type McpPiBridge,
@@ -78,6 +82,9 @@ import type { TavilyService } from "../tavily/service.js";
 import type { WebReaderService } from "../web-reader/service.js";
 import type { MemoryLifecycleService } from "../memory-coordinator/lifecycle.js";
 import type { VisionService } from "../vision/service.js";
+import type { DocumentConversionService } from "../document/service.js";
+import type { MineruService } from "../mineru/service.js";
+import type { GitAccessService } from "../git/index.js";
 import type { RelationshipService } from "../relationship/service.js";
 import type { WorldService } from "../world/service.js";
 import type { WorldAutonomyCoordinator } from "../world/coordinator.js";
@@ -102,6 +109,7 @@ import { memoryContextVersion } from "../context/memory-version.js";
 import { estimateTokens, roundMetric, stableHash } from "../context/tokens.js";
 import type { ContextBudgetSnapshot, ContextEconomicsPlan, ContextPlan } from "../context/types.js";
 import { createSandboxedShellTool } from "./sandboxed-shell-tool.js";
+import { createDocumentReadTool } from "./document-read-tool.js";
 import { createSkillReadTool } from "./skill-read-tool.js";
 import { createWorkspaceTools } from "./workspace-tools.js";
 import {
@@ -214,6 +222,9 @@ export type PiSessionRuntimeOptions = {
   tavilyService: TavilyService;
   webReaderService: WebReaderService;
   visionService: VisionService;
+  documentService: DocumentConversionService;
+  mineruService: MineruService;
+  gitService?: GitAccessService;
   relationshipService: RelationshipService;
   worldService: WorldService;
   worldCoordinator: WorldAutonomyCoordinator;
@@ -239,8 +250,16 @@ export type PiSessionRuntimeOptions = {
   contextEconomics: ContextEconomicsRepository;
   workspaceDir: string;
   workspaceFiles: WorkspaceFileService;
+  workspaceWriteGuard?: (additionalBytes: number) => void;
+  shellNetworkAllowed?: () => boolean;
   workspaceRegistry?: WorkspaceScopeRegistry;
   conversationLifecycleThresholds?: Partial<ConversationLifecycleThresholds>;
+  /**
+   * Incognito children operate on a disposable tmpfs snapshot. They may read
+   * inherited context and mutate only their temporary interaction/workspace
+   * overlay; every externally observable or durable capability stays absent.
+   */
+  incognitoChild?: boolean;
 };
 
 export type PiSessionHandle = {
@@ -329,6 +348,9 @@ export class PiSessionRuntime {
   private readonly tavilyService: TavilyService;
   private readonly webReaderService: WebReaderService;
   private readonly visionService: VisionService;
+  private readonly documentService: DocumentConversionService;
+  private readonly mineruService: MineruService;
+  private readonly gitService?: GitAccessService;
   private readonly relationshipService: RelationshipService;
   private readonly worldService: WorldService;
   private readonly worldCoordinator: WorldAutonomyCoordinator;
@@ -347,6 +369,8 @@ export class PiSessionRuntime {
   private readonly memoryLifecycle: MemoryLifecycleService;
   private readonly contextEconomics: ContextEconomicsRepository;
   private readonly workspaceFiles: WorkspaceFileService;
+  private readonly workspaceWriteGuard?: (additionalBytes: number) => void;
+  private readonly shellNetworkAllowed?: () => boolean;
   private readonly workspaceRegistry: WorkspaceScopeRegistry;
   private readonly conversationIndexPath?: string;
   private readonly piSessionDir?: string;
@@ -361,6 +385,7 @@ export class PiSessionRuntime {
   private readonly canonicalDirectLoading = new Map<string, Promise<PiSessionHandle>>();
   private readonly legacyDirectMigrationTargets = new Map<string, string>();
   private readonly conversationLifecycleThresholds: ConversationLifecycleThresholds;
+  private readonly incognitoChild: boolean;
 
   constructor(options: PiSessionRuntimeOptions) {
     this.store = options.store;
@@ -370,6 +395,9 @@ export class PiSessionRuntime {
     this.tavilyService = options.tavilyService;
     this.webReaderService = options.webReaderService;
     this.visionService = options.visionService;
+    this.documentService = options.documentService;
+    this.mineruService = options.mineruService;
+    this.gitService = options.gitService;
     this.relationshipService = options.relationshipService;
     this.worldService = options.worldService;
     this.worldCoordinator = options.worldCoordinator;
@@ -389,6 +417,8 @@ export class PiSessionRuntime {
     this.memoryLifecycle = options.memoryLifecycle;
     this.contextEconomics = options.contextEconomics;
     this.workspaceFiles = options.workspaceFiles;
+    this.workspaceWriteGuard = options.workspaceWriteGuard;
+    this.shellNetworkAllowed = options.shellNetworkAllowed;
     this.workspaceRegistry = options.workspaceRegistry ?? new WorkspaceScopeRegistry(
       this.workspaceDir,
       this.workspaceFiles,
@@ -396,6 +426,7 @@ export class PiSessionRuntime {
     this.conversationLifecycleThresholds = normalizeConversationLifecycleThresholds(
       options.conversationLifecycleThresholds,
     );
+    this.incognitoChild = options.incognitoChild === true;
     this.conversationIndexPath = this.stateDir ? join(this.stateDir, "conversations.json") : undefined;
     this.piSessionDir = this.stateDir ? join(this.stateDir, "pi-sessions") : undefined;
     this.piAgentDir = this.stateDir
@@ -1058,6 +1089,22 @@ export class PiSessionRuntime {
     this.closeHandles(true);
   }
 
+  invalidateSessionCapabilities(sessionId: string, reason = "capabilities_rebuilt"): void {
+    const id = normalizeSessionId(sessionId);
+    if (this.loading.has(id)) throw new Error(`Session ${id} is loading and cannot rebuild capabilities`);
+    const handle = this.handles.get(id);
+    if (!handle) {
+      this.pendingCacheBreakReasons.set(id, reason);
+      return;
+    }
+    if (handle.session.isStreaming) throw new Error(`Session ${id} is running and cannot rebuild capabilities`);
+    if (!this.piSessionDir) this.detachedMessages.set(id, [...handle.session.messages]);
+    handle.session.dispose();
+    for (const bridge of handle.mcpBridges) void bridge.close();
+    this.handles.delete(id);
+    this.pendingCacheBreakReasons.set(id, reason);
+  }
+
   assertCapabilitiesIdle(): void {
     if (this.loading.size || [...this.handles.values()].some((handle) => handle.session.isStreaming)) {
       throw new Error("agent modules cannot be changed while a session is running");
@@ -1146,7 +1193,7 @@ export class PiSessionRuntime {
     };
     const mcpBridges: McpPiBridge[] = [];
     const isSecret = metadata.conversationSpace === "secret";
-    if (!isSecret && this.moduleCatalog.isEnabled(scheduleMcpModuleId)) {
+    if (!this.incognitoChild && !isSecret && this.moduleCatalog.isEnabled(scheduleMcpModuleId)) {
       mcpBridges.push(await createScheduleMcpBridge({
         scheduleService: this.scheduleService,
         store: this.store,
@@ -1164,7 +1211,7 @@ export class PiSessionRuntime {
         actions: () => toolState.actions,
       }));
     }
-    if (!isSecret && this.moduleCatalog.isEnabled(userProfileMcpModuleId)) {
+    if (!this.incognitoChild && !isSecret && this.moduleCatalog.isEnabled(userProfileMcpModuleId)) {
       const permissions = this.permissionCatalog.get();
       mcpBridges.push(await createUserProfileMcpBridge({
         profileService: this.profileService,
@@ -1175,6 +1222,7 @@ export class PiSessionRuntime {
       }));
     }
     if (
+      !this.incognitoChild &&
       this.moduleCatalog.isEnabled(tavilySearchMcpModuleId) &&
       this.tavilyService.isConfigured()
     ) {
@@ -1185,7 +1233,7 @@ export class PiSessionRuntime {
         actions: () => toolState.actions,
       }));
     }
-    if (this.moduleCatalog.isEnabled(webReaderMcpModuleId)) {
+    if (!this.incognitoChild && this.moduleCatalog.isEnabled(webReaderMcpModuleId)) {
       mcpBridges.push(await createWebReaderMcpBridge({
         webReaderService: this.webReaderService,
         store: this.store,
@@ -1194,6 +1242,7 @@ export class PiSessionRuntime {
       }));
     }
     if (
+      !this.incognitoChild &&
       this.moduleCatalog.isEnabled(visionMcpModuleId) &&
       this.visionService.isConfigured() &&
       this.visionService.getConfig().mode !== "off"
@@ -1207,7 +1256,40 @@ export class PiSessionRuntime {
         actions: () => toolState.actions,
       }));
     }
-    if (this.moduleCatalog.isEnabled(subagentMcpModuleId)) {
+    if (
+      !this.incognitoChild &&
+      this.moduleCatalog.isEnabled(mineruMcpModuleId) &&
+      this.mineruService.isConfigured() &&
+      this.permissionCatalog.get().workspaceAccess !== "off"
+    ) {
+      mcpBridges.push(await createMineruMcpBridge({
+        mineruService: this.mineruService,
+        workspaceFiles: workspace.files,
+        cacheNamespace: workspace.cacheNamespace,
+        store: this.store,
+        sessionId: metadata.id,
+        actions: () => toolState.actions,
+      }));
+    }
+    if (
+      !this.incognitoChild &&
+      !isSecret &&
+      metadata.characterId &&
+      this.gitService?.isConfigured() &&
+      this.moduleCatalog.isEnabled(gitMcpModuleId) &&
+      this.permissionCatalog.get().workspaceAccess === "read_write"
+    ) {
+      const character = this.rpService.getCharacter(metadata.characterId);
+      mcpBridges.push(await createGitMcpBridge({
+        gitService: this.gitService,
+        store: this.store,
+        sessionId: metadata.id,
+        characterId: metadata.characterId,
+        characterName: character.name,
+        actions: () => toolState.actions,
+      }));
+    }
+    if (!this.incognitoChild && this.moduleCatalog.isEnabled(subagentMcpModuleId)) {
       mcpBridges.push(await createSubagentMcpBridge({
         store: this.store,
         sessionId: metadata.id,
@@ -1227,7 +1309,7 @@ export class PiSessionRuntime {
         }),
       }));
     }
-    if (!isSecret && metadata.characterId && this.moduleCatalog.isEnabled(relationshipStateMcpModuleId)) {
+    if (!this.incognitoChild && !isSecret && metadata.characterId && this.moduleCatalog.isEnabled(relationshipStateMcpModuleId)) {
       mcpBridges.push(await createRelationshipMcpBridge({
         relationshipService: this.relationshipService,
         sessionId: metadata.id,
@@ -1235,6 +1317,7 @@ export class PiSessionRuntime {
       }));
     }
     if (
+      !this.incognitoChild &&
       !isSecret &&
       metadata.mode === "sms" &&
       metadata.characterId &&
@@ -1252,7 +1335,6 @@ export class PiSessionRuntime {
       }));
     }
     if (
-      !isSecret &&
       metadata.mode === "sms" &&
       metadata.characterId &&
       this.moduleCatalog.isEnabled(interactionStateMcpModuleId)
@@ -1262,12 +1344,18 @@ export class PiSessionRuntime {
         store: this.store,
         sessionId: metadata.id,
         characterId: metadata.characterId,
+        scope: isSecret
+          ? {
+              conversationSpace: "secret",
+              secretOwnerCharacterId: metadata.characterId,
+            }
+          : { conversationSpace: "normal" },
         currentUserText: () => toolState.currentUserText,
         actions: () => toolState.actions,
       }));
     }
     const permissions = this.permissionCatalog.get();
-    if (this.moduleCatalog.isEnabled(memoryCoordinatorMcpModuleId)) {
+    if (!this.incognitoChild && this.moduleCatalog.isEnabled(memoryCoordinatorMcpModuleId)) {
       const realm = metadata.mode === "rp" ? "roleplay" as const : "reality" as const;
       if (realm === "reality" || metadata.characterId) {
         mcpBridges.push(await createMemoryMcpBridge({
@@ -1288,6 +1376,7 @@ export class PiSessionRuntime {
       }
     }
     if (
+      !this.incognitoChild &&
       !isSecret &&
       metadata.characterId &&
       permissions.characterSoulWriteEnabled
@@ -1309,18 +1398,31 @@ export class PiSessionRuntime {
     );
     const workspaceTools = createWorkspaceTools({
       workspaceDir: workspace.dir,
-      workspaceFiles: workspace.files,
       access: permissions.workspaceAccess,
       store: this.store,
       sessionId: metadata.id,
       actions: () => toolState.actions,
-      sharePaths: () => toolState.workspaceSharePaths,
+      ...(this.workspaceWriteGuard ? { assertWriteAllowed: this.workspaceWriteGuard } : {}),
+      ...(!this.incognitoChild ? {
+        workspaceFiles: workspace.files,
+        sharePaths: () => toolState.workspaceSharePaths,
+      } : {}),
     });
-    const shellTool = permissions.shellEnabled
+    const documentReadTool = createDocumentReadTool({
+      service: this.documentService,
+      workspaceFiles: workspace.files,
+      cacheNamespace: workspace.cacheNamespace,
+      access: permissions.workspaceAccess,
+      store: this.store,
+      sessionId: metadata.id,
+      actions: () => toolState.actions,
+    });
+    const shellTool = !this.incognitoChild && permissions.shellEnabled
       ? createSandboxedShellTool({
           workspaceDir: workspace.dir,
           workspaceAccess: permissions.workspaceAccess,
           networkEnabled: permissions.networkEnabled,
+          ...(this.shellNetworkAllowed ? { networkAllowed: this.shellNetworkAllowed } : {}),
           store: this.store,
           sessionId: metadata.id,
           actions: () => toolState.actions,
@@ -1328,8 +1430,9 @@ export class PiSessionRuntime {
       : undefined;
     const customTools = [
       ...mcpBridges.flatMap((bridge) => bridge.tools),
-      ...createRpTools(toolState),
+      ...(!this.incognitoChild ? createRpTools(toolState) : []),
       ...(skillReadTool ? [skillReadTool] : []),
+      ...(documentReadTool ? [documentReadTool] : []),
       ...workspaceTools,
       ...(shellTool ? [shellTool] : []),
     ];
@@ -1477,6 +1580,20 @@ export class PiSessionRuntime {
           actions: () => input.actions,
         }));
       }
+      if (
+        childWorkspaceAccess !== "off" &&
+        this.moduleCatalog.isEnabled(mineruMcpModuleId) &&
+        this.mineruService.isConfigured()
+      ) {
+        childBridges.push(await createMineruMcpBridge({
+          mineruService: this.mineruService,
+          workspaceFiles: input.workspace.files,
+          cacheNamespace: input.workspace.cacheNamespace,
+          store: this.store,
+          sessionId: childSessionId,
+          actions: () => input.actions,
+        }));
+      }
 
       const enabledSkills = this.moduleCatalog.enabledSkills(input.conversationSpace);
       const skillReadTool = createSkillReadTool(
@@ -1485,9 +1602,19 @@ export class PiSessionRuntime {
         input.workspace.dir,
         childWorkspaceAccess,
       );
+      const documentReadTool = createDocumentReadTool({
+        service: this.documentService,
+        workspaceFiles: input.workspace.files,
+        cacheNamespace: input.workspace.cacheNamespace,
+        access: childWorkspaceAccess,
+        store: this.store,
+        sessionId: childSessionId,
+        actions: () => input.actions,
+      });
       const childTools = [
         ...childBridges.flatMap((bridge) => bridge.tools),
         ...(skillReadTool ? [skillReadTool] : []),
+        ...(documentReadTool ? [documentReadTool] : []),
         ...createWorkspaceTools({
           workspaceDir: input.workspace.dir,
           workspaceFiles: input.workspace.files,
@@ -3039,6 +3166,26 @@ function matchingPiSessionFile(
 ): string | undefined {
   if (!isRealDirectory(sessionDir)) return undefined;
   const candidate = join(sessionDir, fileName);
+  return piSessionHeaderMatches(candidate, sessionId) ? candidate : undefined;
+}
+
+/**
+ * Resolve one exact persisted Pi binding without following either directory or
+ * file symlinks. The file must be a direct child and its trusted first JSONL
+ * record must bind the expected Pi session id.
+ */
+export function resolveSafePiSessionFileBinding(
+  sessionDir: string,
+  boundFilePath: string,
+  sessionId: string,
+): string | undefined {
+  const normalizedDir = resolve(sessionDir);
+  if (!isAbsolute(boundFilePath) || dirname(boundFilePath) !== normalizedDir) return undefined;
+  const fileName = basename(boundFilePath);
+  if (!isSafePiSessionFileName(fileName, sessionId)) return undefined;
+  if (!isRealDirectory(normalizedDir)) return undefined;
+  const candidate = join(normalizedDir, fileName);
+  if (candidate !== boundFilePath) return undefined;
   return piSessionHeaderMatches(candidate, sessionId) ? candidate : undefined;
 }
 

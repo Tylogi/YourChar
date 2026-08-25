@@ -25,8 +25,10 @@ test("module toggles rebuild Pi capabilities and profile context without losing 
   try {
     const modules = runtime.kernel.listAgentModules();
     assert.deepEqual(modules.map((entry) => [entry.type, entry.name, entry.enabled]), [
+      ["mcp", "Git MCP", false],
       ["mcp", "Interaction State MCP", true],
       ["mcp", "Memory Coordinator MCP", true],
+      ["mcp", "MinerU Document MCP", false],
       ["mcp", "Relationship State MCP", false],
       ["mcp", "Schedule MCP", true],
       ["mcp", "Subagent Delegation MCP", false],
@@ -40,7 +42,7 @@ test("module toggles rebuild Pi capabilities and profile context without losing 
     ]);
     assert.deepEqual(
       modules.filter((entry) => entry.type === "mcp").map((entry) => [entry.name, entry.estimatedTokens]),
-      [["Interaction State MCP", 650], ["Memory Coordinator MCP", 430], ["Relationship State MCP", 230], ["Schedule MCP", 960], ["Subagent Delegation MCP", 390], ["Tavily Search MCP", 350], ["User Profile MCP", 270], ["Vision MCP", 420], ["Web Reader MCP", 260], ["World State MCP", 860]],
+      [["Git MCP", 620], ["Interaction State MCP", 650], ["Memory Coordinator MCP", 430], ["MinerU Document MCP", 300], ["Relationship State MCP", 230], ["Schedule MCP", 960], ["Subagent Delegation MCP", 390], ["Tavily Search MCP", 350], ["User Profile MCP", 270], ["Vision MCP", 420], ["Web Reader MCP", 260], ["World State MCP", 960]],
     );
     assert.match(runtime.kernel.getAgentModuleDetail("mcp:interaction-state").content, /begin_meeting/);
     assert.match(runtime.kernel.getAgentModuleDetail("mcp:interaction-state").content, /semantic evidence/);
@@ -48,6 +50,14 @@ test("module toggles rebuild Pi capabilities and profile context without losing 
     assert.match(runtime.kernel.getAgentModuleDetail("mcp:schedule").content, /never reminders or system notifications/);
     assert.match(runtime.kernel.getAgentModuleDetail("mcp:subagent").content, /delegate_task/);
     assert.match(runtime.kernel.getAgentModuleDetail("mcp:subagent").content, /At most three tasks/);
+    assert.match(runtime.kernel.getAgentModuleDetail("mcp:mineru").content, /uploads the entire selected/);
+    const gitDetail = runtime.kernel.getAgentModuleDetail("mcp:git").content;
+    assert.match(gitDetail, /git_open_repository/);
+    assert.match(gitDetail, /ssh:\/\/user@host/);
+    assert.match(gitDetail, /Workspace\/repos/);
+    assert.match(gitDetail, /Force push/);
+    assert.match(gitDetail, /Secret and incognito/);
+    assert.doesNotMatch(gitDetail, /git_list_projects|git_clone_or_sync|Work Items|selected project/);
     assert.match(runtime.kernel.getAgentModuleDetail("mcp:relationship-state").content, /get_relationship_state/);
     assert.ok(modules.filter((entry) => entry.type === "skill").every((entry) =>
       entry.estimatedTokens > 0 && (entry.fullContentEstimatedTokens ?? 0) > 0
@@ -104,16 +114,6 @@ test("generic Agent Skills can be enabled for normal, secret, both, or neither",
     assert.match(
       runtime.kernel.getAgentModuleDetail(planning.id, "secret").content,
       /Daily Planning/,
-    );
-    assert.equal(
-      runtime.kernel.getCharacterFunctionProfile(character.id, "normal").modules
-        .find((entry) => entry.id === planning.id)?.enabled,
-      false,
-    );
-    assert.equal(
-      runtime.kernel.getCharacterFunctionProfile(character.id, "secret").modules
-        .find((entry) => entry.id === planning.id)?.enabled,
-      true,
     );
 
     runtime.model.enqueue([

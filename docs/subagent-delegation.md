@@ -44,8 +44,9 @@ ordinary persisted tool result in the parent Pi transcript.
 The child can receive only capabilities already enabled for the application:
 
 - enabled Skill content through the restricted `read` tool;
-- Workspace `read` and `list_workspace`, downgraded to read-only even when the
-  parent has read-write access;
+- Workspace `read`, `read_document`, and `list_workspace`, downgraded to
+  read-only even when the parent has read-write access; document conversion
+  remains local and network-isolated;
 - Tavily Search when both its module and credential are available;
 - Web Reader when its module is enabled, with the same public-network and
   untrusted-content boundaries as the parent session;

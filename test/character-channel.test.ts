@@ -193,7 +193,7 @@ test("model-facing character tools separate conversation from delegated work", a
     assert.match(sendInputDescription, /\brequest_character_help\b/i);
     assert.deepEqual(
       Object.keys(requestHelp.parameters?.properties ?? {}).sort(),
-      ["context", "message", "requiredCapabilityIds", "targetCharacterId", "task"],
+      ["context", "message", "requiredSkillIds", "targetCharacterId", "task"],
     );
     assert.deepEqual(requestHelp.parameters?.required, ["task"]);
     assert.match(

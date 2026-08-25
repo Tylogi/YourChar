@@ -1,5 +1,5 @@
 import type { AppDatabase } from "../storage/database.js";
-import type { ContextLogEntry, Mode } from "../domain/types.js";
+import type { ActionRecord, ContextLogEntry, Mode } from "../domain/types.js";
 import type {
   AffectLabel,
   CharacterRelationshipState,
@@ -25,18 +25,16 @@ export class RelationshipRepository {
   createState(state: CharacterRelationshipState): CharacterRelationshipState {
     this.database.connection.prepare(`
       INSERT INTO character_relationship_states(
-        character_id, trust, closeness, affection, respect, tension,
+        character_id, trust, bond, tension,
         bond_facets_json, romance_status, semantic_updated_at,
         affect_valence, affect_arousal, affect_control, affect_labels_json,
         affect_updated_at, version, created_at, updated_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT(character_id) DO NOTHING
     `).run(
       state.characterId,
       state.trust,
-      state.closeness,
-      state.affection,
-      state.respect,
+      state.bond,
       state.tension,
       JSON.stringify(state.bondFacets),
       state.romanceStatus,
@@ -63,16 +61,14 @@ export class RelationshipRepository {
   updateState(state: CharacterRelationshipState): CharacterRelationshipState {
     this.database.connection.prepare(`
       UPDATE character_relationship_states SET
-        trust = ?, closeness = ?, affection = ?, respect = ?, tension = ?,
+        trust = ?, bond = ?, tension = ?,
         bond_facets_json = ?, romance_status = ?, semantic_updated_at = ?,
         affect_valence = ?, affect_arousal = ?, affect_control = ?,
         affect_labels_json = ?, affect_updated_at = ?, version = ?, updated_at = ?
       WHERE character_id = ?
     `).run(
       state.trust,
-      state.closeness,
-      state.affection,
-      state.respect,
+      state.bond,
       state.tension,
       JSON.stringify(state.bondFacets),
       state.romanceStatus,
@@ -375,9 +371,7 @@ function mapState(row: Row): CharacterRelationshipState {
   const state = {
     characterId: String(row.character_id),
     trust: Number(row.trust),
-    closeness: Number(row.closeness),
-    affection: Number(row.affection),
-    respect: Number(row.respect),
+    bond: Number(row.bond),
     tension: Number(row.tension),
     bondFacets: parseBondFacets(row.bond_facets_json),
     romanceStatus: parseRomanceStatus(row.romance_status),
@@ -395,7 +389,7 @@ function mapState(row: Row): CharacterRelationshipState {
     createdAt: String(row.created_at),
     updatedAt: String(row.updated_at),
   };
-  return { ...state, stage: deriveStage(state) };
+  return { ...state, stage: deriveRelationshipStage(state) };
 }
 
 function mapEvent(row: Row): RelationshipEvent {
@@ -435,10 +429,28 @@ function mapContextLog(row: Row): ContextLogEntry {
     reply: String(row.reply),
     status: row.turn_status === "completed" ? "completed" : "failed",
     canRetry: Boolean(row.can_retry),
-    actions: [],
+    actions: parseContextActions(row.actions_json),
     events: [],
     createdAt: String(row.created_at),
   };
+}
+
+function parseContextActions(value: unknown): ActionRecord[] {
+  try {
+    const parsed = JSON.parse(String(value)) as unknown;
+    if (!Array.isArray(parsed)) return [];
+    return parsed.filter((entry): entry is ActionRecord => {
+      if (!entry || typeof entry !== "object" || Array.isArray(entry)) return false;
+      const record = entry as Record<string, unknown>;
+      return typeof record.id === "string" && typeof record.actionType === "string" &&
+        (record.status === "completed" || record.status === "failed" || record.status === "blocked") &&
+        (record.conversationSpace === "normal" || record.conversationSpace === "secret") &&
+        Boolean(record.payload) && typeof record.payload === "object" && !Array.isArray(record.payload) &&
+        typeof record.createdAt === "string";
+    }).slice(0, 100);
+  } catch {
+    return [];
+  }
 }
 
 function mapJob(row: Row): RelationshipExtractionJob {
@@ -473,12 +485,12 @@ function mapJob(row: Row): RelationshipExtractionJob {
   };
 }
 
-function parseAnalysisKinds(value: unknown): Array<"relationship" | "interaction"> {
+function parseAnalysisKinds(value: unknown): Array<"relationship" | "interaction" | "world_attributes"> {
   try {
     const parsed = JSON.parse(String(value));
     if (!Array.isArray(parsed)) return ["relationship"];
-    const kinds = parsed.filter((entry): entry is "relationship" | "interaction" =>
-      entry === "relationship" || entry === "interaction");
+    const kinds = parsed.filter((entry): entry is "relationship" | "interaction" | "world_attributes" =>
+      entry === "relationship" || entry === "interaction" || entry === "world_attributes");
     return [...new Set(kinds)];
   } catch {
     return ["relationship"];
@@ -562,22 +574,20 @@ function parseDelta(value: unknown): RelationshipDelta {
     const parsed = JSON.parse(String(value)) as Partial<RelationshipDelta>;
     return {
       trust: Number(parsed.trust ?? 0),
-      closeness: Number(parsed.closeness ?? 0),
-      affection: Number(parsed.affection ?? 0),
-      respect: Number(parsed.respect ?? 0),
+      bond: Number(parsed.bond ?? 0),
       tension: Number(parsed.tension ?? 0),
     };
   } catch {
-    return { trust: 0, closeness: 0, affection: 0, respect: 0, tension: 0 };
+    return { trust: 0, bond: 0, tension: 0 };
   }
 }
 
-function deriveStage(state: RelationshipDelta): CharacterRelationshipState["stage"] {
+export function deriveRelationshipStage(state: RelationshipDelta): CharacterRelationshipState["stage"] {
   if (state.tension >= 65 || (state.trust <= 20 && state.tension >= 40)) return "strained";
-  const connection = (state.trust + state.closeness + state.affection + state.respect) / 4;
-  if (connection >= 75 && state.closeness >= 65) return "intimate";
-  if (connection >= 60 && state.closeness >= 45) return "close";
-  if (connection >= 42 || state.closeness >= 30) return "familiar";
+  const connection = (state.trust + state.bond) / 2;
+  if (connection >= 75 && state.bond >= 70) return "intimate";
+  if (connection >= 60 && state.bond >= 50) return "close";
+  if (connection >= 42 || state.bond >= 30) return "familiar";
   if (connection >= 28) return "acquaintance";
   return "stranger";
 }

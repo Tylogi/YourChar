@@ -54,7 +54,7 @@ test("private Pi session delegates to an isolated read-only subagent and resumes
     assert.doesNotMatch(childInitial.systemPrompt, /私聊角色秘密/);
     assert.deepEqual(
       childInitial.toolNames.sort(),
-      ["list_workspace", "read"],
+      ["list_workspace", "read", "read_document"],
     );
     for (const forbidden of [
       "delegate_task",

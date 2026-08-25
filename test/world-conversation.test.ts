@@ -53,6 +53,15 @@ test("world turns use one world narrative model and never invoke character-bound
                   summary: "Bob 接受了 Alice 对谈话地点的判断。",
                   confidence: 0.91,
                 }],
+                attributeChanges: [{
+                  characterId: aliceId,
+                  key: "public_trust",
+                  direction: "increase",
+                  summary: "Alice 完成了公开的天台会谈",
+                  evidence: "Alice 抬手压住被风吹乱的发梢",
+                  confidence: 0.94,
+                  delta: 999,
+                }],
               })
         : "character model must not be called";
     writeChatCompletionStream(response, model, content);
@@ -70,7 +79,6 @@ test("world turns use one world narrative model and never invoke character-bound
       startScheduler: false,
       startWorldCoordinator: false,
       startPrivateInboxCoordinator: false,
-      characterFunctionInferer: false,
       characterSkillReflector: false,
       postTurnAnalyzer: async () => ({
         relationship: { significant: false, confidence: 1 },
@@ -92,6 +100,28 @@ test("world turns use one world narrative model and never invoke character-bound
       name: "现实杭州",
       directorModelProfileId: director.id,
       analystModelProfileId: analyst.id,
+    });
+    kernel.createWorldAttribute({
+      worldId: world.id,
+      key: "public_trust",
+      name: "公众信任",
+      minValue: 0,
+      maxValue: 100,
+      defaultValue: 10,
+      analysisEnabled: true,
+      increaseRule: "角色完成一次公开且可观察的正式会谈",
+      increaseDelta: 3,
+      decreaseRule: "角色公开违背已经确认的承诺",
+      decreaseDelta: 8,
+    });
+    kernel.createWorldAttribute({
+      worldId: world.id,
+      key: "global_crisis_level",
+      name: "全局危机值",
+      scope: "world",
+      minValue: 0,
+      maxValue: 100,
+      defaultValue: 44,
     });
     const lobby = kernel.createWorldPlace({ worldId: world.id, name: "酒店大堂", capabilityIds: ["socialize", "communicate"] });
     const roof = kernel.createWorldPlace({ worldId: world.id, name: "酒店天台", capabilityIds: ["socialize", "observe"] });
@@ -127,7 +157,11 @@ test("world turns use one world narrative model and never invoke character-bound
     assert.match(requests[0].body, /Alice 冷静、敏锐/);
     assert.match(requests[0].body, /Bob 随和但观察细致/);
     assert.match(requests[0].body, /上午整理实验记录/);
+    assert.match(requests[0].body, /global_crisis_level/);
+    assert.match(requests[0].body, /全局危机值/);
+    assert.match(requests[0].body, /public_trust/);
     assert.match(requests[1].body, /上午十点半/);
+    assert.match(requests[1].body, /角色完成一次公开且可观察的正式会谈/);
     assert.deepEqual(kernel.listWorldConversationMessages(world.id).map((entry) => entry.senderType), [
       "user", "director",
     ]);
@@ -138,6 +172,11 @@ test("world turns use one world narrative model and never invoke character-bound
     assert.match(worldContext, /Alice 认为天台比楼下安静/);
     assert.match(worldContext, /Bob 接受了 Alice/);
     assert.equal(kernel.getWorldConversation(world.id).relationships[0]?.affinity, 52);
+    const aliceLife = kernel.getCharacterLife(alice.id);
+    assert.equal(aliceLife.attributes.find((entry) => entry.key === "public_trust")?.value, 13);
+    assert.equal(aliceLife.attributeEvents[0]?.source, "world_turn_analysis");
+    assert.equal(aliceLife.attributeEvents[0]?.appliedDelta, 3);
+    assert.equal(aliceLife.attributeEvents[0]?.analysisDirection, "increase");
     assert.equal(kernel.getWorldConversation(world.id).unreadCount, 1);
     assert.equal(kernel.markWorldConversationRead(world.id).unreadCount, 0);
     assert.deepEqual(events, [

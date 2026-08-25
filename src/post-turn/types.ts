@@ -5,8 +5,12 @@ import type {
   RelationshipEvidence,
   RelationshipInitiator,
 } from "../relationship/types.js";
+import type {
+  WorldAttributeAnalysisContext,
+  WorldAttributeAnalysisDecision,
+} from "../world/types.js";
 
-export type PostTurnAnalysisKind = "relationship" | "interaction";
+export type PostTurnAnalysisKind = "relationship" | "interaction" | "world_attributes";
 
 export type PostTurnInteractionReasonCode =
   | "explicit_departure"
@@ -38,11 +42,20 @@ export type PostTurnInteractionContext = {
 export type PostTurnAnalysisInput = RelationshipExtractionInput & {
   requestedAnalyses: PostTurnAnalysisKind[];
   interaction?: PostTurnInteractionContext;
+  worldAttributes?: WorldAttributeAnalysisContext;
+  completedWorldActions?: Array<{
+    actionType: "perform_place_action";
+    eventId: string;
+    summary: string;
+    capabilityId: string;
+    placeId?: string;
+  }>;
 };
 
 export type PostTurnAnalysis = {
   relationship: RelationshipExtraction;
   interaction: PostTurnInteractionDecision;
+  worldAttributes: WorldAttributeAnalysisDecision[];
 };
 
 export type PostTurnAnalyzer = (input: PostTurnAnalysisInput) => Promise<unknown>;

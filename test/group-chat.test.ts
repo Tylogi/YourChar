@@ -38,7 +38,6 @@ test("group chat routes each character through its model and later gates see ear
     kernel = new CompanionKernel({
       stateDir,
       startScheduler: false,
-      characterFunctionInferer: false,
       characterSkillReflector: false,
     });
     kernel.setAgentModuleEnabled("mcp:memory-coordinator", false);
@@ -121,7 +120,6 @@ test("group chat validates membership and enforces speaker and per-character mes
     kernel = new CompanionKernel({
       stateDir,
       startScheduler: false,
-      characterFunctionInferer: false,
       characterSkillReflector: false,
     });
     kernel.setAgentModuleEnabled("mcp:memory-coordinator", false);
