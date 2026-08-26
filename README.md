@@ -23,7 +23,7 @@ and adds the RP companion domain on top:
 - direct or independent Vision MCP image understanding for text-only primary models;
 - optional isolated private-chat subagents for bounded work, research, planning, and review;
 - automatic SOUL-derived functional roles, multiple exclusive versioned Skills per character, Skill-aware same-world delegation, and reviewed self-improvement proposals;
-- opt-in character-bound Skill management with inactive workflow drafts, character/space-private Pi Agent Skill resource packages, remote quarantine review, and local-only installation confirmation;
+- opt-in character-bound Skill autonomy with next-turn workflow activation and safety-checked, character/space-private Agent Skill installation;
 - optional per-character trust/bond state, decaying tension and affect, with trusted bounded updates;
 - a 2000-character profile summary plus durable reality/global memory;
 - persistent, retryable post-turn Memory Coordinator jobs with trusted review;
@@ -202,9 +202,10 @@ MinerU endpoint and optional Bearer token settings use `/api/settings/mineru`;
 its connection diagnostic uses `POST /api/v1/diagnostics/mineru/test`.
 Character-owned workflow review uses
 `/api/v1/characters/{id}/owned-skills/*`. Character-private Agent Skill package
-inventory and enablement use `/api/v1/characters/{id}/skill-packages/*`, while
-short-lived local review and confirmation use
-`/api/v1/characters/{id}/skill-package-stages/*`.
+inventory, post-install inspection, enablement, and removal use
+`/api/v1/characters/{id}/skill-packages/*`. Legacy short-lived stage routes
+remain a host control-plane compatibility surface; the character-facing
+autonomous installer does not expose its stage or confirmation boundary.
 The one host-side Git identity is managed from **Settings → Repository** through
 `/api/settings/git-access`. Repository URLs are supplied in normal character
 conversation instead of being pre-registered as Projects or application
@@ -274,14 +275,18 @@ authority; SQLite, FTS, journal checkpoints, mirrors, and context state remain
 rebuildable runtime data.
 
 Character Skill self-management is a separate Agent permission and defaults
-off. When enabled, a role can maintain only its own current-space workflow
-drafts and private Agent Skill enablement, and can stage only a URL stated in
-the current user message. It cannot activate drafts, confirm installation,
-install globally, change permissions, update, or uninstall packages. Local
-confirmation reviews and publishes the exact quarantined resource package;
-Skill text and resources never grant tools or permissions. Incognito and
-generic subagents receive no management surface. See the linked character and
-module documents for their narrower read-only snapshot behavior.
+off. When enabled, a role can create and activate its own current-space
+workflows, revise them, and install or enable its own private Agent Skill
+packages without a per-install approval. Remote installation is exposed only
+in normal character conversations: it performs an outbound request to a
+model-selected public HTTPS source, so the remote server can observe the host
+and path. Secret conversations retain local workflow and package management
+but cannot initiate that outbound fetch. Every package still passes the
+quarantine, DNS/SSRF, redirect, archive, path, size, digest, and integrity
+checks, and becomes available only from the next turn. Skills never add tools
+or permissions. Incognito and generic subagents receive no management surface.
+See the linked character and module documents for the narrower snapshot and
+network-isolation behavior.
 
 The old Python implementation was intentionally removed from the working tree.
 It remains available through Git history.

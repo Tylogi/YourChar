@@ -108,6 +108,7 @@ import {
   type CharacterAgentSkillConfirmInput,
   type CharacterAgentSkillEnabledInput,
   type CharacterAgentSkillPackageScope,
+  type CharacterAgentSkillUninstallInput,
 } from "../modules/character-skill-packages.js";
 import {
   CharacterCapabilityRepository,
@@ -3231,6 +3232,21 @@ export class CompanionKernel {
     return updated;
   }
 
+  async uninstallCharacterAgentSkillPackage(
+    input: CharacterAgentSkillUninstallInput,
+  ) {
+    this.assertCharacterSkillControlPlaneIdle();
+    const removed = await this.requireCharacterSkillPackages().uninstall(input);
+    this.store.addAction("uninstall_character_agent_skill", "completed", {
+      characterId: input.characterId,
+      packageName: removed.name,
+      digest: removed.digest,
+      integrityAtRemoval: removed.integrityAtRemoval,
+    }, characterConversationActionScope(input.characterId, input.conversationSpace));
+    this.rebuildCharacterSkillCapabilities(input);
+    return removed;
+  }
+
   private requireCharacterSkillPackages(): CharacterAgentSkillPackageService {
     if (!this.characterSkillPackages) {
       throw new AgentSkillInstallerError(
@@ -3945,12 +3961,17 @@ export class CompanionKernel {
     if (request.conversationSpace === "secret") {
       this.enforcePrivateShellNetworkIsolation("secret_turn", true);
     }
-    return this.store.withActionScope({
-      conversationSpace: request.conversationSpace,
-      ...(request.conversationSpace === "secret" && request.characterId
-        ? { secretOwnerCharacterId: request.characterId }
-        : {}),
-    }, () => this.sendMessageLockedInScope(sessionId, request, onEvent, signal));
+    this.sessionRuntime.beginCapabilityTurn();
+    try {
+      return await this.store.withActionScope({
+        conversationSpace: request.conversationSpace,
+        ...(request.conversationSpace === "secret" && request.characterId
+          ? { secretOwnerCharacterId: request.characterId }
+          : {}),
+      }, () => this.sendMessageLockedInScope(sessionId, request, onEvent, signal));
+    } finally {
+      this.sessionRuntime.finishCapabilityTurn();
+    }
   }
 
   private async sendMessageLockedInScope(
@@ -3999,6 +4020,10 @@ export class CompanionKernel {
     handle.toolState.traceKind = "user";
     handle.toolState.traceRequestText = request.text;
     handle.toolState.currentUserText = request.burstMessages?.at(-1)?.text ?? request.text;
+    this.sessionRuntime.latchShellNetworkForTurn(handle);
+    handle.toolState.characterSkillRemoteInstallAttempts = 0;
+    handle.toolState.characterSkillRemoteInstallInFlight = false;
+    handle.toolState.successfulCharacterSkillInstallSourceUrl = undefined;
     handle.toolState.toolMutationsAllowed = true;
     handle.toolState.realWorldMutationConfirmed = request.mode !== "rp";
     handle.toolState.confirmedMutationId = undefined;
@@ -4212,6 +4237,7 @@ export class CompanionKernel {
     handle.toolState.turnContextPrompt = assembledContext.turnContext;
     handle.toolState.contextPlan = assembledContext;
     await this.sessionRuntime.prepareForTurn(handle);
+    this.sessionRuntime.tightenShellNetworkLatchForTurn(handle);
     const prefixMessages = privateBurstPrefixUserMessages(request);
     if (prefixMessages.length) this.sessionRuntime.appendMessages(handle, prefixMessages);
     const unsubscribe = handle.session.subscribe((event) => {
@@ -5374,6 +5400,8 @@ export class CompanionKernel {
       return fallback;
     }
     return this.executionQueue.run(metadata.id, async () => {
+      this.sessionRuntime.beginCapabilityTurn();
+      try {
       const handle = await this.sessionRuntime.getOrCreate(
         metadata.id,
         metadata.mode,
@@ -5387,6 +5415,10 @@ export class CompanionKernel {
       handle.toolState.traceKind = "reminder_due";
       handle.toolState.traceRequestText = reminder.title;
       handle.toolState.currentUserText = reminder.title;
+      this.sessionRuntime.latchShellNetworkForTurn(handle);
+      handle.toolState.characterSkillRemoteInstallAttempts = 0;
+      handle.toolState.characterSkillRemoteInstallInFlight = false;
+      handle.toolState.successfulCharacterSkillInstallSourceUrl = undefined;
       handle.toolState.toolMutationsAllowed = false;
       handle.toolState.outputGuardRetryUsed = false;
       handle.toolState.outputGuardBlocked = false;
@@ -5410,6 +5442,7 @@ export class CompanionKernel {
       handle.toolState.turnContextPrompt = assembledContext.turnContext;
       handle.toolState.contextPlan = assembledContext;
       await this.sessionRuntime.prepareForTurn(handle);
+      this.sessionRuntime.tightenShellNetworkLatchForTurn(handle);
 
       const proactiveSystemPrompt = [
         this.effectiveSystemPrompt(metadata.mode),
@@ -5502,6 +5535,9 @@ export class CompanionKernel {
         events,
       });
       return { body: reply, agentGenerated: true };
+      } finally {
+        this.sessionRuntime.finishCapabilityTurn();
+      }
     });
   }
 

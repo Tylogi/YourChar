@@ -6,8 +6,9 @@ import {
 import { basename, dirname, isAbsolute, join, resolve, sep } from "node:path";
 import { backup, DatabaseSync } from "node:sqlite";
 import {
-  BACKUP_SCHEMA_VERSION, assertWriterInactive, payloadFiles, sha256,
-  validateBackupDirectory, validateDatabase, validateVault,
+  BACKUP_SCHEMA_VERSION, assertWriterInactive, characterAgentSkillPublishedDirectories,
+  payloadFiles, sha256, validateBackupDirectory, validateCharacterAgentSkillPackages,
+  validateDatabase, validateVault,
 } from "./backup-contract.mjs";
 import { resolveStateDirectory } from "./state-directory.mjs";
 
@@ -19,9 +20,27 @@ if (existsSync(destination)) throw new Error(`backup destination already exists:
 assertWriterInactive(stateDir);
 const externalGitPrivateKeys = readExternalGitPrivateKeyPaths(stateDir);
 const gitWorkspaceRepositories = resolve(join(stateDir, "workspace", "repos"));
+const characterSkillPackageRoot = resolve(join(stateDir, "character-agent-skills"));
 
 try {
   mkdirSync(staging, { recursive: true, mode: 0o700 });
+  const databasePath = join(stateDir, "rp-agent.sqlite");
+  const backupDatabasePath = join(staging, "rp-agent.sqlite");
+  if (existsSync(databasePath)) {
+    const sourceDatabase = new DatabaseSync(databasePath, { readOnly: true });
+    try {
+      await backup(sourceDatabase, backupDatabasePath);
+    } finally {
+      sourceDatabase.close();
+    }
+  }
+  // The copied SQLite snapshot is the authority for published character
+  // packages. A crashed publish can leave an otherwise valid directory with
+  // no durable row; copying only row-backed package roots keeps that orphan
+  // out of the backup without broad basename filters inside package content.
+  const characterSkillPublishedDirectories = new Set(
+    characterAgentSkillPublishedDirectories(backupDatabasePath),
+  );
   for (const name of [
     "conversations.json", "pi-sessions", "pi-agent", "model-api.json", "tavily.json", "vision.json", "mineru.json",
     "git", "git-worktrees", "git-work-items.json", "git-runtime", "git-repository.json",
@@ -37,23 +56,21 @@ try {
         filter: (candidate) => {
           const resolvedCandidate = resolve(candidate);
           return !isPathAtOrBelow(resolvedCandidate, gitWorkspaceRepositories) &&
+            !isCharacterSkillTransientPath(resolvedCandidate, characterSkillPackageRoot) &&
+            isCharacterSkillPublishedPath(
+              resolvedCandidate,
+              characterSkillPackageRoot,
+              characterSkillPublishedDirectories,
+            ) &&
             !externalGitPrivateKeys.has(resolvedCandidate);
         },
       });
     }
   }
-  const databasePath = join(stateDir, "rp-agent.sqlite");
-  if (existsSync(databasePath)) {
-    const database = new DatabaseSync(databasePath, { readOnly: true });
-    try {
-      await backup(database, join(staging, "rp-agent.sqlite"));
-    } finally {
-      database.close();
-    }
-  }
   assertWriterInactive(stateDir);
   const database = validateDatabase(join(staging, "rp-agent.sqlite"));
   const vault = validateVault(staging, database);
+  validateCharacterAgentSkillPackages(staging);
   const createdAt = new Date().toISOString();
   const files = payloadFiles(staging);
   const manifest = {
@@ -85,6 +102,8 @@ try {
     containsSecretWorkspace: files.some((file) => file.path.startsWith("workspace-secret/")),
     containsInstalledSkills: files.some((file) => file.path.startsWith("skills/")),
     containsCharacterAgentSkills: files.some((file) => file.path.startsWith("character-agent-skills/")),
+    excludesCharacterAgentSkillTransientState: true,
+    characterAgentSkillPackagesConsistent: true,
     excludesGitWorkspaceRepositories: true,
     containsGitAccessConfig: existsSync(join(staging, "git", "access.json")),
     containsGitRegistry: existsSync(join(staging, "git", "registry.json")),
@@ -146,6 +165,28 @@ function addExternalGitPrivateKeyPath(paths, value) {
 
 function isPathAtOrBelow(path, directory) {
   return path === directory || path.startsWith(`${directory}${sep}`);
+}
+
+function isCharacterSkillTransientPath(path, packageRoot) {
+  if (!isPathAtOrBelow(path, packageRoot) || path === packageRoot) return false;
+  const segments = path.slice(packageRoot.length + 1).split(sep);
+  return segments[0] === ".uninstall-quarantine" ||
+    (/^[0-9a-f]{64}$/u.test(segments[0] ?? "") &&
+      (segments[1] === "normal" || segments[1] === "secret") &&
+      segments[2] === "skill-installer-quarantine");
+}
+
+function isCharacterSkillPublishedPath(path, packageRoot, publishedDirectories) {
+  if (!isPathAtOrBelow(path, packageRoot)) return true;
+  if (path === packageRoot) return true;
+  for (const relativeDirectory of publishedDirectories) {
+    const publishedDirectory = resolve(join(packageRoot, ...relativeDirectory.split("/")));
+    if (
+      isPathAtOrBelow(path, publishedDirectory) ||
+      isPathAtOrBelow(publishedDirectory, path)
+    ) return true;
+  }
+  return false;
 }
 
 function writeBackupStatus(stateDir, value) {

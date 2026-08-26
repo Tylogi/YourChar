@@ -100,9 +100,9 @@ test("incognito inherits a stable transcript, supports meetings, and leaves pare
       runtime.kernel.getConversationInteraction(incognito.id).state.location,
       "MEETING_INHERITANCE_SENTINEL",
     );
-    const createdRoots = listSnapshotRoots().filter((path) => !rootsBefore.includes(path));
-    assert.equal(createdRoots.length, 1);
-    assert.equal(lstatSync(createdRoots[0]).mode & 0o777, 0o700);
+    const createdRoot = findNewSnapshotRoot(rootsBefore, normal.id);
+    assert.ok(createdRoot);
+    assert.equal(lstatSync(createdRoot).mode & 0o777, 0o700);
 
     runtime.model.enqueue([{ kind: "assistant_text", text: "这条回复只存在于无痕快照" }]);
     await runtime.kernel.sendMessage(incognito.id, { text: "还记得海边约定吗？" });
@@ -156,7 +156,7 @@ test("incognito inherits a stable transcript, supports meetings, and leaves pare
     assert.equal(hashPersistentTree(stateDir), parentHash);
 
     await runtime.kernel.closeIncognitoConversation(incognito.id);
-    assert.equal(existsSync(createdRoots[0]), false);
+    assert.equal(existsSync(createdRoot), false);
     assert.equal(hashPersistentTree(stateDir), parentHash);
     await assert.rejects(
       runtime.kernel.getConversationTranscript(incognito.id),
@@ -418,7 +418,7 @@ test("snapshot physically excludes private Vault data and secret-only Skill pack
     const character = runtime.kernel.createCharacter({ name: "私密清除角色" });
     runtime.kernel.setAgentSkillEnabledSpaces("skill:normal-only", ["normal"]);
     runtime.kernel.setAgentSkillEnabledSpaces("skill:secret-only", ["secret"]);
-    await runtime.kernel.openCanonicalPrivateConversation(character.id, "normal");
+    const normal = await runtime.kernel.openCanonicalPrivateConversation(character.id, "normal");
     const secret = await runtime.kernel.openCanonicalPrivateConversation(character.id, "secret");
     const secretMemory = runtime.kernel.memoryLifecycle.captureAuthorized({
       conversationSpace: "secret",
@@ -454,7 +454,9 @@ test("snapshot physically excludes private Vault data and secret-only Skill pack
 
     const rootsBefore = listSnapshotRoots();
     const incognito = await runtime.kernel.openIncognitoConversation(character.id);
-    const root = listSnapshotRoots().find((path) => !rootsBefore.includes(path));
+    const root = listSnapshotRoots()
+      .filter((path) => !rootsBefore.includes(path))
+      .find((path) => snapshotConversationIds(path).includes(normal.id));
     assert.ok(root);
     assert.equal(existsSync(join(root, "skills", "normal-only", "SKILL.md")), true);
     assert.equal(existsSync(join(root, "skills", "secret-only")), false);
@@ -528,11 +530,11 @@ test("incognito freezes enabled character-private Skills as read-only capabiliti
       digest: stage.digest,
       enabled: true,
     });
-    await kernel.openCanonicalPrivateConversation(character.id);
+    const normal = await kernel.openCanonicalPrivateConversation(character.id);
 
     const rootsBefore = listSnapshotRoots();
     const incognito = await kernel.openIncognitoConversation(character.id);
-    const root = listSnapshotRoots().find((path) => !rootsBefore.includes(path));
+    const root = findNewSnapshotRoot(rootsBefore, normal.id);
     assert.ok(root);
     const privateSkillPath = join(
       root,
@@ -559,16 +561,16 @@ test("incognito freezes enabled character-private Skills as read-only capabiliti
     assert.match(firstRequest.systemPrompt, /INCOGNITO_PRIVATE_SKILL_DESCRIPTION_SENTINEL/u);
     assert.equal(firstRequest.toolNames.includes("read"), true);
     for (const toolName of [
-      "create_current_character_skill_draft",
-      "revise_current_character_skill_draft",
-      "request_current_character_skill_install",
+      "create_current_character_skill",
+      "revise_current_character_skill",
+      "install_current_character_skill",
       "set_current_character_private_skill_enabled",
     ]) {
       assert.equal(firstRequest.toolNames.includes(toolName), false);
     }
     assert.doesNotMatch(
       JSON.stringify(firstRequest.providerPayload),
-      /Current-character Skill draft and private package management are authorized/u,
+      /Current-character Skill creation, activation, revision/u,
     );
     assert.match(
       JSON.stringify(model.requests.at(-1)?.messages),
@@ -606,9 +608,10 @@ test("snapshot inherits ordinary workspace files but excludes workspace/repos fr
     writeFileSync(oversizedRepositoryPayload, "EXCLUDED_REPOSITORY_PAYLOAD_SENTINEL");
     truncateSync(oversizedRepositoryPayload, 257 * 1024 * 1024);
 
+    const normal = await runtime.kernel.openCanonicalPrivateConversation(character.id);
     const rootsBefore = listSnapshotRoots();
     const incognito = await runtime.kernel.openIncognitoConversation(character.id);
-    const root = listSnapshotRoots().find((path) => !rootsBefore.includes(path));
+    const root = findNewSnapshotRoot(rootsBefore, normal.id);
     assert.ok(root);
     assert.equal(
       readFileSync(join(root, "workspace", "ordinary-note.md"), "utf8"),
@@ -768,10 +771,10 @@ test("runtime quota rejects an oversized disposable overlay before child access"
   const runtime = createTestRuntime({ stateDir, seed: "incognito-runtime-quota" });
   try {
     const character = runtime.kernel.createCharacter({ name: "配额测试角色" });
-    await runtime.kernel.openCanonicalPrivateConversation(character.id);
+    const normal = await runtime.kernel.openCanonicalPrivateConversation(character.id);
     const rootsBefore = listSnapshotRoots();
     const incognito = await runtime.kernel.openIncognitoConversation(character.id);
-    const root = listSnapshotRoots().find((path) => !rootsBefore.includes(path));
+    const root = findNewSnapshotRoot(rootsBefore, normal.id);
     assert.ok(root);
     const overflow = join(root, "runtime-quota-overflow.bin");
     writeFileSync(overflow, "quota");
@@ -871,6 +874,25 @@ function listSnapshotRoots(): string[] {
     .filter((name) => name.startsWith(snapshotPrefix))
     .map((name) => join(tmpfsRoot, name))
     .sort();
+}
+
+function snapshotConversationIds(root: string): string[] {
+  try {
+    const parsed = JSON.parse(readFileSync(join(root, "conversations.json"), "utf8")) as {
+      conversations?: Array<{ id?: unknown }>;
+    };
+    return (parsed.conversations ?? [])
+      .map((conversation) => conversation.id)
+      .filter((id): id is string => typeof id === "string");
+  } catch {
+    return [];
+  }
+}
+
+function findNewSnapshotRoot(rootsBefore: readonly string[], sourceSessionId: string): string | undefined {
+  return listSnapshotRoots()
+    .filter((path) => !rootsBefore.includes(path))
+    .find((path) => snapshotConversationIds(path).includes(sourceSessionId));
 }
 
 function hashPersistentTree(root: string): string {

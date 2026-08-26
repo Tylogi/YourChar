@@ -23,6 +23,13 @@ type RuntimeState = {
   traceKind: "user" | "reminder_due";
   traceRequestText: string;
   currentUserText: string;
+  /** Immutable provenance bit for untrusted character Skill context loaded by this handle. */
+  untrustedCharacterSkillLoaded: boolean;
+  /** Turn-latched gate for shell network when untrusted character Skills are in scope. */
+  shellNetworkAllowed: boolean;
+  characterSkillRemoteInstallAttempts: number;
+  characterSkillRemoteInstallInFlight: boolean;
+  successfulCharacterSkillInstallSourceUrl?: string;
   toolMutationsAllowed: boolean;
   realWorldMutationConfirmed: boolean;
   confirmedMutationId?: string;

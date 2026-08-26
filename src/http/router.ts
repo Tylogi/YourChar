@@ -2754,7 +2754,10 @@ async function route(input: {
     }
     sendJson(input.response, 200, {
       package: {
-        ...packageSummary,
+        ...characterAgentSkillPackageSummary(packageSummary),
+        source: packageSummary.source,
+        archiveSha256: packageSummary.archiveSha256,
+        manifest: packageSummary.manifest,
         skillMarkdown: kernel.readCharacterAgentSkillMarkdown({
           characterId,
           conversationSpace,
@@ -2802,6 +2805,27 @@ async function route(input: {
           conversationSpace,
           name: packageName,
           enabled: requiredBoolean(body.enabled, "enabled"),
+        }),
+      });
+      return;
+    }
+    if (method === "DELETE") {
+      assertLocalControlPlaneMutation(input.request);
+      const conversationSpace = requestedCharacterWorkspaceSpace(url, characterId);
+      const body = asRecord(await readJson(input.request));
+      assertOnlyKeys(
+        body,
+        ["name", "digest", "conversationSpace", "characterId"],
+        "Character Skill package removal",
+      );
+      assertCharacterSkillMutationScope(body, characterId, conversationSpace);
+      assertCharacterSkillPackageName(body, packageName);
+      sendJson(input.response, 200, {
+        uninstalled: await kernel.uninstallCharacterAgentSkillPackage({
+          characterId,
+          conversationSpace,
+          name: packageName,
+          digest: requiredStringValue(body.digest, "digest"),
         }),
       });
       return;
@@ -4736,10 +4760,13 @@ function agentSkillInstallerHttpStatus(code: string): number {
     code === "STAGE_DIGEST_MISMATCH" ||
     code === "STAGE_CHANGED" ||
     code === "DIGEST_MISMATCH" ||
+    code === "PACKAGE_DIGEST_MISMATCH" ||
+    code === "PACKAGE_ENABLED" ||
     code === "SKILL_EXISTS" ||
     code === "SKILL_NAME_CONFLICT" ||
     code === "SKILL_SOURCE_MISMATCH"
   ) return 409;
+  if (code === "UNINSTALL_FAILED" || code === "UNINSTALL_ROLLBACK_FAILED") return 500;
   if (code === "REQUEST_ABORTED" || code === "REQUEST_TIMEOUT") return 408;
   if (
     code === "DOWNLOAD_TOO_LARGE" ||
@@ -4817,12 +4844,16 @@ function characterAgentSkillStageSummary(stage: AgentSkillStageResult) {
 
 function characterAgentSkillPackageSummary(skill: CharacterAgentSkillPackage) {
   return {
+    characterId: skill.characterId,
+    conversationSpace: skill.conversationSpace,
     name: skill.name,
     description: skill.description,
     enabled: skill.enabled,
     digest: skill.digest,
     fileCount: skill.manifest.length,
     integrity: skill.integrity,
+    createdAt: skill.createdAt,
+    updatedAt: skill.updatedAt,
     ...agentSkillSafeSourceSummary(skill.source),
   };
 }

@@ -1,7 +1,16 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  renameSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -58,7 +67,7 @@ test("schema 47 and the character Skill management permission are durable and co
     assert.equal(permissions.get().characterSkillManageEnabled, false);
     assert.equal(
       permissions.contextStatus({ mode: "sms", characterId: "character" })
-        .includes("Character Skill draft and private package management are disabled"),
+        .includes("Character Skill creation and private package management are disabled"),
       true,
     );
     permissions.update({ characterSkillManageEnabled: true });
@@ -234,6 +243,324 @@ test("character package install binds stage, owner, space, digest, and durable p
   }
 });
 
+test("autonomous package install is serialized, idempotent, and rejects same-name source changes", async () => {
+  const root = mkdtempSync(join(tmpdir(), "yourchar-character-skill-autonomous-"));
+  const database = new AppDatabase(join(root, "state.sqlite"));
+  insertCharacter(database, "owner");
+  let activeDownloads = 0;
+  let maximumActiveDownloads = 0;
+  let transportCalls = 0;
+  const transport: SkillInstallerTransport = async (request) => {
+    transportCalls += 1;
+    activeDownloads += 1;
+    maximumActiveDownloads = Math.max(maximumActiveDownloads, activeDownloads);
+    await new Promise((resolve) => setTimeout(resolve, 15));
+    activeDownloads -= 1;
+    const changed = request.url.pathname.includes("changed");
+    return zipResponse(zipSync({
+      "wrapper/SKILL.md": strToU8(skillMarkdown("autonomous-planning")),
+      "wrapper/references/guide.md": strToU8(
+        changed ? "Changed package bytes.\n" : "Original package bytes.\n",
+      ),
+    }));
+  };
+  const service = createService(database, root, transport);
+  try {
+    const installInput = {
+      characterId: "owner",
+      conversationSpace: "normal" as const,
+      sourceUrl: "https://downloads.example.com/autonomous.zip",
+    };
+    const [first, retry] = await Promise.all([
+      service.install(installInput),
+      service.install(installInput),
+    ]);
+    assert.equal(maximumActiveDownloads, 1, "one character/space install is serialized");
+    assert.deepEqual(
+      [first.alreadyInstalled, retry.alreadyInstalled].sort(),
+      [false, true],
+    );
+    assert.equal(first.package.enabled, true);
+    assert.equal(first.package.integrity, "verified");
+    assert.equal(first.digest, retry.digest);
+    assert.equal(first.sourceHost, "downloads.example.com");
+    assert.equal(service.listStages(installInput).length, 0);
+
+    service.setEnabled({ ...installInput, name: "autonomous-planning", enabled: false });
+    const enabledRetry = await service.install(installInput);
+    assert.equal(enabledRetry.alreadyInstalled, true);
+    assert.equal(enabledRetry.package.enabled, true);
+
+    await assert.rejects(service.install({
+      ...installInput,
+      sourceUrl: "https://downloads.example.com/changed.zip",
+    }), hasCode("SKILL_EXISTS"));
+    assert.equal(service.listStages(installInput).length, 0);
+    assert.equal(transportCalls, 4);
+  } finally {
+    service.dispose();
+    database.close();
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("autonomous package install cancels a completed stage when its turn aborts before publish", async () => {
+  const root = mkdtempSync(join(tmpdir(), "yourchar-character-skill-abort-"));
+  const database = new AppDatabase(join(root, "state.sqlite"));
+  insertCharacter(database, "owner");
+  const controller = new AbortController();
+  let nowCalls = 0;
+  const service = new CharacterAgentSkillPackageService({
+    database,
+    stateDir: root,
+    transport: fixedArchiveTransport("aborted-install"),
+    resolveHostname: async () => [publicAddress],
+    now: () => {
+      nowCalls += 1;
+      if (nowCalls === 1) controller.abort(new Error("turn cancelled"));
+      return Date.parse("2026-08-26T10:00:00.000Z");
+    },
+  });
+  try {
+    await assert.rejects(service.install({
+      characterId: "owner",
+      conversationSpace: "normal",
+      sourceUrl,
+    }, controller.signal), hasCode("REQUEST_ABORTED"));
+    assert.deepEqual(service.list({ characterId: "owner", conversationSpace: "normal" }), []);
+    assert.deepEqual(service.listStages({ characterId: "owner", conversationSpace: "normal" }), []);
+  } finally {
+    service.dispose();
+    database.close();
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("trusted uninstall uses disabled digest CAS and recovers verified, changed, and missing packages", async () => {
+  const root = mkdtempSync(join(tmpdir(), "yourchar-character-skill-uninstall-"));
+  const database = new AppDatabase(join(root, "state.sqlite"));
+  insertCharacter(database, "owner");
+  const transport: SkillInstallerTransport = async (request) => {
+    const name = request.url.pathname.split("/").pop()?.replace(/\.zip$/u, "") || "unnamed";
+    return zipResponse(skillArchive(name));
+  };
+  const service = createService(database, root, transport);
+  const scope = { characterId: "owner", conversationSpace: "normal" as const };
+  try {
+    const changed = await service.install({
+      ...scope,
+      sourceUrl: "https://downloads.example.com/remove-changed.zip",
+    });
+    await assert.rejects(service.uninstall({
+      ...scope,
+      name: changed.package.name,
+      digest: changed.digest,
+    }), hasCode("PACKAGE_ENABLED"));
+    service.setEnabled({ ...scope, name: changed.package.name, enabled: false });
+    await assert.rejects(service.uninstall({
+      ...scope,
+      name: changed.package.name,
+      digest: "0".repeat(64),
+    }), hasCode("PACKAGE_DIGEST_MISMATCH"));
+    const changedLocation = join(
+      root,
+      "character-agent-skills",
+      createHash("sha256").update(scope.characterId).digest("hex"),
+      "normal",
+      "skills",
+      changed.package.name,
+    );
+    writeFileSync(join(changedLocation, "references", "guide.md"), "tampered\n");
+    assert.equal(service.list(scope)[0].integrity, "changed");
+    const changedRemoved = await service.uninstall({
+      ...scope,
+      name: changed.package.name,
+      digest: changed.digest,
+    });
+    assert.equal(changedRemoved.integrityAtRemoval, "changed");
+    assert.equal(existsSync(changedLocation), false);
+
+    const missing = await service.install({
+      ...scope,
+      sourceUrl: "https://downloads.example.com/remove-missing.zip",
+    });
+    service.setEnabled({ ...scope, name: missing.package.name, enabled: false });
+    const missingLocation = service.effectivePackageLocations(scope).find((entry) =>
+      entry.name === missing.package.name
+    );
+    // Disabled packages are intentionally absent from effective locations.
+    assert.equal(missingLocation, undefined);
+    const missingPath = join(
+      root,
+      "character-agent-skills",
+      createHash("sha256").update(scope.characterId).digest("hex"),
+      "normal",
+      "skills",
+      missing.package.name,
+    );
+    rmSync(missingPath, { recursive: true, force: false });
+    const missingRemoved = await service.uninstall({
+      ...scope,
+      name: missing.package.name,
+      digest: missing.digest,
+    });
+    assert.equal(missingRemoved.integrityAtRemoval, "missing");
+
+    const rollback = await service.install({
+      ...scope,
+      sourceUrl: "https://downloads.example.com/remove-rollback.zip",
+    });
+    service.setEnabled({ ...scope, name: rollback.package.name, enabled: false });
+    const rollbackPath = join(
+      root,
+      "character-agent-skills",
+      createHash("sha256").update(scope.characterId).digest("hex"),
+      "normal",
+      "skills",
+      rollback.package.name,
+    );
+    database.connection.exec(`
+      CREATE TRIGGER reject_character_skill_uninstall_test
+      BEFORE DELETE ON character_agent_skill_packages
+      WHEN OLD.name = 'remove-rollback'
+      BEGIN
+        SELECT RAISE(ABORT, 'test rejection');
+      END;
+    `);
+    await assert.rejects(service.uninstall({
+      ...scope,
+      name: rollback.package.name,
+      digest: rollback.digest,
+    }), hasCode("UNINSTALL_FAILED"));
+    database.connection.exec("DROP TRIGGER reject_character_skill_uninstall_test");
+    assert.equal(existsSync(rollbackPath), true);
+    assert.equal(service.list(scope).some((entry) => entry.name === rollback.package.name), true);
+
+    const unsafe = await service.install({
+      ...scope,
+      sourceUrl: "https://downloads.example.com/remove-unsafe.zip",
+    });
+    service.setEnabled({ ...scope, name: unsafe.package.name, enabled: false });
+    const unsafePath = join(
+      root,
+      "character-agent-skills",
+      createHash("sha256").update(scope.characterId).digest("hex"),
+      "normal",
+      "skills",
+      unsafe.package.name,
+    );
+    const external = join(root, "external-package");
+    rmSync(unsafePath, { recursive: true, force: false });
+    symlinkSync(external, unsafePath);
+    await assert.rejects(service.uninstall({
+      ...scope,
+      name: unsafe.package.name,
+      digest: unsafe.digest,
+    }), hasCode("UNSAFE_REMOVE"));
+    assert.equal(service.list(scope).some((entry) => entry.name === unsafe.package.name), true);
+  } finally {
+    service.dispose();
+    database.close();
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("startup recovery restores or finalizes journaled uninstalls and removes install orphans", async () => {
+  const root = mkdtempSync(join(tmpdir(), "yourchar-character-skill-recovery-"));
+  const database = new AppDatabase(join(root, "state.sqlite"));
+  insertCharacter(database, "owner");
+  const scope = { characterId: "owner", conversationSpace: "normal" as const };
+  const ownerHash = createHash("sha256").update(scope.characterId).digest("hex");
+  const skillsRoot = join(root, "character-agent-skills", ownerHash, "normal", "skills");
+  const uninstallRoot = join(root, "character-agent-skills", ".uninstall-quarantine");
+  const transport: SkillInstallerTransport = async (request) => {
+    const name = request.url.pathname.split("/").pop()?.replace(/\.zip$/u, "") || "unnamed";
+    return zipResponse(skillArchive(name));
+  };
+  let service = createService(database, root, transport);
+  try {
+    const restore = await service.install({
+      ...scope,
+      sourceUrl: "https://downloads.example.com/crash-restore.zip",
+    });
+    service.setEnabled({ ...scope, name: restore.package.name, enabled: false });
+    service.dispose();
+    const restoreId = "00000000-0000-4000-8000-000000000001";
+    const restoreSource = join(skillsRoot, restore.package.name);
+    const restoreTombstone = join(uninstallRoot, `remove-${restoreId}`);
+    const restoreJournal = join(uninstallRoot, `uninstall-${restoreId}.json`);
+    writeFileSync(restoreJournal, `${JSON.stringify({
+      version: 1,
+      ...scope,
+      name: restore.package.name,
+      digest: restore.digest,
+      sourceRelative: join(ownerHash, "normal", "skills", restore.package.name),
+      tombstoneName: `remove-${restoreId}`,
+    })}\n`);
+    renameSync(restoreSource, restoreTombstone);
+
+    service = createService(database, root, transport);
+    assert.equal(existsSync(restoreSource), true, "a pre-commit crash restores bytes for the durable row");
+    assert.equal(existsSync(restoreTombstone), false);
+    assert.equal(existsSync(restoreJournal), false);
+    assert.equal(service.list(scope).find((entry) => entry.name === restore.package.name)?.integrity, "verified");
+
+    const finalize = await service.install({
+      ...scope,
+      sourceUrl: "https://downloads.example.com/crash-finalize.zip",
+    });
+    service.setEnabled({ ...scope, name: finalize.package.name, enabled: false });
+    service.dispose();
+    const finalizeId = "00000000-0000-4000-8000-000000000002";
+    const finalizeSource = join(skillsRoot, finalize.package.name);
+    const finalizeTombstone = join(uninstallRoot, `remove-${finalizeId}`);
+    const finalizeJournal = join(uninstallRoot, `uninstall-${finalizeId}.json`);
+    writeFileSync(finalizeJournal, `${JSON.stringify({
+      version: 1,
+      ...scope,
+      name: finalize.package.name,
+      digest: finalize.digest,
+      sourceRelative: join(ownerHash, "normal", "skills", finalize.package.name),
+      tombstoneName: `remove-${finalizeId}`,
+    })}\n`);
+    renameSync(finalizeSource, finalizeTombstone);
+    database.connection.prepare(`
+      DELETE FROM character_agent_skill_packages
+      WHERE character_id = ? AND conversation_space = ? AND name = ? AND digest = ?
+    `).run(scope.characterId, scope.conversationSpace, finalize.package.name, finalize.digest);
+
+    service = createService(database, root, transport);
+    assert.equal(existsSync(finalizeSource), false);
+    assert.equal(existsSync(finalizeTombstone), false, "a post-commit crash finalizes quarantine cleanup");
+    assert.equal(existsSync(finalizeJournal), false);
+    assert.equal(service.list(scope).some((entry) => entry.name === finalize.package.name), false);
+
+    const orphan = await service.install({
+      ...scope,
+      sourceUrl: "https://downloads.example.com/crash-orphan.zip",
+    });
+    const orphanSource = join(skillsRoot, orphan.package.name);
+    service.dispose();
+    database.connection.prepare(`
+      DELETE FROM character_agent_skill_packages
+      WHERE character_id = ? AND conversation_space = ? AND name = ? AND digest = ?
+    `).run(scope.characterId, scope.conversationSpace, orphan.package.name, orphan.digest);
+
+    service = createService(database, root, transport);
+    assert.equal(existsSync(orphanSource), false, "an exact real package directory without a DB row is reconciled");
+    const reinstalled = await service.install({
+      ...scope,
+      sourceUrl: "https://downloads.example.com/crash-orphan.zip",
+    });
+    assert.equal(reinstalled.alreadyInstalled, false);
+    assert.equal(reinstalled.package.integrity, "verified");
+  } finally {
+    service.dispose();
+    database.close();
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test("publish rolls back when persistence fails, name policy is enforced, and package limits are per space", async () => {
   const root = mkdtempSync(join(tmpdir(), "yourchar-character-skill-rollback-"));
   const database = new AppDatabase(join(root, "state.sqlite"));
@@ -382,6 +709,25 @@ test("operational backup and restore preserve verified character-private Skill p
     database.close();
     database = undefined;
 
+    const ownerHash = createHash("sha256").update("backup-owner").digest("hex");
+    const scopedRoot = join(stateDir, "character-agent-skills", ownerHash, "secret");
+    mkdirSync(join(scopedRoot, "skill-installer-quarantine", "stage-orphan"), {
+      recursive: true,
+      mode: 0o700,
+    });
+    writeFileSync(
+      join(scopedRoot, "skill-installer-quarantine", "stage-orphan", "rejected.txt"),
+      "REJECTED_STAGE_SENTINEL",
+    );
+    mkdirSync(join(stateDir, "character-agent-skills", ".uninstall-quarantine", "remove-00000000-0000-4000-8000-000000000000"), {
+      recursive: true,
+      mode: 0o700,
+    });
+    writeFileSync(
+      join(stateDir, "character-agent-skills", ".uninstall-quarantine", "remove-00000000-0000-4000-8000-000000000000", "removed.txt"),
+      "REMOVED_PACKAGE_SENTINEL",
+    );
+
     execFileSync(process.execPath, ["scripts/backup-state.mjs", stateDir, backupDir], {
       cwd: process.cwd(),
       stdio: "pipe",
@@ -394,8 +740,35 @@ test("operational backup and restore preserve verified character-private Skill p
     const manifest = JSON.parse(readFileSync(
       join(backupDir, "backup-manifest.json"),
       "utf8",
-    )) as { containsCharacterAgentSkills?: boolean };
+    )) as {
+      containsCharacterAgentSkills?: boolean;
+      excludesCharacterAgentSkillTransientState?: boolean;
+    };
     assert.equal(manifest.containsCharacterAgentSkills, true);
+    assert.equal(manifest.excludesCharacterAgentSkillTransientState, true);
+    assert.equal(existsSync(join(
+      backupDir,
+      "character-agent-skills",
+      ownerHash,
+      "secret",
+      "skill-installer-quarantine",
+    )), false);
+    assert.equal(existsSync(join(
+      backupDir,
+      "character-agent-skills",
+      ".uninstall-quarantine",
+    )), false);
+    assert.equal(existsSync(join(
+      backupDir,
+      "character-agent-skills",
+      ownerHash,
+      "secret",
+      "skills",
+      "backup-private-skill",
+      "references",
+      "skill-installer-quarantine",
+      "preserve.txt",
+    )), true, "a package resource with the same basename is not transient state");
     database = new AppDatabase(join(restoredDir, "rp-agent.sqlite"));
     service = createService(database, restoredDir, fixedArchiveTransport("unused"));
     const restored = service.list({
@@ -457,6 +830,9 @@ function skillArchive(name: string): Uint8Array {
   return zipSync({
     "wrapper/SKILL.md": strToU8(skillMarkdown(name)),
     "wrapper/references/guide.md": strToU8("Use bounded, reversible steps.\n"),
+    "wrapper/references/skill-installer-quarantine/preserve.txt": strToU8(
+      "This is a manifest-bound package resource and must be backed up.\n",
+    ),
   });
 }
 

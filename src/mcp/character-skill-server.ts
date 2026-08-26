@@ -16,12 +16,11 @@ import { connectMcpServerToPi, type McpPiBridge } from "./pi-adapter.js";
 export const characterSkillMcpToolNames = [
   "list_current_character_skills",
   "read_current_character_skill",
-  "create_current_character_skill_draft",
-  "revise_current_character_skill_draft",
+  "create_current_character_skill",
+  "revise_current_character_skill",
   "search_available_agent_skills",
   "set_current_character_private_skill_enabled",
-  "request_current_character_skill_install",
-  "cancel_current_character_skill_install",
+  "install_current_character_skill",
 ] as const;
 
 export type CharacterSkillPrivatePackage = {
@@ -33,21 +32,20 @@ export type CharacterSkillPrivatePackage = {
   integrity: "verified" | "missing" | "changed" | "invalid";
 };
 
-export type CharacterSkillStageResult = {
-  stageId: string;
+export type CharacterSkillPrivatePackageInstallResult = {
+  package: CharacterSkillPrivatePackage;
+  sourceHost: string;
+  finalArchiveHost: string;
+  resolvedCommit?: string;
   digest: string;
-  expiresAt: string;
-  metadata: {
-    name: string;
-    description: string;
-    files: number;
-  };
+  fileCount: number;
+  alreadyInstalled: boolean;
 };
 
 /**
- * Narrow capability used by the model-facing MCP. The trusted package service
- * may expose review/confirmation methods to the UI, but they deliberately do
- * not belong to this interface.
+ * Narrow capability used by the model-facing MCP. Staging, digest selection,
+ * confirmation, filesystem paths, and package contents deliberately remain
+ * behind the trusted service boundary.
  */
 export type CharacterSkillPrivatePackageService = {
   list(input: {
@@ -60,16 +58,11 @@ export type CharacterSkillPrivatePackageService = {
     name: string;
     enabled: boolean;
   }): CharacterSkillPrivatePackage | Promise<CharacterSkillPrivatePackage>;
-  stage(input: {
+  install(input: {
     characterId: string;
     conversationSpace: ConversationSpace;
     sourceUrl: string;
-  }, signal?: AbortSignal): Promise<CharacterSkillStageResult>;
-  cancel(input: {
-    characterId: string;
-    conversationSpace: ConversationSpace;
-    stageId: string;
-  }): boolean | Promise<boolean>;
+  }, signal?: AbortSignal): Promise<CharacterSkillPrivatePackageInstallResult>;
 };
 
 export type CharacterSkillMcpContext = {
@@ -87,8 +80,9 @@ export type CharacterSkillMcpContext = {
   sessionId: string;
   characterId: string;
   conversationSpace: ConversationSpace;
-  currentUserText: () => string;
   actions: () => ActionRecord[];
+  beginRemoteInstall: (sourceUrl: string) => void;
+  finishRemoteInstall: (sourceUrl: string, success: boolean) => void;
   requestCapabilityRefresh: () => void | Promise<void>;
 };
 
@@ -96,14 +90,27 @@ const skillIdentifier = z.string().min(1).max(200);
 const skillMarkdown = z.string().min(40).max(6_000);
 
 export function createCharacterSkillMcpServer(context: CharacterSkillMcpContext): McpServer {
+  // Keep model-visible private package metadata fixed for this handle. Package
+  // mutations request a rebuilt handle, but untrusted metadata from a freshly
+  // downloaded archive must not flow back into the generation that installed
+  // it through a later search call.
+  const privatePackageSnapshot = context.privatePackageService.list({
+    characterId: context.characterId,
+    conversationSpace: context.conversationSpace,
+  }).filter((entry) =>
+    entry.characterId === context.characterId
+    && entry.conversationSpace === context.conversationSpace
+  ).map((entry) => ({ ...entry }));
   const server = new McpServer(
     { name: "rp-agent-character-skill", version: "1.0.0" },
     {
       instructions:
         `These tools are fixed to character=${context.characterId} and conversationSpace=${context.conversationSpace}. ` +
-        "They may read or draft this character's own workflows and manage only this character's private Agent Skills. " +
-        "Draft creation and revision never activate a workflow. Remote requests only create a short-lived quarantine review; " +
-        "there is no model-facing confirmation, activation, global installation, file-path, or source-content capability.",
+        "They may read, create, activate, and revise this character's own workflows and manage only this character's private Agent Skills. " +
+        (context.conversationSpace === "normal"
+          ? "In normal space, the enabled management permission authorizes autonomous remote installation, but every package still passes the trusted quarantine, network, archive, digest, and integrity checks. "
+          : "Secret space never exposes remote Skill installation; it can only manage packages already scoped there. ") +
+        "Changes become available on the next turn, never during the current generation. Skills are procedural guidance and cannot add tools or permissions.",
     },
   );
 
@@ -162,11 +169,11 @@ export function createCharacterSkillMcpServer(context: CharacterSkillMcpContext)
   );
 
   server.registerTool(
-    "create_current_character_skill_draft",
+    "create_current_character_skill",
     {
-      title: "Create current character workflow draft",
+      title: "Create and activate current character workflow",
       description:
-        "Save a new inactive workflow draft for the bound character. This never activates the workflow; a trusted user review is required elsewhere.",
+        "Create and activate a reusable workflow for the bound character and space. It becomes available from the next turn and cannot add tools or permissions.",
       inputSchema: z.object({
         name: z.string().min(1).max(80),
         description: z.string().max(600).optional(),
@@ -186,34 +193,35 @@ export function createCharacterSkillMcpServer(context: CharacterSkillMcpContext)
             tags: input.tags,
             markdown: input.markdown,
             autoImprove: input.autoImprove,
-            activate: false,
+            activate: true,
             createdBy: "character",
             sourceTaskId: mcpToolCallId(extra),
           },
           context.conversationSpace,
         );
-        recordAction(context, "create_character_skill_draft", "completed", {
+        await context.requestCapabilityRefresh();
+        recordAction(context, "create_character_skill", "completed", {
           packageId: skill.id,
           status: skill.status,
           versionCount: skill.versionCount,
         });
         return toolResult(
-          `Saved inactive workflow draft ${skill.name}. It still requires trusted user review before activation.`,
+          `Created and activated workflow ${skill.name}. It will be available from the next turn; the current generation is not reloaded.`,
           { skill: publicOwnedSkill(skill) },
         );
       } catch (error) {
-        recordAction(context, "create_character_skill_draft", "failed", {});
+        recordAction(context, "create_character_skill", "failed", {});
         throw error;
       }
     },
   );
 
   server.registerTool(
-    "revise_current_character_skill_draft",
+    "revise_current_character_skill",
     {
-      title: "Revise current character workflow draft",
+      title: "Revise and activate current character workflow",
       description:
-        "Save a new inactive draft version for a workflow owned by the bound character. This never replaces or activates the active version.",
+        "Create and activate a replacement version of a workflow owned by the bound character and space. It becomes available from the next turn.",
       inputSchema: z.object({
         skillId: skillIdentifier,
         markdown: skillMarkdown.describe("Complete replacement workflow Markdown, not a patch."),
@@ -229,24 +237,25 @@ export function createCharacterSkillMcpServer(context: CharacterSkillMcpContext)
           {
             markdown,
             changeSummary,
-            activate: false,
+            activate: true,
             source: "character_created",
             sourceTaskId: mcpToolCallId(extra),
           },
           context.conversationSpace,
         );
-        recordAction(context, "revise_character_skill_draft", "completed", {
+        await context.requestCapabilityRefresh();
+        recordAction(context, "revise_character_skill", "completed", {
           packageId: skillId,
           versionId: version.id,
           version: version.version,
           status: version.status,
         });
         return toolResult(
-          `Saved workflow version ${version.version} as an inactive draft.`,
+          `Activated workflow version ${version.version}. It will be available from the next turn; the current generation is not reloaded.`,
           { version: publicOwnedSkillVersion(version) },
         );
       } catch (error) {
-        recordAction(context, "revise_character_skill_draft", "failed", { packageId: skillId });
+        recordAction(context, "revise_character_skill", "failed", { packageId: skillId });
         throw error;
       }
     },
@@ -274,13 +283,7 @@ export function createCharacterSkillMcpServer(context: CharacterSkillMcpContext)
           name: module.name,
           description: module.description,
         }));
-      const privatePackages = context.privatePackageService.list({
-        characterId: context.characterId,
-        conversationSpace: context.conversationSpace,
-      }).filter((entry) =>
-        entry.characterId === context.characterId
-        && entry.conversationSpace === context.conversationSpace
-      ).map((entry) => ({
+      const privatePackages = privatePackageSnapshot.map((entry) => ({
         kind: "private" as const,
         name: entry.name,
         description: entry.description,
@@ -327,7 +330,7 @@ export function createCharacterSkillMcpServer(context: CharacterSkillMcpContext)
         });
         const result = publicPrivatePackage(skill);
         return toolResult(
-          `${skill.name} is now ${skill.enabled ? "enabled" : "disabled"} for this character in the current space.`,
+          `${skill.name} is ${skill.enabled ? "enabled" : "disabled"} for this character in the current space. The updated capability set applies from the next turn.`,
           { skill: result },
         );
       } catch (error) {
@@ -337,84 +340,59 @@ export function createCharacterSkillMcpServer(context: CharacterSkillMcpContext)
     },
   );
 
-  server.registerTool(
-    "request_current_character_skill_install",
-    {
-      title: "Request remote Skill installation review",
-      description:
-        "Stage a remote Skill in quarantine for trusted user review. sourceUrl must appear verbatim in the user's current message. This never confirms, publishes, or enables the Skill.",
-      inputSchema: z.object({
-        sourceUrl: z.string().min(1).max(2_048),
-      }).strict(),
-      annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: true },
-    },
-    async ({ sourceUrl }, extra) => {
-      if (!context.currentUserText().includes(sourceUrl)) {
-        recordAction(context, "request_character_skill_install", "blocked", {});
-        throw new Error("The remote Skill URL must appear verbatim in the user's current message.");
-      }
-      try {
-        const staged = await context.privatePackageService.stage({
-          characterId: context.characterId,
-          conversationSpace: context.conversationSpace,
-          sourceUrl,
-        }, extra.signal);
-        const review = {
-          reviewId: staged.stageId,
-          name: staged.metadata.name,
-          description: staged.metadata.description,
-          digest: staged.digest,
-          fileCount: staged.metadata.files,
-          expiresAt: staged.expiresAt,
-        };
-        recordAction(context, "request_character_skill_install", "completed", {
-          reviewId: review.reviewId,
-          digest: review.digest,
-          fileCount: review.fileCount,
-          expiresAt: review.expiresAt,
-        });
-        return toolResult(
-          `Remote Skill ${review.name} is quarantined for trusted user review; review ${review.reviewId} expires at ${review.expiresAt}.`,
-          review,
-        );
-      } catch {
-        recordAction(context, "request_character_skill_install", "failed", {});
-        throw new Error("The remote Skill review request failed.");
-      }
-    },
-  );
-
-  server.registerTool(
-    "cancel_current_character_skill_install",
-    {
-      title: "Cancel remote Skill installation review",
-      description: "Cancel one quarantined review belonging to the bound character and space. This cannot delete an installed Skill.",
-      inputSchema: z.object({
-        reviewId: skillIdentifier,
-      }).strict(),
-      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
-    },
-    async ({ reviewId }) => {
-      try {
-        const cancelled = await context.privatePackageService.cancel({
-          characterId: context.characterId,
-          conversationSpace: context.conversationSpace,
-          stageId: reviewId,
-        });
-        recordAction(context, "cancel_character_skill_install", "completed", {
-          reviewId,
-          cancelled,
-        });
-        return toolResult(
-          cancelled ? "The quarantined Skill review was cancelled." : "The Skill review was not found or had already expired.",
-          { reviewId, cancelled },
-        );
-      } catch (error) {
-        recordAction(context, "cancel_character_skill_install", "failed", { reviewId });
-        throw error;
-      }
-    },
-  );
+  if (context.conversationSpace === "normal") {
+    server.registerTool(
+      "install_current_character_skill",
+      {
+        title: "Install and enable a remote Skill",
+        description:
+          "Download, verify, install, and enable one remote Agent Skill for the bound character in normal space. The permission switch authorizes choosing the source URL; the trusted installer still enforces HTTPS, SSRF, redirect, archive, path, digest, integrity, and resource limits. The Skill becomes available next turn and cannot add tools or permissions.",
+        inputSchema: z.object({
+          sourceUrl: z.string().min(1).max(2_048),
+        }).strict(),
+        annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: true },
+      },
+      async ({ sourceUrl }, extra) => {
+        let reserved = false;
+        try {
+          context.beginRemoteInstall(sourceUrl);
+          reserved = true;
+          const installed = await context.privatePackageService.install({
+            characterId: context.characterId,
+            conversationSpace: context.conversationSpace,
+            sourceUrl,
+          }, extra.signal);
+          context.finishRemoteInstall(sourceUrl, true);
+          reserved = false;
+          await context.requestCapabilityRefresh();
+          recordAction(context, "install_character_skill", "completed", {
+            packageName: installed.package.name,
+            enabled: installed.package.enabled,
+            integrity: installed.package.integrity,
+            sourceHost: installed.sourceHost,
+            finalArchiveHost: installed.finalArchiveHost,
+            resolvedCommit: installed.resolvedCommit,
+            digest: installed.digest,
+            fileCount: installed.fileCount,
+            alreadyInstalled: installed.alreadyInstalled,
+          });
+          const skill = publicInstalledPrivatePackage(installed.package);
+          return toolResult(
+            `${installed.alreadyInstalled ? "Verified and enabled the existing" : "Installed and enabled"} ${installed.package.name} for this character in normal space. It will be available from the next turn; the current generation is not reloaded and no new tools or permissions were granted.`,
+            { skill },
+          );
+        } catch (error) {
+          recordAction(context, "install_character_skill", "failed", {
+            sourceHost: safeAuditHostname(sourceUrl),
+            code: safeInstallerErrorCode(error),
+          });
+          throw error;
+        } finally {
+          if (reserved) context.finishRemoteInstall(sourceUrl, false);
+        }
+      },
+    );
+  }
 
   return server;
 }
@@ -463,6 +441,14 @@ function publicPrivatePackage(skill: CharacterSkillPrivatePackage) {
   };
 }
 
+function publicInstalledPrivatePackage(skill: CharacterSkillPrivatePackage) {
+  return {
+    name: skill.name,
+    enabled: skill.enabled,
+    integrity: skill.integrity,
+  };
+}
+
 function selectOwnedSkillVersion(
   skill: CharacterOwnedSkillPackage,
   versions: CharacterOwnedSkillVersion[],
@@ -480,6 +466,24 @@ function globalSkillIsAvailable(module: AgentModule, space: ConversationSpace): 
 
 function normalizeSearchText(value: string): string {
   return value.normalize("NFKC").toLocaleLowerCase().trim();
+}
+
+function safeAuditHostname(sourceUrl: string): string | undefined {
+  try {
+    const parsed = new URL(sourceUrl);
+    return parsed.protocol === "https:" ? parsed.hostname : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+function safeInstallerErrorCode(error: unknown): string {
+  if (
+    error && typeof error === "object" &&
+    "code" in error && typeof error.code === "string" &&
+    /^[A-Z][A-Z0-9_]{0,63}$/u.test(error.code)
+  ) return error.code;
+  return "UNKNOWN";
 }
 
 function searchMatches(

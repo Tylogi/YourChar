@@ -116,9 +116,11 @@ export class AgentPermissionCatalog {
       : characterSoulStatus(permissions.characterSoulWriteEnabled, context);
     const characterSkillManage = permissions.characterSkillManageEnabled
       ? context?.characterId
-        ? "Current-character Skill draft and private package management are authorized through character-bound tools."
+        ? secret
+          ? "Current-character Skill creation, activation, revision, and installed private-package toggles are authorized in secret space. Remote Skill installation is unavailable. Changes apply from the next turn and never grant tools or permissions."
+          : "Current-character Skill creation, activation, revision, and safety-checked private package installation are authorized through character-bound tools. Changes apply from the next turn and never grant tools or permissions."
         : "Character Skill management is authorized but unavailable because this session has no character."
-      : "Character Skill draft and private package management are disabled.";
+      : "Character Skill creation and private package management are disabled.";
     const realityMemoryWrite = permissions.realityMemoryWriteEnabled
       ? "Reality memory proposals are authorized. The trusted background Coordinator may auto-capture low-risk facts backed by an exact user quote; sensitive facts remain pending. Confirmation and deletion otherwise remain control-plane only."
       : "Reality memory Agent proposals and automatic daily-fact capture are disabled."

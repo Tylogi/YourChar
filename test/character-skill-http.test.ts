@@ -21,11 +21,24 @@ test("character Skill HTTP inventory is scoped and full reviews require the loca
     database,
     stateDir,
     resolveHostname: async () => [{ address: "93.184.216.34", family: 4 }],
-    transport: async (request) => ({
-      response: new Response(toArrayBuffer(skillArchive(
-        request.url.pathname.includes("secret-review") ? "secret-review" : "normal-review",
-      )), { headers: { "content-type": "application/zip" } }),
-    }),
+    transport: async (request) => {
+      if (
+        request.url.hostname === "downloads.example.com" &&
+        request.url.pathname === "/normal-review.zip"
+      ) {
+        return {
+          response: new Response(null, {
+            status: 302,
+            headers: { location: "https://cdn.example.net/final/normal-review.zip" },
+          }),
+        };
+      }
+      return {
+        response: new Response(toArrayBuffer(skillArchive(
+          request.url.pathname.includes("secret-review") ? "secret-review" : "normal-review",
+        )), { headers: { "content-type": "application/zip" } }),
+      };
+    },
   });
   const model = new ScriptedModelController("character-skill-http");
   const kernel = new CompanionKernel({
@@ -56,6 +69,18 @@ test("character Skill HTTP inventory is scoped and full reviews require the loca
     characterId: character.id,
     conversationSpace: "secret",
     sourceUrl: "https://downloads.example.com/secret-review.zip",
+  });
+  const secretInstalledStage = await packageService.stage({
+    characterId: character.id,
+    conversationSpace: "secret",
+    sourceUrl: "https://downloads.example.com/secret-installed.zip",
+  });
+  packageService.confirm({
+    characterId: character.id,
+    conversationSpace: "secret",
+    stageId: secretInstalledStage.stageId,
+    digest: secretInstalledStage.digest,
+    enabled: true,
   });
   const server = createHttpServer({ kernel });
   await listen(server);
@@ -100,6 +125,7 @@ test("character Skill HTTP inventory is scoped and full reviews require the loca
     assert.doesNotMatch(normalStagesText, new RegExp(privateMarkdownSentinel));
     assert.doesNotMatch(normalStagesText, new RegExp(privateManifestPath.replace(".", "\\.")));
     assert.doesNotMatch(normalStagesText, /https:\/\/downloads\.example\.com/u);
+    assert.doesNotMatch(normalStagesText, /https:\/\/cdn\.example\.net/u);
     const normalStages = JSON.parse(normalStagesText) as {
       stages: Array<Record<string, unknown>>;
     };
@@ -270,12 +296,22 @@ test("character Skill HTTP inventory is scoped and full reviews require the loca
     assert.doesNotMatch(packageListText, new RegExp(privateMarkdownSentinel));
     assert.doesNotMatch(packageListText, new RegExp(privateManifestPath.replace(".", "\\.")));
     assert.doesNotMatch(packageListText, /https:\/\/downloads\.example\.com/u);
+    assert.doesNotMatch(packageListText, /https:\/\/cdn\.example\.net/u);
     const packageList = JSON.parse(packageListText) as {
-      packages: Array<Record<string, unknown>>;
+      packages: Array<Record<string, unknown> & {
+        characterId: string;
+        conversationSpace: string;
+        createdAt: string;
+        updatedAt: string;
+      }>;
     };
+    assert.equal(packageList.packages[0].characterId, character.id);
+    assert.equal(packageList.packages[0].conversationSpace, "normal");
     assert.equal(packageList.packages[0].name, "normal-review");
     assert.equal(packageList.packages[0].enabled, true);
     assert.equal(packageList.packages[0].integrity, "verified");
+    assert.match(packageList.packages[0].createdAt, /^\d{4}-\d{2}-\d{2}T/u);
+    assert.equal(packageList.packages[0].updatedAt, packageList.packages[0].createdAt);
     assert.equal("skillMarkdown" in packageList.packages[0], false);
     assert.equal("manifest" in packageList.packages[0], false);
     assert.equal("source" in packageList.packages[0], false);
@@ -302,11 +338,115 @@ test("character Skill HTTP inventory is scoped and full reviews require the loca
       body: JSON.stringify(packageReviewBody),
     });
     assert.equal(packageReview.status, 200, await packageReview.clone().text());
-    const reviewedPackage = (await packageReview.json() as {
-      package: { skillMarkdown: string; manifest: Array<{ path: string }> };
+    const packageReviewText = await packageReview.text();
+    const reviewedPackage = (JSON.parse(packageReviewText) as {
+      package: {
+        sourceHost: string;
+        source: {
+          requestedUrl: string;
+          resolvedArchiveUrl: string;
+          finalArchiveUrl: string;
+        };
+        archiveSha256: string;
+        digest: string;
+        skillMarkdown: string;
+        manifest: Array<{ path: string }>;
+      };
     }).package;
+    assert.equal(reviewedPackage.sourceHost, "downloads.example.com");
+    assert.equal(
+      reviewedPackage.source.requestedUrl,
+      "https://downloads.example.com/normal-review.zip",
+    );
+    assert.equal(
+      reviewedPackage.source.resolvedArchiveUrl,
+      "https://downloads.example.com/normal-review.zip",
+    );
+    assert.equal(
+      reviewedPackage.source.finalArchiveUrl,
+      "https://cdn.example.net/final/normal-review.zip",
+      "the protected audit exposes a cross-origin final archive URL",
+    );
+    assert.match(reviewedPackage.archiveSha256, /^[a-f0-9]{64}$/u);
+    assert.match(reviewedPackage.digest, /^[a-f0-9]{64}$/u);
     assert.match(reviewedPackage.skillMarkdown, new RegExp(privateMarkdownSentinel));
     assert.equal(reviewedPackage.manifest.some((entry) => entry.path === privateManifestPath), true);
+
+    const secretPackageCollectionUrl =
+      `${origin}/api/v1/characters/${encodeURIComponent(character.id)}/skill-packages` +
+      `?conversationSpace=secret&characterId=${encodeURIComponent(character.id)}`;
+    const secretPackageListResponse = await fetch(secretPackageCollectionUrl);
+    assert.equal(secretPackageListResponse.status, 200);
+    const secretPackageList = await secretPackageListResponse.json() as {
+      packages: Array<{ name: string; conversationSpace: string; enabled: boolean }>;
+    };
+    assert.deepEqual(secretPackageList.packages.map((entry) => entry.name), ["normal-review"]);
+    assert.equal(secretPackageList.packages[0].conversationSpace, "secret");
+    assert.equal(secretPackageList.packages[0].enabled, true);
+    const secretPackageReviewUrl =
+      `${origin}/api/v1/characters/${encodeURIComponent(character.id)}` +
+      `/skill-packages/${encodeURIComponent("normal-review")}/review` +
+      `?conversationSpace=secret&characterId=${encodeURIComponent(character.id)}`;
+    const secretPackageReviewBody = {
+      name: "normal-review",
+      characterId: character.id,
+      conversationSpace: "secret",
+    };
+    const wrongSpacePackageReview = await fetch(secretPackageReviewUrl, {
+      method: "POST",
+      headers: trustedHeaders,
+      body: JSON.stringify({ ...secretPackageReviewBody, conversationSpace: "normal" }),
+    });
+    assert.equal(wrongSpacePackageReview.status, 404);
+    const secretPackageReview = await fetch(secretPackageReviewUrl, {
+      method: "POST",
+      headers: trustedHeaders,
+      body: JSON.stringify(secretPackageReviewBody),
+    });
+    assert.equal(secretPackageReview.status, 200, await secretPackageReview.clone().text());
+    const secretPackageReviewText = await secretPackageReview.text();
+    const secretReviewedPackage = (JSON.parse(secretPackageReviewText) as {
+      package: {
+        conversationSpace: string;
+        source: { requestedUrl: string; finalArchiveUrl: string };
+        skillMarkdown: string;
+        manifest: Array<{ path: string }>;
+      };
+    }).package;
+    assert.equal(secretReviewedPackage.conversationSpace, "secret");
+    assert.equal(
+      secretReviewedPackage.source.requestedUrl,
+      "https://downloads.example.com/secret-installed.zip",
+    );
+    assert.equal(
+      secretReviewedPackage.source.finalArchiveUrl,
+      "https://downloads.example.com/secret-installed.zip",
+    );
+    assert.match(secretReviewedPackage.skillMarkdown, new RegExp(privateMarkdownSentinel));
+    assert.equal(
+      secretReviewedPackage.manifest.some((entry) => entry.path === privateManifestPath),
+      true,
+    );
+
+    const removeBody = {
+      name: "normal-review",
+      digest: normalStage.digest,
+      characterId: character.id,
+      conversationSpace: "normal",
+    };
+    const untrustedRemove = await fetch(packageDetailUrl, {
+      method: "DELETE",
+      headers: { "content-type": "application/json", origin },
+      body: JSON.stringify(removeBody),
+    });
+    assert.equal(untrustedRemove.status, 403);
+    const enabledRemove = await fetch(packageDetailUrl, {
+      method: "DELETE",
+      headers: trustedHeaders,
+      body: JSON.stringify(removeBody),
+    });
+    assert.equal(enabledRemove.status, 409);
+    assert.equal((await enabledRemove.json() as { code: string }).code, "PACKAGE_ENABLED");
 
     const untrustedDisable = await fetch(packageDetailUrl, {
       method: "PATCH",
@@ -336,6 +476,59 @@ test("character Skill HTTP inventory is scoped and full reviews require the loca
       characterId: character.id,
       conversationSpace: "normal",
     })[0].enabled, false);
+    const disabledInventoryResponse = await fetch(packageCollectionUrl);
+    assert.equal(disabledInventoryResponse.status, 200);
+    assert.equal(
+      ((await disabledInventoryResponse.json() as {
+        packages: Array<{ enabled: boolean }>;
+      }).packages[0].enabled),
+      false,
+      "the read-only inventory reflects a manual disable without another review step",
+    );
+    const wrongDigestRemove = await fetch(packageDetailUrl, {
+      method: "DELETE",
+      headers: trustedHeaders,
+      body: JSON.stringify({ ...removeBody, digest: "f".repeat(64) }),
+    });
+    assert.equal(wrongDigestRemove.status, 409);
+    assert.equal(
+      (await wrongDigestRemove.json() as { code: string }).code,
+      "PACKAGE_DIGEST_MISMATCH",
+    );
+    const remove = await fetch(packageDetailUrl, {
+      method: "DELETE",
+      headers: trustedHeaders,
+      body: JSON.stringify(removeBody),
+    });
+    assert.equal(remove.status, 200, await remove.clone().text());
+    const uninstalled = (await remove.json() as {
+      uninstalled: {
+        characterId: string;
+        conversationSpace: string;
+        name: string;
+        digest: string;
+        integrityAtRemoval: string;
+        removedAt: string;
+      };
+    }).uninstalled;
+    assert.equal(uninstalled.characterId, character.id);
+    assert.equal(uninstalled.conversationSpace, "normal");
+    assert.equal(uninstalled.name, "normal-review");
+    assert.equal(uninstalled.digest, normalStage.digest);
+    assert.equal(uninstalled.integrityAtRemoval, "verified");
+    assert.match(uninstalled.removedAt, /^\d{4}-\d{2}-\d{2}T/u);
+    const removedInventoryResponse = await fetch(packageCollectionUrl);
+    assert.equal(removedInventoryResponse.status, 200);
+    assert.deepEqual(
+      (await removedInventoryResponse.json() as { packages: unknown[] }).packages,
+      [],
+    );
+    const removedReview = await fetch(packageReviewUrl, {
+      method: "POST",
+      headers: trustedHeaders,
+      body: JSON.stringify(packageReviewBody),
+    });
+    assert.equal(removedReview.status, 404);
 
     const cancelUrl =
       `${origin}/api/v1/characters/${encodeURIComponent(character.id)}` +
@@ -357,6 +550,7 @@ test("character Skill HTTP inventory is scoped and full reviews require the loca
     const actionTypes = kernel.store.allActions().map((action) => action.actionType);
     assert.equal(actionTypes.includes("confirm_character_agent_skill"), true);
     assert.equal(actionTypes.includes("set_character_agent_skill_enabled"), true);
+    assert.equal(actionTypes.includes("uninstall_character_agent_skill"), true);
     assert.equal(actionTypes.includes("cancel_character_agent_skill_review"), true);
     const confirmAction = kernel.store.allActions().find((action) =>
       action.actionType === "confirm_character_agent_skill");
@@ -365,6 +559,13 @@ test("character Skill HTTP inventory is scoped and full reviews require the loca
       action.actionType === "cancel_character_agent_skill_review");
     assert.equal(cancelAction?.conversationSpace, "secret");
     assert.equal(cancelAction?.secretOwnerCharacterId, character.id);
+    const uninstallAction = kernel.store.allActions().find((action) =>
+      action.actionType === "uninstall_character_agent_skill");
+    assert.equal(uninstallAction?.conversationSpace, "normal");
+    assert.equal(uninstallAction?.payload.integrityAtRemoval, "verified");
+    const actionText = JSON.stringify(kernel.store.allActions());
+    assert.doesNotMatch(actionText, /https:\/\/downloads\.example\.com/u);
+    assert.doesNotMatch(actionText, /https:\/\/cdn\.example\.net/u);
   } finally {
     await close(server);
     kernel.dispose();

@@ -58,7 +58,7 @@ YourChar has two deliberately separate Skill concepts:
 
 | Concept | Purpose | Body and resources | Activation boundary |
 |---|---|---|---|
-| Character-owned workflow | Records how one character performs a kind of work and supports routing, evaluation, and improvement | Immutable, versioned Markdown in the organization store; no package resource directory | A character may create or revise only an inactive draft; the user activates a version through the local control plane |
+| Character-owned workflow | Records how one character performs a kind of work and supports routing, evaluation, and improvement | Immutable, versioned Markdown in the organization store; no package resource directory | The local user may review versions; when Skill autonomy is enabled, the bound character may also create or revise and activate its own version for the next turn |
 | Agent Skill package | Supplies Pi-compatible procedural instructions and optional package resources to a model call | One direct `SKILL.md` plus verified files below its package root | Shared packages use global per-space switches; private packages are enabled only for one character and one space |
 
 Both are instructions, not executable authority. A workflow or Agent Skill can
@@ -95,36 +95,60 @@ character receives a character-bound MCP. The permission defaults off. It
 allows the character to:
 
 - list and read its own workflows in the current space;
-- create a new workflow draft or a new draft version;
+- create and activate a new workflow, or revise and activate a new version;
 - search metadata for shared Skills enabled in the current space and every
   installed private package for the current character and space, including its
   enabled and integrity state;
 - enable or disable an already installed private package in that exact scope;
-- request a remote package review, or cancel one of its own pending reviews.
+- in a normal conversation, choose a public HTTPS source and autonomously
+  download, verify, install, and enable its own private package.
 
-The MCP has no confirm, activate, global-install, permission-edit, update, or
-uninstall tool. Its schemas contain no owner or space fields: `characterId` and
-`conversationSpace` come from trusted session context. Secret-space actions are
-also written with that character as the secret audit owner. Draft and review
-audits omit Markdown, resource contents, filesystem paths, and source URLs.
+The MCP has no global-install, permission-edit, update, arbitrary owner, or
+arbitrary space operation. Its schemas contain no owner or space fields:
+`characterId` and `conversationSpace` come from trusted session context.
+Secret-space actions are written with that character as the secret audit owner.
+Audits omit workflow Markdown, resource contents, filesystem paths, and complete
+source URLs.
 
-A remote request is deliberately split across two authorities:
+A remote autonomous install remains internally split into a quarantine and
+publication transaction, but the enabled permission is the one human
+authorization boundary:
 
 ```text
-URL stated verbatim by the user in the current message
-  -> character requests a bounded remote stage
-  -> private quarantine; model receives only review metadata
-  -> local user reviews source, manifest, digest, and complete SKILL.md
-  -> local control-plane confirmation publishes the exact reviewed bytes
+model-selected public HTTPS source in a normal character conversation
+  -> private quarantine and bounded download/archive validation
+  -> exact staged digest is published and enabled for that character/space
+  -> matching sessions rebuild capabilities for the next turn
 ```
 
-The model-facing response contains only a short-lived review ID, name,
-description, canonical manifest digest, file count, and expiry. The stage is
-process-local and expires after ten minutes; restart removes orphaned stage
-bytes. Each character/space may have at most four pending reviews and twelve
-installed private packages. Confirmation rechecks the bound owner, space,
-stage, digest, name collision, and package bytes before an atomic publish.
+“Next turn” refers to automatic workflow injection, the private-package index,
+and the package `read` allowlist. The current tool call still returns a bounded
+receipt, and a character may read workflow text it just authored through its
+management surface; freshly downloaded package descriptions and contents are
+not exposed until the rebuilt handle.
+
+The model-facing result contains only safe installed-package metadata and never
+returns package Markdown, resource contents, paths, stage IDs, or complete
+source URLs. Internal stages are process-local and are cancelled after success
+or failure; restart removes orphaned bytes. Each character/space may have at
+most twelve installed private packages. A foreground turn may make at most
+three remote-install attempts and complete only one source; the reservation is
+taken before any fetch, so parallel tool calls cannot bypass it. Publication rechecks the bound owner,
+space, stage digest, name collision, and package bytes before an atomic rename.
 Shared and private package names cannot collide in either installation order.
+
+This is intentionally an open-world capability. The selected remote host can
+observe its hostname and request path, and archive validation cannot undo that
+network disclosure. For that reason `install_current_character_skill` is not
+registered in secret conversations. Secret conversations may still create or
+revise local workflows and manage packages already present in their own secret
+scope.
+
+Package checks establish filesystem and transport safety, not publisher trust.
+An unsigned downloaded `SKILL.md` becomes model guidance on the next turn and
+may persuade the character to use Workspace, Tavily, Web Reader, or any other
+capability the user already enabled. It cannot create new authority, but it can
+exercise existing authority; enabling autonomy explicitly accepts that risk.
 
 An installed private package is a resource package, not just a copied prompt.
 The installer preserves the reviewed `SKILL.md` and its manifest-bound files,
@@ -138,7 +162,11 @@ are never executed by installation or activation.
 Turning the management permission off removes the character-management MCP on
 the next capability rebuild. It does not disable an already enabled Agent Skill
 or deactivate an already active character-owned workflow; those have their own
-trusted controls.
+trusted controls. Shell network is denied for the full turn whenever autonomy
+is enabled or that turn has loaded an enabled character-private package or an
+autonomously created workflow. Turning autonomy off therefore does not let a
+loaded package reach the loopback control plane; network preference can take
+effect only on a later turn after the relevant content is disabled.
 
 ### Incognito and subagent boundaries
 
@@ -156,10 +184,11 @@ but only as read-only guidance. Character-owned workflow bodies are not
 automatically added to the generic subagent prompt. Delegation cannot expand
 the parent's tool or permission set.
 
-The current package lifecycle is install once, enable/disable, and integrity
-check. There is no supported in-place update, overwrite, or individual
-uninstall API/UI yet. A same-name stage is rejected; disable the existing
-package instead. Complete user-data deletion removes all private package rows
+The current package lifecycle is install once, enable/disable, integrity check,
+and trusted removal after disable. There is no supported in-place update or
+overwrite; a same-name package with different bytes is rejected. Removal is
+bound to the exact owner, space, name, and digest and is intentionally absent
+from the model MCP. Complete user-data deletion removes all private package rows
 and owned package directories. Operational backups include the complete
 `character-agent-skills/` resource tree together with its scoped database rows;
 restore verification rejects a manifest that claims otherwise. JSON export is
@@ -245,18 +274,19 @@ session is bound to a character, the session is not incognito, and
 |---|---:|---|
 | `list_current_character_skills` | No | List metadata for owned workflows in the bound character/space |
 | `read_current_character_skill` | No | Read one bound owned-workflow version |
-| `create_current_character_skill_draft` | Yes | Create with `createdBy=character` and `activate=false` |
-| `revise_current_character_skill_draft` | Yes | Create a `character_created`, inactive version |
+| `create_current_character_skill` | Yes | Create with `createdBy=character`, activate it, and rebuild matching sessions for the next turn |
+| `revise_current_character_skill` | Yes | Create and activate a `character_created` replacement version for the next turn |
 | `search_available_agent_skills` | No | Return metadata only for enabled shared Skills and all installed bound-private packages, including disabled or integrity-failed entries |
 | `set_current_character_private_skill_enabled` | Yes | Toggle an installed package in the fixed character/space and rebuild matching session capabilities |
-| `request_current_character_skill_install` | Yes | Require a current-message verbatim URL and create only a quarantine review |
-| `cancel_current_character_skill_install` | Yes | Cancel one bound, pending review |
+| `install_current_character_skill` | Yes, normal only | Autonomously stage, validate, publish, and enable one model-selected public HTTPS package; at most three attempts and one completed source per foreground turn |
 
-There is intentionally no model-facing confirmation, activation, global
-installation, permission mutation, update, uninstall, arbitrary owner, or
-arbitrary space operation. Remote content is untrusted data. The stage service
-applies the same HTTPS, DNS/SSRF, archive, manifest, and size checks as the
-global installer before returning the redacted review summary.
+There is intentionally no model-facing global installation, permission
+mutation, update, uninstall, arbitrary owner, or arbitrary space operation.
+Remote content is untrusted data. The stage service applies the same HTTPS,
+DNS/SSRF, redirect, archive, manifest, and size checks as the global installer,
+then publishes the exact checked digest. The install tool is omitted entirely
+from secret conversations because an arbitrary outbound URL is itself a data
+egress channel.
 
 ## 5. HTTP contract
 
@@ -271,6 +301,7 @@ global installer before returning the redacted review summary.
 | GET | `/api/v1/characters/{id}/skill-packages/{name}` | Read one safe package summary without source URL, manifest, path, or Markdown |
 | POST | `/api/v1/characters/{id}/skill-packages/{name}/review` | Locally authenticate and read full provenance, manifest, and verified `SKILL.md` |
 | PATCH | `/api/v1/characters/{id}/skill-packages/{name}` | Locally enable or disable one bound private package |
+| DELETE | `/api/v1/characters/{id}/skill-packages/{name}` | Locally remove one disabled package using exact owner/space/name/digest matching |
 | GET | `/api/v1/characters/{id}/skill-package-stages` | List redacted pending-review summaries |
 | GET | `/api/v1/characters/{id}/skill-package-stages/{reviewId}` | Read one redacted pending-review summary |
 | POST | `/api/v1/characters/{id}/skill-package-stages/{reviewId}/review` | Locally authenticate and read full stage provenance, manifest, and `SKILL.md` |
@@ -311,12 +342,17 @@ For a Skill, use the reviewed installer or place a valid
 `<package>/SKILL.md` under a discovery root. A manually added package appears
 after a rescan and remains disabled until explicitly enabled.
 
-For a character-private Agent Skill, enable the default-off management
-permission, let the bound character stage a URL from the current user message,
-and confirm it in the character workbench. Copying files into
+For a character-private Agent Skill, enable the default-off autonomy permission
+and ask the bound character in a normal conversation to install a known public
+HTTPS source (or one found through a separately enabled web-search tool). The
+character selects the URL and the service performs the
+quarantine and validation transaction without a second confirmation. The
+source host can observe the request host/path, so remote installation is not
+available in secret conversations. Copying files into
 `character-agent-skills/` does not create the required scoped database row,
-provenance, or manifest and is unsupported. Existing private packages can be
-enabled or disabled; update and uninstall are not implemented.
+provenance, or manifest and is unsupported. Existing packages can be inspected,
+enabled, disabled, and—after disabling—removed from the trusted local UI;
+in-place update is not implemented.
 
 For an MCP module, add its descriptor to the catalog, construct its bridge only
 when enabled, and append it to `PiSessionHandle.mcpBridges`. Keep direct domain

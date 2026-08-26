@@ -22,6 +22,7 @@ import {
   SettingsManager,
   type AgentSession,
   type ExtensionFactory,
+  type Skill,
 } from "@earendil-works/pi-coding-agent";
 import type { Api, Model } from "@earendil-works/pi-ai/compat";
 import type { Clock } from "../app/clock.js";
@@ -79,6 +80,10 @@ import {
 } from "../mcp/index.js";
 import type { CharacterCapabilityService } from "../organization/service.js";
 import type { CharacterAgentSkillPackageService } from "../modules/character-skill-packages.js";
+import {
+  beginCharacterSkillRemoteInstall,
+  finishCharacterSkillRemoteInstall,
+} from "../modules/character-skill-turn-policy.js";
 import type { UserProfileService } from "../profile/service.js";
 import type { RpService } from "../rp/service.js";
 import type { ScheduleService } from "../schedule/service.js";
@@ -425,6 +430,7 @@ export class PiSessionRuntime {
   private readonly pendingCapabilityRefreshes = new Set<string>();
   private readonly activeSubagentCounts = new Map<string, number>();
   private readonly activeSubagents = new Set<AgentSession>();
+  private activeCapabilityTurns = 0;
   private readonly canonicalDirectLoading = new Map<string, Promise<PiSessionHandle>>();
   private readonly legacyDirectMigrationTargets = new Map<string, string>();
   private readonly conversationLifecycleThresholds: Partial<ConversationLifecycleThresholds>;
@@ -580,6 +586,40 @@ export class PiSessionRuntime {
       handle.modelFingerprint = fingerprint;
     }
     this.touch(handle.metadata);
+  }
+
+  /**
+   * Freeze the effective shell-network trust decision for one whole turn.
+   * Skill-management tools may change permission/package state during that
+   * turn, but they cannot use that change to regain network in the same model
+   * generation.
+   */
+  latchShellNetworkForTurn(handle: PiSessionHandle): boolean {
+    const allowed =
+      !handle.toolState.untrustedCharacterSkillLoaded &&
+      this.characterSkillShellNetworkAllowed(handle.metadata);
+    handle.toolState.shellNetworkAllowed = allowed;
+    return allowed;
+  }
+
+  /** Recheck mutable trust state without ever reopening network in this turn. */
+  tightenShellNetworkLatchForTurn(handle: PiSessionHandle): boolean {
+    handle.toolState.shellNetworkAllowed =
+      handle.toolState.shellNetworkAllowed &&
+      !handle.toolState.untrustedCharacterSkillLoaded &&
+      this.characterSkillShellNetworkAllowed(handle.metadata);
+    return handle.toolState.shellNetworkAllowed;
+  }
+
+  beginCapabilityTurn(): void {
+    this.activeCapabilityTurns += 1;
+  }
+
+  finishCapabilityTurn(): void {
+    if (this.activeCapabilityTurns <= 0) {
+      throw new Error("capability turn accounting underflow");
+    }
+    this.activeCapabilityTurns -= 1;
   }
 
   async getContextBudget(sessionId: string): Promise<ContextBudgetSnapshot> {
@@ -1397,7 +1437,11 @@ export class PiSessionRuntime {
   }
 
   assertCapabilitiesIdle(): void {
-    if (this.loading.size || [...this.handles.values()].some((handle) => handle.session.isStreaming)) {
+    if (
+      this.activeCapabilityTurns > 0 ||
+      this.loading.size ||
+      [...this.handles.values()].some((handle) => handle.session.isStreaming)
+    ) {
       throw new Error("agent modules cannot be changed while a session is running");
     }
   }
@@ -1478,6 +1522,14 @@ export class PiSessionRuntime {
       traceKind: "user",
       traceRequestText: "",
       currentUserText: "",
+      // Only private package paths are immutable in a loaded handle. Owned
+      // workflow context is rebuilt for every turn and is evaluated live by
+      // latchShellNetworkForTurn().
+      untrustedCharacterSkillLoaded: false,
+      shellNetworkAllowed: false,
+      characterSkillRemoteInstallAttempts: 0,
+      characterSkillRemoteInstallInFlight: false,
+      successfulCharacterSkillInstallSourceUrl: undefined,
       toolMutationsAllowed: true,
       realWorldMutationConfirmed: metadata.mode !== "rp",
       confirmedMutationId: undefined,
@@ -1675,8 +1727,13 @@ export class PiSessionRuntime {
         sessionId: metadata.id,
         characterId: metadata.characterId,
         conversationSpace: metadata.conversationSpace,
-        currentUserText: () => toolState.currentUserText,
         actions: () => toolState.actions,
+        beginRemoteInstall: (sourceUrl) => {
+          beginCharacterSkillRemoteInstall(toolState, sourceUrl);
+        },
+        finishRemoteInstall: (sourceUrl, success) => {
+          finishCharacterSkillRemoteInstall(toolState, sourceUrl, success);
+        },
         requestCapabilityRefresh: () => this.requestCharacterSkillCapabilityRefresh(
           metadata.characterId!,
           metadata.conversationSpace,
@@ -1721,6 +1778,13 @@ export class PiSessionRuntime {
       metadata.conversationSpace,
       metadata.characterId,
     );
+    toolState.untrustedCharacterSkillLoaded ||= this.privateSkillLoadedInHandle(
+      metadata,
+      enabledSkills,
+    );
+    toolState.shellNetworkAllowed =
+      !toolState.untrustedCharacterSkillLoaded &&
+      this.characterSkillShellNetworkAllowed(metadata);
     const skillReadTool = createSkillReadTool(
       enabledSkills,
       this.cwd,
@@ -1753,7 +1817,8 @@ export class PiSessionRuntime {
           workspaceDir: workspace.dir,
           workspaceAccess: permissions.workspaceAccess,
           networkEnabled: permissions.networkEnabled,
-          ...(this.shellNetworkAllowed ? { networkAllowed: this.shellNetworkAllowed } : {}),
+          networkAllowed: () =>
+            toolState.shellNetworkAllowed && (this.shellNetworkAllowed?.() ?? true),
           store: this.store,
           sessionId: metadata.id,
           actions: () => toolState.actions,
@@ -1843,6 +1908,56 @@ export class PiSessionRuntime {
       toolNames: customTools.map((tool) => tool.name),
       modelFingerprint: model ? modelFingerprint(model) : undefined,
     };
+  }
+
+  private characterSkillShellNetworkAllowed(metadata: ConversationMetadata): boolean {
+    if (this.permissionCatalog.get().characterSkillManageEnabled) return false;
+    if (!metadata.characterId) return true;
+    try {
+      if (this.characterSkillPackages?.effectivePackageLocations({
+        characterId: metadata.characterId,
+        conversationSpace: metadata.conversationSpace,
+      }).length) return false;
+      return !this.autonomousOwnedWorkflowActive(metadata);
+    } catch {
+      // Corrupt or concurrently removed Skill state must fail closed for shell
+      // network, even though Skill loading itself will also reject it.
+      return false;
+    }
+  }
+
+  private autonomousOwnedWorkflowActive(metadata: ConversationMetadata): boolean {
+    if (!metadata.characterId || !this.characterCapabilities) return false;
+    try {
+      return this.characterCapabilities
+        .listOwnedSkills(metadata.characterId, metadata.conversationSpace)
+        .some((skill) =>
+          skill.status === "active" &&
+          Boolean(skill.activeVersion) &&
+          (
+            skill.createdBy === "character" ||
+            skill.activeVersion?.source === "character_created"
+          )
+        );
+    } catch {
+      return true;
+    }
+  }
+
+  private privateSkillLoadedInHandle(
+    metadata: ConversationMetadata,
+    enabledSkills: readonly Skill[],
+  ): boolean {
+    if (!metadata.characterId || !this.characterSkillPackages) return false;
+    try {
+      const privatePaths = new Set(this.characterSkillPackages.effectivePackageLocations({
+        characterId: metadata.characterId,
+        conversationSpace: metadata.conversationSpace,
+      }).map((location) => resolve(location.filePath)));
+      return enabledSkills.some((skill) => privatePaths.has(resolve(skill.filePath)));
+    } catch {
+      return true;
+    }
   }
 
   private async runSubagent(input: {
@@ -3549,11 +3664,10 @@ const mutatingTools = new Set([
   "propose_meeting",
   "begin_meeting",
   "end_meeting",
-  "create_current_character_skill_draft",
-  "revise_current_character_skill_draft",
+  "create_current_character_skill",
+  "revise_current_character_skill",
   "set_current_character_private_skill_enabled",
-  "request_current_character_skill_install",
-  "cancel_current_character_skill_install",
+  "install_current_character_skill",
 ]);
 
 function isCharacterScheduleInput(input: unknown): boolean {

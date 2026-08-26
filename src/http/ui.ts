@@ -1019,17 +1019,6 @@ export function renderAppHtml(): string {
     }
     .character-skill-package-state { min-height: 16px; color: var(--muted); font-size: 11px; }
     .character-skill-package-state.error { color: var(--danger); }
-    .character-skill-stage-list { display: grid; gap: 9px; }
-    .character-skill-stage {
-      min-width: 0;
-      padding: 11px 12px;
-      border: 1px solid #ead39c;
-      border-radius: 7px;
-      background: #fffaf0;
-      display: grid;
-      gap: 9px;
-    }
-    .character-skill-stage-head,
     .character-skill-package-detail-head {
       min-width: 0;
       display: flex;
@@ -1037,15 +1026,10 @@ export function renderAppHtml(): string {
       justify-content: space-between;
       gap: 10px;
     }
-    .character-skill-stage-head > div,
     .character-skill-package-detail-head > div:first-child { min-width: 0; display: grid; gap: 3px; }
-    .character-skill-stage-head strong,
     .character-skill-package-detail-head strong { overflow-wrap: anywhere; font-size: 12px; }
-    .character-skill-stage-head span,
     .character-skill-package-detail-head span { color: var(--muted); font-size: 10px; overflow-wrap: anywhere; }
-    .character-skill-stage-actions,
     .character-skill-package-detail-actions { flex: 0 0 auto; display: flex; gap: 7px; }
-    .character-skill-stage-actions button,
     .character-skill-package-detail-actions button { width: auto; }
     .character-skill-package-summary {
       display: grid;
@@ -1060,6 +1044,8 @@ export function renderAppHtml(): string {
     .character-skill-package-summary span { color: var(--muted); font-size: 9px; }
     .character-skill-package-summary strong,
     .character-skill-package-summary code { min-width: 0; overflow-wrap: anywhere; font-size: 10px; }
+    .character-skill-package-inspection { min-width: 0; display: grid; gap: 9px; }
+    .character-skill-package-inspection-note { margin: 0; color: var(--muted); font-size: 10px; line-height: 1.5; }
     .character-skill-package-review,
     .character-skill-package-manifest {
       min-width: 0;
@@ -4002,9 +3988,7 @@ export function renderAppHtml(): string {
       .owned-skill-workbench-head,
       .owned-skill-detail-head { align-items: stretch; flex-direction: column; }
       .owned-skill-workbench-head button { align-self: flex-start; }
-      .character-skill-stage-head,
       .character-skill-package-detail-head { align-items: stretch; flex-direction: column; }
-      .character-skill-stage-actions,
       .character-skill-package-detail-actions { justify-content: flex-start; }
       .character-skill-package-summary { grid-template-columns: minmax(0, 1fr); }
       .character-skill-manifest-row { grid-template-columns: minmax(0, 1fr); }
@@ -5250,31 +5234,35 @@ export function renderAppHtml(): string {
                 <div class="owned-skill-workbench-head">
                   <div>
                     <strong id="characterSkillPackagesTitle">扩展 Skill 包</strong>
-                    <span>角色可以按授权为自己下载并预检扩展包；预检不会安装，必须由你在本机核对摘要与完整 SKILL.md 后确认。</span>
+                    <span>开启后，普通角色会话可自行下载、安装并启用扩展包，无需逐次确认；私密空间只能查看和管理已安装包。你仍可在此审计内容、停用或移除。</span>
                   </div>
                   <button id="refreshCharacterSkillPackagesBtn" class="secondary" type="button"><i data-lucide="refresh-cw" aria-hidden="true"></i><span>刷新</span></button>
                 </div>
                 <div id="characterSkillPackageState" class="character-skill-package-state" role="status" aria-live="polite"></div>
-                <div id="characterSkillPackageStageList" class="character-skill-stage-list" aria-label="待确认的角色 Skill 包"></div>
                 <div class="owned-skill-layout">
                   <div id="characterSkillPackageList" class="owned-skill-list" aria-label="已安装的角色扩展 Skill 包"></div>
                   <div id="characterSkillPackageDetail" class="character-skill-package-detail" hidden>
                     <div class="character-skill-package-detail-head">
                       <div><strong id="characterSkillPackageName"></strong><span id="characterSkillPackageMeta"></span></div>
                       <div class="character-skill-package-detail-actions">
+                        <button id="inspectCharacterSkillPackageBtn" class="secondary" type="button">查看安装内容</button>
                         <button id="toggleCharacterSkillPackageBtn" class="secondary" type="button"></button>
+                        <button id="removeCharacterSkillPackageBtn" class="danger-button" type="button">移除</button>
                       </div>
                     </div>
                     <p id="characterSkillPackageDescription" class="owned-skill-description"></p>
                     <div id="characterSkillPackageSummary" class="character-skill-package-summary"></div>
-                    <details class="character-skill-package-manifest">
-                      <summary>查看完整 Manifest</summary>
-                      <div id="characterSkillPackageManifest" class="character-skill-manifest-list"></div>
-                    </details>
-                    <details class="character-skill-package-review" open>
-                      <summary>完整 SKILL.md</summary>
-                      <pre id="characterSkillPackageMarkdown"></pre>
-                    </details>
+                    <section id="characterSkillPackageInspection" class="character-skill-package-inspection" aria-label="已安装 Skill 只读审计" hidden>
+                      <p class="character-skill-package-inspection-note">以下是安装后的本机只读审计记录，仅用于核对来源与内容，不会改变启用状态。来源 URL 可能含敏感路径，请勿直接分享。</p>
+                      <details class="character-skill-package-manifest" open>
+                        <summary>完整 Manifest</summary>
+                        <div id="characterSkillPackageManifest" class="character-skill-manifest-list"></div>
+                      </details>
+                      <details class="character-skill-package-review" open>
+                        <summary>完整 SKILL.md</summary>
+                        <pre id="characterSkillPackageMarkdown"></pre>
+                      </details>
+                    </section>
                   </div>
                 </div>
               </section>
@@ -5483,7 +5471,7 @@ export function renderAppHtml(): string {
                 <div class="permission-row">
                   <div>
                     <div class="module-name">终端网络</div>
-                    <div class="module-description">允许沙箱命令访问网络</div>
+                    <div class="module-description">保存 Shell 网络偏好；实际访问还受私密模式、角色私有 Skill 与角色自建工作法的安全隔离约束</div>
                   </div>
                   <label class="toggle"><span id="networkPermissionLabel">已关闭</span><input id="networkPermissionInput" type="checkbox" data-permission="networkEnabled" /></label>
                 </div>
@@ -5504,7 +5492,7 @@ export function renderAppHtml(): string {
                 <div class="permission-row">
                   <div>
                     <div class="module-name">角色 Skill 自主管理</div>
-                    <div class="module-description">允许角色为自己预检扩展 Skill 包并管理启用状态；安装确认仍只由本机用户完成</div>
+                    <div class="module-description">允许普通角色会话中的角色自行选择公开 HTTPS 来源并下载安装；请求会向远端暴露目标主机和路径，请勿在 URL 或普通空间内容中放入秘密。下载内容会从下一回合起作为指令影响角色，并可引导使用你已开启的 Workspace 或联网工具，请仅在接受此风险时开启。私密会话不能远程安装，但仍可创建、修订本地工作法并管理已安装包；无痕会话只使用只读冻结快照，不能进行任何 Skill 管理。自治开启、本轮加载启用中的角色私有 Skill 或角色自建工作法时，Shell 有效网络会被拒绝；关闭后需停用相关项并进入下一安全回合，才按原网络偏好恢复</div>
                   </div>
                   <label class="toggle"><span id="characterSkillManagePermissionLabel">已关闭</span><input id="characterSkillManagePermissionInput" type="checkbox" data-permission="characterSkillManageEnabled" /></label>
                 </div>
@@ -6445,7 +6433,6 @@ export function renderAppHtml(): string {
       selectedCharacterOwnedSkillId: "",
       characterOwnedSkillReview: null,
       characterSkillPackages: [],
-      characterSkillPackageStages: [],
       selectedCharacterSkillPackageName: "",
       characterSkillPackageDetailData: null,
       characterSkillPackageRequestId: 0,
@@ -6973,16 +6960,18 @@ export function renderAppHtml(): string {
       characterSkillPackageWorkbench: document.getElementById("characterSkillPackageWorkbench"),
       refreshCharacterSkillPackagesBtn: document.getElementById("refreshCharacterSkillPackagesBtn"),
       characterSkillPackageState: document.getElementById("characterSkillPackageState"),
-      characterSkillPackageStageList: document.getElementById("characterSkillPackageStageList"),
       characterSkillPackageList: document.getElementById("characterSkillPackageList"),
       characterSkillPackageDetail: document.getElementById("characterSkillPackageDetail"),
       characterSkillPackageName: document.getElementById("characterSkillPackageName"),
       characterSkillPackageMeta: document.getElementById("characterSkillPackageMeta"),
       characterSkillPackageDescription: document.getElementById("characterSkillPackageDescription"),
       characterSkillPackageSummary: document.getElementById("characterSkillPackageSummary"),
+      characterSkillPackageInspection: document.getElementById("characterSkillPackageInspection"),
       characterSkillPackageManifest: document.getElementById("characterSkillPackageManifest"),
       characterSkillPackageMarkdown: document.getElementById("characterSkillPackageMarkdown"),
+      inspectCharacterSkillPackageBtn: document.getElementById("inspectCharacterSkillPackageBtn"),
       toggleCharacterSkillPackageBtn: document.getElementById("toggleCharacterSkillPackageBtn"),
+      removeCharacterSkillPackageBtn: document.getElementById("removeCharacterSkillPackageBtn"),
       characterFunctionAdvanced: document.getElementById("characterFunctionAdvanced"),
       characterPublicRole: document.getElementById("characterPublicRole"),
       characterMaxConcurrentTasks: document.getElementById("characterMaxConcurrentTasks"),
@@ -7534,9 +7523,10 @@ export function renderAppHtml(): string {
       closeCharacterOwnedSkillDialog();
     });
     nodes.refreshCharacterSkillPackagesBtn.addEventListener("click", () => loadCharacterSkillPackages());
-    nodes.characterSkillPackageStageList.addEventListener("click", handleCharacterSkillPackageStageAction);
     nodes.characterSkillPackageList.addEventListener("click", selectCharacterSkillPackage);
+    nodes.inspectCharacterSkillPackageBtn.addEventListener("click", inspectCharacterSkillPackage);
     nodes.toggleCharacterSkillPackageBtn.addEventListener("click", toggleCharacterSkillPackage);
+    nodes.removeCharacterSkillPackageBtn.addEventListener("click", removeCharacterSkillPackage);
     nodes.characterName.addEventListener("input", renderCharacterAvatarPreview);
     nodes.characterSoulMarkdown.addEventListener("input", updateCharacterSoulCount);
     nodes.changeCharacterAvatarBtn.addEventListener("click", () => nodes.characterAvatarInput.click());
@@ -12415,16 +12405,15 @@ export function renderAppHtml(): string {
     function clearCharacterSkillPackageState() {
       ++state.characterSkillPackageRequestId;
       state.characterSkillPackages = [];
-      state.characterSkillPackageStages = [];
       state.selectedCharacterSkillPackageName = "";
       state.characterSkillPackageDetailData = null;
       nodes.characterSkillPackageState.textContent = "";
       nodes.characterSkillPackageState.classList.remove("error");
-      nodes.characterSkillPackageStageList.innerHTML = "";
       nodes.characterSkillPackageList.innerHTML = "";
       nodes.characterSkillPackageDetail.hidden = true;
-      nodes.characterSkillPackageMarkdown.textContent = "";
+      nodes.characterSkillPackageInspection.hidden = true;
       nodes.characterSkillPackageManifest.innerHTML = "";
+      nodes.characterSkillPackageMarkdown.textContent = "";
     }
 
     function captureCharacterSkillPackageScope(requestId = state.characterSkillPackageRequestId) {
@@ -12460,21 +12449,13 @@ export function renderAppHtml(): string {
       );
     }
 
-    function characterSkillPackageStageUrl(scope, suffix = "") {
-      return withConversationSpace(
-        "/api/v1/characters/" + encodeURIComponent(scope.characterId) +
-          "/skill-package-stages" + suffix,
-        scope.conversationSpace,
-        scope.characterId
-      );
-    }
-
     function setCharacterSkillPackageBusy(busy) {
       nodes.refreshCharacterSkillPackagesBtn.disabled = busy;
+      nodes.inspectCharacterSkillPackageBtn.disabled = busy;
       nodes.toggleCharacterSkillPackageBtn.disabled = busy;
-      nodes.characterSkillPackageStageList.querySelectorAll("button").forEach((button) => {
-        button.disabled = busy;
-      });
+      const selected = state.characterSkillPackages.find((entry) =>
+        entry.name === state.selectedCharacterSkillPackageName);
+      nodes.removeCharacterSkillPackageBtn.disabled = busy || !selected || selected.enabled;
       nodes.characterSkillPackageList.querySelectorAll("button").forEach((button) => {
         button.disabled = busy;
       });
@@ -12488,62 +12469,27 @@ export function renderAppHtml(): string {
       nodes.characterSkillPackageState.classList.remove("error");
       setCharacterSkillPackageBusy(true);
       try {
-        const [packageResponse, stageResponse] = await Promise.all([
-          fetch(characterSkillPackageUrl(scope)),
-          fetch(characterSkillPackageStageUrl(scope))
-        ]);
-        const [packageBody, stageBody] = await Promise.all([
-          packageResponse.json(),
-          stageResponse.json()
-        ]);
+        const packageResponse = await fetch(characterSkillPackageUrl(scope));
+        const packageBody = await packageResponse.json();
         if (!packageResponse.ok) throw new Error(packageBody.error || "扩展 Skill 包加载失败");
-        if (!stageResponse.ok) throw new Error(stageBody.error || "Skill 预检加载失败");
-        if (!characterSkillPackageScopeIsCurrent(scope)) return;
-        const stageSummaries = Array.isArray(stageBody.stages) ? stageBody.stages : [];
-        const stageReviews = await Promise.all(stageSummaries.map(async (stage) => {
-          const stageId = stage.reviewId || "";
-          const response = await controlPlaneFetch(characterSkillPackageStageUrl(
-            scope,
-            "/" + encodeURIComponent(stageId) + "/review"
-          ), {
-            method: "POST",
-            body: JSON.stringify({
-              stageId,
-              characterId: scope.characterId,
-              conversationSpace: scope.conversationSpace
-            })
-          });
-          const body = await response.json();
-          if (!response.ok) throw new Error(body.error || "Skill 完整预检加载失败");
-          return body.stage;
-        }));
         if (!characterSkillPackageScopeIsCurrent(scope)) return;
         state.characterSkillPackages = Array.isArray(packageBody.packages)
           ? packageBody.packages
           : [];
-        state.characterSkillPackageStages = stageReviews.filter(Boolean);
+        state.characterSkillPackageDetailData = null;
         if (!state.characterSkillPackages.some((entry) =>
           entry.name === state.selectedCharacterSkillPackageName)) {
           state.selectedCharacterSkillPackageName = state.characterSkillPackages[0]?.name || "";
-          state.characterSkillPackageDetailData = null;
         }
         renderCharacterSkillPackages();
-        setCharacterSkillPackageBusy(true);
-        nodes.characterSkillPackageState.textContent = [
-          state.characterSkillPackages.length + " 个扩展包",
-          state.characterSkillPackageStages.length
-            ? state.characterSkillPackageStages.length + " 个等待本机确认"
-            : "没有待确认预检"
-        ].join(" · ");
-        if (state.selectedCharacterSkillPackageName) {
-          await loadCharacterSkillPackageDetail(scope, state.selectedCharacterSkillPackageName);
-        }
+        const enabledCount = state.characterSkillPackages.filter((entry) => entry.enabled).length;
+        nodes.characterSkillPackageState.textContent =
+          state.characterSkillPackages.length + " 个已安装 · " + enabledCount + " 个已启用";
       } catch (error) {
         if (!characterSkillPackageScopeIsCurrent(scope)) return;
         nodes.characterSkillPackageState.textContent = error.message || String(error);
         nodes.characterSkillPackageState.classList.add("error");
         state.characterSkillPackages = [];
-        state.characterSkillPackageStages = [];
         state.selectedCharacterSkillPackageName = "";
         state.characterSkillPackageDetailData = null;
         renderCharacterSkillPackages();
@@ -12553,11 +12499,12 @@ export function renderAppHtml(): string {
     }
 
     function renderCharacterSkillPackages() {
-      renderCharacterSkillPackageStages();
       const packages = Array.isArray(state.characterSkillPackages) ? state.characterSkillPackages : [];
       if (!packages.length) {
         nodes.characterSkillPackageList.innerHTML =
-          '<div class="owned-skill-empty">还没有扩展 Skill 包。授权后，角色可以先生成仅供你审核的预检。</div>';
+          '<div class="owned-skill-empty">' + (state.conversationSpace === "secret"
+            ? "当前私密空间还没有已安装的扩展 Skill。私密会话不能远程安装，可管理已有包与本地工作法。"
+            : "还没有已安装的扩展 Skill。开启授权后，普通角色会话可按需自动下载、安装并启用。") + '</div>';
         nodes.characterSkillPackageDetail.hidden = true;
         return;
       }
@@ -12578,102 +12525,12 @@ export function renderAppHtml(): string {
       renderCharacterSkillPackageDetail();
     }
 
-    function renderCharacterSkillPackageStages() {
-      const stages = Array.isArray(state.characterSkillPackageStages)
-        ? state.characterSkillPackageStages
-        : [];
-      if (!stages.length) {
-        nodes.characterSkillPackageStageList.innerHTML = "";
-        return;
-      }
-      nodes.characterSkillPackageStageList.innerHTML = stages.map((stage) => {
-        const stageId = stage.stageId || stage.reviewId || "";
-        const source = characterSkillPackageSource(stage);
-        const fields = [
-          ["来源", source.requestedUrl || source.sourceHost || "未知"],
-          ["Ref", source.requestedRef || "未指定"],
-          ["Commit", source.resolvedCommit || "未解析"],
-          ["Manifest 摘要", stage.digest || "未知"],
-          ["归档摘要", stage.archiveSha256 || "未知"],
-          ["到期", stage.expiresAt ? formatTraceTime(stage.expiresAt) : "未知"]
-        ];
-        return '<article class="character-skill-stage" data-character-skill-stage-id="' +
-          escapeHtml(stageId) + '">' +
-          '<div class="character-skill-stage-head"><div><strong>待确认 · ' +
-          escapeHtml(stage.metadata?.name || "未命名 Skill") + '</strong><span>' +
-          escapeHtml(stage.metadata?.description || "请核对完整包内容") + '</span></div>' +
-          '<div class="character-skill-stage-actions">' +
-          '<button type="button" class="secondary" data-stage-action="cancel">取消预检</button>' +
-          '<button type="button" class="primary" data-stage-action="confirm">确认安装并启用</button>' +
-          '</div></div>' +
-          characterSkillPackageSummaryHtml(fields) +
-          '<details class="character-skill-package-manifest"><summary>完整 Manifest（' +
-          Number(stage.manifest?.length || 0) + ' 个文件）</summary>' +
-          characterSkillManifestHtml(stage.manifest) + '</details>' +
-          '<details class="character-skill-package-review" open><summary>完整 SKILL.md</summary>' +
-          '<pre data-character-skill-stage-markdown="' + escapeHtml(stageId) + '"></pre></details>' +
-        '</article>';
-      }).join("");
-      nodes.characterSkillPackageStageList
-        .querySelectorAll("pre[data-character-skill-stage-markdown]")
-        .forEach((pre) => {
-          const stage = stages.find((entry) =>
-            (entry.stageId || entry.reviewId) === pre.dataset.characterSkillStageMarkdown);
-          pre.textContent = typeof stage?.skillMarkdown === "string" ? stage.skillMarkdown : "";
-        });
-    }
-
-    async function selectCharacterSkillPackage(event) {
+    function selectCharacterSkillPackage(event) {
       const card = event.target.closest("[data-character-skill-package-name]");
       if (!card) return;
-      const requestId = ++state.characterSkillPackageRequestId;
-      const scope = captureCharacterSkillPackageScope(requestId);
-      if (!scope) return;
       state.selectedCharacterSkillPackageName = card.dataset.characterSkillPackageName || "";
       state.characterSkillPackageDetailData = null;
       renderCharacterSkillPackages();
-      setCharacterSkillPackageBusy(true);
-      try {
-        await loadCharacterSkillPackageDetail(scope, state.selectedCharacterSkillPackageName);
-      } finally {
-        if (characterSkillPackageScopeIsCurrent(scope)) setCharacterSkillPackageBusy(false);
-      }
-    }
-
-    async function loadCharacterSkillPackageDetail(scope, packageName) {
-      if (!scope || !packageName) return;
-      nodes.characterSkillPackageDetail.hidden = false;
-      nodes.characterSkillPackageMarkdown.textContent = "正在读取完整 SKILL.md...";
-      try {
-        const response = await controlPlaneFetch(characterSkillPackageUrl(
-          scope,
-          "/" + encodeURIComponent(packageName) + "/review"
-        ), {
-          method: "POST",
-          body: JSON.stringify({
-            name: packageName,
-            characterId: scope.characterId,
-            conversationSpace: scope.conversationSpace
-          })
-        });
-        const body = await response.json();
-        if (!response.ok) throw new Error(body.error || "扩展 Skill 包详情加载失败");
-        if (
-          !characterSkillPackageScopeIsCurrent(scope) ||
-          state.selectedCharacterSkillPackageName !== packageName
-        ) return;
-        state.characterSkillPackageDetailData = body.package || null;
-        renderCharacterSkillPackageDetail();
-      } catch (error) {
-        if (
-          characterSkillPackageScopeIsCurrent(scope) &&
-          state.selectedCharacterSkillPackageName === packageName
-        ) {
-          nodes.characterSkillPackageState.textContent = error.message || String(error);
-          nodes.characterSkillPackageState.classList.add("error");
-          nodes.characterSkillPackageMarkdown.textContent = "";
-        }
-      }
     }
 
     function renderCharacterSkillPackageDetail() {
@@ -12681,11 +12538,13 @@ export function renderAppHtml(): string {
         entry.name === state.selectedCharacterSkillPackageName);
       if (!summary) {
         nodes.characterSkillPackageDetail.hidden = true;
+        nodes.characterSkillPackageInspection.hidden = true;
         return;
       }
-      const detail = state.characterSkillPackageDetailData?.name === summary.name
+      const inspection = state.characterSkillPackageDetailData?.name === summary.name
         ? state.characterSkillPackageDetailData
-        : summary;
+        : null;
+      const detail = inspection || summary;
       const source = characterSkillPackageSource(detail);
       nodes.characterSkillPackageDetail.hidden = false;
       nodes.characterSkillPackageName.textContent = detail.name || "未命名 Skill";
@@ -12695,18 +12554,31 @@ export function renderAppHtml(): string {
         characterSkillPackageIntegrityLabel(detail.integrity),
         "仅此角色 · " + (detail.conversationSpace === "secret" ? "私密空间" : "普通空间")
       ].join(" · ");
+      nodes.inspectCharacterSkillPackageBtn.textContent = inspection
+        ? "刷新安装内容"
+        : "查看安装内容";
       nodes.toggleCharacterSkillPackageBtn.textContent = detail.enabled ? "停用" : "启用";
+      nodes.removeCharacterSkillPackageBtn.disabled = Boolean(detail.enabled);
+      nodes.removeCharacterSkillPackageBtn.title = detail.enabled ? "请先停用此 Skill，再将其移除" : "";
       nodes.characterSkillPackageSummary.innerHTML = characterSkillPackageSummaryFields([
-        ["来源", source.requestedUrl || source.sourceHost || "未知"],
+        ["请求来源", source.requestedUrl || source.sourceHost || "未知"],
+        ["解析归档", source.resolvedArchiveUrl || "查看安装内容后显示"],
+        ["最终归档", source.finalArchiveUrl || "查看安装内容后显示"],
+        ["包内路径", source.packagePath || "根目录"],
         ["Ref", source.requestedRef || "未指定"],
         ["Commit", source.resolvedCommit || "未解析"],
         ["Manifest 摘要", detail.digest || "未知"],
-        ["归档摘要", detail.archiveSha256 || "未知"],
+        ["归档摘要", detail.archiveSha256 || "查看安装内容后显示"],
+        ["文件数", Number(detail.fileCount ?? detail.manifest?.length ?? 0)],
+        ["安装时间", detail.createdAt ? formatTraceTime(detail.createdAt) : "未知"],
         ["更新时间", detail.updatedAt ? formatTraceTime(detail.updatedAt) : "未知"]
       ]);
-      nodes.characterSkillPackageManifest.innerHTML = characterSkillManifestRows(detail.manifest);
-      nodes.characterSkillPackageMarkdown.textContent = typeof detail.skillMarkdown === "string"
-        ? detail.skillMarkdown
+      nodes.characterSkillPackageInspection.hidden = !inspection;
+      nodes.characterSkillPackageManifest.innerHTML = inspection
+        ? characterSkillManifestRows(inspection.manifest)
+        : "";
+      nodes.characterSkillPackageMarkdown.textContent = inspection && typeof inspection.skillMarkdown === "string"
+        ? inspection.skillMarkdown
         : "";
     }
 
@@ -12714,6 +12586,9 @@ export function renderAppHtml(): string {
       const source = value?.source && typeof value.source === "object" ? value.source : {};
       return {
         requestedUrl: source.requestedUrl || value?.sourceUrl || "",
+        resolvedArchiveUrl: source.resolvedArchiveUrl || value?.resolvedArchiveUrl || "",
+        finalArchiveUrl: source.finalArchiveUrl || value?.finalArchiveUrl || "",
+        packagePath: source.packagePath || value?.packagePath || "",
         sourceHost: source.sourceHost || value?.sourceHost || "",
         requestedRef: source.requestedRef || value?.resolvedRef || value?.ref || "",
         resolvedCommit: source.resolvedCommit || value?.resolvedCommit || value?.commit || ""
@@ -12728,19 +12603,9 @@ export function renderAppHtml(): string {
       return value === true ? "完整性已验证" : "完整性待验证";
     }
 
-    function characterSkillPackageSummaryHtml(fields) {
-      return '<div class="character-skill-package-summary">' +
-        characterSkillPackageSummaryFields(fields) + '</div>';
-    }
-
     function characterSkillPackageSummaryFields(fields) {
       return fields.map((field) => '<div><span>' + escapeHtml(field[0]) + '</span><code>' +
         escapeHtml(String(field[1] ?? "")) + '</code></div>').join("");
-    }
-
-    function characterSkillManifestHtml(manifest) {
-      return '<div class="character-skill-manifest-list">' +
-        characterSkillManifestRows(manifest) + '</div>';
     }
 
     function characterSkillManifestRows(manifest) {
@@ -12752,46 +12617,38 @@ export function renderAppHtml(): string {
         : '<span class="muted">Manifest 为空</span>';
     }
 
-    async function handleCharacterSkillPackageStageAction(event) {
-      const button = event.target.closest("button[data-stage-action]");
-      const article = event.target.closest("[data-character-skill-stage-id]");
-      if (!button || !article) return;
-      const stage = state.characterSkillPackageStages.find((entry) =>
-        (entry.stageId || entry.reviewId) === article.dataset.characterSkillStageId);
-      if (!stage) return;
-      const stageId = stage.stageId || stage.reviewId || "";
-      const action = button.dataset.stageAction;
-      if (action === "confirm") {
-        const accepted = window.confirm(
-          "请确认你已核对来源、Manifest 摘要与完整 SKILL.md。安装后仅授权给当前角色和当前空间，是否继续？"
-        );
-        if (!accepted) return;
-      }
+    async function inspectCharacterSkillPackage() {
+      const entry = state.characterSkillPackages.find((candidate) =>
+        candidate.name === state.selectedCharacterSkillPackageName);
+      if (!entry) return;
       const requestId = ++state.characterSkillPackageRequestId;
       const scope = captureCharacterSkillPackageScope(requestId);
       if (!scope) return;
       setCharacterSkillPackageBusy(true);
-      nodes.characterSkillPackageState.textContent = action === "confirm"
-        ? "正在确认安装扩展 Skill 包..."
-        : "正在取消预检...";
+      nodes.characterSkillPackageState.textContent = "正在读取只读安装记录...";
       nodes.characterSkillPackageState.classList.remove("error");
       try {
-        const suffix = "/" + encodeURIComponent(stageId) +
-          (action === "confirm" ? "/confirm" : "/cancel");
-        const response = await controlPlaneFetch(characterSkillPackageStageUrl(scope, suffix), {
+        const packageName = entry.name;
+        const response = await controlPlaneFetch(characterSkillPackageUrl(
+          scope,
+          "/" + encodeURIComponent(packageName) + "/review"
+        ), {
           method: "POST",
           body: JSON.stringify({
-            stageId,
-            digest: stage.digest,
-            ...(action === "confirm" ? { enabled: true } : {}),
+            name: packageName,
             characterId: scope.characterId,
             conversationSpace: scope.conversationSpace
           })
         });
         const body = await response.json();
-        if (!response.ok) throw new Error(body.error || (action === "confirm" ? "Skill 包安装失败" : "预检取消失败"));
-        if (!characterSkillPackageScopeIsCurrent(scope)) return;
-        await loadCharacterSkillPackages(true);
+        if (!response.ok) throw new Error(body.error || "安装内容读取失败");
+        if (
+          !characterSkillPackageScopeIsCurrent(scope) ||
+          state.selectedCharacterSkillPackageName !== packageName
+        ) return;
+        state.characterSkillPackageDetailData = body.package || null;
+        renderCharacterSkillPackageDetail();
+        nodes.characterSkillPackageState.textContent = "已加载只读安装记录 · 不会更改启用状态";
       } catch (error) {
         if (!characterSkillPackageScopeIsCurrent(scope)) return;
         nodes.characterSkillPackageState.textContent = error.message || String(error);
@@ -12826,6 +12683,53 @@ export function renderAppHtml(): string {
         const body = await response.json();
         if (!response.ok) throw new Error(body.error || "扩展 Skill 包状态更新失败");
         if (!characterSkillPackageScopeIsCurrent(scope)) return;
+        await loadCharacterSkillPackages(true);
+      } catch (error) {
+        if (!characterSkillPackageScopeIsCurrent(scope)) return;
+        nodes.characterSkillPackageState.textContent = error.message || String(error);
+        nodes.characterSkillPackageState.classList.add("error");
+      } finally {
+        if (characterSkillPackageScopeIsCurrent(scope)) setCharacterSkillPackageBusy(false);
+      }
+    }
+
+    async function removeCharacterSkillPackage() {
+      const entry = state.characterSkillPackages.find((candidate) =>
+        candidate.name === state.selectedCharacterSkillPackageName);
+      if (!entry) return;
+      if (entry.enabled) {
+        nodes.characterSkillPackageState.textContent = "请先停用此 Skill，再将其移除。";
+        nodes.characterSkillPackageState.classList.add("error");
+        return;
+      }
+      const accepted = window.confirm(
+        "将从当前角色和当前空间永久移除扩展 Skill “" + entry.name + "”。此操作不可撤销，是否继续？"
+      );
+      if (!accepted) return;
+      const requestId = ++state.characterSkillPackageRequestId;
+      const scope = captureCharacterSkillPackageScope(requestId);
+      if (!scope) return;
+      setCharacterSkillPackageBusy(true);
+      nodes.characterSkillPackageState.textContent = "正在移除扩展 Skill...";
+      nodes.characterSkillPackageState.classList.remove("error");
+      try {
+        const response = await controlPlaneFetch(characterSkillPackageUrl(
+          scope,
+          "/" + encodeURIComponent(entry.name)
+        ), {
+          method: "DELETE",
+          body: JSON.stringify({
+            name: entry.name,
+            digest: entry.digest,
+            characterId: scope.characterId,
+            conversationSpace: scope.conversationSpace
+          })
+        });
+        const body = await response.json();
+        if (!response.ok) throw new Error(body.error || "扩展 Skill 移除失败");
+        if (!characterSkillPackageScopeIsCurrent(scope)) return;
+        state.selectedCharacterSkillPackageName = "";
+        state.characterSkillPackageDetailData = null;
         await loadCharacterSkillPackages(true);
       } catch (error) {
         if (!characterSkillPackageScopeIsCurrent(scope)) return;
@@ -15748,6 +15652,11 @@ export function renderAppHtml(): string {
       });
       setPermissionToggle(nodes.shellPermissionInput, nodes.shellPermissionLabel, permissions.shellEnabled);
       setPermissionToggle(nodes.networkPermissionInput, nodes.networkPermissionLabel, permissions.networkEnabled);
+      if (permissions.networkEnabled) {
+        nodes.networkPermissionLabel.textContent = permissions.characterSkillManageEnabled
+          ? "偏好已开启 · 当前隔离"
+          : "偏好已开启";
+      }
       setPermissionToggle(nodes.profileWritePermissionInput, nodes.profileWritePermissionLabel, permissions.userProfileWriteEnabled);
       setPermissionToggle(nodes.soulWritePermissionInput, nodes.soulWritePermissionLabel, permissions.characterSoulWriteEnabled);
       setPermissionToggle(
@@ -15760,7 +15669,11 @@ export function renderAppHtml(): string {
       setPermissionControlsDisabled(false);
       nodes.shellPermissionInput.disabled = !permissions.shellAvailable;
       nodes.networkPermissionInput.disabled = !permissions.shellEnabled;
-      const networkPermissionHint = permissions.shellEnabled ? "" : "请先启用终端执行";
+      const networkPermissionHint = !permissions.shellEnabled
+        ? "请先启用终端执行"
+        : permissions.characterSkillManageEnabled
+          ? "角色 Skill 自主管理开启期间，Shell 有效网络保持关闭；关闭后若当前回合已加载私有 Skill 或角色自建工作法，仍需停用相关项并进入下一安全回合"
+          : "这是网络偏好；当前回合加载启用中的角色私有 Skill、角色自建工作法或进入其他隔离模式时，实际网络仍会被拒绝";
       nodes.networkPermissionInput.title = networkPermissionHint;
       nodes.networkPermissionInput.closest(".toggle").title = networkPermissionHint;
       nodes.permissionRuntime.textContent = permissions.shellAvailable

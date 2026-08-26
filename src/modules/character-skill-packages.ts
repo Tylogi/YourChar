@@ -1,16 +1,20 @@
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import {
   chmodSync,
   closeSync,
   constants,
   existsSync,
   fstatSync,
+  fsyncSync,
   lstatSync,
   mkdirSync,
   openSync,
   readFileSync,
+  readdirSync,
   realpathSync,
+  renameSync,
   rmSync,
+  writeFileSync,
 } from "node:fs";
 import { join, relative, resolve, sep } from "node:path";
 import type { ConversationSpace } from "../domain/types.js";
@@ -73,6 +77,18 @@ export type CharacterAgentSkillPackageServiceOptions = {
 
 export type CharacterAgentSkillStageInput = CharacterAgentSkillPackageScope & AgentSkillStageInput;
 
+export type CharacterAgentSkillInstallInput = CharacterAgentSkillStageInput;
+
+export type CharacterAgentSkillInstallResult = {
+  package: CharacterAgentSkillPackage;
+  sourceHost: string;
+  finalArchiveHost: string;
+  resolvedCommit?: string;
+  digest: string;
+  fileCount: number;
+  alreadyInstalled: boolean;
+};
+
 export type CharacterAgentSkillStageLookup = CharacterAgentSkillPackageScope & {
   stageId: string;
 };
@@ -89,6 +105,18 @@ export type CharacterAgentSkillCancelInput = CharacterAgentSkillStageLookup & {
 export type CharacterAgentSkillEnabledInput = CharacterAgentSkillPackageScope & {
   name: string;
   enabled: boolean;
+};
+
+export type CharacterAgentSkillUninstallInput = CharacterAgentSkillPackageScope & {
+  name: string;
+  digest: string;
+};
+
+export type CharacterAgentSkillUninstallResult = CharacterAgentSkillPackageScope & {
+  name: string;
+  digest: string;
+  integrityAtRemoval: CharacterAgentSkillPackageIntegrity;
+  removedAt: string;
 };
 
 type PackageRow = {
@@ -116,15 +144,30 @@ type ScopedInstaller = {
   installer: AgentSkillInstallerService;
 };
 
+type CharacterSkillUninstallJournal = {
+  version: 1;
+  characterId: string;
+  conversationSpace: ConversationSpace;
+  name: string;
+  digest: string;
+  sourceRelative: string;
+  tombstoneName: string;
+};
+
 const sha256Pattern = /^[0-9a-f]{64}$/;
 const skillNamePattern = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
+const uninstallJournalNamePattern = /^uninstall-([0-9a-f-]{36})\.json$/u;
+const uninstallTombstoneNamePattern = /^remove-([0-9a-f-]{36})$/u;
+const orphanTombstoneNamePattern = /^orphan-([0-9a-f-]{36})$/u;
 
 export class CharacterAgentSkillPackageService {
   private readonly database: AppDatabase;
   private readonly stateDir: string;
   private readonly packageRoot: string;
+  private readonly uninstallRoot: string;
   private readonly installerOptions: Omit<AgentSkillInstallerOptions, "stateDir">;
   private readonly installers = new Map<string, ScopedInstaller>();
+  private readonly installTails = new Map<string, Promise<void>>();
   private readonly now: () => number;
   private disposed = false;
 
@@ -132,6 +175,7 @@ export class CharacterAgentSkillPackageService {
     this.database = options.database;
     this.stateDir = requiredStateDirectory(options.stateDir);
     this.packageRoot = join(this.stateDir, "character-agent-skills");
+    this.uninstallRoot = join(this.packageRoot, ".uninstall-quarantine");
     this.now = options.now ?? Date.now;
     this.installerOptions = {
       ...(options.transport ? { transport: options.transport } : {}),
@@ -143,6 +187,9 @@ export class CharacterAgentSkillPackageService {
         : {}),
     };
     ensureOwnedDirectory(this.packageRoot);
+    ensureOwnedDirectory(this.uninstallRoot);
+    this.recoverUninstallJournals();
+    this.reconcileOrphanPackages();
   }
 
   async stage(
@@ -172,6 +219,83 @@ export class CharacterAgentSkillPackageService {
       );
     }
     return staged;
+  }
+
+  /**
+   * Install and enable one remote package through the same quarantined staging
+   * pipeline used by the trusted control plane. Keeping this composition in
+   * the package service prevents model-facing callers from choosing a stage
+   * digest or bypassing any download, archive, manifest, or publish check.
+   */
+  async install(
+    input: CharacterAgentSkillInstallInput,
+    signal?: AbortSignal,
+  ): Promise<CharacterAgentSkillInstallResult> {
+    const scope = this.scope(input);
+    return this.withInstallLock(scope, async () => {
+      assertInstallNotAborted(signal);
+      this.assertCharacterExists(scope.characterId);
+      const installer = this.installerFor(scope);
+      if (installer.listStages().length >= characterAgentSkillStageLimit) {
+        throw new AgentSkillInstallerError(
+          `a character can have at most ${characterAgentSkillStageLimit} pending Skill reviews per space`,
+          "STAGE_LIMIT",
+        );
+      }
+      const staged = await installer.stage({
+        sourceUrl: input.sourceUrl,
+        ...(input.packagePath ? { packagePath: input.packagePath } : {}),
+        ...(input.expectedSha256 ? { expectedSha256: input.expectedSha256 } : {}),
+      }, signal);
+      try {
+        // Publishing is deliberately separated from the awaited network and
+        // extraction phase so cancellation can never install a package after
+        // its originating turn has been aborted.
+        assertInstallNotAborted(signal);
+        const existingRow = this.findRow(scope, staged.metadata.name);
+        if (existingRow) {
+          const existing = this.packageFromRow(existingRow);
+          if (!sameInstalledSource(existing, staged)) {
+            throw new AgentSkillInstallerError(
+              `Skill ${staged.metadata.name} is already installed for this character and space`,
+              "SKILL_EXISTS",
+            );
+          }
+          if (existing.integrity !== "verified") {
+            throw new AgentSkillInstallerError(
+              `Skill ${existing.name} cannot be reused because its installed package failed integrity verification`,
+              "SKILL_SOURCE_MISMATCH",
+            );
+          }
+          const enabled = existing.enabled
+            ? existing
+            : this.setEnabled({ ...scope, name: existing.name, enabled: true });
+          return installResult(enabled, true);
+        }
+        if (this.packageCount(scope) >= characterAgentSkillPackageLimit) throw packageLimitError();
+        const installed = this.confirm({
+          ...scope,
+          stageId: staged.stageId,
+          digest: staged.digest,
+          enabled: true,
+        });
+        return installResult(installed, false);
+      } catch (error) {
+        // confirm() already rolls back any published bytes before throwing;
+        // cancel() removes only a remaining quarantine stage.
+        try {
+          installer.cancel({ stageId: staged.stageId, digest: staged.digest });
+        } catch {
+          // Preserve the original installation error.
+        }
+        throw error;
+      } finally {
+        // Successful idempotent retries do not consume a quarantine slot.
+        if (installer.getStage(staged.stageId)) {
+          installer.cancel({ stageId: staged.stageId, digest: staged.digest });
+        }
+      }
+    });
   }
 
   list(scopeInput: CharacterAgentSkillPackageScope): CharacterAgentSkillPackage[] {
@@ -312,6 +436,132 @@ export class CharacterAgentSkillPackageService {
     return this.packageFromRow(this.requiredRow(scope, name));
   }
 
+  async uninstall(
+    input: CharacterAgentSkillUninstallInput,
+  ): Promise<CharacterAgentSkillUninstallResult> {
+    const scope = this.scope(input);
+    return this.withInstallLock(scope, async () => {
+      this.assertCharacterExists(scope.characterId);
+      const name = requiredSkillName(input.name);
+      const digest = requiredDigest(input.digest);
+      const installed = this.packageFromRow(this.requiredRow(scope, name));
+      if (installed.digest !== digest) {
+        throw new AgentSkillInstallerError(
+          "installed package digest does not match the uninstall request",
+          "PACKAGE_DIGEST_MISMATCH",
+        );
+      }
+      if (installed.enabled) {
+        throw new AgentSkillInstallerError(
+          `Skill ${name} must be disabled before it can be uninstalled`,
+          "PACKAGE_ENABLED",
+        );
+      }
+      const source = this.packageDirectory(installed);
+      const sourcePresent = pathEntryExists(source);
+      if (sourcePresent) {
+        // Integrity failures may be the reason the user needs recovery. Move
+        // only the exact top-level scoped directory without inspecting or
+        // following its untrusted descendants.
+        assertInstalledPackageRemovalSource(
+          source,
+          join(this.scopeStateDirectory(scope), "skills"),
+        );
+      }
+      ensureOwnedDirectory(this.uninstallRoot);
+      const uninstallId = sourcePresent ? randomUUID() : undefined;
+      const quarantineName = uninstallId ? `remove-${uninstallId}` : undefined;
+      const quarantine = quarantineName
+        ? join(this.uninstallRoot, quarantineName)
+        : undefined;
+      const journal = quarantineName
+        ? this.persistUninstallJournal({
+            version: 1,
+            ...scope,
+            name,
+            digest,
+            sourceRelative: relative(this.packageRoot, source),
+            tombstoneName: quarantineName,
+          }, uninstallId!)
+        : undefined;
+      const removedAt = new Date(checkedNow(this.now)).toISOString();
+      if (quarantine) {
+        try {
+          renameSync(source, quarantine);
+          fsyncDirectory(join(this.scopeStateDirectory(scope), "skills"));
+          fsyncDirectory(this.uninstallRoot);
+        } catch (error) {
+          try {
+            if (journal) removeUninstallJournal(journal, this.uninstallRoot);
+          } catch {
+            // Startup recovery will clear a pre-rename journal.
+          }
+          throw new AgentSkillInstallerError(
+            "failed to quarantine the disabled Skill before uninstall",
+            "UNINSTALL_FAILED",
+            { cause: error },
+          );
+        }
+      }
+
+      try {
+        this.database.transaction(() => {
+          const deleted = this.database.connection.prepare(`
+            DELETE FROM character_agent_skill_packages
+            WHERE character_id = ? AND conversation_space = ? AND name = ?
+              AND digest = ? AND enabled = 0
+          `).run(scope.characterId, scope.conversationSpace, name, digest);
+          if (deleted.changes !== 1) {
+            throw new Error("character Skill package row changed during uninstall");
+          }
+        });
+      } catch (error) {
+        try {
+          if (quarantine && pathEntryExists(quarantine) && !pathEntryExists(source)) {
+            renameSync(quarantine, source);
+            fsyncDirectory(join(this.scopeStateDirectory(scope), "skills"));
+            fsyncDirectory(this.uninstallRoot);
+          }
+        } catch (rollbackError) {
+          throw new AgentSkillInstallerError(
+            "failed to persist Skill uninstall and its package could not be restored",
+            "UNINSTALL_ROLLBACK_FAILED",
+            { cause: new AggregateError([error, rollbackError]) },
+          );
+        }
+        try {
+          if (journal) removeUninstallJournal(journal, this.uninstallRoot);
+        } catch {
+          // The durable journal will confirm the restored source at startup.
+        }
+        throw new AgentSkillInstallerError(
+          "failed to persist Skill uninstall; the package was restored",
+          "UNINSTALL_FAILED",
+          { cause: error },
+        );
+      }
+
+      // The row is already gone and the package is outside every discovery
+      // root. Cleanup is best-effort and retried on the next service start.
+      if (quarantine && journal) {
+        try {
+          removeUninstallQuarantine(quarantine, this.uninstallRoot);
+          removeUninstallJournal(journal, this.uninstallRoot);
+        } catch {
+          // Keep the journal until startup can observe the committed DB state
+          // and safely finish the inaccessible tombstone.
+        }
+      }
+      return {
+        ...scope,
+        name,
+        digest,
+        integrityAtRemoval: installed.integrity,
+        removedAt,
+      };
+    });
+  }
+
   effectivePackageLocations(
     scopeInput: CharacterAgentSkillPackageScope,
   ): CharacterAgentSkillPackageLocation[] {
@@ -429,6 +679,7 @@ export class CharacterAgentSkillPackageService {
       rmSync(this.packageRoot, { recursive: true, force: false });
     }
     ensureOwnedDirectory(this.packageRoot);
+    ensureOwnedDirectory(this.uninstallRoot);
     this.database.connection.prepare("DELETE FROM character_agent_skill_packages").run();
   }
 
@@ -449,6 +700,27 @@ export class CharacterAgentSkillPackageService {
     });
     this.installers.set(key, { ...scope, installer });
     return installer;
+  }
+
+  private async withInstallLock<T>(
+    scope: CharacterAgentSkillPackageScope,
+    operation: () => Promise<T>,
+  ): Promise<T> {
+    const key = scopeKey(scope);
+    const previous = this.installTails.get(key) ?? Promise.resolve();
+    let release!: () => void;
+    const owned = new Promise<void>((resolveOwned) => {
+      release = resolveOwned;
+    });
+    const tail = previous.catch(() => undefined).then(() => owned);
+    this.installTails.set(key, tail);
+    await previous.catch(() => undefined);
+    try {
+      return await operation();
+    } finally {
+      release();
+      if (this.installTails.get(key) === tail) this.installTails.delete(key);
+    }
   }
 
   private scope(input: CharacterAgentSkillPackageScope): CharacterAgentSkillPackageScope {
@@ -590,6 +862,147 @@ export class CharacterAgentSkillPackageService {
     this.installers.clear();
   }
 
+  private persistUninstallJournal(
+    journal: CharacterSkillUninstallJournal,
+    uninstallId: string,
+  ): string {
+    const path = join(this.uninstallRoot, `uninstall-${uninstallId}.json`);
+    let descriptor: number | undefined;
+    try {
+      descriptor = openSync(
+        path,
+        constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL,
+        0o600,
+      );
+      writeFileSync(descriptor, `${JSON.stringify(journal)}\n`);
+      fsyncSync(descriptor);
+      closeSync(descriptor);
+      descriptor = undefined;
+      fsyncDirectory(this.uninstallRoot);
+      return path;
+    } catch (error) {
+      if (descriptor !== undefined) closeSync(descriptor);
+      if (pathEntryExists(path)) rmSync(path, { force: true });
+      throw new AgentSkillInstallerError(
+        "failed to persist the Skill uninstall recovery journal",
+        "UNINSTALL_FAILED",
+        { cause: error },
+      );
+    }
+  }
+
+  private recoverUninstallJournals(): void {
+    for (const entry of readdirSync(this.uninstallRoot, { withFileTypes: true })) {
+      if (!uninstallJournalNamePattern.test(entry.name)) continue;
+      const journalPath = join(this.uninstallRoot, entry.name);
+      try {
+        const journal = readUninstallJournal(
+          journalPath,
+          this.packageRoot,
+          this.uninstallRoot,
+        );
+        const scope = {
+          characterId: journal.characterId,
+          conversationSpace: journal.conversationSpace,
+        };
+        const source = join(this.packageRoot, journal.sourceRelative);
+        const tombstone = join(this.uninstallRoot, journal.tombstoneName);
+        const skillsRoot = join(this.scopeStateDirectory(scope), "skills");
+        const row = this.findRow(scope, journal.name);
+        if (row && row.digest !== journal.digest) continue;
+        const sourcePresent = pathEntryExists(source);
+        const tombstonePresent = pathEntryExists(tombstone);
+        if (row) {
+          if (sourcePresent && tombstonePresent) continue;
+          if (tombstonePresent) {
+            if (!realDirectoryAtExactPath(skillsRoot)) continue;
+            assertUninstallQuarantineDirectory(tombstone, this.uninstallRoot);
+            renameSync(tombstone, source);
+            fsyncDirectory(skillsRoot);
+            fsyncDirectory(this.uninstallRoot);
+          } else if (sourcePresent) {
+            assertInstalledPackageRemovalSource(
+              source,
+              skillsRoot,
+            );
+          } else {
+            continue;
+          }
+        } else {
+          if (sourcePresent && tombstonePresent) continue;
+          if (sourcePresent) {
+            assertInstalledPackageRemovalSource(
+              source,
+              skillsRoot,
+            );
+            renameSync(source, tombstone);
+            fsyncDirectory(skillsRoot);
+            fsyncDirectory(this.uninstallRoot);
+          }
+          if (pathEntryExists(tombstone)) {
+            removeUninstallQuarantine(tombstone, this.uninstallRoot);
+          }
+        }
+        removeUninstallJournal(journalPath, this.uninstallRoot);
+      } catch {
+        // Preserve ambiguous state for manual repair instead of deleting a
+        // directory that may still be referenced by the durable row.
+      }
+    }
+  }
+
+  private reconcileOrphanPackages(): void {
+    const expected = new Set<string>();
+    const rows = this.database.connection.prepare(`
+      SELECT character_id, conversation_space, name
+      FROM character_agent_skill_packages
+    `).all() as Array<{ character_id: string; conversation_space: string; name: string }>;
+    for (const row of rows) {
+      try {
+        expected.add(this.packageDirectory({
+          characterId: row.character_id,
+          conversationSpace: requiredConversationSpace(row.conversation_space),
+          name: requiredSkillName(row.name),
+        }));
+      } catch {
+        // Invalid rows are preserved for explicit trusted repair.
+      }
+    }
+
+    for (const entry of readdirSync(this.uninstallRoot, { withFileTypes: true })) {
+      if (!orphanTombstoneNamePattern.test(entry.name)) continue;
+      try {
+        removeOrphanQuarantine(join(this.uninstallRoot, entry.name), this.uninstallRoot);
+      } catch {
+        // Keep suspicious entries isolated.
+      }
+    }
+
+    for (const owner of readdirSync(this.packageRoot, { withFileTypes: true })) {
+      if (!/^[0-9a-f]{64}$/u.test(owner.name)) continue;
+      const ownerPath = join(this.packageRoot, owner.name);
+      if (!realDirectoryAtExactPath(ownerPath)) continue;
+      for (const space of ["normal", "secret"] as const) {
+        const skillsRoot = join(ownerPath, space, "skills");
+        if (!pathEntryExists(skillsRoot) || !realDirectoryAtExactPath(skillsRoot)) continue;
+        for (const skill of readdirSync(skillsRoot, { withFileTypes: true })) {
+          if (!skillNamePattern.test(skill.name) || skill.name.length > 64) continue;
+          const path = join(skillsRoot, skill.name);
+          if (expected.has(path) || !realDirectoryAtExactPath(path)) continue;
+          const quarantine = join(this.uninstallRoot, `orphan-${randomUUID()}`);
+          try {
+            renameSync(path, quarantine);
+            fsyncDirectory(skillsRoot);
+            fsyncDirectory(this.uninstallRoot);
+            removeOrphanQuarantine(quarantine, this.uninstallRoot);
+          } catch {
+            // Leave an ambiguous package isolated in place for manual repair.
+          }
+        }
+      }
+    }
+  }
+
   private assertAvailable(): void {
     if (this.disposed) {
       throw new AgentSkillInstallerError(
@@ -602,6 +1015,42 @@ export class CharacterAgentSkillPackageService {
 
 function scopeKey(scope: CharacterAgentSkillPackageScope): string {
   return `${scope.characterId.length}:${scope.characterId}:${scope.conversationSpace}`;
+}
+
+function sameInstalledSource(
+  installed: CharacterAgentSkillPackage,
+  staged: AgentSkillStageResult,
+): boolean {
+  return installed.name === staged.metadata.name &&
+    installed.digest === staged.digest &&
+    installed.source.requestedUrl === staged.source.requestedUrl &&
+    (installed.source.packagePath ?? "") === (staged.source.packagePath ?? "");
+}
+
+function installResult(
+  installed: CharacterAgentSkillPackage,
+  alreadyInstalled: boolean,
+): CharacterAgentSkillInstallResult {
+  return {
+    package: installed,
+    sourceHost: new URL(installed.source.requestedUrl).hostname,
+    finalArchiveHost: new URL(installed.source.finalArchiveUrl).hostname,
+    ...(installed.source.resolvedCommit
+      ? { resolvedCommit: installed.source.resolvedCommit }
+      : {}),
+    digest: installed.digest,
+    fileCount: installed.manifest.length,
+    alreadyInstalled,
+  };
+}
+
+function assertInstallNotAborted(signal: AbortSignal | undefined): void {
+  if (!signal?.aborted) return;
+  throw new AgentSkillInstallerError(
+    "Skill installation was cancelled before publication",
+    "REQUEST_ABORTED",
+    signal.reason === undefined ? undefined : { cause: signal.reason },
+  );
 }
 
 function requiredStageId(value: string): string {
@@ -627,6 +1076,214 @@ function requiredSkillName(value: string): string {
     throw new AgentSkillInstallerError("Skill name is invalid", "PERSISTED_MANIFEST_INVALID");
   }
   return value;
+}
+
+function requiredDigest(value: string): string {
+  if (typeof value !== "string" || !sha256Pattern.test(value)) {
+    throw new AgentSkillInstallerError("package digest is invalid", "PACKAGE_INPUT_INVALID");
+  }
+  return value;
+}
+
+function assertInstalledPackageRemovalSource(source: string, skillsRoot: string): void {
+  const resolvedRoot = resolve(skillsRoot);
+  const resolvedSource = resolve(source);
+  const nested = relative(resolvedRoot, resolvedSource);
+  if (!nested || nested.includes(sep) || nested === ".." || nested.startsWith(`..${sep}`)) {
+    throw new AgentSkillInstallerError(
+      "refusing to uninstall a package outside its scoped Skill root",
+      "UNSAFE_REMOVE",
+    );
+  }
+  try {
+    const rootStats = lstatSync(resolvedRoot);
+    const sourceStats = lstatSync(resolvedSource);
+    if (
+      rootStats.isSymbolicLink() || !rootStats.isDirectory() ||
+      sourceStats.isSymbolicLink() || !sourceStats.isDirectory() ||
+      realpathSync(resolvedRoot) !== resolvedRoot ||
+      realpathSync(resolvedSource) !== resolvedSource
+    ) {
+      throw new Error("package removal path is not a real directory");
+    }
+  } catch (error) {
+    if (error instanceof AgentSkillInstallerError) throw error;
+    throw new AgentSkillInstallerError(
+      "installed Skill package is not safe to remove",
+      "UNSAFE_REMOVE",
+      { cause: error },
+    );
+  }
+}
+
+function removeUninstallQuarantine(path: string, uninstallRoot: string): void {
+  assertUninstallQuarantineDirectory(path, uninstallRoot);
+  if (!pathEntryExists(path)) return;
+  rmSync(path, { recursive: true, force: false });
+  fsyncDirectory(uninstallRoot);
+}
+
+function assertUninstallQuarantineDirectory(path: string, uninstallRoot: string): void {
+  const root = resolve(uninstallRoot);
+  const candidate = resolve(path);
+  const nested = relative(root, candidate);
+  if (
+    !uninstallTombstoneNamePattern.test(nested) ||
+    nested.includes(sep) ||
+    realpathSync(root) !== root
+  ) {
+    throw new AgentSkillInstallerError(
+      "refusing to remove a path outside uninstall quarantine",
+      "UNSAFE_REMOVE",
+    );
+  }
+  if (!pathEntryExists(candidate)) return;
+  const stats = lstatSync(candidate);
+  if (stats.isSymbolicLink() || !stats.isDirectory() || realpathSync(candidate) !== candidate) {
+    throw new AgentSkillInstallerError(
+      "uninstall quarantine entry must be a real directory",
+      "UNSAFE_REMOVE",
+    );
+  }
+}
+
+function removeOrphanQuarantine(path: string, uninstallRoot: string): void {
+  const root = resolve(uninstallRoot);
+  const candidate = resolve(path);
+  const nested = relative(root, candidate);
+  if (
+    !orphanTombstoneNamePattern.test(nested) ||
+    nested.includes(sep) ||
+    realpathSync(root) !== root ||
+    !realDirectoryAtExactPath(candidate)
+  ) {
+    throw new AgentSkillInstallerError(
+      "orphan quarantine entry is unsafe",
+      "UNSAFE_REMOVE",
+    );
+  }
+  rmSync(candidate, { recursive: true, force: false });
+  fsyncDirectory(root);
+}
+
+function readUninstallJournal(
+  path: string,
+  packageRoot: string,
+  uninstallRoot: string,
+): CharacterSkillUninstallJournal {
+  const root = resolve(uninstallRoot);
+  const journalPath = resolve(path);
+  const journalName = relative(root, journalPath);
+  const nameMatch = uninstallJournalNamePattern.exec(journalName);
+  if (!nameMatch || journalName.includes(sep) || realpathSync(root) !== root) {
+    throw new AgentSkillInstallerError("uninstall journal path is unsafe", "UNSAFE_REMOVE");
+  }
+  let descriptor: number | undefined;
+  try {
+    descriptor = openSync(journalPath, constants.O_RDONLY | constants.O_NOFOLLOW);
+    const stats = fstatSync(descriptor);
+    if (!stats.isFile() || stats.size < 2 || stats.size > 16 * 1024) {
+      throw new Error("uninstall journal is not a bounded regular file");
+    }
+    const parsed = JSON.parse(readFileSync(descriptor, "utf8")) as unknown;
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+      throw new Error("uninstall journal is invalid");
+    }
+    const record = parsed as Record<string, unknown>;
+    const characterId = typeof record.characterId === "string" ? record.characterId : "";
+    if (!characterId || characterId.trim() !== characterId || characterId.length > 300) {
+      throw new Error("uninstall journal character is invalid");
+    }
+    const conversationSpace = requiredConversationSpace(String(record.conversationSpace));
+    const name = requiredSkillName(String(record.name));
+    const digest = requiredDigest(String(record.digest));
+    const tombstoneName = String(record.tombstoneName);
+    if (
+      record.version !== 1 ||
+      !uninstallTombstoneNamePattern.test(tombstoneName) ||
+      uninstallTombstoneNamePattern.exec(tombstoneName)?.[1] !== nameMatch[1]
+    ) {
+      throw new Error("uninstall journal identity is invalid");
+    }
+    const sourceRelative = String(record.sourceRelative);
+    const expectedRelative = relative(resolve(packageRoot), join(
+      resolve(packageRoot),
+      createHash("sha256").update(characterId).digest("hex"),
+      conversationSpace,
+      "skills",
+      name,
+    ));
+    if (sourceRelative !== expectedRelative || sourceRelative.startsWith(`..${sep}`)) {
+      throw new Error("uninstall journal source is invalid");
+    }
+    return {
+      version: 1,
+      characterId,
+      conversationSpace,
+      name,
+      digest,
+      sourceRelative,
+      tombstoneName,
+    };
+  } catch (error) {
+    if (error instanceof AgentSkillInstallerError) throw error;
+    throw new AgentSkillInstallerError(
+      "uninstall recovery journal is invalid",
+      "UNINSTALL_RECOVERY_REQUIRED",
+      { cause: error },
+    );
+  } finally {
+    if (descriptor !== undefined) closeSync(descriptor);
+  }
+}
+
+function removeUninstallJournal(path: string, uninstallRoot: string): void {
+  const root = resolve(uninstallRoot);
+  const candidate = resolve(path);
+  const nested = relative(root, candidate);
+  if (
+    !uninstallJournalNamePattern.test(nested) ||
+    nested.includes(sep) ||
+    realpathSync(root) !== root
+  ) {
+    throw new AgentSkillInstallerError("uninstall journal path is unsafe", "UNSAFE_REMOVE");
+  }
+  if (!pathEntryExists(candidate)) return;
+  const stats = lstatSync(candidate);
+  if (stats.isSymbolicLink() || !stats.isFile()) {
+    throw new AgentSkillInstallerError("uninstall journal is unsafe", "UNSAFE_REMOVE");
+  }
+  rmSync(candidate, { force: false });
+  fsyncDirectory(root);
+}
+
+function pathEntryExists(path: string): boolean {
+  try {
+    lstatSync(path);
+    return true;
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return false;
+    throw error;
+  }
+}
+
+function realDirectoryAtExactPath(path: string): boolean {
+  try {
+    const resolved = resolve(path);
+    const stats = lstatSync(resolved);
+    return stats.isDirectory() && !stats.isSymbolicLink() && realpathSync(resolved) === resolved;
+  } catch {
+    return false;
+  }
+}
+
+function fsyncDirectory(path: string): void {
+  const descriptor = openSync(path, constants.O_RDONLY | constants.O_DIRECTORY);
+  try {
+    fsyncSync(descriptor);
+  } finally {
+    closeSync(descriptor);
+  }
 }
 
 function parseManifest(value: string): AgentSkillManifestEntry[] | undefined {

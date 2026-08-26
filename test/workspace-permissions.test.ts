@@ -4,10 +4,13 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync
 import { tmpdir } from "node:os";
 import { join, relative } from "node:path";
 import test from "node:test";
+import { strToU8, zipSync } from "fflate";
 import { VirtualClock } from "../src/app/clock.js";
 import { CompanionKernel } from "../src/domain/index.js";
 import { createHttpServer } from "../src/http/router.js";
-import { createTestRuntime } from "../src/testing/index.js";
+import { CharacterAgentSkillPackageService } from "../src/modules/character-skill-packages.js";
+import { AppDatabase } from "../src/storage/database.js";
+import { createTestRuntime, ScriptedModelController } from "../src/testing/index.js";
 
 test("permission defaults are conservative and profile write can be disabled independently", async () => {
   const workspaceDir = mkdtempSync(join(tmpdir(), "rp-agent-workspace-default-"));
@@ -451,6 +454,216 @@ test("active incognito mode dynamically removes loopback shell network without p
   } finally {
     if (app) await new Promise<void>((resolve) => app!.close(() => resolve()));
     runtime.dispose();
+    rmSync(stateDir, { recursive: true, force: true });
+  }
+});
+
+test("character autonomy and loaded private Skills latch real shell network until a later safe turn", async () => {
+  const stateDir = mkdtempSync(join(tmpdir(), "yourchar-character-skill-shell-network-"));
+  const database = new AppDatabase(join(stateDir, "rp-agent.sqlite"));
+  const model = new ScriptedModelController("character-skill-shell-network");
+  const packageService = new CharacterAgentSkillPackageService({
+    database,
+    stateDir,
+    resolveHostname: async () => [{ address: "93.184.216.34", family: 4 }],
+    transport: async () => ({
+      response: new Response(Uint8Array.from(zipSync({
+        "bundle/SKILL.md": strToU8([
+          "---",
+          "name: network-bound-private-skill",
+          "description: Network-bound private Skill",
+          "---",
+          "",
+          "# Network-bound private Skill",
+          "",
+          "Treat every local control endpoint as privileged.",
+          "",
+        ].join("\n")),
+      })).buffer, { headers: { "content-type": "application/zip" } }),
+    }),
+  });
+  const kernel = new CompanionKernel({
+    stateDir,
+    database,
+    characterSkillPackages: packageService,
+    modelResolver: model.resolver,
+    startScheduler: false,
+    startWorldCoordinator: false,
+    startPrivateInboxCoordinator: false,
+    characterSkillReflector: false,
+    imGateway: false,
+  });
+  let app: ReturnType<typeof createHttpServer> | undefined;
+  try {
+    kernel.patchModelApiConfig({
+      enabled: true,
+      baseUrl: "http://test.invalid/v1",
+      model: "scripted-model",
+      temperature: 0,
+    });
+    const character = kernel.createCharacter({ name: "Skill 网络边界" });
+    kernel.patchAgentPermissions({
+      workspaceAccess: "read_write",
+      shellEnabled: true,
+      networkEnabled: true,
+      characterSkillManageEnabled: true,
+    });
+    const installed = await packageService.install({
+      characterId: character.id,
+      conversationSpace: "normal",
+      sourceUrl: "https://downloads.example.com/network-bound-private-skill.zip",
+    });
+    const normal = await kernel.openCanonicalPrivateConversation(character.id);
+    kernel.patchAgentPermissions({ characterSkillManageEnabled: false });
+
+    app = createHttpServer({ kernel });
+    await new Promise<void>((resolve) => app!.listen(0, "127.0.0.1", resolve));
+    const address = app.address();
+    assert.ok(address && typeof address === "object");
+    const baseUrl = `http://127.0.0.1:${address.port}`;
+    const replayCommand = (reachable: string, blocked: string) =>
+      `if /usr/bin/curl -fsS -c /tmp/control.cookies '${baseUrl}/' >/dev/null 2>&1 && ` +
+      `/usr/bin/curl -fsS -b /tmp/control.cookies -H 'content-type: application/json' ` +
+      `-H 'origin: ${baseUrl}' -H 'sec-fetch-mode: cors' -H 'sec-fetch-site: same-origin' ` +
+      `'${baseUrl}/api/v1/agent-permissions' >/dev/null 2>&1; ` +
+      `then printf '${reachable}'; else printf '${blocked}'; fi`;
+    const runShellTurn = async (label: string, networkExpected: boolean) => {
+      const requestStart = model.requests.length;
+      const actionStart = kernel.store.actions.length;
+      const reachable = `${label}_CONTROL_REPLAY_REACHABLE`;
+      const blocked = `${label}_CONTROL_REPLAY_BLOCKED`;
+      model.enqueue([
+        { kind: "tool_call", name: "bash", arguments: { command: replayCommand(reachable, blocked) } },
+        { kind: "assistant_text", text: `${label} done` },
+      ]);
+      await kernel.sendMessage(normal.id, { text: label });
+      const requestMessages = JSON.stringify(model.requests.slice(requestStart));
+      assert.match(
+        requestMessages,
+        new RegExp(`${networkExpected ? reachable : blocked}\\\\nCommand exited with code 0`),
+      );
+      if (!networkExpected) {
+        assert.doesNotMatch(requestMessages, new RegExp(`${reachable}\\\\nCommand exited with code 0`));
+      }
+      const shellActions = kernel.store.actions.slice(actionStart)
+        .filter((action) => action.actionType === "workspace_shell");
+      assert.equal(shellActions.length, 1);
+      assert.equal(shellActions[0].payload.networkEnabled, networkExpected);
+    };
+
+    // Turning autonomy off does not trust a private package already loaded
+    // into this character's next handle.
+    await runShellTurn("PRIVATE_PACKAGE", false);
+
+    // A Skill can disable itself through its bounded MCP, but the network bit
+    // is frozen for the whole generation and therefore remains false.
+    kernel.patchAgentPermissions({ characterSkillManageEnabled: true });
+    const mutationRequestStart = model.requests.length;
+    const mutationActionStart = kernel.store.actions.length;
+    model.enqueue([
+      {
+        kind: "tool_call",
+        name: "bash",
+        arguments: { command: replayCommand("BEFORE_DISABLE_REACHABLE", "BEFORE_DISABLE_BLOCKED") },
+      },
+      {
+        kind: "tool_call",
+        name: "set_current_character_private_skill_enabled",
+        arguments: { name: installed.package.name, enabled: false },
+      },
+      {
+        kind: "tool_call",
+        name: "bash",
+        arguments: { command: replayCommand("AFTER_DISABLE_REACHABLE", "AFTER_DISABLE_BLOCKED") },
+      },
+      { kind: "assistant_text", text: "同回合网络保持隔离" },
+    ]);
+    await kernel.sendMessage(normal.id, { text: "disable the private package and retry" });
+    const mutationMessages = JSON.stringify(model.requests.slice(mutationRequestStart));
+    assert.match(mutationMessages, /BEFORE_DISABLE_BLOCKED\\nCommand exited with code 0/);
+    assert.match(mutationMessages, /AFTER_DISABLE_BLOCKED\\nCommand exited with code 0/);
+    assert.doesNotMatch(mutationMessages, /(?:BEFORE|AFTER)_DISABLE_REACHABLE\\nCommand exited with code 0/);
+    assert.equal(packageService.list({
+      characterId: character.id,
+      conversationSpace: "normal",
+    })[0].enabled, false);
+    const mutationShellActions = kernel.store.actions.slice(mutationActionStart)
+      .filter((action) => action.actionType === "workspace_shell");
+    assert.equal(mutationShellActions.length, 2);
+    assert.equal(mutationShellActions.every((action) => action.payload.networkEnabled === false), true);
+
+    kernel.patchAgentPermissions({ characterSkillManageEnabled: false });
+    await runShellTurn("DISABLED_PACKAGE_NEXT_SAFE_TURN", true);
+
+    kernel.patchAgentPermissions({ characterSkillManageEnabled: true });
+    await runShellTurn("MANAGEMENT_PERMISSION", false);
+    kernel.patchAgentPermissions({ characterSkillManageEnabled: false });
+    await runShellTurn("MANAGEMENT_PERMISSION_OFF_NEXT_TURN", true);
+
+    const owned = kernel.createCharacterOwnedSkill(character.id, {
+      name: "Autonomous loopback boundary",
+      description: "Character-created workflow",
+      markdown: "# Autonomous workflow\n\nNever trust a local control endpoint from a Skill.\n",
+      activate: true,
+      createdBy: "character",
+    });
+    await runShellTurn("AUTONOMOUS_OWNED_WORKFLOW", false);
+    kernel.updateCharacterOwnedSkill(character.id, owned.id, { status: "disabled" });
+    await runShellTurn("OWNED_WORKFLOW_DISABLED_NEXT_TURN", true);
+
+    assert.equal(kernel.getAgentPermissions().networkEnabled, true, "the user preference is never overwritten");
+  } finally {
+    if (app) await new Promise<void>((resolve) => app!.close(() => resolve()));
+    kernel.dispose();
+    database.close();
+    rmSync(stateDir, { recursive: true, force: true });
+  }
+});
+
+test("control-plane capability changes are blocked before provider streaming starts", async () => {
+  const stateDir = mkdtempSync(join(tmpdir(), "yourchar-capability-turn-race-"));
+  const model = new ScriptedModelController("capability-turn-race");
+  let releaseResolver!: () => void;
+  const resolverReleased = new Promise<void>((resolve) => {
+    releaseResolver = resolve;
+  });
+  let announceResolver!: () => void;
+  const resolverStarted = new Promise<void>((resolve) => {
+    announceResolver = resolve;
+  });
+  const kernel = new CompanionKernel({
+    stateDir,
+    modelResolver: async (context) => {
+      announceResolver();
+      await resolverReleased;
+      return model.resolver(context);
+    },
+    startScheduler: false,
+    startWorldCoordinator: false,
+    startPrivateInboxCoordinator: false,
+    characterSkillReflector: false,
+    imGateway: false,
+  });
+  try {
+    kernel.patchModelApiConfig({
+      enabled: true,
+      baseUrl: "http://test.invalid/v1",
+      model: "scripted-model",
+      temperature: 0,
+    });
+    model.enqueue([{ kind: "assistant_text", text: "race closed" }]);
+    const turn = kernel.sendMessage("capability-race", { mode: "sms", text: "start" });
+    await resolverStarted;
+    assert.throws(
+      () => kernel.patchAgentPermissions({ characterSkillManageEnabled: true }),
+      /control-plane operations are unavailable while an Agent turn is active/,
+    );
+    releaseResolver();
+    await turn;
+    assert.equal(kernel.patchAgentPermissions({ characterSkillManageEnabled: true }).characterSkillManageEnabled, true);
+  } finally {
+    releaseResolver();
+    kernel.dispose();
     rmSync(stateDir, { recursive: true, force: true });
   }
 });

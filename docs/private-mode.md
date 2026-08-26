@@ -73,13 +73,14 @@ while that state remains. Tavily, Web Reader, Vision, and the model provider are
 host-side clients with separate configuration and request boundaries; private
 turns may still send necessary content to an enabled external service.
 
-Installing a Skill does not re-enable sandbox network. The Management UI uses a
-separate host-side installer with a narrowly bounded HTTPS downloader, archive
-validation, a visible `SKILL.md` review, and an explicit second confirmation.
-The Agent cannot silently invoke it or choose an arbitrary URL through a model
-tool. A private-only package is published only after active Agent turns finish;
-that confirmation also applies the global shell-network fail-close before the
-package becomes discoverable.
+Installing a Skill does not re-enable sandbox network. A secret-space Agent has
+no remote-install tool and cannot choose an arbitrary download URL. Host-side
+private installation through the Management UI remains a separate, reviewed
+control-plane operation. Packages already installed for the same character and
+secret space can still be inspected, enabled, or disabled, and local owned
+workflows can be created or revised when the user has enabled Skill autonomy.
+Normal-space autonomous installation is described separately in the Agent Skill
+documentation and does not weaken this secret-space restriction.
 
 Operational backups include the database, private transcripts, private Vault
 documents, `workspace-secret`, and host-installed Agent Skill packages.

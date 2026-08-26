@@ -1129,10 +1129,17 @@ test("server serves chat UI and debug model traces", async () => {
     assert.match(html, /执行后生成改进提案/);
     assert.match(html, /id="characterOwnedSkillsTitle">专属工作法/);
     assert.match(html, /id="characterSkillPackagesTitle">扩展 Skill 包/);
-    assert.match(html, /id="characterSkillPackageStageList"/);
+    assert.match(html, /普通角色会话可自行下载、安装并启用扩展包，无需逐次确认/);
+    assert.match(html, /私密空间只能查看和管理已安装包/);
+    assert.match(html, /私密会话不能远程安装，可管理已有包与本地工作法/);
+    assert.doesNotMatch(html, /id="characterSkillPackageStageList"/);
+    assert.match(html, /id="inspectCharacterSkillPackageBtn"[^>]*>查看安装内容<\/button>/);
+    assert.match(html, /id="removeCharacterSkillPackageBtn"[^>]*>移除<\/button>/);
     assert.match(html, /id="characterSkillPackageManifest"/);
     assert.match(html, /id="characterSkillPackageMarkdown"/);
-    assert.match(html, /完整 SKILL\.md/);
+    assert.match(html, /安装后的本机只读审计记录/);
+    assert.match(html, /不会改变启用状态/);
+    assert.match(html, /来源 URL 可能含敏感路径，请勿直接分享/);
     assert.match(html, /function renderCharacterOwnedSkills/);
     assert.match(html, /function reviewCharacterOwnedSkillProposal/);
     assert.match(html, /controlPlaneFetch\(withConversationSpace\(/);
@@ -1144,22 +1151,111 @@ test("server serves chat UI and debug model traces", async () => {
       /function clearCharacterSkillPackageState\(\)[\s\S]*?(?=\n    async function loadCharacterFunction)/,
     )?.[0] ?? "";
     assert.match(characterSkillPackageScript, /\/skill-packages/);
-    assert.match(characterSkillPackageScript, /\/skill-package-stages/);
-    assert.match(characterSkillPackageScript, /controlPlaneFetch\(characterSkillPackageStageUrl/);
-    assert.match(characterSkillPackageScript, /encodeURIComponent\(stageId\) \+ "\/review"/);
+    assert.match(characterSkillPackageScript, /fetch\(characterSkillPackageUrl\(scope\)\)/);
     assert.match(characterSkillPackageScript, /controlPlaneFetch\(characterSkillPackageUrl/);
-    assert.match(characterSkillPackageScript, /encodeURIComponent\(packageName\) \+ "\/review"/);
-    assert.match(characterSkillPackageScript, /stageId,[\s\S]*?characterId: scope\.characterId,[\s\S]*?conversationSpace: scope\.conversationSpace/);
-    assert.match(characterSkillPackageScript, /name: packageName,[\s\S]*?characterId: scope\.characterId,[\s\S]*?conversationSpace: scope\.conversationSpace/);
-    assert.match(characterSkillPackageScript, /window\.confirm\(/);
-    assert.match(characterSkillPackageScript, /digest: stage\.digest/);
-    assert.match(characterSkillPackageScript, /enabled: true/);
+    assert.match(characterSkillPackageScript, /method: "PATCH"/);
+    assert.match(characterSkillPackageScript, /enabled: !entry\.enabled/);
+    assert.match(characterSkillPackageScript, /个已安装 · /);
+    assert.doesNotMatch(characterSkillPackageScript, /\/skill-package-stages|data-stage-action/);
+    const inspectCharacterSkillPackageScript = inlineScript.match(
+      /async function inspectCharacterSkillPackage\(\)[\s\S]*?(?=\n    async function toggleCharacterSkillPackage)/,
+    )?.[0] ?? "";
+    assert.match(inspectCharacterSkillPackageScript, /encodeURIComponent\(packageName\) \+ "\/review"/);
+    assert.match(inspectCharacterSkillPackageScript, /method: "POST"/);
+    assert.match(inspectCharacterSkillPackageScript, /name: packageName/);
+    assert.match(inspectCharacterSkillPackageScript, /characterId: scope\.characterId/);
+    assert.match(inspectCharacterSkillPackageScript, /conversationSpace: scope\.conversationSpace/);
+    assert.match(inspectCharacterSkillPackageScript, /characterSkillPackageScopeIsCurrent\(scope\)/);
+    assert.match(inspectCharacterSkillPackageScript, /state\.selectedCharacterSkillPackageName !== packageName/);
     assert.match(characterSkillPackageScript, /characterSkillPackageMarkdown\.textContent/);
-    assert.match(characterSkillPackageScript, /pre\.textContent = typeof stage\?\.skillMarkdown/);
+    assert.match(characterSkillPackageScript, /\["Manifest 摘要", detail\.digest/);
+    assert.match(characterSkillPackageScript, /\["归档摘要", detail\.archiveSha256/);
+    assert.match(characterSkillPackageScript, /\["安装时间", detail\.createdAt/);
+    assert.match(characterSkillPackageScript, /\["解析归档", source\.resolvedArchiveUrl/);
+    assert.match(characterSkillPackageScript, /\["最终归档", source\.finalArchiveUrl/);
+    assert.match(characterSkillPackageScript, /escapeHtml\(entry\.path \|\| ""\)/);
+    assert.match(characterSkillPackageScript, /escapeHtml\(entry\.sha256 \|\| ""\)/);
     assert.doesNotMatch(
       characterSkillPackageScript,
-      /renderMarkdown\([^)]*skillMarkdown|innerHTML\s*=\s*[^;]*skillMarkdown/,
+      /renderMarkdown\([^)]*skillMarkdown|characterSkillPackageMarkdown\.innerHTML/,
     );
+    const removeCharacterSkillPackageScript = inlineScript.match(
+      /async function removeCharacterSkillPackage\(\)[\s\S]*?(?=\n    async function loadCharacterFunction)/,
+    )?.[0] ?? "";
+    assert.match(removeCharacterSkillPackageScript, /if \(entry\.enabled\)/);
+    assert.match(removeCharacterSkillPackageScript, /window\.confirm\(/);
+    assert.match(removeCharacterSkillPackageScript, /method: "DELETE"/);
+    assert.match(removeCharacterSkillPackageScript, /name: entry\.name/);
+    assert.match(removeCharacterSkillPackageScript, /digest: entry\.digest/);
+    assert.match(removeCharacterSkillPackageScript, /characterId: scope\.characterId/);
+    assert.match(removeCharacterSkillPackageScript, /conversationSpace: scope\.conversationSpace/);
+    assert.match(removeCharacterSkillPackageScript, /characterSkillPackageScopeIsCurrent\(scope\)/);
+    assert.match(characterSkillPackageScript, /removeCharacterSkillPackageBtn\.disabled = Boolean\(detail\.enabled\)/);
+    const hostileSkillMarkdown = "</pre><script>globalThis.__characterSkillXss = true</script>";
+    const hostileManifestPath = "references/<img src=x onerror=manifest_xss>.md";
+    const auditMarkdownNode = { textContent: "", innerHTML: "must-not-change" };
+    const auditManifestNode = { innerHTML: "" };
+    const auditContext: Record<string, any> = {
+      state: {
+        characterSkillPackages: [{
+          name: "hostile-skill",
+          description: "inspection fixture",
+          enabled: true,
+          integrity: "verified",
+          conversationSpace: "normal",
+          sourceHost: "skills.example.com",
+          digest: "manifest-digest",
+          fileCount: 1,
+          createdAt: "2026-08-27T01:00:00.000Z",
+          updatedAt: "2026-08-27T02:00:00.000Z",
+        }],
+        selectedCharacterSkillPackageName: "hostile-skill",
+        characterSkillPackageDetailData: {
+          name: "hostile-skill",
+          description: "inspection fixture",
+          enabled: true,
+          integrity: "verified",
+          conversationSpace: "normal",
+          sourceHost: "skills.example.com",
+          digest: "manifest-digest",
+          archiveSha256: "archive-digest",
+          createdAt: "2026-08-27T01:00:00.000Z",
+          updatedAt: "2026-08-27T02:00:00.000Z",
+          skillMarkdown: hostileSkillMarkdown,
+          manifest: [{ path: hostileManifestPath, size: 12, sha256: "<digest>" }],
+        },
+      },
+      nodes: {
+        characterSkillPackageDetail: { hidden: true },
+        characterSkillPackageInspection: { hidden: true },
+        characterSkillPackageName: { textContent: "" },
+        characterSkillPackageDescription: { textContent: "" },
+        characterSkillPackageMeta: { textContent: "" },
+        inspectCharacterSkillPackageBtn: { textContent: "" },
+        toggleCharacterSkillPackageBtn: { textContent: "" },
+        removeCharacterSkillPackageBtn: { disabled: false, title: "" },
+        characterSkillPackageSummary: { innerHTML: "" },
+        characterSkillPackageManifest: auditManifestNode,
+        characterSkillPackageMarkdown: auditMarkdownNode,
+      },
+      escapeHtml(value: unknown) {
+        const replacements: Record<string, string> = {
+          "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#039;",
+        };
+        return String(value).replace(/[&<>"']/gu, (character) => replacements[character]);
+      },
+      formatFileSize() { return "12 B"; },
+      formatTraceTime(value: string) { return value; },
+    };
+    new Script(
+      characterSkillPackageScript +
+      "\nthis.renderCharacterSkillPackageDetailForTest = renderCharacterSkillPackageDetail;",
+    ).runInNewContext(auditContext);
+    auditContext.renderCharacterSkillPackageDetailForTest();
+    assert.equal(auditMarkdownNode.textContent, hostileSkillMarkdown);
+    assert.equal(auditMarkdownNode.innerHTML, "must-not-change");
+    assert.match(auditManifestNode.innerHTML, /&lt;img src=x onerror=manifest_xss&gt;/u);
+    assert.doesNotMatch(auditManifestNode.innerHTML, /<img/u);
     const characterSkillScopeScript = inlineScript.match(
       /function captureCharacterSkillPackageScope[\s\S]*?(?=\n    function characterSkillPackageUrl)/,
     )?.[0] ?? "";
@@ -1203,6 +1299,13 @@ test("server serves chat UI and debug model traces", async () => {
     characterSkillScopeState.characterSkillPackageRequestId += 1;
     assert.equal(characterSkillScopeContext.characterSkillPackageScopeIsCurrentForTest(currentCharacterSkillScope), false);
     characterSkillScopeState.characterSkillPackageRequestId = 6;
+    characterSkillScopeState.conversationSpace = "normal";
+    assert.equal(
+      characterSkillScopeContext.characterSkillPackageScopeIsCurrentForTest(currentCharacterSkillScope),
+      false,
+      "a private Skill audit response cannot cross into the normal space",
+    );
+    characterSkillScopeState.conversationSpace = "secret";
     characterSkillScopeState.conversationSpaceEpoch += 1;
     assert.equal(characterSkillScopeContext.characterSkillPackageScopeIsCurrentForTest(currentCharacterSkillScope), false);
     characterSkillScopeState.conversationSpaceEpoch = 4;
@@ -1264,9 +1367,19 @@ test("server serves chat UI and debug model traces", async () => {
     assert.match(html, /id="managementPage"/);
     assert.match(html, /能力模块/);
     assert.match(html, /角色 Skill 自主管理/);
+    assert.match(html, /自行选择公开 HTTPS 来源并下载安装/);
+    assert.match(html, /远端暴露目标主机和路径/);
+    assert.match(html, /请勿在 URL 或普通空间内容中放入秘密/);
+    assert.match(html, /私密会话不能远程安装，但仍可创建、修订本地工作法并管理已安装包/);
+    assert.match(html, /无痕会话只使用只读冻结快照，不能进行任何 Skill 管理/);
+    assert.match(html, /角色私有 Skill 或角色自建工作法/);
+    assert.match(html, /停用相关项并进入下一安全回合/);
     assert.match(html, /id="characterSkillManagePermissionInput"[^>]+data-permission="characterSkillManageEnabled"/);
     assert.match(html, /id="characterSkillManagePermissionLabel">已关闭/);
     assert.match(html, /permissions\.characterSkillManageEnabled/);
+    assert.match(html, /偏好已开启 · 当前隔离/);
+    assert.match(html, /这是网络偏好/);
+    assert.match(html, /实际网络仍会被拒绝/);
     const permissionPatchScript = inlineScript.match(
       /async function patchAgentPermissions\(patch\)[\s\S]*?(?=\n    function renderAgentModules)/,
     )?.[0] ?? "";

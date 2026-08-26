@@ -121,6 +121,22 @@ export function validateBackupDirectory(root, manifest) {
   ) {
     throw new Error("backup character Agent Skill metadata does not match payload");
   }
+  const characterSkillTransientStatePresent = actualFiles.some((file) =>
+    isCharacterSkillTransientBackupPath(file.path)
+  );
+  if (
+    manifest.excludesCharacterAgentSkillTransientState !== undefined &&
+    (manifest.excludesCharacterAgentSkillTransientState !== true ||
+      characterSkillTransientStatePresent)
+  ) {
+    throw new Error("backup character Agent Skill transient-state exclusion metadata does not match payload");
+  }
+  if (manifest.characterAgentSkillPackagesConsistent !== undefined) {
+    if (manifest.characterAgentSkillPackagesConsistent !== true) {
+      throw new Error("backup character Agent Skill consistency flag must be true when present");
+    }
+    validateCharacterAgentSkillPackages(root);
+  }
   const imRuntimePresent = actualFiles.some((file) => file.path.startsWith("im-runtime/"));
   const imCredentialsPresent = existsSync(join(root, "im-runtime", "credentials.json"));
   const mineruConfigPresent = existsSync(join(root, "mineru.json"));
@@ -212,6 +228,258 @@ export function validateBackupDirectory(root, manifest) {
     throw new Error("backup consistency metadata does not match payload");
   }
   return { database, vault };
+}
+
+function isCharacterSkillTransientBackupPath(path) {
+  if (!path.startsWith("character-agent-skills/")) return false;
+  const segments = path.split("/").slice(1);
+  return segments[0] === ".uninstall-quarantine" ||
+    (/^[0-9a-f]{64}$/u.test(segments[0] ?? "") &&
+      (segments[1] === "normal" || segments[1] === "secret") &&
+      segments[2] === "skill-installer-quarantine");
+}
+
+/**
+ * Return the exact row-backed package directories relative to
+ * character-agent-skills/. The copied database snapshot, rather than the live
+ * filesystem, is deliberately authoritative so crashed publish orphans are
+ * never promoted into a new backup.
+ */
+export function characterAgentSkillPublishedDirectories(databasePath) {
+  return characterAgentSkillPackageRows(databasePath).map((row) => row.relativeDirectory);
+}
+
+/**
+ * Verify every durable character package row against the bytes copied into a
+ * backup. This is opt-in for existing schema-v3 manifests, while every newly
+ * produced backup sets the consistency flag and therefore gets strict restore
+ * verification too.
+ */
+export function validateCharacterAgentSkillPackages(root) {
+  const rows = characterAgentSkillPackageRows(join(root, "rp-agent.sqlite"));
+  const expected = new Set(rows.map((row) => row.relativeDirectory));
+  for (const row of rows) {
+    verifyCharacterAgentSkillPackage(join(
+      root,
+      "character-agent-skills",
+      ...row.relativeDirectory.split("/"),
+    ), row);
+  }
+  const observed = publishedCharacterAgentSkillDirectories(
+    join(root, "character-agent-skills"),
+  );
+  for (const relativeDirectory of observed) {
+    if (!expected.has(relativeDirectory)) {
+      throw new Error(`backup contains an orphan character Agent Skill package: ${relativeDirectory}`);
+    }
+  }
+  return { consistent: true, packageCount: rows.length };
+}
+
+function characterAgentSkillPackageRows(databasePath) {
+  if (!existsSync(databasePath)) return [];
+  const database = new DatabaseSync(databasePath, { readOnly: true });
+  try {
+    const table = database.prepare(
+      "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'character_agent_skill_packages'",
+    ).get();
+    if (!table) return [];
+    const rows = database.prepare(`
+      SELECT character_id, conversation_space, name, digest, manifest_json
+      FROM character_agent_skill_packages
+      ORDER BY character_id, conversation_space, name
+    `).all();
+    return rows.map((row) => {
+      const characterId = typeof row.character_id === "string" ? row.character_id : "";
+      const conversationSpace = row.conversation_space;
+      const name = row.name;
+      const digest = row.digest;
+      if (!characterId || characterId.trim() !== characterId || characterId.length > 300) {
+        throw new Error("backup character Agent Skill row has an invalid character id");
+      }
+      if (conversationSpace !== "normal" && conversationSpace !== "secret") {
+        throw new Error("backup character Agent Skill row has an invalid conversation space");
+      }
+      if (
+        typeof name !== "string" ||
+        name.length > 64 ||
+        !/^[a-z0-9]+(?:-[a-z0-9]+)*$/u.test(name)
+      ) {
+        throw new Error("backup character Agent Skill row has an invalid package name");
+      }
+      if (typeof digest !== "string" || !/^[0-9a-f]{64}$/u.test(digest)) {
+        throw new Error(`backup character Agent Skill ${name} has an invalid package digest`);
+      }
+      const manifest = parseCharacterAgentSkillManifest(row.manifest_json, name);
+      return {
+        name,
+        digest,
+        manifest,
+        relativeDirectory: `${sha256(characterId)}/${conversationSpace}/skills/${name}`,
+      };
+    });
+  } finally {
+    database.close();
+  }
+}
+
+function parseCharacterAgentSkillManifest(value, name) {
+  let parsed;
+  try {
+    parsed = JSON.parse(value);
+  } catch (error) {
+    throw new Error(`backup character Agent Skill ${name} has invalid manifest JSON`, { cause: error });
+  }
+  if (!Array.isArray(parsed) || parsed.length === 0 || parsed.length > 256) {
+    throw new Error(`backup character Agent Skill ${name} has an invalid manifest file count`);
+  }
+  const manifest = [];
+  let previousPath = "";
+  let totalBytes = 0;
+  for (const entry of parsed) {
+    if (!entry || typeof entry !== "object" || Array.isArray(entry)) {
+      throw new Error(`backup character Agent Skill ${name} has an invalid manifest entry`);
+    }
+    const path = validateCharacterAgentSkillManifestPath(entry.path, name);
+    if (compareText(path, previousPath) <= 0) {
+      throw new Error(`backup character Agent Skill ${name} manifest is not uniquely sorted`);
+    }
+    if (!Number.isSafeInteger(entry.size) || entry.size < 0 || entry.size > 4 * 1024 * 1024) {
+      throw new Error(`backup character Agent Skill ${name} has an invalid manifest size`);
+    }
+    if (typeof entry.sha256 !== "string" || !/^[0-9a-f]{64}$/u.test(entry.sha256)) {
+      throw new Error(`backup character Agent Skill ${name} has an invalid file digest`);
+    }
+    totalBytes += entry.size;
+    if (totalBytes > 16 * 1024 * 1024) {
+      throw new Error(`backup character Agent Skill ${name} exceeds the package size limit`);
+    }
+    manifest.push({ path, size: entry.size, sha256: entry.sha256 });
+    previousPath = path;
+  }
+  if (!manifest.some((entry) => entry.path === "SKILL.md")) {
+    throw new Error(`backup character Agent Skill ${name} is missing SKILL.md in its manifest`);
+  }
+  return manifest;
+}
+
+function validateCharacterAgentSkillManifestPath(value, name) {
+  if (
+    typeof value !== "string" ||
+    !value ||
+    value.length > 512 ||
+    value !== value.normalize("NFC") ||
+    value.startsWith("/") ||
+    value.startsWith("\\") ||
+    /^[A-Za-z]:/u.test(value) ||
+    value.includes("\\") ||
+    value.includes("\0") ||
+    value.endsWith("/")
+  ) {
+    throw new Error(`backup character Agent Skill ${name} has an invalid manifest path`);
+  }
+  const parts = value.split("/");
+  if (
+    parts.length > 20 ||
+    parts.some((part) =>
+      !part || part === "." || part === ".." || part.length > 255 || /[:\x00-\x1f\x7f]/u.test(part)
+    )
+  ) {
+    throw new Error(`backup character Agent Skill ${name} has an unsafe manifest path`);
+  }
+  return parts.join("/");
+}
+
+function verifyCharacterAgentSkillPackage(packageDirectory, row) {
+  if (!existsSync(packageDirectory)) {
+    throw new Error(`backup character Agent Skill ${row.name} package bytes are missing`);
+  }
+  const rootStats = lstatSync(packageDirectory);
+  if (rootStats.isSymbolicLink() || !rootStats.isDirectory()) {
+    throw new Error(`backup character Agent Skill ${row.name} package root is unsafe`);
+  }
+  const observed = [];
+  const observedDirectories = [];
+  let totalBytes = 0;
+  const inspect = (directory, prefix) => {
+    for (const entry of readdirSync(directory, { withFileTypes: true })) {
+      const relativePath = prefix ? `${prefix}/${entry.name}` : entry.name;
+      validateCharacterAgentSkillManifestPath(relativePath, row.name);
+      const target = join(directory, entry.name);
+      const stats = lstatSync(target);
+      if (stats.isSymbolicLink() || (!stats.isFile() && !stats.isDirectory())) {
+        throw new Error(`backup character Agent Skill ${row.name} contains a link or special file`);
+      }
+      if (stats.isDirectory()) {
+        observedDirectories.push(relativePath);
+        inspect(target, relativePath);
+        continue;
+      }
+      if (observed.length >= 256 || stats.size > 4 * 1024 * 1024) {
+        throw new Error(`backup character Agent Skill ${row.name} exceeds file limits`);
+      }
+      totalBytes += stats.size;
+      if (totalBytes > 16 * 1024 * 1024) {
+        throw new Error(`backup character Agent Skill ${row.name} exceeds the package size limit`);
+      }
+      const bytes = readFileSync(target);
+      observed.push({ path: relativePath, size: bytes.byteLength, sha256: sha256(bytes) });
+    }
+  };
+  inspect(packageDirectory, "");
+  observed.sort((left, right) => compareText(left.path, right.path));
+  observedDirectories.sort(compareText);
+  const expectedDirectories = directoriesForCharacterAgentSkillManifest(row.manifest);
+  const observedDigest = sha256(JSON.stringify({ version: 1, files: observed }));
+  if (
+    observedDigest !== row.digest ||
+    JSON.stringify(observed) !== JSON.stringify(row.manifest) ||
+    JSON.stringify(observedDirectories) !== JSON.stringify(expectedDirectories)
+  ) {
+    throw new Error(`backup character Agent Skill ${row.name} package bytes changed`);
+  }
+}
+
+function directoriesForCharacterAgentSkillManifest(manifest) {
+  const directories = new Set();
+  for (const entry of manifest) {
+    const parts = entry.path.split("/");
+    parts.pop();
+    while (parts.length) {
+      directories.add(parts.join("/"));
+      parts.pop();
+    }
+  }
+  return [...directories].sort(compareText);
+}
+
+function publishedCharacterAgentSkillDirectories(packageRoot) {
+  if (!existsSync(packageRoot)) return [];
+  const directories = [];
+  for (const owner of readdirSync(packageRoot, { withFileTypes: true })) {
+    if (!owner.isDirectory() || !/^[0-9a-f]{64}$/u.test(owner.name)) continue;
+    for (const space of ["normal", "secret"]) {
+      const skillsRoot = join(packageRoot, owner.name, space, "skills");
+      if (!existsSync(skillsRoot)) continue;
+      const stats = lstatSync(skillsRoot);
+      if (stats.isSymbolicLink() || !stats.isDirectory()) {
+        throw new Error(`backup character Agent Skill published root is unsafe: ${skillsRoot}`);
+      }
+      for (const skill of readdirSync(skillsRoot, { withFileTypes: true })) {
+        const skillPath = join(skillsRoot, skill.name);
+        const skillStats = lstatSync(skillPath);
+        if (skillStats.isSymbolicLink() || !skillStats.isDirectory()) {
+          throw new Error(`backup character Agent Skill published entry is unsafe: ${skillPath}`);
+        }
+        directories.push(`${owner.name}/${space}/skills/${skill.name}`);
+      }
+    }
+  }
+  return directories.sort(compareText);
+}
+
+function compareText(left, right) {
+  return left < right ? -1 : left > right ? 1 : 0;
 }
 
 export function validateDatabase(path) {

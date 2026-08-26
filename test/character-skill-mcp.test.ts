@@ -10,6 +10,11 @@ import {
   type CharacterSkillPrivatePackageService,
 } from "../src/mcp/index.js";
 import type { AgentModule } from "../src/modules/types.js";
+import {
+  beginCharacterSkillRemoteInstall,
+  finishCharacterSkillRemoteInstall,
+  resetCharacterSkillRemoteInstallTurn,
+} from "../src/modules/character-skill-turn-policy.js";
 import type {
   CharacterOwnedSkillCreateInput,
   CharacterOwnedSkillPackage,
@@ -21,7 +26,7 @@ const sessionId = "character-skill-session";
 const activeMarkdown = "# Active workflow\n\nACTIVE_WORKFLOW_PRIVATE_BODY_SENTINEL";
 const draftMarkdown = "# Draft workflow\n\nDRAFT_WORKFLOW_BODY_WITH_ENOUGH_DETAIL_TO_BE_VALID";
 
-test("character Skill MCP exposes only bounded role tools and forces workflow changes to drafts", async () => {
+test("character Skill MCP exposes only bounded role tools and activates workflow changes for the next turn", async () => {
   const activeVersion = ownedVersion({
     id: "version-active",
     status: "active",
@@ -32,18 +37,16 @@ test("character Skill MCP exposes only bounded role tools and forces workflow ch
   const created = ownedPackage({
     id: "skill-created",
     name: "new-workflow",
-    status: "draft",
     createdBy: "character",
-    activeVersion: undefined,
   });
   const revised = ownedVersion({
     id: "version-revised",
     version: 2,
-    status: "draft",
+    status: "active",
     markdown: draftMarkdown,
     source: "character_created",
-    activatedAt: undefined,
   });
+  let refreshes = 0;
   const calls: {
     list?: [string, ConversationSpace | undefined];
     get?: [string, string, ConversationSpace | undefined];
@@ -73,7 +76,12 @@ test("character Skill MCP exposes only bounded role tools and forces workflow ch
       return revised;
     },
   };
-  const harness = createHarness({ characterCapabilities });
+  const harness = createHarness({
+    characterCapabilities,
+    requestCapabilityRefresh: () => {
+      refreshes += 1;
+    },
+  });
   const bridge = await createCharacterSkillMcpBridge(harness.context);
   try {
     const listing = await bridge.client.listTools();
@@ -102,7 +110,7 @@ test("character Skill MCP exposes only bounded role tools and forces workflow ch
     assert.match(JSON.stringify(read), /ACTIVE_WORKFLOW_PRIVATE_BODY_SENTINEL/);
 
     const create = await bridge.client.callTool({
-      name: "create_current_character_skill_draft",
+      name: "create_current_character_skill",
       arguments: {
         name: "new-workflow",
         description: "Reusable workflow",
@@ -116,13 +124,13 @@ test("character Skill MCP exposes only bounded role tools and forces workflow ch
     assert.ok(calls.create);
     assert.equal(calls.create[0], characterId);
     assert.equal(calls.create[2], "normal");
-    assert.equal(calls.create[1].activate, false);
+    assert.equal(calls.create[1].activate, true);
     assert.equal(calls.create[1].createdBy, "character");
     assert.equal(calls.create[1].sourceTaskId, "create-call");
     assert.doesNotMatch(JSON.stringify(create), /DRAFT_WORKFLOW_BODY/);
 
     const revise = await bridge.client.callTool({
-      name: "revise_current_character_skill_draft",
+      name: "revise_current_character_skill",
       arguments: {
         skillId: existing.id,
         markdown: draftMarkdown,
@@ -134,13 +142,14 @@ test("character Skill MCP exposes only bounded role tools and forces workflow ch
     assert.ok(calls.revise);
     assert.equal(calls.revise[0], characterId);
     assert.equal(calls.revise[1], existing.id);
-    assert.equal(calls.revise[2].activate, false);
+    assert.equal(calls.revise[2].activate, true);
     assert.equal(calls.revise[2].source, "character_created");
     assert.equal(calls.revise[2].sourceTaskId, "revise-call");
     assert.equal(calls.revise[3], "normal");
+    assert.equal(refreshes, 2);
 
     const ownerInjection = await bridge.client.callTool({
-      name: "create_current_character_skill_draft",
+      name: "create_current_character_skill",
       arguments: {
         characterId: "character-victim",
         conversationSpace: "secret",
@@ -271,105 +280,224 @@ test("private package enablement is owner-bound, refreshes capabilities, and wri
   }
 });
 
-test("remote install requests require a verbatim current-turn URL and expose only a redacted quarantine review", async () => {
-  const approvedUrl = "https://github.com/example/skills/tree/main/demo";
-  const rejectedUrl = "https://github.com/example/skills/tree/main/not-mentioned";
-  const markdownSentinel = "REMOTE_SKILL_MARKDOWN_SENTINEL";
-  const manifestPathSentinel = "references/private-notes.md";
-  let currentUserText = `请预检这个 Skill：${approvedUrl}`;
-  const stageInputs: Array<Parameters<CharacterSkillPrivatePackageService["stage"]>[0]> = [];
-  let cancelInput: Parameters<CharacterSkillPrivatePackageService["cancel"]>[0] | undefined;
+test("remote install autonomously installs a model-selected URL and exposes only redacted package metadata", async () => {
+  const selectedUrl = "https://github.com/example/skills/tree/main/demo";
+  const installInputs: Array<Parameters<CharacterSkillPrivatePackageService["install"]>[0]> = [];
+  const remoteDescription = "REMOTE_DESCRIPTION_PROMPT_INJECTION_SENTINEL";
+  const livePackages: CharacterSkillPrivatePackage[] = [];
+  let refreshes = 0;
   const privateService = privateServiceStub({
-    async stage(input) {
-      stageInputs.push(input);
-      return {
-        stageId: "stage-secret-token",
-        digest: "a".repeat(64),
-        archiveSha256: "b".repeat(64),
-        expiresAt: "2026-08-26T10:10:00.000Z",
-        metadata: {
+    list: () => livePackages,
+    async install(input) {
+      installInputs.push(input);
+      const packageRecord = privatePackage({
           name: "remote-demo",
-          description: "Remote demo Skill",
-          files: 3,
-          unpackedBytes: 12_345,
-        },
-        source: {
-          requestedUrl: approvedUrl,
-          resolvedArchiveUrl: "https://codeload.github.com/example/skills/archive.zip",
-          finalArchiveUrl: "https://codeload.github.com/example/skills/final.zip",
-        },
-        manifest: [{ path: manifestPathSentinel, size: 12, sha256: "c".repeat(64) }],
-        skillMarkdown: markdownSentinel,
+          description: remoteDescription,
+          conversationSpace: input.conversationSpace,
+        });
+      livePackages.push(packageRecord);
+      return {
+        package: packageRecord,
+        sourceHost: "github.com",
+        finalArchiveHost: "codeload.github.com",
+        resolvedCommit: "f".repeat(40),
+        digest: "a".repeat(64),
+        fileCount: 3,
+        alreadyInstalled: false,
       };
-    },
-    cancel(input) {
-      cancelInput = input;
-      return true;
     },
   });
   const harness = createHarness({
-    conversationSpace: "secret",
+    conversationSpace: "normal",
     privatePackageService: privateService,
-    currentUserText: () => currentUserText,
+    requestCapabilityRefresh: () => {
+      refreshes += 1;
+    },
   });
   const bridge = await createCharacterSkillMcpBridge(harness.context);
   try {
-    const blocked = await bridge.client.callTool({
-      name: "request_current_character_skill_install",
-      arguments: { sourceUrl: rejectedUrl },
+    const installed = await bridge.client.callTool({
+      name: "install_current_character_skill",
+      arguments: { sourceUrl: selectedUrl },
     });
-    assert.equal(blocked.isError, true);
-    assert.equal(stageInputs.length, 0);
-    assert.doesNotMatch(JSON.stringify(blocked), /not-mentioned/);
-    assert.equal(harness.turnActions[0].status, "blocked");
-
-    const staged = await bridge.client.callTool({
-      name: "request_current_character_skill_install",
-      arguments: { sourceUrl: approvedUrl },
-    });
-    assert.equal(staged.isError, undefined);
-    assert.deepEqual(stageInputs, [{
+    assert.equal(installed.isError, undefined);
+    assert.deepEqual(installInputs, [{
       characterId,
-      conversationSpace: "secret",
-      sourceUrl: approvedUrl,
+      conversationSpace: "normal",
+      sourceUrl: selectedUrl,
     }]);
-    const serialized = JSON.stringify(staged);
-    assert.match(serialized, /reviewId/);
-    assert.match(serialized, /stage-secret-token/);
+    assert.equal(refreshes, 1);
+    const serialized = JSON.stringify(installed);
     assert.match(serialized, /remote-demo/);
-    assert.match(serialized, /Remote demo Skill/);
-    assert.match(serialized, /"fileCount":3/);
-    assert.doesNotMatch(serialized, /github\.com|codeload\.github\.com/);
-    assert.doesNotMatch(serialized, /REMOTE_SKILL_MARKDOWN_SENTINEL|private-notes\.md|archiveSha256|unpackedBytes|manifest/);
+    assert.doesNotMatch(serialized, new RegExp(remoteDescription));
+    assert.match(serialized, /next turn/i);
+    assert.doesNotMatch(serialized, /github\.com|sourceUrl|digest|manifest|stage|review/i);
 
-    const cancelled = await bridge.client.callTool({
-      name: "cancel_current_character_skill_install",
-      arguments: { reviewId: "stage-secret-token" },
+    const sameTurnSearch = await bridge.client.callTool({
+      name: "search_available_agent_skills",
+      arguments: {},
     });
-    assert.equal(cancelled.isError, undefined);
-    assert.deepEqual(cancelInput, {
-      characterId,
-      conversationSpace: "secret",
-      stageId: "stage-secret-token",
-    });
+    assert.doesNotMatch(JSON.stringify(sameTurnSearch), /remote-demo|REMOTE_DESCRIPTION_PROMPT_INJECTION_SENTINEL/);
 
-    assert.equal(harness.turnActions.length, 3);
+    assert.equal(harness.turnActions.length, 1);
     for (const action of harness.turnActions) {
-      assert.equal(action.conversationSpace, "secret");
-      assert.equal(action.secretOwnerCharacterId, characterId);
+      assert.equal(action.conversationSpace, "normal");
+      assert.equal(action.secretOwnerCharacterId, undefined);
       assert.equal(action.payload.characterId, characterId);
       const audit = JSON.stringify(action.payload);
-      assert.doesNotMatch(audit, /github\.com|codeload\.github\.com/);
-      assert.doesNotMatch(audit, /REMOTE_SKILL_MARKDOWN_SENTINEL|private-notes\.md|manifest|sourceUrl/);
+      assert.match(audit, /github\.com/);
+      assert.match(audit, new RegExp("a{64}"));
+      assert.match(audit, new RegExp("f{40}"));
+      assert.doesNotMatch(audit, /https?:\/\/|sourceUrl|manifest|stage|review/i);
     }
+  } finally {
+    await bridge.close();
+  }
+});
 
-    currentUserText = "下一轮已不再包含该 URL";
-    const staleTurn = await bridge.client.callTool({
-      name: "request_current_character_skill_install",
-      arguments: { sourceUrl: approvedUrl },
+test("remote install turn limits are atomic, count revalidation, and reset for the next turn", async () => {
+  const firstUrl = "https://downloads.example.com/first.zip";
+  const secondUrl = "https://downloads.example.com/second.zip";
+  const turnState = {
+    characterSkillRemoteInstallAttempts: 0,
+    characterSkillRemoteInstallInFlight: false,
+    successfulCharacterSkillInstallSourceUrl: undefined as string | undefined,
+  };
+  let transportStarts = 0;
+  let releaseFirst!: () => void;
+  const firstReleased = new Promise<void>((resolve) => {
+    releaseFirst = resolve;
+  });
+  let announceFirst!: () => void;
+  const firstStarted = new Promise<void>((resolve) => {
+    announceFirst = resolve;
+  });
+  const privateService = privateServiceStub({
+    async install(input) {
+      transportStarts += 1;
+      if (transportStarts === 1) {
+        announceFirst();
+        await firstReleased;
+      }
+      return {
+        package: privatePackage({ name: `remote-${transportStarts}` }),
+        sourceHost: "downloads.example.com",
+        finalArchiveHost: "downloads.example.com",
+        digest: "a".repeat(64),
+        fileCount: 1,
+        // Revalidation of an existing artifact still consumes the successful
+        // source slot because it performed an outbound fetch.
+        alreadyInstalled: true,
+      };
+    },
+  });
+  const harness = createHarness({
+    privatePackageService: privateService,
+    beginRemoteInstall: (sourceUrl) => beginCharacterSkillRemoteInstall(turnState, sourceUrl),
+    finishRemoteInstall: (sourceUrl, success) => {
+      finishCharacterSkillRemoteInstall(turnState, sourceUrl, success);
+    },
+  });
+  const bridge = await createCharacterSkillMcpBridge(harness.context);
+  try {
+    const first = bridge.client.callTool({
+      name: "install_current_character_skill",
+      arguments: { sourceUrl: firstUrl },
     });
-    assert.equal(staleTurn.isError, true);
-    assert.equal(stageInputs.length, 1);
+    await firstStarted;
+    const concurrent = bridge.client.callTool({
+      name: "install_current_character_skill",
+      arguments: { sourceUrl: secondUrl },
+    });
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    releaseFirst();
+    const [firstResult, concurrentResult] = await Promise.all([first, concurrent]);
+    assert.equal(firstResult.isError, undefined);
+    assert.equal(concurrentResult.isError, true);
+    assert.equal(transportStarts, 1);
+    assert.equal(turnState.successfulCharacterSkillInstallSourceUrl, firstUrl);
+
+    resetCharacterSkillRemoteInstallTurn(turnState);
+    const nextTurn = await bridge.client.callTool({
+      name: "install_current_character_skill",
+      arguments: { sourceUrl: secondUrl },
+    });
+    assert.equal(nextTurn.isError, undefined);
+    assert.equal(transportStarts, 2);
+  } finally {
+    releaseFirst();
+    await bridge.close();
+  }
+});
+
+test("a fourth failed remote install attempt is blocked before transport", async () => {
+  const turnState = {
+    characterSkillRemoteInstallAttempts: 0,
+    characterSkillRemoteInstallInFlight: false,
+    successfulCharacterSkillInstallSourceUrl: undefined as string | undefined,
+  };
+  let transportStarts = 0;
+  const harness = createHarness({
+    privatePackageService: privateServiceStub({
+      async install() {
+        transportStarts += 1;
+        throw Object.assign(new Error("download rejected"), { code: "DOWNLOAD_FAILED" });
+      },
+    }),
+    beginRemoteInstall: (sourceUrl) => beginCharacterSkillRemoteInstall(turnState, sourceUrl),
+    finishRemoteInstall: (sourceUrl, success) => {
+      finishCharacterSkillRemoteInstall(turnState, sourceUrl, success);
+    },
+  });
+  const bridge = await createCharacterSkillMcpBridge(harness.context);
+  try {
+    const results = [];
+    for (let attempt = 1; attempt <= 4; attempt += 1) {
+      results.push(await bridge.client.callTool({
+        name: "install_current_character_skill",
+        arguments: { sourceUrl: `https://downloads.example.com/failure-${attempt}.zip` },
+      }));
+    }
+    assert.deepEqual(results.map((result) => result.isError), [true, true, true, true]);
+    assert.equal(transportStarts, 3);
+    assert.equal(turnState.characterSkillRemoteInstallAttempts, 4);
+  } finally {
+    await bridge.close();
+  }
+});
+
+test("secret character Skill MCP omits autonomous remote installation", async () => {
+  let installs = 0;
+  const harness = createHarness({
+    conversationSpace: "secret",
+    privatePackageService: privateServiceStub({
+      async install(input) {
+        installs += 1;
+        return {
+          package: privatePackage({ conversationSpace: input.conversationSpace }),
+          sourceHost: "downloads.example.com",
+          finalArchiveHost: "downloads.example.com",
+          digest: "a".repeat(64),
+          fileCount: 1,
+          alreadyInstalled: false,
+        };
+      },
+    }),
+  });
+  const bridge = await createCharacterSkillMcpBridge(harness.context);
+  try {
+    const listing = await bridge.client.listTools();
+    const names = listing.tools.map((tool) => tool.name);
+    assert.equal(names.includes("install_current_character_skill"), false);
+    assert.equal(names.includes("create_current_character_skill"), true);
+    assert.equal(names.includes("revise_current_character_skill"), true);
+    assert.equal(names.includes("set_current_character_private_skill_enabled"), true);
+    const blocked = await bridge.client.callTool({
+      name: "install_current_character_skill",
+      arguments: { sourceUrl: "https://downloads.example.com/secret.zip" },
+    });
+    assert.equal(blocked.isError, true);
+    assert.equal(installs, 0);
   } finally {
     await bridge.close();
   }
@@ -386,8 +514,9 @@ function createHarness(overrides: Partial<CharacterSkillMcpContext> = {}) {
     sessionId,
     characterId,
     conversationSpace: "normal",
-    currentUserText: () => "",
     actions: () => turnActions,
+    beginRemoteInstall: () => undefined,
+    finishRemoteInstall: () => undefined,
     requestCapabilityRefresh: () => undefined,
     ...overrides,
   };
@@ -416,13 +545,18 @@ function privateServiceStub(
       enabled: input.enabled,
       conversationSpace: input.conversationSpace,
     }),
-    stage: async () => ({
-      stageId: "stage",
+    install: async (input) => ({
+      package: privatePackage({
+        name: "remote",
+        description: "Remote Skill",
+        conversationSpace: input.conversationSpace,
+      }),
+      sourceHost: "downloads.example.com",
+      finalArchiveHost: "downloads.example.com",
       digest: "a".repeat(64),
-      expiresAt: "2026-08-26T10:10:00.000Z",
-      metadata: { name: "remote", description: "Remote Skill", files: 1 },
+      fileCount: 1,
+      alreadyInstalled: false,
     }),
-    cancel: () => false,
     ...overrides,
   };
 }
