@@ -1,4 +1,5 @@
 import { createHash, randomBytes } from "node:crypto";
+import { Blob } from "node:buffer";
 import {
   chmodSync,
   closeSync,
@@ -12,7 +13,7 @@ import {
   writeFileSync,
 } from "node:fs";
 import { basename, dirname, extname, join } from "node:path";
-import { Agent, fetch as undiciFetch, type Dispatcher } from "undici";
+import { Agent, FormData, fetch as undiciFetch, type Dispatcher } from "undici";
 import type { Clock } from "../app/clock.js";
 import { SystemClock } from "../app/clock.js";
 import { MAX_WORKSPACE_UPLOAD_BYTES } from "../workspace/file-service.js";
@@ -26,10 +27,11 @@ import type {
 } from "./types.js";
 
 type StoredMineruConfig = MineruApiConfig & { apiKey?: string };
-type MineruFetch = (
-  input: string,
-  init?: RequestInit & { dispatcher?: Dispatcher },
-) => Promise<Response>;
+type MineruRequestInit = Omit<RequestInit, "body"> & {
+  body?: RequestInit["body"] | FormData;
+  dispatcher?: Dispatcher;
+};
+type MineruFetch = (input: string, init?: MineruRequestInit) => Promise<Response>;
 type CachedDocument = {
   markdown: string;
   images: MineruImage[];
@@ -404,6 +406,8 @@ export class MineruService {
   }
 
   private createParseForm(source: ReturnType<typeof readWorkspaceDocument>): FormData {
+    // Keep FormData in the same Undici realm as fetchImpl. Passing Node's
+    // global FormData to the package fetch serializes it as "[object FormData]".
     const form = new FormData();
     form.set("files", new Blob([new Uint8Array(source.bytes)], { type: source.mimeType }), source.name);
     form.set("backend", this.config.backend);
@@ -537,7 +541,7 @@ export class MineruService {
 
   private async withResponse<T>(
     path: string,
-    init: RequestInit,
+    init: MineruRequestInit,
     signal: AbortSignal | undefined,
     responseLimit: number,
     requestTimeoutMs: number | undefined,

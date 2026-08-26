@@ -4,7 +4,7 @@ import { createServer } from "node:http";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import test from "node:test";
-import { Agent, getGlobalDispatcher, setGlobalDispatcher } from "undici";
+import { Agent, FormData as UndiciFormData, getGlobalDispatcher, setGlobalDispatcher } from "undici";
 import { CompanionKernel } from "../src/domain/kernel.js";
 import { createHttpServer } from "../src/http/router.js";
 import { MineruConfigurationError, MineruService } from "../src/mineru/index.js";
@@ -27,7 +27,7 @@ test("MinerU service persists masked configuration, sends the official multipart
   const root = mkdtempSync(join(tmpdir(), "yourchar-mineru-service-"));
   const workspaceFiles = new WorkspaceFileService(join(root, "workspace"));
   const document = workspaceFiles.upload({ directory: "uploads", name: "paper.pdf", bytes: pdfFixture });
-  const requests: Array<{ url: string; authorization: string; method: string; form?: FormData }> = [];
+  const requests: Array<{ url: string; authorization: string; method: string; form?: UndiciFormData }> = [];
   let submittedTasks = 0;
   const service = new MineruService({
     stateDir: root,
@@ -36,7 +36,7 @@ test("MinerU service persists masked configuration, sends the official multipart
         url,
         authorization: new Headers(init?.headers).get("authorization") ?? "",
         method: init?.method ?? "GET",
-        ...(init?.body instanceof FormData ? { form: init.body } : {}),
+        ...(init?.body instanceof UndiciFormData ? { form: init.body } : {}),
       });
       if (url.endsWith("/health")) return Response.json({ status: "ok" });
       if (url.endsWith("/tasks") && init?.method === "POST") {
@@ -147,6 +147,74 @@ test("MinerU service persists masked configuration, sends the official multipart
     assert.ok(statSync(join(workspaceFiles.rootDir, dirname(refreshed.savedPath))).mtimeMs > old.getTime());
   } finally {
     service.dispose();
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("MinerU default transport serializes the uploaded document as a real multipart files field", async () => {
+  const root = mkdtempSync(join(tmpdir(), "yourchar-mineru-multipart-transport-"));
+  const workspaceFiles = new WorkspaceFileService(join(root, "workspace"));
+  const document = workspaceFiles.upload({ directory: "uploads", name: "paper.pdf", bytes: pdfFixture });
+  const taskId = "10000000-0000-4000-8000-000000000001";
+  let taskSubmissions = 0;
+  let submittedContentType = "";
+  let submittedBody = Buffer.alloc(0);
+  const upstream = createServer((request, response) => {
+    const chunks: Buffer[] = [];
+    request.on("data", (chunk: Buffer) => chunks.push(chunk));
+    request.on("end", () => {
+      const body = Buffer.concat(chunks);
+      const sendJson = (status: number, value: unknown) => {
+        response.writeHead(status, { "content-type": "application/json" });
+        response.end(JSON.stringify(value));
+      };
+      if (request.url === "/tasks" && request.method === "POST") {
+        taskSubmissions += 1;
+        submittedContentType = request.headers["content-type"] ?? "";
+        submittedBody = body;
+        const text = body.toString("latin1");
+        const validMultipart = submittedContentType.startsWith("multipart/form-data; boundary=")
+          && text.includes('Content-Disposition: form-data; name="files"; filename="paper.pdf"')
+          && body.indexOf(pdfFixture) >= 0;
+        if (!validMultipart) {
+          sendJson(422, {
+            detail: [{ type: "missing", loc: ["body", "files"], msg: "Field required", input: null }],
+          });
+          return;
+        }
+        sendJson(202, { task_id: taskId, status: "pending" });
+        return;
+      }
+      if (request.url === `/tasks/${taskId}` && request.method === "GET") {
+        sendJson(200, { task_id: taskId, status: "completed" });
+        return;
+      }
+      if (request.url === `/tasks/${taskId}/result` && request.method === "GET") {
+        sendJson(200, parsedDocumentBody("# Multipart result"));
+        return;
+      }
+      response.writeHead(404);
+      response.end();
+    });
+  });
+  await new Promise<void>((resolve) => upstream.listen(0, "127.0.0.1", resolve));
+  const address = upstream.address();
+  assert.ok(address && typeof address === "object");
+  const service = new MineruService({ stateDir: root });
+  try {
+    service.patchConfig({ baseUrl: `http://127.0.0.1:${address.port}`, timeoutSeconds: 10 });
+    const parsed = await service.parseDocument({ path: document.path }, { workspaceFiles, cacheNamespace: "normal" });
+    assert.match(parsed.markdown, /Multipart result/);
+    assert.equal(taskSubmissions, 1);
+    assert.match(submittedContentType, /^multipart\/form-data; boundary=/u);
+    assert.match(
+      submittedBody.toString("latin1"),
+      /Content-Disposition: form-data; name="files"; filename="paper\.pdf"/u,
+    );
+    assert.ok(submittedBody.indexOf(pdfFixture) >= 0);
+  } finally {
+    service.dispose();
+    await new Promise<void>((resolve, reject) => upstream.close((error) => error ? reject(error) : resolve()));
     rmSync(root, { recursive: true, force: true });
   }
 });
