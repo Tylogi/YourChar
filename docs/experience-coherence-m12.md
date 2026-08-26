@@ -176,9 +176,9 @@ Compaction has three bounded levels:
 1. provider-only hygiene continues to omit historical thinking and compact old
    tool payloads without rewriting the transcript;
 2. planned compaction runs after a completed, side-effect-free turn when the
-   projected next request crosses the model-relative warning boundary;
-3. emergency preflight compaction runs before a request that cannot fit the
-   configured window, rather than sending a request known to overflow.
+   canonical input reaches the smaller of 128 Ki tokens or 90% of usable input;
+3. emergency preflight compaction runs before a projected request reaches 95%
+   of usable input, rather than sending a request close to overflow.
 
 Planned or emergency compaction first flushes accepted User Insights, promises,
 scene state, and other durable coordinator work. It then uses the existing
@@ -189,10 +189,17 @@ Hysteresis and a minimum growth interval prevent repeated compaction near one
 threshold. Failure leaves the original branch usable and exposes a retryable
 status without discarding the completed reply.
 
-The existing 32k tired and 60k hard-rest thresholds remain default experience
-limits for large-context models, but effective thresholds are capped by the
-configured model budget. A smaller model must compact before overflow instead of
-waiting for an impossible fixed threshold.
+The lifecycle no longer uses the old fixed 32k tired and 60k hard-rest limits in
+production. It follows the current profile's canonical Provider budget, using
+measured input (including cache reads and writes) when available. With the
+131,072-token fallback window, output and safety reserves place planned
+compaction at roughly 105k input. A 262,144-token profile reaches the absolute
+128 Ki-token planning cap while retaining roughly half of its total window.
+
+If a turn completes a tool or real-world side effect, the checkpoint is stored
+as pending and runs at the next side-effect-free boundary. The fatigue notice is
+latched independently, so a character does not repeatedly say it is tired while
+the same tool chain continues.
 
 The chat header shows one quiet capacity indicator: percentage on narrow screens
 and estimated remaining tokens plus percentage on wider screens. Selecting it

@@ -128,10 +128,6 @@ import { createTurnContextMessage, TURN_CONTEXT_CUSTOM_TYPE } from "./turn-conte
 // Pi's generic estimator uses characters/4, while Chinese dialogue is much denser.
 // 4k estimated tokens retains roughly 8-16k real conversational tokens here.
 const roleplayRecentContextTokens = 4_096;
-const defaultConversationLifecycleThresholds = {
-  tiredTokens: 32_000,
-  hardSleepTokens: 60_000,
-} as const;
 const maxConcurrentSubagentsPerSession = 3;
 const maxSubagentModelCalls = 8;
 const maxSubagentOutputCharacters = 12_000;
@@ -160,6 +156,8 @@ export type ConversationMetadata = {
   tiredAt?: string;
   sleepSuggestedAt?: string;
   sleepCheckpointAt?: string;
+  pendingCompactionAt?: string;
+  pendingCompactionReason?: PendingConversationCompactionReason;
   lastCompactionAt?: string;
   lastCompactionReason?: string;
   lastCompactionStatus?: "completed" | "failed";
@@ -174,8 +172,12 @@ export type ConversationMetadata = {
 
 export type ConversationSleepState = "awake" | "tired" | "sleeping";
 
+export type PendingConversationCompactionReason = "conversation_sleep" | "budget_planned";
+
 export type ConversationLifecycleThresholds = {
+  /** @deprecated Test-only absolute override. Production lifecycle uses the model-relative context budget. */
   tiredTokens: number;
+  /** @deprecated Test-only absolute override. Production lifecycle uses the model-relative context budget. */
   hardSleepTokens: number;
 };
 
@@ -184,7 +186,13 @@ export type ConversationLifecycleDecision = {
   estimatedTokens: number;
   shouldSuggestSleep: boolean;
   shouldSleepAfterTurn: boolean;
+  userAcceptedSleep: boolean;
+  hardSleepRequired: boolean;
   wakePending: boolean;
+  compactionPending: boolean;
+  pendingCompactionReason?: PendingConversationCompactionReason;
+  compactionEntryCount: number;
+  budget: ContextBudgetSnapshot;
   context: string;
 };
 
@@ -395,7 +403,7 @@ export class PiSessionRuntime {
   private readonly activeSubagents = new Set<AgentSession>();
   private readonly canonicalDirectLoading = new Map<string, Promise<PiSessionHandle>>();
   private readonly legacyDirectMigrationTargets = new Map<string, string>();
-  private readonly conversationLifecycleThresholds: ConversationLifecycleThresholds;
+  private readonly conversationLifecycleThresholds: Partial<ConversationLifecycleThresholds>;
   private readonly subagentTimeoutMs: number;
   private readonly incognitoChild: boolean;
 
@@ -577,7 +585,7 @@ export class PiSessionRuntime {
     allowed: boolean,
     beforeCompact?: () => Promise<void>,
   ): Promise<ConversationCompactionResult | undefined> {
-    const projected = this.contextBudgetForHandle(handle, estimateTokens(userText) + 1_024);
+    const projected = this.contextBudgetForHandle(handle, estimateTokens(userText), true);
     if (projected.level !== "critical") return undefined;
     if (!allowed) {
       throw new ConversationCompactionUnavailableError(
@@ -590,7 +598,19 @@ export class PiSessionRuntime {
       );
     }
     await beforeCompact?.();
-    const result = await this.compactHandle(handle, "budget_preflight");
+    const reason = handle.metadata.pendingCompactionReason === "conversation_sleep"
+      ? "conversation_sleep"
+      : "budget_preflight";
+    const result = await this.compactHandle(handle, reason);
+    if (reason === "conversation_sleep") {
+      finishSuccessfulConversationCompaction(
+        handle.metadata,
+        reason,
+        this.clock.now().toISOString(),
+      );
+      this.touch(handle.metadata);
+      result.budgetAfter = this.contextBudgetForHandle(handle);
+    }
     if (result.budgetAfter.level === "critical") {
       throw new ConversationCompactionUnavailableError(
         "整理后固定提示词与工具仍接近模型窗口，请增大上下文窗口或减少启用工具",
@@ -605,10 +625,11 @@ export class PiSessionRuntime {
     options: { completedSideEffect: boolean; allowProactiveCompaction: boolean },
   ): boolean {
     if (options.completedSideEffect) return false;
-    if (lifecycle.shouldSleepAfterTurn) return true;
     if (!options.allowProactiveCompaction) return false;
+    if (lifecycle.shouldSleepAfterTurn || lifecycle.compactionPending) return true;
     const budget = this.contextBudgetForHandle(handle);
-    return budget.shouldCompact && this.canCompactAgain(handle, budget);
+    return (budget.shouldCompact || lifecycle.budget.shouldCompact) &&
+      this.canCompactAgain(handle, budget);
   }
 
   refreshResidentMemoryContext(handle: PiSessionHandle): void {
@@ -629,23 +650,60 @@ export class PiSessionRuntime {
     userText: string,
   ): ConversationLifecycleDecision {
     const metadata = handle.metadata;
-    const estimatedTokens = estimateConversationHistoryTokens(handle.session.messages);
+    const historyTokens = estimateConversationHistoryTokens(handle.session.messages);
+    const budget = this.contextBudgetForHandle(handle, estimateTokens(userText), true);
+    const pressure = conversationLifecyclePressure(
+      budget,
+      historyTokens,
+      this.conversationLifecycleThresholds,
+    );
+    const estimatedTokens = budget.usedInputTokens;
     let state = metadata.sleepState ?? "awake";
-    if (state === "awake" && estimatedTokens >= this.conversationLifecycleThresholds.tiredTokens) {
+    let metadataChanged = false;
+    let compactionPending = Boolean(
+      metadata.pendingCompactionAt && metadata.pendingCompactionReason,
+    );
+
+    // A planned checkpoint is pressure-driven. If the user switches to a
+    // larger model (or measured usage corrects an estimate downward), cancel
+    // that stale plan. A conversation_sleep request remains an intentional
+    // roleplay transition and is therefore preserved.
+    if (
+      compactionPending &&
+      metadata.pendingCompactionReason === "budget_planned" &&
+      !budget.shouldCompact
+    ) {
+      delete metadata.pendingCompactionAt;
+      delete metadata.pendingCompactionReason;
+      compactionPending = false;
+      metadataChanged = true;
+    }
+
+    // Versions before the model-relative budget used a fixed 32k threshold. Do
+    // not carry that stale tired state forever after upgrading.
+    if (state === "tired" && !pressure.tired && !compactionPending) {
+      state = "awake";
+      metadata.sleepState = state;
+      delete metadata.tiredAt;
+      delete metadata.sleepSuggestedAt;
+      metadataChanged = true;
+    }
+    if ((state === "awake" && pressure.tired) || (compactionPending && state !== "tired")) {
       state = "tired";
       metadata.sleepState = state;
-      metadata.tiredAt = this.clock.now().toISOString();
-      delete metadata.sleepSuggestedAt;
-      this.touch(metadata);
+      metadata.tiredAt ??= this.clock.now().toISOString();
+      if (!compactionPending) delete metadata.sleepSuggestedAt;
+      metadataChanged = true;
     }
+    if (metadataChanged) this.touch(metadata);
 
     const wakePending = state === "sleeping";
     const userAcceptedSleep = state === "tired" && acceptsConversationSleep(userText);
-    const hardSleepRequired = state === "tired" &&
-      estimatedTokens >= this.conversationLifecycleThresholds.hardSleepTokens;
+    const hardSleepRequired = state === "tired" && pressure.hard;
     const shouldSuggestSleep = state === "tired" && !metadata.sleepSuggestedAt &&
-      !userAcceptedSleep && !hardSleepRequired;
-    const shouldSleepAfterTurn = userAcceptedSleep || hardSleepRequired;
+      !userAcceptedSleep && !hardSleepRequired &&
+      (!compactionPending || metadata.pendingCompactionReason === "budget_planned");
+    const shouldSleepAfterTurn = userAcceptedSleep || hardSleepRequired || compactionPending;
     const context = wakePending
       ? [
           "<conversation_lifecycle state=\"waking\">",
@@ -653,7 +711,7 @@ export class PiSessionRuntime {
           "Do not claim that a specific amount of real-world time passed unless the trusted current time or user message establishes it. Do not mention context compression, tokens, checkpoints or this instruction.",
           "</conversation_lifecycle>",
         ].join("\n")
-      : shouldSleepAfterTurn
+      : userAcceptedSleep || hardSleepRequired
         ? [
             "<conversation_lifecycle state=\"sleep_transition\">",
             hardSleepRequired
@@ -669,6 +727,13 @@ export class PiSessionRuntime {
               "Do not interrupt a tool call, urgent request or real-world action. Do not claim to have already slept. Do not mention context compression, tokens, checkpoints or this instruction.",
               "</conversation_lifecycle>",
             ].join("\n")
+          : compactionPending
+            ? [
+                "<conversation_lifecycle state=\"rest_pending\">",
+                "The character has already indicated being tired, and the conversation will be checkpointed after the next safe completed exchange.",
+                "Finish the user's current request naturally. Do not repeatedly ask to rest, and do not mention context compression, tokens, checkpoints or this instruction.",
+                "</conversation_lifecycle>",
+              ].join("\n")
           : state === "tired"
             ? [
                 "<conversation_lifecycle state=\"tired_waiting\">",
@@ -682,7 +747,16 @@ export class PiSessionRuntime {
       estimatedTokens,
       shouldSuggestSleep,
       shouldSleepAfterTurn,
+      userAcceptedSleep,
+      hardSleepRequired,
       wakePending,
+      compactionPending,
+      ...(metadata.pendingCompactionReason
+        ? { pendingCompactionReason: metadata.pendingCompactionReason }
+        : {}),
+      compactionEntryCount: handle.sessionManager.getBranch().filter((entry) =>
+        entry.type === "compaction").length,
+      budget,
       context,
     };
   }
@@ -709,39 +783,88 @@ export class PiSessionRuntime {
       metadata.sleepState = "awake";
       delete metadata.tiredAt;
       delete metadata.sleepSuggestedAt;
+      delete metadata.pendingCompactionAt;
+      delete metadata.pendingCompactionReason;
       this.touch(metadata);
       return { compacted: false, woke: true };
     }
-    if (
-      decision.shouldSuggestSleep &&
-      !options.completedSideEffect &&
-      mentionsConversationFatigue(options.assistantText)
-    ) {
+    const mentionedFatigue = decision.state === "tired" &&
+      mentionsConversationFatigue(options.assistantText);
+    if (mentionedFatigue && !metadata.sleepSuggestedAt) {
       metadata.sleepSuggestedAt = this.clock.now().toISOString();
       this.touch(metadata);
     }
+
+    const compactedDuringTurn = handle.sessionManager.getBranch().filter((entry) =>
+      entry.type === "compaction").length > decision.compactionEntryCount;
+    if (compactedDuringTurn) {
+      const reason: PendingConversationCompactionReason =
+        decision.userAcceptedSleep || mentionedFatigue ||
+          decision.pendingCompactionReason === "conversation_sleep"
+          ? "conversation_sleep"
+          : "budget_planned";
+      finishSuccessfulConversationCompaction(metadata, reason, this.clock.now().toISOString());
+      this.touch(metadata);
+      return {
+        compacted: true,
+        woke: false,
+        reason,
+        budgetBefore: decision.budget,
+        budgetAfter: this.contextBudgetForHandle(handle),
+      };
+    }
+
     const budget = this.contextBudgetForHandle(handle);
-    const proactive = options.allowProactiveCompaction !== false && budget.shouldCompact &&
-      this.canCompactAgain(handle, budget);
-    if ((!decision.shouldSleepAfterTurn && !proactive) || options.completedSideEffect) {
+    // Absolute lifecycle thresholds are retained only for deterministic tests
+    // and legacy callers; they must not replace the canonical model budget as
+    // an automatic compaction trigger.
+    const canCompact = this.canCompactAgain(handle, budget);
+    const proactive = budget.shouldCompact && canCompact;
+    const fatigueRequestsCompaction = mentionedFatigue &&
+      ((budget.shouldCompact && canCompact) || decision.compactionPending || decision.hardSleepRequired);
+    const existingReason = metadata.pendingCompactionReason;
+    const requestedReason: PendingConversationCompactionReason | undefined =
+      decision.userAcceptedSleep || decision.hardSleepRequired || fatigueRequestsCompaction ||
+          existingReason === "conversation_sleep"
+        ? "conversation_sleep"
+        : proactive || decision.compactionPending
+          ? "budget_planned"
+          : undefined;
+    if (!requestedReason) {
       return { compacted: false, woke: false };
     }
 
-    const reason = decision.shouldSleepAfterTurn ? "conversation_sleep" : "budget_planned";
-    const compaction = await this.compactHandle(handle, reason);
-    if (decision.shouldSleepAfterTurn) {
-      metadata.sleepState = "sleeping";
-      metadata.sleepCheckpointAt = this.clock.now().toISOString();
-    } else {
-      metadata.sleepState = "awake";
+    const safeBoundary = !options.completedSideEffect &&
+      options.allowProactiveCompaction !== false;
+    if (!safeBoundary) {
+      metadata.sleepState = "tired";
+      metadata.tiredAt ??= this.clock.now().toISOString();
+      metadata.pendingCompactionAt ??= this.clock.now().toISOString();
+      if (
+        requestedReason === "conversation_sleep" ||
+        metadata.pendingCompactionReason !== "conversation_sleep"
+      ) metadata.pendingCompactionReason = requestedReason;
+      this.touch(metadata);
+      return { compacted: false, woke: false };
     }
-    delete metadata.tiredAt;
-    delete metadata.sleepSuggestedAt;
+
+    metadata.pendingCompactionAt ??= this.clock.now().toISOString();
+    if (
+      requestedReason === "conversation_sleep" ||
+      metadata.pendingCompactionReason !== "conversation_sleep"
+    ) metadata.pendingCompactionReason = requestedReason;
+    this.touch(metadata);
+    const compaction = await this.compactHandle(handle, requestedReason);
+    finishSuccessfulConversationCompaction(
+      metadata,
+      requestedReason,
+      this.clock.now().toISOString(),
+    );
     this.touch(metadata);
     return {
       compacted: true,
       woke: false,
-      reason,
+      reason: requestedReason,
       budgetBefore: compaction.budgetBefore,
       budgetAfter: compaction.budgetAfter,
     };
@@ -1204,10 +1327,22 @@ export class PiSessionRuntime {
     const authStorage = AuthStorage.inMemory();
     const modelRegistry = ModelRegistry.inMemory(authStorage);
     const payloadOptions = this.providerPayloadOptions?.(metadata.id) ?? {};
-    const contextWindow = payloadOptions.contextWindowTokens ?? assumedContextWindowTokens;
+    const capacityBudget = buildContextBudget({
+      sessionId: metadata.id,
+      modelProfileId: payloadOptions.modelProfileId ?? "default",
+      model: payloadOptions.model ?? "",
+      contextWindowTokens: payloadOptions.contextWindowTokens,
+      maxOutputTokens: payloadOptions.maxTokens,
+      estimatedInputTokens: 0,
+      updatedAt: metadata.updatedAt,
+    });
+    const contextWindow = capacityBudget.contextWindowTokens;
+    // Pi remains an overflow backstop. Planned compaction is coordinated by
+    // the application at a side-effect-free boundary instead of racing Pi's
+    // turn-internal threshold compaction.
     const autoCompactionReserve = Math.min(
-      Math.max(4_096, contextWindow - 4_096),
-      Math.max(payloadOptions.maxTokens ?? 4_096, Math.floor(contextWindow * 0.2)),
+      Math.max(1_024, contextWindow - 1_024),
+      Math.max(4_096, contextWindow - capacityBudget.usableInputTokens),
     );
     const settingsManager = SettingsManager.inMemory({
       compaction: {
@@ -1881,6 +2016,11 @@ export class PiSessionRuntime {
     return [
       (pi) => {
         pi.on("session_before_compact", (event) => {
+          // Threshold compaction can run before a tool turn returns and would
+          // bypass the durable side-effect boundary. The application performs
+          // the same planned checkpoint after the completed turn; overflow
+          // recovery and explicit/manual compaction remain available.
+          if (event.reason === "threshold") return { cancel: true };
           // Reset before the rewrite is attempted. A failed compaction can cause one
           // duplicate injection; retaining a stale checkpoint can omit memory forever.
           this.contextEconomics.resetResidentMemories(
@@ -1898,13 +2038,34 @@ export class PiSessionRuntime {
             details: { policy: "rp-agent-roleplay-v1" },
           } };
         });
-        pi.on("session_compact", () => {
+        pi.on("session_compact", (event) => {
           this.contextEconomics.resetResidentMemories(
             toolState.sessionId,
             toolState.conversationSpace,
             toolState.conversationSpace === "secret" ? toolState.characterId : undefined,
           );
           toolState.cacheBreakReason = "context_compacted";
+          const metadata = this.metadata.get(toolState.sessionId);
+          if (metadata) {
+            const handle = this.handles.get(toolState.sessionId);
+            const now = this.clock.now().toISOString();
+            metadata.lastCompactionAt = now;
+            metadata.lastCompactionReason = event.reason === "overflow"
+              ? "budget_overflow"
+              : "manual";
+            metadata.lastCompactionStatus = "completed";
+            metadata.lastCompactionEstimatedTokensBefore = Math.max(
+              0,
+              Math.floor(event.compactionEntry.tokensBefore),
+            );
+            if (handle) {
+              metadata.lastCompactionEstimatedTokensAfter =
+                estimateConversationHistoryTokens(handle.session.messages);
+            }
+            delete metadata.lastCompactionError;
+            clearConversationLifecycleAfterCompaction(metadata);
+            this.touch(metadata);
+          }
         });
         pi.on("before_agent_start", () => ({
           systemPrompt: [
@@ -2456,6 +2617,7 @@ export class PiSessionRuntime {
   private contextBudgetForHandle(
     handle: PiSessionHandle,
     projectedAdditionalTokens = 0,
+    includeLatestOutputInProjection = false,
   ): ContextBudgetSnapshot {
     const metadata = handle.metadata;
     const latest = this.contextEconomics.latestForSession(
@@ -2470,16 +2632,28 @@ export class PiSessionRuntime {
     const estimatedBase = latest && latestAfterCompaction
       ? latest.estimatedInputTokens
       : metadata.lastCompactionEstimatedTokensAfter ?? historyEstimate;
-    const actualInputTokens = projectedAdditionalTokens === 0 && latest && latestAfterCompaction
+    const measuredBase = latest && latestAfterCompaction
       ? measuredContextInputTokens(latest.actual)
       : null;
+    const isProjection = projectedAdditionalTokens > 0 || includeLatestOutputInProjection;
+    const projectionBase = isProjection
+      ? Math.max(estimatedBase, measuredBase ?? 0)
+      : estimatedBase;
+    // The latest provider input predates its assistant response. That response
+    // becomes part of the next request, so a turn projection must include it
+    // (or a small envelope reserve when usage is unavailable).
+    const unobservedOutputTokens = includeLatestOutputInProjection && latest && latestAfterCompaction
+      ? Math.max(1_024, latest.actual.outputTokens ?? 0)
+      : includeLatestOutputInProjection ? 1_024 : 0;
+    const actualInputTokens = isProjection ? null : measuredBase;
     return buildContextBudget({
       sessionId: metadata.id,
       modelProfileId: options.modelProfileId ?? "default",
       model: options.model ?? "",
       contextWindowTokens: options.contextWindowTokens,
       maxOutputTokens: options.maxTokens,
-      estimatedInputTokens: estimatedBase + Math.max(0, projectedAdditionalTokens),
+      estimatedInputTokens: projectionBase + Math.max(0, projectedAdditionalTokens) +
+        unobservedOutputTokens,
       actualInputTokens,
       lifecycleState: metadata.sleepState ?? "awake",
       ...(metadata.lastCompactionAt && metadata.lastCompactionStatus && metadata.lastCompactionReason
@@ -2530,6 +2704,7 @@ export class PiSessionRuntime {
       metadata.lastCompactionEstimatedTokensBefore = budgetBefore.estimatedInputTokens;
       metadata.lastCompactionEstimatedTokensAfter = after;
       delete metadata.lastCompactionError;
+      clearConversationLifecycleAfterCompaction(metadata);
       this.touch(metadata);
       return {
         compacted: true,
@@ -2542,6 +2717,7 @@ export class PiSessionRuntime {
       metadata.lastCompactionReason = reason;
       metadata.lastCompactionStatus = "failed";
       metadata.lastCompactionEstimatedTokensBefore = budgetBefore.estimatedInputTokens;
+      delete metadata.lastCompactionEstimatedTokensAfter;
       metadata.lastCompactionError = (error instanceof Error ? error.message : String(error)).slice(0, 1_000);
       this.touch(metadata);
       throw error;
@@ -2781,8 +2957,23 @@ function estimateConversationHistoryTokens(messages: AgentMessage[]): number {
 
 function acceptsConversationSleep(text: string): boolean {
   const normalized = text.replace(/\s+/g, "").trim();
-  if (!normalized || /(?:别|不要|不准|不能)(?:去)?(?:睡|休息)|还不能睡/.test(normalized)) return false;
-  return /^(?:好(?:的|呀|啊|吧)?[,，。！!]*)?(?:(?:你|我们|咱们)?(?:先|去)?(?:睡吧|睡觉吧|休息吧|休息一下吧)|晚安(?:啦|呀|啊|咯|哦)?|我(?:先|要|去)?睡(?:了|觉了)?|一起睡吧)[。！!~～]*$/.test(normalized);
+  if (
+    !normalized ||
+    /[?？]|(?:为什么|为何|要不要|能不能|可不可以|是不是)/.test(normalized) ||
+    /(?:别|不要|不准|不能|还不能)[^，。！？!?]{0,8}(?:睡|休息)|不(?:想|用|必)(?:去)?(?:睡|休息)/.test(
+      normalized,
+    ) || /不(?:去)?(?:睡|休息)/.test(normalized)
+  ) return false;
+  if (
+    /^(?:好(?:的|呀|啊|吧)?[,，。！!]*)?(?:(?:你|我们|咱们)?(?:先|去)?(?:睡吧|睡觉吧|休息吧|休息一下吧)|晚安(?:啦|呀|啊|咯|哦)?|我(?:先|要|去)?睡(?:了|觉了)?|一起睡吧)[。！!~～]*$/.test(
+      normalized,
+    )
+  ) return true;
+  const grantsRest = /(?:你|我们|咱们)[^。！？!?]{0,32}(?:睡|休息)|(?:先|去|安心|好好|早点)(?:睡|休息)/.test(
+    normalized,
+  );
+  const closesExchange = /(?:吧|晚安|明天|改天|醒来|之后|回头|再继续|别撑)/.test(normalized);
+  return grantsRest && closesExchange;
 }
 
 function mentionsConversationFatigue(text: string): boolean {
@@ -3068,17 +3259,51 @@ function isCharacterCollaborationReportMarker(message: AgentMessage): boolean {
 
 function normalizeConversationLifecycleThresholds(
   value?: Partial<ConversationLifecycleThresholds>,
-): ConversationLifecycleThresholds {
+): Partial<ConversationLifecycleThresholds> {
   const tiredTokens = Number.isFinite(value?.tiredTokens) && Number(value?.tiredTokens) > 0
     ? Math.floor(Number(value?.tiredTokens))
-    : defaultConversationLifecycleThresholds.tiredTokens;
-  const requestedHard = Number.isFinite(value?.hardSleepTokens) && Number(value?.hardSleepTokens) > 0
+    : undefined;
+  const hardSleepTokens = Number.isFinite(value?.hardSleepTokens) && Number(value?.hardSleepTokens) > 0
     ? Math.floor(Number(value?.hardSleepTokens))
-    : defaultConversationLifecycleThresholds.hardSleepTokens;
+    : undefined;
   return {
-    tiredTokens,
-    hardSleepTokens: Math.max(tiredTokens, requestedHard),
+    ...(tiredTokens === undefined ? {} : { tiredTokens }),
+    ...(hardSleepTokens === undefined
+      ? {}
+      : { hardSleepTokens: Math.max(tiredTokens ?? 1, hardSleepTokens) }),
   };
+}
+
+function conversationLifecyclePressure(
+  budget: ContextBudgetSnapshot,
+  historyTokens: number,
+  thresholds: Partial<ConversationLifecycleThresholds>,
+): { tired: boolean; hard: boolean } {
+  const hard = budget.level === "critical" ||
+    (thresholds.hardSleepTokens !== undefined && historyTokens >= thresholds.hardSleepTokens);
+  const tired = hard || budget.shouldCompact ||
+    (thresholds.tiredTokens !== undefined && historyTokens >= thresholds.tiredTokens);
+  return { tired, hard };
+}
+
+function clearConversationLifecycleAfterCompaction(metadata: ConversationMetadata): void {
+  metadata.sleepState = "awake";
+  delete metadata.tiredAt;
+  delete metadata.sleepSuggestedAt;
+  delete metadata.pendingCompactionAt;
+  delete metadata.pendingCompactionReason;
+}
+
+function finishSuccessfulConversationCompaction(
+  metadata: ConversationMetadata,
+  reason: PendingConversationCompactionReason,
+  now: string,
+): void {
+  clearConversationLifecycleAfterCompaction(metadata);
+  if (reason === "conversation_sleep") {
+    metadata.sleepState = "sleeping";
+    metadata.sleepCheckpointAt = now;
+  }
 }
 
 function normalizeSubagentTimeoutMs(value?: number): number {
@@ -3223,6 +3448,18 @@ function normalizeMetadata(value: unknown): ConversationMetadata | undefined {
   if (!id || !mode || !createdAt || !updatedAt) {
     return undefined;
   }
+  const pendingCompactionReason = value.pendingCompactionReason === "conversation_sleep" ||
+      value.pendingCompactionReason === "budget_planned"
+    ? value.pendingCompactionReason
+    : undefined;
+  const pendingCompactionAt = pendingCompactionReason &&
+      typeof value.pendingCompactionAt === "string" && value.pendingCompactionAt.trim()
+    ? value.pendingCompactionAt.trim()
+    : undefined;
+  const lastCompactionStatus = value.lastCompactionStatus === "completed" ||
+      value.lastCompactionStatus === "failed"
+    ? value.lastCompactionStatus
+    : undefined;
   return {
     id,
     mode,
@@ -3246,11 +3483,33 @@ function normalizeMetadata(value: unknown): ConversationMetadata | undefined {
     tiredAt: typeof value.tiredAt === "string" ? value.tiredAt : undefined,
     sleepSuggestedAt: typeof value.sleepSuggestedAt === "string" ? value.sleepSuggestedAt : undefined,
     sleepCheckpointAt: typeof value.sleepCheckpointAt === "string" ? value.sleepCheckpointAt : undefined,
+    pendingCompactionAt,
+    pendingCompactionReason: pendingCompactionAt ? pendingCompactionReason : undefined,
+    lastCompactionAt: typeof value.lastCompactionAt === "string" ? value.lastCompactionAt : undefined,
+    lastCompactionReason: typeof value.lastCompactionReason === "string" && value.lastCompactionReason.trim()
+      ? value.lastCompactionReason.trim().slice(0, 120)
+      : undefined,
+    lastCompactionStatus,
+    lastCompactionEstimatedTokensBefore: finiteMetadataTokenCount(
+      value.lastCompactionEstimatedTokensBefore,
+    ),
+    lastCompactionEstimatedTokensAfter: finiteMetadataTokenCount(
+      value.lastCompactionEstimatedTokensAfter,
+    ),
+    lastCompactionError: typeof value.lastCompactionError === "string" && value.lastCompactionError
+      ? value.lastCompactionError.slice(0, 1_000)
+      : undefined,
     piSessionId: typeof value.piSessionId === "string" ? value.piSessionId : undefined,
     piSessionFile: typeof value.piSessionFile === "string" ? value.piSessionFile : undefined,
     createdAt,
     updatedAt,
   };
+}
+
+function finiteMetadataTokenCount(value: unknown): number | undefined {
+  return typeof value === "number" && Number.isFinite(value) && value >= 0
+    ? Math.floor(value)
+    : undefined;
 }
 
 function normalizeConversationTitle(value: string): string {

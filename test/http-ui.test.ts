@@ -1066,6 +1066,8 @@ test("server serves chat UI and debug model traces", async () => {
     assert.match(html, /id="sceneInfoDialog"/);
     assert.match(html, /id="contextBudgetBtn"/);
     assert.match(html, /id="contextBudgetDialog"/);
+    assert.match(html, /计划整理阈值/);
+    assert.match(html, /紧急保护阈值/);
     assert.match(html, /Provider 实测（含缓存）/);
     assert.match(html, /\["本地估算", formatTokenCount\(budget\.estimatedInputTokens\)\]/);
     assert.match(html, /api\/v1\/sessions\/.*\/context-budget/);

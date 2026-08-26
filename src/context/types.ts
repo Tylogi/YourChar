@@ -129,6 +129,9 @@ export type ContextBudgetSnapshot = {
   remainingRatio: number;
   utilizationRatio: number;
   level: "healthy" | "warning" | "critical";
+  warningThresholdTokens: number;
+  plannedThresholdTokens: number;
+  criticalThresholdTokens: number;
   shouldCompact: boolean;
   lifecycleState: "awake" | "tired" | "sleeping";
   lastCompaction?: {

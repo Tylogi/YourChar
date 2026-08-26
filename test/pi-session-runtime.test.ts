@@ -21,7 +21,7 @@ import {
 } from "../src/domain/index.js";
 import { createHttpServer } from "../src/http/router.js";
 import { PiSessionIntegrityError, SessionModeMismatchError } from "../src/pi/index.js";
-import { ScriptedModelController } from "../src/testing/runtime.js";
+import { createTestRuntime, ScriptedModelController } from "../src/testing/runtime.js";
 
 test("Pi AgentSession transcript persists and resumes after kernel restart", async () => {
   const stateDir = mkdtempSync(join(tmpdir(), "rp-agent-pi-session-"));
@@ -286,7 +286,12 @@ test("a rest checkpoint survives kernel restart and wakes on the next turn", asy
   let first: CompanionKernel | undefined;
   let second: CompanionKernel | undefined;
   try {
-    first = createPersistentScriptedKernel(stateDir, model);
+    first = createPersistentScriptedKernel(
+      stateDir,
+      model,
+      true,
+      { tiredTokens: 12_000, hardSleepTokens: 60_000 },
+    );
     const character = first.createCharacter({ name: "苏言" });
     first.writeRpMemory({
       realm: RP_MEMORY_REALM,
@@ -331,10 +336,38 @@ test("a rest checkpoint survives kernel restart and wakes on the next turn", asy
     assert.equal(first.listConversationMetadata().find((entry) =>
       entry.id === "compact-restart"
     )?.sleepState, "sleeping");
+    const compactionMetadata = first.listConversationMetadata().find((entry) =>
+      entry.id === "compact-restart"
+    );
+    assert.equal(compactionMetadata?.lastCompactionStatus, "completed");
+    assert.equal(compactionMetadata?.lastCompactionReason, "conversation_sleep");
+    assert.ok(compactionMetadata?.lastCompactionAt);
+    assert.ok((compactionMetadata?.lastCompactionEstimatedTokensBefore ?? 0) > 0);
+    assert.ok((compactionMetadata?.lastCompactionEstimatedTokensAfter ?? Infinity) <
+      (compactionMetadata?.lastCompactionEstimatedTokensBefore ?? 0));
     first.dispose();
     first = undefined;
 
-    second = createPersistentScriptedKernel(stateDir, model, false);
+    second = createPersistentScriptedKernel(
+      stateDir,
+      model,
+      false,
+      { tiredTokens: 12_000, hardSleepTokens: 60_000 },
+    );
+    const restoredCompactionMetadata = second.listConversationMetadata().find((entry) =>
+      entry.id === "compact-restart"
+    );
+    assert.equal(restoredCompactionMetadata?.lastCompactionStatus, "completed");
+    assert.equal(restoredCompactionMetadata?.lastCompactionReason, "conversation_sleep");
+    assert.equal(restoredCompactionMetadata?.lastCompactionAt, compactionMetadata?.lastCompactionAt);
+    assert.equal(
+      restoredCompactionMetadata?.lastCompactionEstimatedTokensBefore,
+      compactionMetadata?.lastCompactionEstimatedTokensBefore,
+    );
+    assert.equal(
+      restoredCompactionMetadata?.lastCompactionEstimatedTokensAfter,
+      compactionMetadata?.lastCompactionEstimatedTokensAfter,
+    );
     const beforeNextTurn = await second.getSession("compact-restart");
     assert.ok(beforeNextTurn.messages.some((message) => message.role === "compactionSummary"));
     assert.ok(beforeNextTurn.messages.some((message) =>
@@ -366,16 +399,138 @@ test("a rest checkpoint survives kernel restart and wakes on the next turn", asy
   }
 });
 
+test("a side-effect deferred checkpoint survives restart and runs at the next safe boundary", async () => {
+  const stateDir = mkdtempSync(join(tmpdir(), "rp-agent-pending-compaction-restart-"));
+  const workspaceDir = join(stateDir, "workspace");
+  let first: ReturnType<typeof createTestRuntime> | undefined;
+  let second: ReturnType<typeof createTestRuntime> | undefined;
+  try {
+    first = createTestRuntime({
+      stateDir,
+      workspaceDir,
+      seed: "pending-compaction-restart-first",
+      conversationLifecycleThresholds: { tiredTokens: 1, hardSleepTokens: 1_000_000 },
+    });
+    first.kernel.patchAgentPermissions({ workspaceAccess: "read_write" });
+    first.model.enqueue([
+      { kind: "assistant_text", text: `第一轮交流完成。${"abcd".repeat(6_000)}` },
+      { kind: "tool_call", name: "write", arguments: { path: "second.txt", content: "second" } },
+      {
+        kind: "assistant_text",
+        text: "第二项操作也完成了，我有些困了，等安全的时候休息一下。",
+      },
+    ]);
+    await first.kernel.sendMessage("pending-restart", { mode: "sms", text: "先聊一句" });
+    await first.kernel.sendMessage("pending-restart", { mode: "sms", text: "你先休息吧" });
+    const pendingBeforeRestart = first.kernel.listConversationMetadata().find((entry) =>
+      entry.id === "pending-restart"
+    );
+    assert.ok(pendingBeforeRestart?.pendingCompactionAt);
+    assert.ok(pendingBeforeRestart?.pendingCompactionReason);
+    assert.ok(pendingBeforeRestart?.sleepSuggestedAt);
+    first.dispose();
+    first = undefined;
+
+    second = createTestRuntime({
+      stateDir,
+      workspaceDir,
+      seed: "pending-compaction-restart-second",
+      conversationLifecycleThresholds: { tiredTokens: 1, hardSleepTokens: 1_000_000 },
+    });
+    const restoredPending = second.kernel.listConversationMetadata().find((entry) =>
+      entry.id === "pending-restart"
+    );
+    assert.equal(restoredPending?.pendingCompactionAt, pendingBeforeRestart?.pendingCompactionAt);
+    assert.equal(restoredPending?.pendingCompactionReason, pendingBeforeRestart?.pendingCompactionReason);
+    assert.equal(restoredPending?.sleepSuggestedAt, pendingBeforeRestart?.sleepSuggestedAt);
+
+    second.model.enqueue([
+      { kind: "assistant_text", text: "工具操作链已经结束。" },
+      { kind: "assistant_text", text: "重启后执行的安全整理摘要。" },
+    ]);
+    const safeTurn = await second.kernel.sendMessage("pending-restart", {
+      mode: "sms",
+      text: "现在可以继续了",
+    });
+    assert.equal(safeTurn.status, "completed");
+    const handle = await second.kernel.sessionRuntime.getOrCreate("pending-restart", "sms");
+    assert.ok(handle.sessionManager.getEntries().some((entry) => entry.type === "compaction"));
+    const after = second.kernel.listConversationMetadata().find((entry) => entry.id === "pending-restart");
+    assert.equal(after?.pendingCompactionAt, undefined);
+    assert.equal(after?.pendingCompactionReason, undefined);
+    assert.equal(after?.lastCompactionStatus, "completed");
+  } finally {
+    first?.dispose();
+    second?.dispose();
+    rmSync(stateDir, { recursive: true, force: true });
+  }
+});
+
+test("a legacy 32k tired marker self-heals after restart when the canonical budget is healthy", async () => {
+  const stateDir = mkdtempSync(join(tmpdir(), "rp-agent-legacy-tired-restart-"));
+  let first: ReturnType<typeof createTestRuntime> | undefined;
+  let second: ReturnType<typeof createTestRuntime> | undefined;
+  try {
+    first = createTestRuntime({ stateDir, seed: "legacy-tired-restart-first" });
+    first.kernel.patchModelApiConfig({ contextWindowTokens: 131_072, maxTokens: 4_096 });
+    first.model.enqueue([{
+      kind: "assistant_text",
+      text: "这是一段实际预算很健康的历史。",
+      usage: { input: 8_000, output: 64 },
+    }]);
+    await first.kernel.sendMessage("legacy-tired", { mode: "sms", text: "保留这段短对话" });
+    first.dispose();
+    first = undefined;
+
+    const indexPath = join(stateDir, "conversations.json");
+    const index = JSON.parse(readFileSync(indexPath, "utf8")) as {
+      conversations: Array<Record<string, unknown>>;
+    };
+    const legacy = index.conversations.find((entry) => entry.id === "legacy-tired");
+    assert.ok(legacy);
+    legacy.sleepState = "tired";
+    legacy.tiredAt = "2026-01-01T00:01:00.000Z";
+    legacy.sleepSuggestedAt = "2026-01-01T00:01:01.000Z";
+    writeFileSync(indexPath, `${JSON.stringify(index, null, 2)}\n`, "utf8");
+
+    second = createTestRuntime({ stateDir, seed: "legacy-tired-restart-second" });
+    second.kernel.patchModelApiConfig({ contextWindowTokens: 131_072, maxTokens: 4_096 });
+    assert.equal(
+      second.kernel.listConversationMetadata().find((entry) => entry.id === "legacy-tired")?.sleepState,
+      "tired",
+    );
+    second.model.enqueue([{
+      kind: "assistant_text",
+      text: "实际余量充足，我们正常继续。",
+      usage: { input: 9_000, output: 64 },
+    }]);
+    await second.kernel.sendMessage("legacy-tired", { mode: "sms", text: "继续" });
+
+    const healed = second.kernel.listConversationMetadata().find((entry) => entry.id === "legacy-tired");
+    assert.equal(healed?.sleepState, "awake");
+    assert.equal(healed?.tiredAt, undefined);
+    assert.equal(healed?.sleepSuggestedAt, undefined);
+    const request = second.model.requests.find((entry) => JSON.stringify(entry.messages).includes("继续"));
+    assert.doesNotMatch(JSON.stringify(request?.messages), /conversation_lifecycle[^]*state=\\?"tired/);
+  } finally {
+    first?.dispose();
+    second?.dispose();
+    rmSync(stateDir, { recursive: true, force: true });
+  }
+});
+
 function createPersistentScriptedKernel(
   stateDir: string,
   model: ScriptedModelController,
   configure = true,
+  conversationLifecycleThresholds?: { tiredTokens: number; hardSleepTokens: number },
 ): CompanionKernel {
   const kernel = new CompanionKernel({
     stateDir,
     modelResolver: model.resolver,
     startScheduler: false,
     quietHours: false,
+    conversationLifecycleThresholds,
   });
   if (configure) {
     kernel.patchModelApiConfig({

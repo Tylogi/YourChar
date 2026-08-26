@@ -3,7 +3,10 @@ import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
-import { normalizeActualProviderUsage } from "../src/context/provider-usage.js";
+import {
+  measuredContextInputTokens,
+  normalizeActualProviderUsage,
+} from "../src/context/provider-usage.js";
 import { createHttpServer } from "../src/http/router.js";
 import { memoryCoordinatorMcpModuleId } from "../src/modules/catalog.js";
 import type { MemoryCandidateInput } from "../src/memory-coordinator/types.js";
@@ -394,10 +397,302 @@ test("economics keeps stable system hashes, exact LCP evidence, and actual usage
   }
 });
 
+test("conversation fatigue follows the canonical model budget instead of raw oversized tool transcripts", async () => {
+  const stateDir = mkdtempSync(join(tmpdir(), "rp-agent-r4-budget-lifecycle-"));
+  const workspaceDir = join(stateDir, "workspace");
+  const runtime = createTestRuntime({ stateDir, workspaceDir, seed: "r4-budget-lifecycle" });
+  try {
+    runtime.kernel.patchModelApiConfig({ contextWindowTokens: 32_768, maxTokens: 2_048 });
+    runtime.kernel.patchAgentPermissions({ workspaceAccess: "read_only" });
+    writeFileSync(
+      join(workspaceDir, "oversized-result.txt"),
+      `${"0123456789".repeat(16_000)}RAW_TOOL_RESULT_TAIL`,
+      "utf8",
+    );
+    runtime.model.enqueue([
+      { kind: "tool_call", name: "read", arguments: { path: "oversized-result.txt", limit: 1 } },
+      {
+        kind: "assistant_text",
+        text: "大文件已经读取，当前模型上下文仍有充足余量。",
+      },
+      {
+        kind: "assistant_text",
+        text: "我可以继续处理。",
+      },
+    ]);
+
+    await runtime.kernel.sendMessage("raw-tool-budget", { mode: "sms", text: "读取这个大文件" });
+    assert.ok(
+      JSON.stringify((await runtime.kernel.getSession("raw-tool-budget")).messages).length > 128_000,
+      "the durable transcript must retain the raw tool result used by this regression",
+    );
+    await runtime.kernel.sendMessage("raw-tool-budget", { mode: "sms", text: "继续分析" });
+
+    const metadata = runtime.kernel.listConversationMetadata().find((entry) =>
+      entry.id === "raw-tool-budget"
+    );
+    const budget = await runtime.kernel.getConversationContextBudget("raw-tool-budget");
+    const followUpRequest = runtime.model.requests.find((request) =>
+      JSON.stringify(request.messages).includes("继续分析")
+    );
+    const handle = await runtime.kernel.sessionRuntime.getOrCreate("raw-tool-budget", "sms");
+    assert.equal(budget.level, "healthy");
+    assert.equal(
+      budget.usedInputTokens,
+      measuredContextInputTokens(runtime.kernel.recentContextEconomics(1)[0].actual),
+    );
+    assert.ok(budget.usedInputTokens < budget.plannedThresholdTokens);
+    assert.equal(metadata?.sleepState ?? "awake", "awake");
+    assert.doesNotMatch(JSON.stringify(followUpRequest?.messages), /conversation_lifecycle[^]*state=\\?"tired/);
+    assert.equal(handle.sessionManager.getEntries().some((entry) => entry.type === "compaction"), false);
+  } finally {
+    runtime.dispose();
+    rmSync(stateDir, { recursive: true, force: true });
+  }
+});
+
+test("planned pressure starts near ninety percent of a small simulated window, not at warning pressure", async () => {
+  const runtime = createTestRuntime({ seed: "r4-planned-pressure" });
+  try {
+    runtime.kernel.patchModelApiConfig({ contextWindowTokens: 32_768, maxTokens: 2_048 });
+    runtime.model.enqueue([
+      {
+        kind: "assistant_text",
+        text: `八成多的占用还不需要打断对话。${"abcd".repeat(9_000)}`,
+      },
+      {
+        kind: "assistant_text",
+        text: "我仍然可以自然地继续。",
+      },
+      { kind: "assistant_text", text: "继续也不需要发出困倦提示。" },
+    ]);
+
+    await runtime.kernel.sendMessage("planned-pressure", { mode: "sms", text: "第一轮" });
+    await runtime.kernel.sendMessage("planned-pressure", { mode: "sms", text: "第二轮" });
+    const warningBudget = await runtime.kernel.getConversationContextBudget("planned-pressure");
+    assert.equal(warningBudget.level, "warning");
+    assert.ok(warningBudget.usedInputTokens >= warningBudget.warningThresholdTokens);
+    assert.ok(warningBudget.usedInputTokens < warningBudget.plannedThresholdTokens);
+    assert.equal(warningBudget.shouldCompact, false);
+
+    await runtime.kernel.sendMessage("planned-pressure", { mode: "sms", text: "再继续一轮" });
+    const followUpRequest = runtime.model.requests.find((request) =>
+      JSON.stringify(request.messages).includes("再继续一轮")
+    );
+    const handle = await runtime.kernel.sessionRuntime.getOrCreate("planned-pressure", "sms");
+    assert.equal(
+      runtime.kernel.listConversationMetadata().find((entry) => entry.id === "planned-pressure")
+        ?.sleepState ?? "awake",
+      "awake",
+    );
+    assert.doesNotMatch(JSON.stringify(followUpRequest?.messages), /conversation_lifecycle[^]*state=\\?"tired/);
+    assert.equal(handle.sessionManager.getEntries().some((entry) => entry.type === "compaction"), false);
+  } finally {
+    runtime.dispose();
+  }
+});
+
+test("a conservative turn projection can suggest fatigue but cannot checkpoint below measured planned pressure", async () => {
+  const stateDir = mkdtempSync(join(tmpdir(), "rp-agent-r4-projection-recovery-"));
+  const workspaceDir = join(stateDir, "workspace");
+  const runtime = createTestRuntime({ stateDir, workspaceDir, seed: "r4-projection-recovery" });
+  try {
+    runtime.kernel.patchModelApiConfig({ contextWindowTokens: 65_536, maxTokens: 2_048 });
+    runtime.kernel.patchAgentPermissions({ workspaceAccess: "read_write" });
+    runtime.model.enqueue([
+      { kind: "assistant_text", text: `投影边界上下文。${"abcd".repeat(44_000)}` },
+      { kind: "tool_call", name: "write", arguments: { path: "projection.txt", content: "done" } },
+      { kind: "assistant_text", text: "文件写好了，我有点困了。" },
+      { kind: "assistant_text", text: "实测余量充足，我们正常继续。" },
+    ]);
+
+    await runtime.kernel.sendMessage("projection-recovery", { mode: "sms", text: "先保留背景" });
+    await runtime.kernel.sendMessage("projection-recovery", { mode: "sms", text: "写入结果" });
+    const measured = await runtime.kernel.getConversationContextBudget("projection-recovery");
+    const projectedMetadata = runtime.kernel.listConversationMetadata().find((entry) =>
+      entry.id === "projection-recovery"
+    );
+    const handle = await runtime.kernel.sessionRuntime.getOrCreate("projection-recovery", "sms");
+    assert.ok(measured.usedInputTokens < measured.plannedThresholdTokens);
+    assert.equal(projectedMetadata?.sleepState, "tired");
+    assert.ok(projectedMetadata?.sleepSuggestedAt);
+    assert.equal(projectedMetadata?.pendingCompactionAt, undefined);
+    assert.equal(handle.sessionManager.getEntries().some((entry) => entry.type === "compaction"), false);
+
+    await runtime.kernel.sendMessage("projection-recovery", { mode: "sms", text: "继续" });
+    const healed = runtime.kernel.listConversationMetadata().find((entry) =>
+      entry.id === "projection-recovery"
+    );
+    assert.equal(healed?.sleepState, "awake");
+    assert.equal(healed?.sleepSuggestedAt, undefined);
+    assert.equal(healed?.pendingCompactionAt, undefined);
+    assert.equal(handle.sessionManager.getEntries().some((entry) => entry.type === "compaction"), false);
+  } finally {
+    runtime.dispose();
+    rmSync(stateDir, { recursive: true, force: true });
+  }
+});
+
+test("a tired tool turn is checkpointed at the next safe boundary without another fatigue prompt", async () => {
+  const stateDir = mkdtempSync(join(tmpdir(), "rp-agent-r4-pending-checkpoint-"));
+  const workspaceDir = join(stateDir, "workspace");
+  const runtime = createTestRuntime({ stateDir, workspaceDir, seed: "r4-pending-checkpoint" });
+  try {
+    runtime.kernel.patchModelApiConfig({ contextWindowTokens: 65_536, maxTokens: 2_048 });
+    runtime.kernel.patchAgentPermissions({ workspaceAccess: "read_write" });
+    runtime.model.enqueue([
+      {
+        kind: "assistant_text",
+        text: `这是后续操作需要保留的上下文。${"abcd".repeat(46_000)}`,
+      },
+      { kind: "tool_call", name: "write", arguments: { path: "second.txt", content: "second" } },
+      {
+        kind: "assistant_text",
+        text: "第二项也完成了，我确实有点困了，想在安全的时候休息一下。",
+      },
+      {
+        kind: "assistant_text",
+        text: "当前操作链结束了。",
+      },
+      { kind: "assistant_text", text: "较早对话的安全整理摘要。" },
+    ]);
+
+    await runtime.kernel.sendMessage("pending-checkpoint", { mode: "sms", text: "先梳理操作背景" });
+    await runtime.kernel.sendMessage("pending-checkpoint", { mode: "sms", text: "再写第二个文件" });
+    const afterSideEffect = runtime.kernel.listConversationMetadata().find((entry) =>
+      entry.id === "pending-checkpoint"
+    );
+    assert.equal(afterSideEffect?.sleepState, "tired");
+    assert.ok(afterSideEffect?.sleepSuggestedAt, "a fatigue line must be latched even on a tool side-effect turn");
+    assert.ok(afterSideEffect?.pendingCompactionAt, "the deferred safe checkpoint must be durable");
+    assert.ok(
+      afterSideEffect?.pendingCompactionReason === "conversation_sleep" ||
+        afterSideEffect?.pendingCompactionReason === "budget_planned",
+    );
+    const pendingBudget = await runtime.kernel.getConversationContextBudget("pending-checkpoint");
+    assert.ok(pendingBudget.usedInputTokens >= pendingBudget.plannedThresholdTokens);
+    const beforeSafeHandle = await runtime.kernel.sessionRuntime.getOrCreate("pending-checkpoint", "sms");
+    assert.equal(
+      beforeSafeHandle.sessionManager.getEntries().some((entry) => entry.type === "compaction"),
+      false,
+    );
+
+    await runtime.kernel.sendMessage("pending-checkpoint", { mode: "sms", text: "现在继续" });
+    const safeBoundaryRequest = runtime.model.requests.find((request) =>
+      JSON.stringify(request.messages).includes("现在继续")
+    );
+    const safeBoundaryPayload = JSON.stringify(safeBoundaryRequest?.messages);
+    assert.doesNotMatch(safeBoundaryPayload, /naturally say once that the character is getting tired/);
+    assert.ok(beforeSafeHandle.sessionManager.getEntries().some((entry) => entry.type === "compaction"));
+    const afterCheckpoint = runtime.kernel.listConversationMetadata().find((entry) =>
+      entry.id === "pending-checkpoint"
+    );
+    assert.equal(afterCheckpoint?.sleepSuggestedAt, undefined);
+    assert.equal(afterCheckpoint?.pendingCompactionAt, undefined);
+    assert.equal(afterCheckpoint?.pendingCompactionReason, undefined);
+    assert.equal(
+      runtime.kernel.store.actions.some((action) =>
+        action.actionType === "conversation_sleep_checkpoint" && action.status === "completed"
+      ) || runtime.kernel.store.actions.some((action) =>
+        action.actionType === "context_compaction" && action.status === "completed"
+      ),
+      true,
+    );
+  } finally {
+    runtime.dispose();
+    rmSync(stateDir, { recursive: true, force: true });
+  }
+});
+
+test("Pi threshold compaction is cancelled inside a side-effect turn and recorded as pending", async () => {
+  const stateDir = mkdtempSync(join(tmpdir(), "rp-agent-r4-pi-threshold-"));
+  const workspaceDir = join(stateDir, "workspace");
+  const runtime = createTestRuntime({
+    stateDir,
+    workspaceDir,
+    seed: "r4-pi-threshold",
+    scriptedModelContextWindowTokens: 10_000,
+    conversationLifecycleThresholds: { tiredTokens: 1, hardSleepTokens: 1_000_000 },
+  });
+  try {
+    runtime.kernel.patchModelApiConfig({ contextWindowTokens: 32_768, maxTokens: 2_048 });
+    runtime.kernel.patchAgentPermissions({ workspaceAccess: "read_write" });
+    runtime.model.enqueue([
+      { kind: "assistant_text", text: "前置交流完成。" },
+      { kind: "tool_call", name: "write", arguments: { path: "threshold.txt", content: "done" } },
+      { kind: "assistant_text", text: "文件已经写完，我有些困了。" },
+    ]);
+
+    await runtime.kernel.sendMessage("pi-threshold-side-effect", { mode: "sms", text: "先聊一句" });
+    await runtime.kernel.sendMessage("pi-threshold-side-effect", { mode: "sms", text: "你先休息吧" });
+
+    const handle = await runtime.kernel.sessionRuntime.getOrCreate("pi-threshold-side-effect", "sms");
+    const metadata = runtime.kernel.listConversationMetadata().find((entry) =>
+      entry.id === "pi-threshold-side-effect"
+    );
+    assert.equal(handle.sessionManager.getEntries().some((entry) => entry.type === "compaction"), false);
+    assert.ok(metadata?.pendingCompactionAt);
+    assert.equal(metadata?.pendingCompactionReason, "conversation_sleep");
+    assert.equal(metadata?.sleepState, "tired");
+  } finally {
+    runtime.dispose();
+    rmSync(stateDir, { recursive: true, force: true });
+  }
+});
+
+test("natural rest consent and the exact legacy good-night phrase both checkpoint a tired conversation", async (context) => {
+  const cases = [
+    {
+      name: "natural long consent",
+      userText: "好啦，你今天也忙了很久，就先安心休息一下吧，我们明天醒来再继续聊。",
+    },
+    { name: "legacy exact good-night", userText: "晚安咯" },
+  ];
+  for (const [index, scenario] of cases.entries()) {
+    await context.test(scenario.name, async () => {
+      const root = mkdtempSync(join(tmpdir(), `rp-agent-r4-rest-consent-${index}-`));
+      const runtime = createTestRuntime({
+        stateDir: root,
+        workspaceDir: join(root, "workspace"),
+        seed: `r4-rest-consent-${index}`,
+        conversationLifecycleThresholds: { tiredTokens: 1, hardSleepTokens: 1_000_000 },
+      });
+      try {
+        runtime.model.enqueue([
+          { kind: "assistant_text", text: `前置交流完成。${"abcd".repeat(6_000)}` },
+          { kind: "assistant_text", text: "晚安，我先安心休息，醒来后我们再继续。" },
+          { kind: "assistant_text", text: "保留关系、约定和未完成事项的整理摘要。" },
+        ]);
+        const sessionId = `rest-consent-${index}`;
+        await runtime.kernel.sendMessage(sessionId, { mode: "sms", text: "先聊一句" });
+        const resting = await runtime.kernel.sendMessage(sessionId, {
+          mode: "sms",
+          text: scenario.userText,
+        });
+        const handle = await runtime.kernel.sessionRuntime.getOrCreate(sessionId, "sms");
+        assert.equal(resting.status, "completed");
+        assert.ok(handle.sessionManager.getEntries().some((entry) => entry.type === "compaction"));
+        assert.equal(
+          runtime.kernel.listConversationMetadata().find((entry) => entry.id === sessionId)?.sleepState,
+          "sleeping",
+        );
+      } finally {
+        runtime.dispose();
+        rmSync(root, { recursive: true, force: true });
+      }
+    });
+  }
+});
+
 test("30 long turns defer compaction until rest and preserve bounded memory context after waking", async () => {
   const stateDir = mkdtempSync(join(tmpdir(), "rp-agent-r4-long-"));
-  const runtime = createTestRuntime({ stateDir, seed: "r4-long" });
+  const runtime = createTestRuntime({
+    stateDir,
+    seed: "r4-long",
+    conversationLifecycleThresholds: { tiredTokens: 32_000, hardSleepTokens: 60_000 },
+  });
   try {
+    runtime.kernel.patchModelApiConfig({ contextWindowTokens: 262_144, maxTokens: 4_096 });
     const core = active(runtime, {
       realm: "reality",
       type: "boundary",

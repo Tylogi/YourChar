@@ -3,6 +3,10 @@ import { roundMetric } from "./tokens.js";
 
 export const assumedContextWindowTokens = 131_072;
 export const defaultMaxOutputTokens = 4_096;
+export const maximumPlannedInputTokens = 131_072;
+export const plannedInputUtilizationRatio = 0.9;
+export const warningInputUtilizationRatio = 0.85;
+export const criticalInputUtilizationRatio = 0.95;
 
 export type ContextBudgetInput = {
   sessionId: string;
@@ -41,9 +45,21 @@ export function buildContextBudget(input: ContextBudgetInput): ContextBudgetSnap
   const remainingTokens = Math.max(0, usableInputTokens - usedInputTokens);
   const utilizationRatio = roundMetric(Math.min(1, usedInputTokens / usableInputTokens));
   const remainingRatio = roundMetric(Math.max(0, 1 - utilizationRatio));
-  const level = utilizationRatio >= 0.9
+  const plannedThresholdTokens = Math.max(1, Math.min(
+    maximumPlannedInputTokens,
+    Math.floor(usableInputTokens * plannedInputUtilizationRatio),
+  ));
+  const warningThresholdTokens = Math.max(1, Math.min(
+    Math.floor(plannedThresholdTokens * warningInputUtilizationRatio),
+    Math.floor(usableInputTokens * warningInputUtilizationRatio),
+  ));
+  const criticalThresholdTokens = Math.max(
+    plannedThresholdTokens,
+    Math.floor(usableInputTokens * criticalInputUtilizationRatio),
+  );
+  const level = usedInputTokens >= criticalThresholdTokens
     ? "critical"
-    : utilizationRatio >= 0.75 ? "warning" : "healthy";
+    : usedInputTokens >= warningThresholdTokens ? "warning" : "healthy";
   return {
     sessionId: input.sessionId,
     modelProfileId: input.modelProfileId,
@@ -61,7 +77,10 @@ export function buildContextBudget(input: ContextBudgetInput): ContextBudgetSnap
     remainingRatio,
     utilizationRatio,
     level,
-    shouldCompact: utilizationRatio >= 0.8,
+    warningThresholdTokens,
+    plannedThresholdTokens,
+    criticalThresholdTokens,
+    shouldCompact: usedInputTokens >= plannedThresholdTokens,
     lifecycleState: input.lifecycleState ?? "awake",
     ...(input.lastCompaction ? { lastCompaction: { ...input.lastCompaction } } : {}),
     updatedAt: input.updatedAt,

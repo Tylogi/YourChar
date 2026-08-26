@@ -79,6 +79,8 @@ export type CreateTestRuntimeOptions = {
   webReaderService?: WebReaderService;
   conversationLifecycleThresholds?: Partial<ConversationLifecycleThresholds>;
   subagentTimeoutMs?: number;
+  /** Keep the scripted Pi model's own window aligned with a small configured profile in budget tests. */
+  scriptedModelContextWindowTokens?: number;
   privateInboxOptions?: PrivateInboxCoordinatorOptions;
   startPrivateInboxCoordinator?: boolean;
   imGateway?: ImGateway | false;
@@ -91,12 +93,18 @@ export class ScriptedModelController {
   private readonly registered = new WeakSet<object>();
   private toolCallSequence = 0;
 
-  constructor(id: string) {
+  constructor(id: string, options: { contextWindowTokens?: number } = {}) {
     const provider = `rp-test-${id}`;
     this.core = createFauxCore({
       api: provider,
       provider,
-      models: [{ id: "scripted-model", name: "Scripted Model" }],
+      models: [{
+        id: "scripted-model",
+        name: "Scripted Model",
+        ...(options.contextWindowTokens === undefined
+          ? {}
+          : { contextWindow: options.contextWindowTokens }),
+      }],
     });
     this.resolver = ({ authStorage, modelRegistry }) => {
       if (!this.registered.has(modelRegistry)) {
@@ -193,7 +201,9 @@ export class TestRuntime {
   constructor(readonly id: string, options: CreateTestRuntimeOptions = {}) {
     this.clock = new VirtualClock(options.now ?? "2026-01-01T00:00:00.000Z");
     this.timezone = options.timezone ?? "Asia/Shanghai";
-    this.model = new ScriptedModelController(id);
+    this.model = new ScriptedModelController(id, {
+      contextWindowTokens: options.scriptedModelContextWindowTokens,
+    });
     this.kernel = new CompanionKernel({
       stateDir: options.stateDir ?? false,
       clock: this.clock,

@@ -26,6 +26,54 @@ test("context budget deducts output and safety reserves from a configured model 
   assert.equal(budget.level, "healthy");
 });
 
+test("planned compaction uses a ninety-percent fallback for 128k windows and a 128 Ki-token cap for larger profiles", () => {
+  const fallback = buildContextBudget({
+    sessionId: "planned-fallback",
+    modelProfileId: "128k-model",
+    model: "medium",
+    contextWindowTokens: 131_072,
+    maxOutputTokens: 4_096,
+    estimatedInputTokens: 0,
+    updatedAt: "2026-07-20T01:00:00.000Z",
+  });
+  assert.ok(Math.abs(fallback.plannedThresholdTokens - Math.floor(fallback.usableInputTokens * 0.9)) <= 1);
+  assert.ok(fallback.plannedThresholdTokens < 128 * 1_024);
+
+  const belowFallback = buildContextBudget({
+    sessionId: "planned-fallback-below",
+    modelProfileId: "128k-model",
+    model: "medium",
+    contextWindowTokens: 131_072,
+    maxOutputTokens: 4_096,
+    estimatedInputTokens: fallback.plannedThresholdTokens - 1,
+    updatedAt: "2026-07-20T01:00:00.000Z",
+  });
+  const atFallback = buildContextBudget({
+    sessionId: "planned-fallback-at",
+    modelProfileId: "128k-model",
+    model: "medium",
+    contextWindowTokens: 131_072,
+    maxOutputTokens: 4_096,
+    estimatedInputTokens: fallback.plannedThresholdTokens,
+    updatedAt: "2026-07-20T01:00:00.000Z",
+  });
+  assert.equal(belowFallback.shouldCompact, false);
+  assert.equal(atFallback.shouldCompact, true);
+
+  const large = buildContextBudget({
+    sessionId: "planned-cap",
+    modelProfileId: "256k-model",
+    model: "large",
+    contextWindowTokens: 262_144,
+    maxOutputTokens: 4_096,
+    estimatedInputTokens: 128 * 1_024,
+    updatedAt: "2026-07-20T01:00:00.000Z",
+  });
+  assert.equal(large.plannedThresholdTokens, 128 * 1_024);
+  assert.equal(large.shouldCompact, true);
+  assert.ok(large.plannedThresholdTokens < Math.floor(large.usableInputTokens * 0.9));
+});
+
 test("cached provider input counts toward the occupied context window", async () => {
   assert.equal(measuredContextInputTokens({
     inputTokens: 913,

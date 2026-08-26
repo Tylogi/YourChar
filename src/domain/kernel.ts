@@ -4070,12 +4070,18 @@ export class CompanionKernel {
       () => this.flushDurableTurnCoordinators(),
     );
     if (preflightCompaction) {
-      actions.push(this.store.addAction("context_compaction", "completed", {
-        sessionId: handle.metadata.id,
-        reason: preflightCompaction.reason,
-        estimatedTokensBefore: preflightCompaction.budgetBefore.estimatedInputTokens,
-        estimatedTokensAfter: preflightCompaction.budgetAfter.estimatedInputTokens,
-      }));
+      actions.push(this.store.addAction(
+        preflightCompaction.reason === "conversation_sleep"
+          ? "conversation_sleep_checkpoint"
+          : "context_compaction",
+        "completed",
+        {
+          sessionId: handle.metadata.id,
+          reason: preflightCompaction.reason,
+          estimatedTokensBefore: preflightCompaction.budgetBefore.estimatedInputTokens,
+          estimatedTokensAfter: preflightCompaction.budgetAfter.estimatedInputTokens,
+        },
+      ));
     }
     const visionInput = await this.prepareVisionInput(handle, request, config, actions, emitEvent, signal);
     const lifecycle = this.sessionRuntime.prepareConversationLifecycle(handle, request.text);
@@ -4333,7 +4339,10 @@ export class CompanionKernel {
         }
       } catch (error) {
         actions.push(this.store.addAction(
-          lifecycle.shouldSleepAfterTurn ? "conversation_sleep_checkpoint" : "context_compaction",
+          lifecycle.shouldSleepAfterTurn ||
+              handle.metadata.pendingCompactionReason === "conversation_sleep"
+            ? "conversation_sleep_checkpoint"
+            : "context_compaction",
           "failed",
           {
             sessionId: handle.metadata.id,

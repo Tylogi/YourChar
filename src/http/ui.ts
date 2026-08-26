@@ -11694,6 +11694,8 @@ export function renderAppHtml(): string {
         ["已用输入", formatTokenCount(budget.usedInputTokens) + " · " + source],
         ["本地估算", formatTokenCount(budget.estimatedInputTokens)],
         ["可用输入上限", formatTokenCount(budget.usableInputTokens)],
+        ["计划整理阈值", formatTokenCount(budget.plannedThresholdTokens)],
+        ["紧急保护阈值", formatTokenCount(budget.criticalThresholdTokens)],
         ["模型窗口", formatTokenCount(budget.contextWindowTokens) + " · " + windowSource],
         ["最大输出保留", formatTokenCount(budget.maxOutputTokens)],
         ["安全保留", formatTokenCount(budget.safetyReserveTokens)],
