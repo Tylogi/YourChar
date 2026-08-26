@@ -12,6 +12,7 @@ import {
   writeFileSync,
 } from "node:fs";
 import { basename, dirname, extname, join } from "node:path";
+import { Agent, fetch as undiciFetch, type Dispatcher } from "undici";
 import type { Clock } from "../app/clock.js";
 import { SystemClock } from "../app/clock.js";
 import { MAX_WORKSPACE_UPLOAD_BYTES } from "../workspace/file-service.js";
@@ -25,7 +26,10 @@ import type {
 } from "./types.js";
 
 type StoredMineruConfig = MineruApiConfig & { apiKey?: string };
-type MineruFetch = (input: string, init?: RequestInit) => Promise<Response>;
+type MineruFetch = (
+  input: string,
+  init?: RequestInit & { dispatcher?: Dispatcher },
+) => Promise<Response>;
 type CachedDocument = {
   markdown: string;
   images: MineruImage[];
@@ -45,6 +49,11 @@ type MineruImage = {
   bytes: Buffer;
 };
 
+type MineruTaskStatus = {
+  status: "pending" | "processing" | "completed" | "failed";
+  error?: string;
+};
+
 const configVersion = "mineru-self-hosted-v2-images";
 const defaultConfig: StoredMineruConfig = {
   baseUrl: "",
@@ -59,6 +68,7 @@ const defaultConfig: StoredMineruConfig = {
 };
 const maximumMarkdownBytes = 8 * 1024 * 1024;
 const maximumResponseBytes = 80 * 1024 * 1024;
+const maximumTaskMetadataBytes = 64 * 1024;
 const maximumImageBytes = 10 * 1024 * 1024;
 const maximumTotalImageBytes = 48 * 1024 * 1024;
 const maximumImageCount = 512;
@@ -75,6 +85,25 @@ const managedPackagePattern = /^mineru-[a-f0-9]{12}-[a-f0-9]{12}-[a-f0-9]{8}$/u;
 const legacyManagedMarkdownPattern = /^mineru-[a-f0-9]{12}-[a-f0-9]{12}(?:-[0-9]+)?\.md$/u;
 const stagingPackagePattern = /^\.mineru-stage-[0-9]+-[a-f0-9]{8}$/u;
 const supportedExtensions = new Set([".pdf", ".png", ".jpg", ".jpeg", ".docx", ".pptx", ".xlsx"]);
+const mineruTaskIdPattern = /^[A-Za-z0-9][A-Za-z0-9_-]{7,127}$/u;
+const maximumShortRequestMs = 30_000;
+const initialTaskPollDelayMs = 250;
+const maximumTaskPollDelayMs = 2_000;
+const maximumConsecutiveTaskNetworkFailures = 3;
+const legacyFallbackStatuses = new Set([404, 405, 501]);
+const allowedNetworkErrorCodes = new Set([
+  "ECONNREFUSED",
+  "ECONNRESET",
+  "EHOSTUNREACH",
+  "ENETUNREACH",
+  "ENOTFOUND",
+  "EAI_AGAIN",
+  "ETIMEDOUT",
+  "UND_ERR_BODY_TIMEOUT",
+  "UND_ERR_CONNECT_TIMEOUT",
+  "UND_ERR_HEADERS_TIMEOUT",
+  "UND_ERR_SOCKET",
+]);
 
 export type MineruServiceOptions = {
   stateDir?: string;
@@ -96,10 +125,18 @@ export class MineruApiError extends Error {
   }
 }
 
+class MineruTransientRequestError extends MineruApiError {
+  constructor(message: string) {
+    super(message);
+    this.name = "MineruTransientRequestError";
+  }
+}
+
 export class MineruService {
   private readonly configPath?: string;
   private readonly clock: Clock;
   private readonly fetchImpl: MineruFetch;
+  private readonly fetchDispatcher?: Agent;
   private config: StoredMineruConfig;
   private readonly cache = new Map<string, CachedDocument>();
   private cacheBytes = 0;
@@ -111,8 +148,17 @@ export class MineruService {
   constructor(options: MineruServiceOptions = {}) {
     this.configPath = options.stateDir ? join(options.stateDir, "mineru.json") : undefined;
     this.clock = options.clock ?? new SystemClock();
-    this.fetchImpl = options.fetch ?? fetch;
     this.config = this.load();
+    this.fetchImpl = options.fetch ?? (undiciFetch as unknown as MineruFetch);
+    this.fetchDispatcher = options.fetch
+      ? undefined
+      : new Agent({
+          // MinerU's legacy synchronous endpoint can legitimately take more
+          // than Undici's five-minute defaults to produce response headers.
+          // AbortSignal remains the single operation deadline for those calls.
+          headersTimeout: 0,
+          bodyTimeout: 0,
+        });
     if (this.configPath && existsSync(this.configPath)) chmodSync(this.configPath, 0o600);
     this.cleanupTimer = setInterval(() => this.cleanupRegisteredWorkspaces(), cleanupIntervalMs);
     this.cleanupTimer.unref?.();
@@ -179,12 +225,21 @@ export class MineruService {
   async testConnection(signal?: AbortSignal): Promise<{ ok: true; status: number; latencyMs: number; backend: string }> {
     this.assertConfigured();
     const startedAt = performance.now();
-    const response = await this.request("/health", { method: "GET" }, signal, 64 * 1024);
-    if (!response.ok) throw await this.responseError(response, "MinerU health check failed", 64 * 1024);
-    await readBoundedText(response, 64 * 1024);
+    const status = await this.withResponse(
+      "/health",
+      { method: "GET" },
+      signal,
+      64 * 1024,
+      maximumShortRequestMs,
+      async (response) => {
+        if (!response.ok) throw await this.responseError(response, "MinerU health check failed", 64 * 1024);
+        await readBoundedText(response, 64 * 1024);
+        return response.status;
+      },
+    );
     return {
       ok: true,
-      status: response.status,
+      status,
       latencyMs: Math.round(performance.now() - startedAt),
       backend: this.config.backend,
     };
@@ -241,6 +296,7 @@ export class MineruService {
     clearInterval(this.cleanupTimer);
     this.registeredWorkspaces.clear();
     this.clearCache();
+    if (this.fetchDispatcher) void this.fetchDispatcher.destroy().catch(() => undefined);
   }
 
   private ensureTemporaryArtifact(document: CachedDocument, workspace: MineruWorkspaceContext): void {
@@ -319,34 +375,19 @@ export class MineruService {
     source: ReturnType<typeof readWorkspaceDocument>,
     signal?: AbortSignal,
   ): Promise<CachedDocument> {
-    const form = new FormData();
-    form.set("files", new Blob([new Uint8Array(source.bytes)], { type: source.mimeType }), source.name);
-    form.set("backend", this.config.backend);
-    form.set("parse_method", this.config.parseMethod);
-    form.set("lang_list", this.config.language);
-    form.set("formula_enable", String(this.config.formulaEnabled));
-    form.set("table_enable", String(this.config.tableEnabled));
-    form.set("return_md", "true");
-    form.set("return_middle_json", "false");
-    form.set("return_model_output", "false");
-    form.set("return_content_list", "false");
-    form.set("return_images", "true");
-    form.set("response_format_zip", "false");
-    const response = await this.request("/file_parse", { method: "POST", body: form }, signal, maximumResponseBytes);
-    if (!response.ok) throw await this.responseError(response, "MinerU document parsing failed", 64 * 1024);
-    const text = await readBoundedText(response, maximumResponseBytes);
-    let body: unknown;
-    try {
-      body = JSON.parse(text);
-    } catch {
-      throw new MineruApiError("MinerU returned invalid JSON", response.status);
-    }
-    const parsed = parseMineruResponse(body);
+    const timeoutSignal = AbortSignal.timeout(this.config.timeoutSeconds * 1_000);
+    const operationSignal = signal ? AbortSignal.any([signal, timeoutSignal]) : timeoutSignal;
+    const taskId = await this.submitAsyncTask(source, operationSignal);
+    const result = taskId === undefined
+      ? await this.convertWithLegacyEndpoint(source, operationSignal)
+      : await this.waitForAsyncTaskResult(taskId, operationSignal);
+    if (operationSignal.aborted) throw new MineruApiError("MinerU request timed out or was cancelled");
+    const parsed = parseMineruResponse(result.body);
     const normalized = normalizeMarkdown(parsed.markdown);
     const markdownBytes = Buffer.byteLength(normalized, "utf8");
-    if (!normalized) throw new MineruApiError("MinerU returned empty Markdown", response.status);
+    if (!normalized) throw new MineruApiError("MinerU returned empty Markdown", result.status);
     if (markdownBytes > maximumMarkdownBytes) {
-      throw new MineruApiError(`MinerU Markdown exceeds ${maximumMarkdownBytes / 1024 / 1024} MiB`, response.status);
+      throw new MineruApiError(`MinerU Markdown exceeds ${maximumMarkdownBytes / 1024 / 1024} MiB`, result.status);
     }
     assertMarkdownImagesAvailable(normalized, parsed.images);
     const imageBytes = parsed.images.reduce((total, image) => total + image.bytes.byteLength, 0);
@@ -362,35 +403,187 @@ export class MineruService {
     };
   }
 
-  private async request(path: string, init: RequestInit, signal: AbortSignal | undefined, responseLimit: number): Promise<Response> {
-    const timeoutSignal = AbortSignal.timeout(this.config.timeoutSeconds * 1_000);
-    const combinedSignal = signal ? AbortSignal.any([signal, timeoutSignal]) : timeoutSignal;
+  private createParseForm(source: ReturnType<typeof readWorkspaceDocument>): FormData {
+    const form = new FormData();
+    form.set("files", new Blob([new Uint8Array(source.bytes)], { type: source.mimeType }), source.name);
+    form.set("backend", this.config.backend);
+    form.set("parse_method", this.config.parseMethod);
+    form.set("lang_list", this.config.language);
+    form.set("formula_enable", String(this.config.formulaEnabled));
+    form.set("table_enable", String(this.config.tableEnabled));
+    form.set("return_md", "true");
+    form.set("return_middle_json", "false");
+    form.set("return_model_output", "false");
+    form.set("return_content_list", "false");
+    form.set("return_images", "true");
+    form.set("response_format_zip", "false");
+    return form;
+  }
+
+  private async submitAsyncTask(
+    source: ReturnType<typeof readWorkspaceDocument>,
+    signal: AbortSignal,
+  ): Promise<string | undefined> {
+    return this.withResponse(
+      "/tasks",
+      { method: "POST", body: this.createParseForm(source) },
+      signal,
+      maximumTaskMetadataBytes,
+      maximumShortRequestMs,
+      async (response) => {
+        if (legacyFallbackStatuses.has(response.status)) {
+          await cancelResponse(response);
+          return undefined;
+        }
+        if (response.status !== 202) {
+          throw await this.responseError(response, "MinerU async task submission failed", maximumTaskMetadataBytes);
+        }
+        const body = await readBoundedJson(response, maximumTaskMetadataBytes, "MinerU task submission");
+        return parseMineruTaskId(body, response.status);
+      },
+    );
+  }
+
+  private async waitForAsyncTaskResult(
+    taskId: string,
+    signal: AbortSignal,
+  ): Promise<{ body: unknown; status: number }> {
+    const encodedTaskId = encodeURIComponent(taskId);
+    let delayMs = initialTaskPollDelayMs;
+    while (true) {
+      const task = await this.retryTaskNetworkRequest(signal, () =>
+        this.withResponse(
+          `/tasks/${encodedTaskId}`,
+          { method: "GET" },
+          signal,
+          maximumTaskMetadataBytes,
+          maximumShortRequestMs,
+          async (response) => {
+            if (response.status !== 200) {
+              throw await this.responseError(response, "MinerU task status check failed", maximumTaskMetadataBytes);
+            }
+            const body = await readBoundedJson(response, maximumTaskMetadataBytes, "MinerU task status");
+            return parseMineruTaskStatus(body, taskId, response.status);
+          },
+        ),
+      );
+      if (task.status === "completed") {
+        return this.retryTaskNetworkRequest(signal, () =>
+          this.withResponse(
+            `/tasks/${encodedTaskId}/result`,
+            { method: "GET" },
+            signal,
+            maximumResponseBytes,
+            maximumShortRequestMs,
+            async (response) => {
+              if (response.status !== 200) {
+                throw await this.responseError(response, "MinerU task result retrieval failed", maximumTaskMetadataBytes);
+              }
+              return {
+                body: await readBoundedJson(response, maximumResponseBytes, "MinerU task result"),
+                status: response.status,
+              };
+            },
+          ),
+        );
+      }
+      if (task.status === "failed") {
+        const detail = task.error ? `: ${redactRemoteDetail(task.error, this.config.apiKey)}` : "";
+        throw new MineruApiError(`MinerU task failed${detail}`);
+      }
+      await waitForPoll(delayMs, signal);
+      delayMs = Math.min(delayMs * 2, maximumTaskPollDelayMs);
+    }
+  }
+
+  private async convertWithLegacyEndpoint(
+    source: ReturnType<typeof readWorkspaceDocument>,
+    signal: AbortSignal,
+  ): Promise<{ body: unknown; status: number }> {
+    return this.withResponse(
+      "/file_parse",
+      { method: "POST", body: this.createParseForm(source) },
+      signal,
+      maximumResponseBytes,
+      undefined,
+      async (response) => {
+        if (!response.ok) throw await this.responseError(response, "MinerU document parsing failed", 64 * 1024);
+        return {
+          body: await readBoundedJson(response, maximumResponseBytes, "MinerU document parsing"),
+          status: response.status,
+        };
+      },
+    );
+  }
+
+  private async retryTaskNetworkRequest<T>(
+    signal: AbortSignal,
+    request: () => Promise<T>,
+  ): Promise<T> {
+    let consecutiveFailures = 0;
+    while (true) {
+      try {
+        return await request();
+      } catch (error) {
+        if (!(error instanceof MineruTransientRequestError) || signal.aborted) throw error;
+        consecutiveFailures += 1;
+        if (consecutiveFailures >= maximumConsecutiveTaskNetworkFailures) {
+          throw new MineruApiError(error.message);
+        }
+        await waitForPoll(initialTaskPollDelayMs * consecutiveFailures, signal);
+      }
+    }
+  }
+
+  private async withResponse<T>(
+    path: string,
+    init: RequestInit,
+    signal: AbortSignal | undefined,
+    responseLimit: number,
+    requestTimeoutMs: number | undefined,
+    use: (response: Response) => Promise<T>,
+  ): Promise<T> {
+    const requestTimeoutSignal = requestTimeoutMs === undefined
+      ? undefined
+      : AbortSignal.timeout(Math.min(requestTimeoutMs, this.config.timeoutSeconds * 1_000));
+    const combinedSignal = signal && requestTimeoutSignal
+      ? AbortSignal.any([signal, requestTimeoutSignal])
+      : signal ?? requestTimeoutSignal;
     const headers = new Headers(init.headers);
     if (this.config.apiKey) headers.set("authorization", `Bearer ${this.config.apiKey}`);
-    let response: Response;
+    let response: Response | undefined;
     try {
       response = await this.fetchImpl(`${this.config.baseUrl}${path}`, {
         ...init,
         headers,
         redirect: "error",
         signal: combinedSignal,
+        ...(this.fetchDispatcher ? { dispatcher: this.fetchDispatcher } : {}),
       });
+      const contentLength = Number(response.headers.get("content-length"));
+      if (Number.isFinite(contentLength) && contentLength > responseLimit) {
+        await cancelResponse(response);
+        throw new MineruApiError(`MinerU response exceeds ${responseLimit} bytes`, response.status);
+      }
+      const value = await use(response);
+      if (signal?.aborted) throw new MineruApiError("MinerU request timed out or was cancelled");
+      if (requestTimeoutSignal?.aborted) throw new MineruTransientRequestError("MinerU request timed out");
+      return value;
     } catch (error) {
-      if (combinedSignal.aborted) throw new MineruApiError("MinerU request timed out or was cancelled");
-      throw new MineruApiError(`MinerU request failed: ${safeErrorMessage(error)}`);
+      if (signal?.aborted) throw new MineruApiError("MinerU request timed out or was cancelled");
+      if (error instanceof MineruApiError) throw error;
+      if (requestTimeoutSignal?.aborted) throw new MineruTransientRequestError("MinerU request timed out");
+      const code = safeNetworkErrorCode(error);
+      throw new MineruTransientRequestError(`MinerU request failed${code ? ` (${code})` : ""}`);
+    } finally {
+      if (response && !response.bodyUsed) await cancelResponse(response);
     }
-    const contentLength = Number(response.headers.get("content-length"));
-    if (Number.isFinite(contentLength) && contentLength > responseLimit) {
-      try { await response.body?.cancel(); } catch { /* best effort */ }
-      throw new MineruApiError(`MinerU response exceeds ${responseLimit} bytes`, response.status);
-    }
-    return response;
   }
 
   private async responseError(response: Response, prefix: string, limit: number): Promise<MineruApiError> {
     let detail = "";
     try { detail = (await readBoundedText(response, limit)).replace(/[\r\n]+/g, " ").slice(0, 500); } catch { /* bounded best effort */ }
-    return new MineruApiError(`${prefix} (${response.status})${detail ? `: ${redact(detail, this.config.apiKey)}` : ""}`, response.status);
+    return new MineruApiError(`${prefix} (${response.status})${detail ? `: ${redactRemoteDetail(detail, this.config.apiKey)}` : ""}`, response.status);
   }
 
   private assertConfigured(): void {
@@ -528,6 +721,36 @@ function documentMimeType(extension: string, bytes: Buffer): string | undefined 
         : "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
   }
   return undefined;
+}
+
+function parseMineruTaskId(body: unknown, status: number): string {
+  if (!body || typeof body !== "object" || Array.isArray(body)) {
+    throw new MineruApiError("MinerU task submission response must be an object", status);
+  }
+  const taskId = (body as Record<string, unknown>).task_id;
+  if (typeof taskId !== "string" || !mineruTaskIdPattern.test(taskId)) {
+    throw new MineruApiError("MinerU returned an invalid task id", status);
+  }
+  return taskId;
+}
+
+function parseMineruTaskStatus(body: unknown, expectedTaskId: string, status: number): MineruTaskStatus {
+  if (!body || typeof body !== "object" || Array.isArray(body)) {
+    throw new MineruApiError("MinerU task status response must be an object", status);
+  }
+  const record = body as Record<string, unknown>;
+  const taskId = parseMineruTaskId(body, status);
+  if (taskId !== expectedTaskId) throw new MineruApiError("MinerU task status id does not match the submitted task", status);
+  if (record.status !== "pending" && record.status !== "processing" && record.status !== "completed" && record.status !== "failed") {
+    throw new MineruApiError("MinerU returned an invalid task status", status);
+  }
+  if (record.error !== undefined && record.error !== null && typeof record.error !== "string") {
+    throw new MineruApiError("MinerU returned an invalid task error", status);
+  }
+  return {
+    status: record.status,
+    ...(typeof record.error === "string" && record.error ? { error: record.error } : {}),
+  };
 }
 
 function parseMineruResponse(body: unknown): {
@@ -671,13 +894,44 @@ async function readBoundedText(response: Response, maximumBytes: number): Promis
       const { done, value } = await reader.read();
       if (done) break;
       total += value.byteLength;
-      if (total > maximumBytes) throw new MineruApiError(`MinerU response exceeds ${maximumBytes} bytes`, response.status);
+      if (total > maximumBytes) {
+        try { await reader.cancel(); } catch { /* best effort */ }
+        throw new MineruApiError(`MinerU response exceeds ${maximumBytes} bytes`, response.status);
+      }
       chunks.push(value);
     }
   } finally {
     reader.releaseLock();
   }
   return Buffer.concat(chunks.map((chunk) => Buffer.from(chunk))).toString("utf8");
+}
+
+async function readBoundedJson(response: Response, maximumBytes: number, context: string): Promise<unknown> {
+  const text = await readBoundedText(response, maximumBytes);
+  try {
+    return JSON.parse(text);
+  } catch {
+    throw new MineruApiError(`${context} returned invalid JSON`, response.status);
+  }
+}
+
+async function cancelResponse(response: Response): Promise<void> {
+  try { await response.body?.cancel(); } catch { /* best effort */ }
+}
+
+async function waitForPoll(delayMs: number, signal: AbortSignal): Promise<void> {
+  if (signal.aborted) throw new MineruApiError("MinerU request timed out or was cancelled");
+  await new Promise<void>((resolve, reject) => {
+    const timer = setTimeout(() => {
+      signal.removeEventListener("abort", abort);
+      resolve();
+    }, delayMs);
+    const abort = () => {
+      clearTimeout(timer);
+      reject(new MineruApiError("MinerU request timed out or was cancelled"));
+    };
+    signal.addEventListener("abort", abort, { once: true });
+  });
 }
 
 function normalizeBaseUrl(value: string): string {
@@ -736,6 +990,25 @@ function maskSecret(secret: string): string {
 
 function redact(value: string, secret?: string): string {
   return secret ? value.split(secret).join("[redacted]") : value;
+}
+
+function redactRemoteDetail(value: string, secret?: string): string {
+  return redact(value, secret)
+    .replace(/\bhttps?:\/\/[^\s"'<>]+/giu, "[url omitted]")
+    .replace(/[\u0000-\u001f\u007f]+/gu, " ")
+    .trim()
+    .slice(0, 500);
+}
+
+function safeNetworkErrorCode(error: unknown): string | undefined {
+  const records: Record<string, unknown>[] = [];
+  if (error && typeof error === "object") records.push(error as Record<string, unknown>);
+  const cause = records[0]?.cause;
+  if (cause && typeof cause === "object") records.push(cause as Record<string, unknown>);
+  for (const record of records) {
+    if (typeof record.code === "string" && allowedNetworkErrorCodes.has(record.code)) return record.code;
+  }
+  return undefined;
 }
 
 function safeErrorMessage(error: unknown): string {
