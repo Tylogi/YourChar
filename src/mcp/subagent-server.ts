@@ -6,7 +6,9 @@ import type { ActionRecord } from "../domain/types.js";
 import { connectMcpServerToPi, type McpPiBridge } from "./pi-adapter.js";
 
 export const subagentMcpToolNames = ["delegate_task"] as const;
-const subagentBridgeTimeoutMs = 100_000;
+const subagentBridgeTimeoutGraceMs = 30_000;
+const maximumNodeTimerMs = 2_147_483_647;
+export const maximumSubagentRuntimeTimeoutMs = maximumNodeTimerMs - subagentBridgeTimeoutGraceMs;
 
 export const subagentRoles = ["worker", "researcher", "planner", "reviewer"] as const;
 export type SubagentRole = typeof subagentRoles[number];
@@ -31,6 +33,7 @@ export type SubagentResult = {
 export type SubagentMcpContext = {
   store: CompanionStore;
   sessionId: string;
+  runtimeTimeoutMs: number;
   actions: () => ActionRecord[];
   run: (request: SubagentRequest, signal?: AbortSignal) => Promise<SubagentResult>;
 };
@@ -102,14 +105,27 @@ export function createSubagentMcpServer(context: SubagentMcpContext): McpServer 
 }
 
 export async function createSubagentMcpBridge(context: SubagentMcpContext): Promise<McpPiBridge> {
+  subagentMcpRequestTimeoutMs(context.runtimeTimeoutMs);
   return connectMcpServerToPi(
     createSubagentMcpServer(context),
     `rp-agent-subagent-pi-${context.sessionId}`,
     {
       executionMode: "parallel",
-      // The child runtime has its own 90-second limit. Keep the MCP envelope
-      // slightly wider so the runtime reports the authoritative timeout.
-      requestTimeoutMs: subagentBridgeTimeoutMs,
+      // The child runtime owns the hard deadline. Keep MCP's transport envelope
+      // wider so it never replaces the authoritative timeout/cancellation result.
+      requestTimeoutMs: () => subagentMcpRequestTimeoutMs(context.runtimeTimeoutMs),
     },
   );
+}
+
+export function subagentMcpRequestTimeoutMs(value: number): number {
+  if (typeof value !== "number" || !Number.isFinite(value) || value <= 0) {
+    throw new TypeError("subagent runtimeTimeoutMs must be a positive finite number");
+  }
+  if (value > maximumSubagentRuntimeTimeoutMs) {
+    throw new TypeError(
+      `subagent runtimeTimeoutMs must not exceed ${maximumSubagentRuntimeTimeoutMs}`,
+    );
+  }
+  return value + subagentBridgeTimeoutGraceMs;
 }

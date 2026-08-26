@@ -3,7 +3,35 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
+import {
+  maximumSubagentRuntimeTimeoutMs,
+  subagentMcpRequestTimeoutMs,
+} from "../src/mcp/subagent-server.js";
+import { defaultSubagentTimeoutMs } from "../src/pi/session-runtime.js";
 import { createTestRuntime } from "../src/testing/index.js";
+
+test("subagent deadlines are finite and the MCP envelope stays 30 seconds wider", () => {
+  assert.equal(defaultSubagentTimeoutMs, 600_000);
+  assert.equal(subagentMcpRequestTimeoutMs(defaultSubagentTimeoutMs), 630_000);
+  assert.equal(
+    subagentMcpRequestTimeoutMs(maximumSubagentRuntimeTimeoutMs),
+    2_147_483_647,
+  );
+  for (const invalid of [0, -1, Number.NaN, Number.POSITIVE_INFINITY]) {
+    assert.throws(
+      () => subagentMcpRequestTimeoutMs(invalid),
+      /positive finite number/u,
+    );
+    assert.throws(
+      () => createTestRuntime({ seed: `subagent-invalid-${String(invalid)}`, subagentTimeoutMs: invalid }),
+      /subagentTimeoutMs must be a positive finite number/u,
+    );
+  }
+  assert.throws(
+    () => subagentMcpRequestTimeoutMs(maximumSubagentRuntimeTimeoutMs + 1),
+    /must not exceed/u,
+  );
+});
 
 test("private Pi session delegates to an isolated read-only subagent and resumes with its result", async () => {
   const runtime = createTestRuntime({ seed: "subagent-private" });
@@ -86,6 +114,129 @@ test("private Pi session delegates to an isolated read-only subagent and resumes
       trace.turnKind === "subagent" && trace.sessionId.startsWith("subagent:subagent-private-session:")
     );
     assert.equal(subagentTrace?.payload.reasoning_effort, "xhigh");
+  } finally {
+    runtime.dispose();
+  }
+});
+
+test("a short hard deadline times out a subagent without activity-based extension", async () => {
+  const runtime = createTestRuntime({
+    seed: "subagent-hard-timeout",
+    subagentTimeoutMs: 30,
+  });
+  try {
+    runtime.kernel.setAgentModuleEnabled("mcp:subagent", true);
+    runtime.model.enqueue([
+      {
+        kind: "tool_call",
+        name: "delegate_task",
+        arguments: { role: "reviewer", task: "Perform a deliberately slow review." },
+      },
+      { kind: "assistant_text", text: "This result arrived too late.", delayMs: 90 },
+      { kind: "assistant_text", text: "委派超过了固定时限。" },
+    ]);
+
+    const response = await runtime.kernel.sendMessage("subagent-hard-timeout", {
+      mode: "sms",
+      text: "委派一个会超过测试时限的任务。",
+    });
+
+    assert.equal(response.status, "completed");
+    assert.equal(response.reply, "委派超过了固定时限。");
+    const session = await runtime.kernel.getSession("subagent-hard-timeout");
+    assert.match(JSON.stringify(session.messages), /Subagent timed out after 0\.03 seconds/u);
+    const delegations = response.actions.filter((action) => action.actionType === "delegate_subagent");
+    assert.equal(delegations.filter((action) => action.status === "failed").length, 1);
+    assert.equal(delegations.filter((action) => action.status === "completed").length, 0);
+  } finally {
+    runtime.dispose();
+  }
+});
+
+test("a longer hard deadline allows multiple child model rounds and a final result", async () => {
+  const runtime = createTestRuntime({
+    seed: "subagent-longer-timeout",
+    subagentTimeoutMs: 300,
+  });
+  try {
+    runtime.kernel.patchAgentPermissions({ workspaceAccess: "read_only" });
+    runtime.kernel.uploadWorkspaceFile({
+      directory: "uploads",
+      name: "deadline-note.txt",
+      bytes: Buffer.from("deadline evidence: amber-42\n", "utf8"),
+    });
+    runtime.kernel.setAgentModuleEnabled("mcp:subagent", true);
+    runtime.model.enqueue([
+      {
+        kind: "tool_call",
+        name: "delegate_task",
+        arguments: { role: "reviewer", task: "Read the note and return its evidence." },
+      },
+      {
+        kind: "tool_call",
+        name: "read",
+        arguments: { path: "uploads/deadline-note.txt" },
+        delayMs: 60,
+      },
+      { kind: "assistant_text", text: "The evidence is amber-42.", delayMs: 80 },
+      { kind: "assistant_text", text: "子任务核对结果是 amber-42。" },
+    ]);
+
+    const response = await runtime.kernel.sendMessage("subagent-longer-timeout", {
+      mode: "sms",
+      text: "委派核对这条记录。",
+    });
+
+    assert.equal(response.status, "completed");
+    assert.match(response.reply, /amber-42/u);
+    const delegations = response.actions.filter((action) => action.actionType === "delegate_subagent");
+    assert.equal(delegations.filter((action) => action.status === "completed").length, 1);
+    assert.equal(delegations.filter((action) => action.status === "failed").length, 0);
+    const delegation = delegations.find((action) => action.status === "completed");
+    assert.ok(delegation);
+    assert.equal(delegation.payload.modelCalls, 2);
+    assert.equal(delegation.payload.toolCalls, 1);
+  } finally {
+    runtime.dispose();
+  }
+});
+
+test("external cancellation takes precedence over the subagent hard deadline", async () => {
+  const runtime = createTestRuntime({
+    seed: "subagent-cancel-priority",
+    subagentTimeoutMs: 60,
+  });
+  try {
+    runtime.kernel.setAgentModuleEnabled("mcp:subagent", true);
+    runtime.model.enqueue([
+      {
+        kind: "tool_call",
+        name: "delegate_task",
+        arguments: { role: "worker", task: "Wait for external cancellation." },
+      },
+      { kind: "assistant_text", text: "This must never become a result.", delayMs: 180 },
+    ]);
+    const controller = new AbortController();
+    const pending = runtime.kernel.streamMessage(
+      "subagent-cancel-priority",
+      { mode: "sms", text: "开始后等待我取消。" },
+      () => undefined,
+      controller.signal,
+    );
+    await waitFor(() => runtime.model.requests.length >= 2);
+    controller.abort();
+
+    const response = await pending;
+    assert.equal(response.status, "cancelled");
+    assert.equal(response.reply, "本轮生成已取消。");
+    await waitFor(() => runtime.kernel.store.actions.some((action) =>
+      action.actionType === "delegate_subagent"));
+    const session = await runtime.kernel.getSession("subagent-cancel-priority");
+    assert.doesNotMatch(JSON.stringify(session.messages), /Subagent timed out/u);
+    const delegations = runtime.kernel.store.actions.filter((action) =>
+      action.actionType === "delegate_subagent");
+    assert.equal(delegations.filter((action) => action.status === "failed").length, 1);
+    assert.equal(delegations.filter((action) => action.status === "completed").length, 0);
   } finally {
     runtime.dispose();
   }
@@ -213,3 +364,11 @@ test("subagent delegation is disabled by default and never enters group actor to
     runtime.dispose();
   }
 });
+
+async function waitFor(predicate: () => boolean, timeoutMs = 1_000): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  while (!predicate()) {
+    if (Date.now() >= deadline) throw new Error("timed out waiting for subagent test condition");
+    await new Promise((resolve) => setTimeout(resolve, 5));
+  }
+}

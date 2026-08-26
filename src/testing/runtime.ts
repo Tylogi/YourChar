@@ -78,6 +78,7 @@ export type CreateTestRuntimeOptions = {
   gitService?: GitAccessService;
   webReaderService?: WebReaderService;
   conversationLifecycleThresholds?: Partial<ConversationLifecycleThresholds>;
+  subagentTimeoutMs?: number;
   privateInboxOptions?: PrivateInboxCoordinatorOptions;
   startPrivateInboxCoordinator?: boolean;
   imGateway?: ImGateway | false;
@@ -219,6 +220,7 @@ export class TestRuntime {
       characterCollaborationReporter: options.characterCollaborationReporter,
       characterSkillReflector: options.characterSkillReflector ?? false,
       conversationLifecycleThresholds: options.conversationLifecycleThresholds,
+      subagentTimeoutMs: options.subagentTimeoutMs,
       privateInboxOptions: options.privateInboxOptions,
       startPrivateInboxCoordinator: options.startPrivateInboxCoordinator,
       imGateway: options.imGateway ?? false,

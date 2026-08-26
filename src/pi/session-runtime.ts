@@ -63,6 +63,7 @@ import {
   createRelationshipMcpBridge,
   createScheduleMcpBridge,
   createSubagentMcpBridge,
+  maximumSubagentRuntimeTimeoutMs,
   createTavilyMcpBridge,
   createWebReaderMcpBridge,
   createUserProfileMcpBridge,
@@ -131,7 +132,7 @@ const defaultConversationLifecycleThresholds = {
 const maxConcurrentSubagentsPerSession = 3;
 const maxSubagentModelCalls = 8;
 const maxSubagentOutputCharacters = 12_000;
-const subagentTimeoutMs = 90_000;
+export const defaultSubagentTimeoutMs = 600_000;
 const historicalToolResultContextCharacters = 6_000;
 const currentToolResultContextCharacters = 48_000;
 const maxCurrentToolResultCharacters = 32_000;
@@ -254,6 +255,8 @@ export type PiSessionRuntimeOptions = {
   shellNetworkAllowed?: () => boolean;
   workspaceRegistry?: WorkspaceScopeRegistry;
   conversationLifecycleThresholds?: Partial<ConversationLifecycleThresholds>;
+  /** Internal/test-only hard wall-clock limit for one delegated subagent task. */
+  subagentTimeoutMs?: number;
   /**
    * Incognito children operate on a disposable tmpfs snapshot. They may read
    * inherited context and mutate only their temporary interaction/workspace
@@ -385,6 +388,7 @@ export class PiSessionRuntime {
   private readonly canonicalDirectLoading = new Map<string, Promise<PiSessionHandle>>();
   private readonly legacyDirectMigrationTargets = new Map<string, string>();
   private readonly conversationLifecycleThresholds: ConversationLifecycleThresholds;
+  private readonly subagentTimeoutMs: number;
   private readonly incognitoChild: boolean;
 
   constructor(options: PiSessionRuntimeOptions) {
@@ -426,6 +430,7 @@ export class PiSessionRuntime {
     this.conversationLifecycleThresholds = normalizeConversationLifecycleThresholds(
       options.conversationLifecycleThresholds,
     );
+    this.subagentTimeoutMs = normalizeSubagentTimeoutMs(options.subagentTimeoutMs);
     this.incognitoChild = options.incognitoChild === true;
     this.conversationIndexPath = this.stateDir ? join(this.stateDir, "conversations.json") : undefined;
     this.piSessionDir = this.stateDir ? join(this.stateDir, "pi-sessions") : undefined;
@@ -1293,6 +1298,7 @@ export class PiSessionRuntime {
       mcpBridges.push(await createSubagentMcpBridge({
         store: this.store,
         sessionId: metadata.id,
+        runtimeTimeoutMs: this.subagentTimeoutMs,
         actions: () => toolState.actions,
         run: (request, signal) => this.runSubagent({
           parentSessionId: metadata.id,
@@ -1544,6 +1550,13 @@ export class PiSessionRuntime {
     let child: AgentSession | undefined;
     let modelCalls = 0;
     let modelBudgetExceeded = false;
+    let timedOut = false;
+    const abort = () => void child?.abort();
+    input.signal?.addEventListener("abort", abort, { once: true });
+    const timeout = setTimeout(() => {
+      timedOut = true;
+      void child?.abort();
+    }, this.subagentTimeoutMs);
     try {
       const permissions = this.permissionCatalog.get();
       const childWorkspaceAccess = permissions.workspaceAccess === "off" ? "off" : "read_only";
@@ -1704,27 +1717,27 @@ export class PiSessionRuntime {
       }));
       this.activeSubagents.add(child);
 
-      let timedOut = false;
-      const abort = () => void child?.abort();
-      input.signal?.addEventListener("abort", abort, { once: true });
-      const timeout = setTimeout(() => {
-        timedOut = true;
-        void child?.abort();
-      }, subagentTimeoutMs);
+      let promptError: unknown;
       try {
+        if (input.signal?.aborted) throw abortError("Subagent task was cancelled");
+        if (timedOut) {
+          throw new Error(`Subagent timed out after ${this.subagentTimeoutMs / 1_000} seconds`);
+        }
         await child.prompt(subagentTaskPrompt(input.request), {
           expandPromptTemplates: false,
           source: "rpc",
         });
-      } finally {
-        clearTimeout(timeout);
-        input.signal?.removeEventListener("abort", abort);
+      } catch (error) {
+        promptError = error;
+      }
+      if (input.signal?.aborted) throw abortError("Subagent task was cancelled");
+      if (timedOut) {
+        throw new Error(`Subagent timed out after ${this.subagentTimeoutMs / 1_000} seconds`);
       }
       if (modelBudgetExceeded) {
         throw new Error(`Subagent exceeded the ${maxSubagentModelCalls}-call model budget`);
       }
-      if (timedOut) throw new Error(`Subagent timed out after ${subagentTimeoutMs / 1_000} seconds`);
-      if (input.signal?.aborted) throw abortError("Subagent task was cancelled");
+      if (promptError) throw promptError;
 
       const finalMessage = [...child.messages].reverse().find((message) => message.role === "assistant");
       if (finalMessage?.role === "assistant" && (finalMessage.stopReason === "error" || finalMessage.stopReason === "aborted")) {
@@ -1752,6 +1765,8 @@ export class PiSessionRuntime {
         truncated,
       };
     } finally {
+      clearTimeout(timeout);
+      input.signal?.removeEventListener("abort", abort);
       if (child) {
         this.activeSubagents.delete(child);
         child.dispose();
@@ -2979,6 +2994,17 @@ function normalizeConversationLifecycleThresholds(
     tiredTokens,
     hardSleepTokens: Math.max(tiredTokens, requestedHard),
   };
+}
+
+function normalizeSubagentTimeoutMs(value?: number): number {
+  if (value === undefined) return defaultSubagentTimeoutMs;
+  if (typeof value !== "number" || !Number.isFinite(value) || value <= 0) {
+    throw new TypeError("subagentTimeoutMs must be a positive finite number");
+  }
+  if (value > maximumSubagentRuntimeTimeoutMs) {
+    throw new TypeError(`subagentTimeoutMs must not exceed ${maximumSubagentRuntimeTimeoutMs}`);
+  }
+  return value;
 }
 
 function agentMessageText(message: AgentMessage): string {

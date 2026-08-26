@@ -134,7 +134,7 @@ const mcpDetails: Record<string, string> = {
 - The parent must provide a self-contained task and only the supporting context the child needs.
 - Child tools are read-only: enabled Skill files, read-only Workspace and MarkItDown document conversion, configured Tavily Search, and configured Vision MCP.
 - The child cannot change schedules, memory, user profile, SOUL.md, scenes, or Workspace files and cannot create another subagent.
-- A task is limited to eight model calls, 90 seconds, and 12,000 output characters. At most three tasks may run concurrently per private session.
+- A task is limited to eight model calls, 10 minutes of hard wall-clock time, and 12,000 output characters. Activity does not extend the deadline. At most three tasks may run concurrently per private session.
 - Delegation is metered and disabled while composing background reminder messages.
 `,
   [memoryCoordinatorMcpModuleId]: `# Memory Coordinator MCP

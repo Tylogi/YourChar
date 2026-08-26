@@ -433,6 +433,8 @@ export type CompanionKernelOptions = CompanionStoreOptions & {
   privateInboxOptions?: PrivateInboxCoordinatorOptions;
   memoryVaultFailpoint?: MemoryVaultFailpoint;
   conversationLifecycleThresholds?: Partial<ConversationLifecycleThresholds>;
+  /** Internal/test-only override for the delegated Pi subagent hard deadline. */
+  subagentTimeoutMs?: number;
   /** Internal-only safety profile used by disposable tmpfs child kernels. */
   incognitoChild?: boolean;
   /** Test/deployment override; the target is still required to be tmpfs. */
@@ -882,6 +884,7 @@ export class CompanionKernel {
         shellNetworkAllowed: () =>
           !(this.incognitoSessions?.requiresShellNetworkIsolation() ?? false),
         conversationLifecycleThresholds: normalizedOptions.conversationLifecycleThresholds,
+        subagentTimeoutMs: normalizedOptions.subagentTimeoutMs,
         incognitoChild: this.incognitoChild,
         providerPayloadOptions: (appSessionId) => {
           const binding = this.modelBindingForSession(appSessionId);
