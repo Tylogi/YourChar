@@ -640,7 +640,7 @@ test("Pi threshold compaction is cancelled inside a side-effect turn and recorde
   }
 });
 
-test("natural rest consent and the exact legacy good-night phrase both checkpoint a tired conversation", async (context) => {
+test("natural rest consent and the exact legacy good-night phrase both checkpoint and proactively wake", async (context) => {
   const cases = [
     {
       name: "natural long consent",
@@ -672,15 +672,285 @@ test("natural rest consent and the exact legacy good-night phrase both checkpoin
         const handle = await runtime.kernel.sessionRuntime.getOrCreate(sessionId, "sms");
         assert.equal(resting.status, "completed");
         assert.ok(handle.sessionManager.getEntries().some((entry) => entry.type === "compaction"));
+        await runtime.kernel.flushConversationWakeNotifications(sessionId);
         assert.equal(
           runtime.kernel.listConversationMetadata().find((entry) => entry.id === sessionId)?.sleepState,
-          "sleeping",
+          "awake",
+        );
+        assert.equal(
+          (await runtime.kernel.getSession(sessionId)).messages.filter((message) =>
+            message.role === "custom" && message.customType === "rp-agent/conversation_wake"
+          ).length,
+          1,
         );
       } finally {
         runtime.dispose();
         rmSync(root, { recursive: true, force: true });
       }
     });
+  }
+});
+
+test("a completed rest checkpoint sends exactly one separate wake message and resumes awake", async () => {
+  const root = mkdtempSync(join(tmpdir(), "rp-agent-r4-proactive-wake-"));
+  const wakeStarted = deferredValue<void>();
+  const releaseWake = deferredValue<string>();
+  let wakeComposerCalls = 0;
+  const runtime = createTestRuntime({
+    stateDir: root,
+    workspaceDir: join(root, "workspace"),
+    seed: "r4-proactive-wake",
+    conversationLifecycleThresholds: { tiredTokens: 1, hardSleepTokens: 1_000_000 },
+    conversationWakeComposer: async () => {
+      wakeComposerCalls += 1;
+      wakeStarted.resolve();
+      return releaseWake.promise;
+    },
+  });
+  try {
+    const character = runtime.kernel.createCharacter({ name: "主动唤醒角色" });
+    runtime.model.enqueue([
+      { kind: "assistant_text", text: `先把今天的事情聊完。${"abcd".repeat(6_000)}` },
+      { kind: "assistant_text", text: "晚安，我先休息一下，醒来后再找你。" },
+      { kind: "assistant_text", text: "下一轮保持自然交流。" },
+    ]);
+    const sessionId = "proactive-wake";
+    await runtime.kernel.sendMessage(sessionId, {
+      mode: "sms",
+      characterId: character.id,
+      text: "先聊一会儿",
+    });
+    const unreadBeforeRest = runtime.kernel.getConversationMetadata(sessionId)?.unreadCount ?? 0;
+
+    const resting = await runtime.kernel.sendMessage(sessionId, {
+      mode: "sms",
+      characterId: character.id,
+      text: "晚安咯",
+    });
+    assert.equal(resting.reply, "晚安，我先休息一下，醒来后再找你。");
+    assert.equal(resting.status, "completed");
+
+    const flush = runtime.kernel.flushConversationWakeNotifications(sessionId);
+    await wakeStarted.promise;
+    releaseWake.resolve("我睡醒啦，又可以继续陪你了。");
+    await flush;
+    assert.equal(await runtime.kernel.flushConversationWakeNotifications(sessionId), 0);
+
+    const transcript = await runtime.kernel.getSession(sessionId);
+    const assistantTexts = transcript.messages.flatMap((message) =>
+      message.role === "assistant"
+        ? [message.content.flatMap((block) => block.type === "text" ? [block.text] : []).join("")]
+        : []
+    );
+    assert.deepEqual(assistantTexts.slice(-2), [
+      "晚安，我先休息一下，醒来后再找你。",
+      "我睡醒啦，又可以继续陪你了。",
+    ]);
+    assert.equal(
+      transcript.messages.filter((message) =>
+        message.role === "custom" && message.customType === "rp-agent/conversation_wake"
+      ).length,
+      1,
+    );
+    const metadata = runtime.kernel.getConversationMetadata(sessionId);
+    assert.equal(metadata?.sleepState, "awake");
+    assert.equal(metadata?.pendingWakeNotificationId, undefined);
+    assert.ok(metadata?.lastWakeNotificationId);
+    assert.ok(metadata?.wakeNotificationDeliveredAt);
+    assert.equal((metadata?.unreadCount ?? 0) - unreadBeforeRest, 2, "rest and wake are two incoming replies");
+    assert.equal(wakeComposerCalls, 1);
+    assert.equal(
+      runtime.kernel.store.actions.filter((action) =>
+        action.actionType === "conversation_wake_notification" && action.status === "completed"
+      ).length,
+      1,
+    );
+
+    await runtime.kernel.sendMessage(sessionId, {
+      mode: "sms",
+      characterId: character.id,
+      text: "那我们继续吧",
+    });
+    assert.doesNotMatch(
+      JSON.stringify(runtime.model.requests.at(-1)?.messages),
+      /conversation_lifecycle[^]*state=\\?"waking/,
+    );
+  } finally {
+    releaseWake.resolve("我睡醒了。");
+    runtime.dispose();
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("planned and manual context compaction do not send a wake notification", async () => {
+  let wakeComposerCalls = 0;
+  const runtime = createTestRuntime({
+    seed: "r4-no-wake-for-maintenance",
+    conversationWakeComposer: async () => {
+      wakeComposerCalls += 1;
+      return "不应发送的醒来消息";
+    },
+  });
+  try {
+    runtime.kernel.patchModelApiConfig({ contextWindowTokens: 32_768, maxTokens: 2_048 });
+    const character = runtime.kernel.createCharacter({ name: "静默整理角色" });
+    runtime.model.enqueue([
+      {
+        kind: "assistant_text",
+        text: `这轮先保留较长背景。${"abcd".repeat(12_000)}`,
+      },
+      {
+        kind: "assistant_text",
+        text: "背景已经自然接续。",
+      },
+      { kind: "assistant_text", text: `手动整理前的普通回复。${"abcd".repeat(6_000)}` },
+    ]);
+    await runtime.kernel.sendMessage("planned-no-wake", {
+      mode: "sms",
+      characterId: character.id,
+      text: "保留背景",
+    });
+    await runtime.kernel.sendMessage("planned-no-wake", {
+      mode: "sms",
+      characterId: character.id,
+      text: "继续，但不需要说困了",
+    });
+    await runtime.kernel.flushConversationWakeNotifications("planned-no-wake");
+    assert.equal(
+      runtime.kernel.getConversationMetadata("planned-no-wake")?.lastCompactionReason,
+      "budget_planned",
+    );
+
+    await runtime.kernel.sendMessage("manual-no-wake", {
+      mode: "sms",
+      characterId: character.id,
+      text: "普通交流",
+    });
+    await runtime.kernel.compactConversationContext("manual-no-wake");
+    await runtime.kernel.flushConversationWakeNotifications("manual-no-wake");
+    assert.equal(runtime.kernel.getConversationMetadata("manual-no-wake")?.lastCompactionReason, "manual");
+
+    assert.equal(wakeComposerCalls, 0);
+    assert.equal(
+      runtime.kernel.store.actions.filter((action) =>
+        action.actionType === "conversation_wake_notification"
+      ).length,
+      0,
+    );
+  } finally {
+    runtime.dispose();
+  }
+});
+
+test("a side-effect-deferred rest checkpoint wakes once at its later safe boundary", async () => {
+  const root = mkdtempSync(join(tmpdir(), "rp-agent-r4-deferred-wake-"));
+  const workspaceDir = join(root, "workspace");
+  let wakeComposerCalls = 0;
+  const runtime = createTestRuntime({
+    stateDir: root,
+    workspaceDir,
+    seed: "r4-deferred-wake",
+    conversationWakeComposer: async () => {
+      wakeComposerCalls += 1;
+      return "我已经休息好了，现在回来找你啦。";
+    },
+  });
+  try {
+    runtime.kernel.patchModelApiConfig({ contextWindowTokens: 65_536, maxTokens: 2_048 });
+    runtime.kernel.patchAgentPermissions({ workspaceAccess: "read_write" });
+    const character = runtime.kernel.createCharacter({ name: "延后唤醒角色" });
+    runtime.model.enqueue([
+      { kind: "assistant_text", text: `这是操作所需的较长背景。${"abcd".repeat(44_000)}` },
+      { kind: "tool_call", name: "write", arguments: { path: "deferred-wake.txt", content: "done" } },
+      { kind: "assistant_text", text: "文件写完了，我确实有点困，想休息一下。" },
+      { kind: "assistant_text", text: "好，等我休息好再回来。" },
+    ]);
+    const request = (text: string) => ({
+      mode: "sms" as const,
+      characterId: character.id,
+      text,
+    });
+    await runtime.kernel.sendMessage("deferred-wake", request("先说明操作背景"));
+    await runtime.kernel.sendMessage("deferred-wake", request("现在写入文件"));
+    assert.ok(runtime.kernel.getConversationMetadata("deferred-wake")?.pendingCompactionAt);
+    assert.equal(await runtime.kernel.flushConversationWakeNotifications("deferred-wake"), 0);
+    assert.equal(wakeComposerCalls, 0);
+
+    await runtime.kernel.sendMessage("deferred-wake", request("晚安咯"));
+    await runtime.kernel.flushConversationWakeNotifications("deferred-wake");
+    assert.equal(await runtime.kernel.flushConversationWakeNotifications("deferred-wake"), 0);
+    assert.equal(wakeComposerCalls, 1);
+    assert.equal(runtime.kernel.getConversationMetadata("deferred-wake")?.sleepState, "awake");
+    assert.equal(
+      runtime.kernel.store.actions.filter((action) =>
+        action.actionType === "conversation_wake_notification" && action.status === "completed"
+      ).length,
+      1,
+    );
+    const transcript = await runtime.kernel.getSession("deferred-wake");
+    assert.equal(
+      transcript.messages.filter((message) =>
+        message.role === "custom" && message.customType === "rp-agent/conversation_wake"
+      ).length,
+      1,
+    );
+  } finally {
+    runtime.dispose();
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("a private-space wake notification stays inside that character's private partition", async () => {
+  const root = mkdtempSync(join(tmpdir(), "rp-agent-r4-private-wake-"));
+  const runtime = createTestRuntime({
+    stateDir: root,
+    workspaceDir: join(root, "workspace"),
+    seed: "r4-private-wake",
+    conversationLifecycleThresholds: { tiredTokens: 1, hardSleepTokens: 1_000_000 },
+    conversationWakeComposer: async () => "我已经醒了，这句话只留在我们的私密对话里。",
+  });
+  try {
+    const character = runtime.kernel.createCharacter({ name: "私密唤醒角色" });
+    const normal = await runtime.kernel.openCanonicalPrivateConversation(character.id, "normal");
+    const secret = await runtime.kernel.openCanonicalPrivateConversation(character.id, "secret");
+    runtime.model.enqueue([
+      { kind: "assistant_text", text: `这里是私密连续性。${"abcd".repeat(6_000)}` },
+      { kind: "assistant_text", text: "晚安，我会在这里休息。" },
+    ]);
+    const request = (text: string) => ({
+      mode: "sms" as const,
+      conversationSpace: "secret" as const,
+      characterId: character.id,
+      text,
+    });
+    await runtime.kernel.sendMessage(secret.id, request("先在私密空间聊一句"));
+    await runtime.kernel.sendMessage(secret.id, request("晚安咯"));
+    await runtime.kernel.flushConversationWakeNotifications(secret.id);
+
+    const privateTranscript = await runtime.kernel.getSession(secret.id);
+    assert.equal(
+      privateTranscript.messages.filter((message) =>
+        message.role === "custom" && message.customType === "rp-agent/conversation_wake"
+      ).length,
+      1,
+    );
+    assert.ok(privateTranscript.messages.some((message) =>
+      message.role === "assistant" && message.content.some((block) =>
+        block.type === "text" && block.text.includes("只留在我们的私密对话"))
+    ));
+    const normalTranscript = await runtime.kernel.getSession(normal.id);
+    assert.doesNotMatch(JSON.stringify(normalTranscript.messages), /只留在我们的私密对话|conversation_wake/);
+    assert.deepEqual(runtime.kernel.listUnreadConversations("normal"), []);
+    assert.equal(runtime.kernel.listUnreadConversations("secret", character.id)[0]?.sessionId, secret.id);
+    const actions = runtime.kernel.store.actions.filter((action) =>
+      action.actionType === "conversation_wake_notification" && action.status === "completed"
+    );
+    assert.equal(actions.length, 1);
+    assert.equal(actions[0]?.conversationSpace, "secret");
+    assert.equal(actions[0]?.secretOwnerCharacterId, character.id);
+  } finally {
+    runtime.dispose();
+    rmSync(root, { recursive: true, force: true });
   }
 });
 
@@ -727,9 +997,10 @@ test("30 long turns defer compaction until rest and preserve bounded memory cont
     });
     assert.equal(sleeping.status, "completed");
     assert.ok(handle.sessionManager.getEntries().some((entry) => entry.type === "compaction"));
+    await runtime.kernel.flushConversationWakeNotifications("long-context");
     assert.equal(runtime.kernel.listConversationMetadata().find((entry) =>
       entry.id === "long-context"
-    )?.sleepState, "sleeping");
+    )?.sleepState, "awake");
     const waking = await runtime.kernel.sendMessage("long-context", {
       mode: "sms",
       text: "醒了吗？",
@@ -851,4 +1122,12 @@ function candidate(
     sourceMessageId: `r4-${suffix}`,
     idempotencyKey: `r4:${suffix}`,
   };
+}
+
+function deferredValue<T>(): { promise: Promise<T>; resolve: (value: T) => void } {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((settle) => {
+    resolve = settle;
+  });
+  return { promise, resolve };
 }

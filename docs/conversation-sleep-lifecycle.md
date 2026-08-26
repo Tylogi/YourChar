@@ -10,10 +10,19 @@
 
 - `awake`：正常对话。
 - `tired`：当前模型的 canonical Provider 输入达到计划整理阈值。系统只在安全的日常交流节点提示一次困倦，不打断工具调用或现实操作。
-- `sleeping`：角色自然表达困倦或用户明确同意休息后，系统在首个无副作用、无待合并消息的安全回合边界建立压缩 checkpoint。
-- 下一条用户消息在最新的 volatile turn context 中收到 `waking` 指令；角色自然恢复交流，成功回复后回到 `awake`。
+- `sleeping`：角色自然表达困倦或用户明确同意休息后，系统在首个无副作用、无待合并消息的安全回合边界建立压缩 checkpoint，并持久化一个待投递的醒来通知。
+- checkpoint 成功后，角色会在原会话中另外发出一条简短、符合角色的“我醒了”主动消息。消息持久化并记为未读后，状态回到 `awake`。
+- 若用户在后台通知发出前先来了新消息，该用户回合会收到 `waking` 指令并自然恢复交流；待投递通知同时取消，不会再补发第二条醒来消息。
 
 系统不凭空声称现实时间已经过去。真实时间仍只来自每轮最新的 runtime envelope。
+
+## Checkpoint 后的主动醒来消息
+
+醒来消息是会话生命周期的一部分，不是世界自主规划候选。它仅由 `conversation_sleep` 原因的成功 checkpoint 触发；`budget_planned`、紧急窗口保护和手动整理都不发送醒来消息。它也不受角色的世界主动消息开关、频率、每日上限、静默时段或 topic 反馈政策影响，不创建 `proactive_messages` 记录。
+
+后台作业与前台用户回合使用同一个 session execution queue。若私聊 Inbox 正在合并或生成，醒来作业会等待该会话空闲，不会插入正在处理的消息中间。默认使用角色当前绑定的模型进行一次有界的后台编写，只读当前空间中的角色、持久连续性与最近对话，不暴露工具，不允许实世界变更。提示要求只通知用户角色已经醒来，不回答旧请求，不暴露 token、压缩或 checkpoint，也不根据 checkpoint 猜测已经过了几分钟、几小时或一晚。
+
+该消息只投递到触发 checkpoint 的原始 YourChar 站内会话和未读列表：普通会话仍在 normal 空间，持久私密会话仍在同一角色的 secret 分区。它不通过桌面通知 sink、提醒 outbox、微信或飞书 IM 发送；即使该角色已绑定外部 IM，也只能在 YourChar 内看到这条醒来消息。
 
 ## Token 与压缩策略
 
@@ -54,10 +63,15 @@ MLX 交互模型缺少 thinking 时最多再生成两次。达到上限后保留
 
 完成副作用的轮次不会立即触发休息压缩。系统会持久记录待整理状态，在下一个无副作用、无待合并消息的安全边界自动执行；已经说过困倦的角色不会因此逐轮重复提醒。若休息压缩失败，正常角色回复仍保持 `completed`，会话留在 `tired`，并记录失败 action，下一轮按原原因重试。
 
+成功的休息 checkpoint 会为当前代次创建一个稳定的醒来通知 ID，并把待投递状态与失败次数写入会话元数据。服务重启后会恢复未完成作业。每条可见 assistant 消息后面都有一条携带同一 ID 的隐藏 `rp-agent/conversation_wake` marker；若进程在消息落盘后、元数据确认前中断，恢复流程只根据 marker 补做确认，不重复显示消息或增加第二次未读。
+
+可注入编写器的短暂失败会保留同一待投递 ID 并进行有界延迟重试，达到上限后改用确定性文本。默认模型未配置、超时、返回空内容或暴露内部机制时，则直接使用一条有界的确定性“我醒了”文本完成站内投递。会话被归档、所有者或空间与作业不再匹配，或用户回合已经自然唤醒角色时，待投递作业会取消。
+
 `GET /api/v1/sessions` 返回 `sleepState` 和 `sleepCheckpointAt`。会话列表对 `tired` 显示“有些困了”，对 `sleeping` 显示“休息中”和 moon 图标。状态转换记录：
 
 - `conversation_sleep_checkpoint`
 - `conversation_wake`
+- `conversation_wake_notification`
 
 压缩本身继续通过 Pi 的 `compaction_start`、`compaction_end` 和 context economics 中的 `context_compacted` 观察。
 

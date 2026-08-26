@@ -156,6 +156,19 @@ export type ConversationMetadata = {
   tiredAt?: string;
   sleepSuggestedAt?: string;
   sleepCheckpointAt?: string;
+  /**
+   * A durable, single-slot outbox for the in-character message sent after a
+   * successful conversation-sleep checkpoint. The visible assistant message
+   * carries the same id so a restart can reconcile an append that completed
+   * before this metadata was acknowledged.
+   */
+  pendingWakeNotificationId?: string;
+  pendingWakeNotificationAt?: string;
+  wakeNotificationGeneration?: number;
+  wakeNotificationAttempts?: number;
+  wakeNotificationLastError?: string;
+  lastWakeNotificationId?: string;
+  wakeNotificationDeliveredAt?: string;
   pendingCompactionAt?: string;
   pendingCompactionReason?: PendingConversationCompactionReason;
   lastCompactionAt?: string;
@@ -173,6 +186,17 @@ export type ConversationMetadata = {
 export type ConversationSleepState = "awake" | "tired" | "sleeping";
 
 export type PendingConversationCompactionReason = "conversation_sleep" | "budget_planned";
+
+export type PendingConversationWakeNotification = {
+  notificationId: string;
+  sessionId: string;
+  mode: Mode;
+  conversationSpace: ConversationSpace;
+  characterId?: string;
+  checkpointAt: string;
+  requestedAt: string;
+  attempts: number;
+};
 
 export type ConversationLifecycleThresholds = {
   /** @deprecated Test-only absolute override. Production lifecycle uses the model-relative context budget. */
@@ -785,6 +809,10 @@ export class PiSessionRuntime {
       delete metadata.sleepSuggestedAt;
       delete metadata.pendingCompactionAt;
       delete metadata.pendingCompactionReason;
+      // A real user turn won the race with the queued proactive wake. The
+      // waking lifecycle prompt handles this turn, so the background sender
+      // must not append a second "awake" message afterward.
+      clearPendingConversationWakeNotification(metadata);
       this.touch(metadata);
       return { compacted: false, woke: true };
     }
@@ -798,11 +826,11 @@ export class PiSessionRuntime {
     const compactedDuringTurn = handle.sessionManager.getBranch().filter((entry) =>
       entry.type === "compaction").length > decision.compactionEntryCount;
     if (compactedDuringTurn) {
-      const reason: PendingConversationCompactionReason =
-        decision.userAcceptedSleep || mentionedFatigue ||
-          decision.pendingCompactionReason === "conversation_sleep"
-          ? "conversation_sleep"
-          : "budget_planned";
+      // Pi threshold compaction is cancelled by our extension. A compaction
+      // that nevertheless occurs inside prompt execution is therefore manual
+      // or overflow recovery, never the application's completed rest
+      // checkpoint. It must not produce an "I woke up" outreach.
+      const reason: PendingConversationCompactionReason = "budget_planned";
       finishSuccessfulConversationCompaction(metadata, reason, this.clock.now().toISOString());
       this.touch(metadata);
       return {
@@ -1100,6 +1128,7 @@ export class PiSessionRuntime {
       const now = this.clock.now().toISOString();
       metadata.archivedAt = now;
       metadata.updatedAt = now;
+      clearPendingConversationWakeNotification(metadata);
       this.persistConversationIndex();
     }
     return { ...metadata };
@@ -1125,6 +1154,86 @@ export class PiSessionRuntime {
     const metadata = this.requireMetadata(sessionId);
     metadata.unreadCount = Math.min(9_999, Math.max(0, metadata.unreadCount ?? 0) + 1);
     metadata.lastUnreadAt = this.clock.now().toISOString();
+    this.touch(metadata);
+    return { ...metadata };
+  }
+
+  listPendingConversationWakeNotifications(): PendingConversationWakeNotification[] {
+    return [...this.metadata.values()].flatMap((metadata) => {
+      const notification = pendingConversationWakeNotification(metadata);
+      return notification ? [notification] : [];
+    });
+  }
+
+  getPendingConversationWakeNotification(
+    sessionId: string,
+  ): PendingConversationWakeNotification | undefined {
+    return pendingConversationWakeNotification(this.requireMetadata(sessionId));
+  }
+
+  recordConversationWakeNotificationFailure(
+    sessionId: string,
+    notificationId: string,
+    error: string,
+  ): ConversationMetadata | undefined {
+    const metadata = this.requireMetadata(sessionId);
+    if (metadata.pendingWakeNotificationId !== notificationId) return undefined;
+    metadata.wakeNotificationAttempts = Math.min(
+      100,
+      Math.max(0, metadata.wakeNotificationAttempts ?? 0) + 1,
+    );
+    metadata.wakeNotificationLastError = error.slice(0, 1_000);
+    this.touch(metadata);
+    return { ...metadata };
+  }
+
+  completeConversationWakeNotification(
+    sessionId: string,
+    notificationId: string,
+    deliveredAt = this.clock.now().toISOString(),
+  ): ConversationMetadata | undefined {
+    const metadata = this.requireMetadata(sessionId);
+    if (metadata.lastWakeNotificationId === notificationId) {
+      // Recover an impossible-looking but crash-representable combination:
+      // delivery was acknowledged, then an older conversations.json snapshot
+      // restored the pending/sleeping fields. Do not publish unread twice.
+      if (metadata.pendingWakeNotificationId === notificationId) {
+        metadata.sleepState = "awake";
+        delete metadata.tiredAt;
+        delete metadata.sleepSuggestedAt;
+        clearPendingConversationWakeNotification(metadata);
+        this.touch(metadata);
+      }
+      return { ...metadata };
+    }
+    if (metadata.pendingWakeNotificationId !== notificationId) return undefined;
+
+    // The assistant message and its hidden idempotency marker have already
+    // been appended when this method is called. A single metadata write now
+    // acknowledges delivery, wakes the character, and publishes one unread
+    // event. Reconciliation after a crash therefore cannot double-increment.
+    metadata.unreadCount = Math.min(9_999, Math.max(0, metadata.unreadCount ?? 0) + 1);
+    metadata.lastUnreadAt = deliveredAt;
+    metadata.sleepState = "awake";
+    delete metadata.tiredAt;
+    delete metadata.sleepSuggestedAt;
+    clearPendingConversationWakeNotification(metadata);
+    metadata.lastWakeNotificationId = notificationId;
+    metadata.wakeNotificationDeliveredAt = deliveredAt;
+    this.touch(metadata);
+    return { ...metadata };
+  }
+
+  cancelPendingConversationWakeNotification(
+    sessionId: string,
+    notificationId?: string,
+  ): ConversationMetadata | undefined {
+    const metadata = this.requireMetadata(sessionId);
+    if (
+      !metadata.pendingWakeNotificationId ||
+      (notificationId !== undefined && metadata.pendingWakeNotificationId !== notificationId)
+    ) return undefined;
+    clearPendingConversationWakeNotification(metadata);
     this.touch(metadata);
     return { ...metadata };
   }
@@ -3292,6 +3401,7 @@ function clearConversationLifecycleAfterCompaction(metadata: ConversationMetadat
   delete metadata.sleepSuggestedAt;
   delete metadata.pendingCompactionAt;
   delete metadata.pendingCompactionReason;
+  clearPendingConversationWakeNotification(metadata);
 }
 
 function finishSuccessfulConversationCompaction(
@@ -3301,9 +3411,47 @@ function finishSuccessfulConversationCompaction(
 ): void {
   clearConversationLifecycleAfterCompaction(metadata);
   if (reason === "conversation_sleep") {
+    const generation = Math.max(0, metadata.wakeNotificationGeneration ?? 0) + 1;
     metadata.sleepState = "sleeping";
     metadata.sleepCheckpointAt = now;
+    metadata.wakeNotificationGeneration = generation;
+    metadata.pendingWakeNotificationId = `${metadata.id}:conversation-wake:${generation}`;
+    metadata.pendingWakeNotificationAt = now;
+    metadata.wakeNotificationAttempts = 0;
+    delete metadata.wakeNotificationLastError;
   }
+}
+
+function clearPendingConversationWakeNotification(metadata: ConversationMetadata): void {
+  delete metadata.pendingWakeNotificationId;
+  delete metadata.pendingWakeNotificationAt;
+  delete metadata.wakeNotificationAttempts;
+  delete metadata.wakeNotificationLastError;
+}
+
+function pendingConversationWakeNotification(
+  metadata: ConversationMetadata,
+): PendingConversationWakeNotification | undefined {
+  const notificationId = metadata.pendingWakeNotificationId?.trim();
+  const requestedAt = metadata.pendingWakeNotificationAt?.trim();
+  const checkpointAt = metadata.sleepCheckpointAt?.trim();
+  if (
+    !notificationId ||
+    !requestedAt ||
+    !checkpointAt ||
+    metadata.sleepState !== "sleeping" ||
+    metadata.archivedAt
+  ) return undefined;
+  return {
+    notificationId,
+    sessionId: metadata.id,
+    mode: metadata.mode,
+    conversationSpace: metadata.conversationSpace,
+    ...(metadata.characterId ? { characterId: metadata.characterId } : {}),
+    checkpointAt,
+    requestedAt,
+    attempts: Math.max(0, Math.floor(metadata.wakeNotificationAttempts ?? 0)),
+  };
 }
 
 function normalizeSubagentTimeoutMs(value?: number): number {
@@ -3460,6 +3608,24 @@ function normalizeMetadata(value: unknown): ConversationMetadata | undefined {
       value.lastCompactionStatus === "failed"
     ? value.lastCompactionStatus
     : undefined;
+  const sleepState = value.sleepState === "tired" || value.sleepState === "sleeping" ||
+      value.sleepState === "awake"
+    ? value.sleepState
+    : undefined;
+  const sleepCheckpointAt = typeof value.sleepCheckpointAt === "string" &&
+      value.sleepCheckpointAt.trim()
+    ? value.sleepCheckpointAt.trim()
+    : undefined;
+  const pendingWakeNotificationId = sleepState === "sleeping" && sleepCheckpointAt &&
+      typeof value.pendingWakeNotificationId === "string" &&
+      value.pendingWakeNotificationId.trim()
+    ? value.pendingWakeNotificationId.trim().slice(0, 500)
+    : undefined;
+  const pendingWakeNotificationAt = pendingWakeNotificationId &&
+      typeof value.pendingWakeNotificationAt === "string" &&
+      value.pendingWakeNotificationAt.trim()
+    ? value.pendingWakeNotificationAt.trim()
+    : undefined;
   return {
     id,
     mode,
@@ -3477,12 +3643,28 @@ function normalizeMetadata(value: unknown): ConversationMetadata | undefined {
     lastReadAt: typeof value.lastReadAt === "string" ? value.lastReadAt : undefined,
     lastTurnStatus: normalizeTurnStatus(value.lastTurnStatus),
     lastTurnCanRetry: typeof value.lastTurnCanRetry === "boolean" ? value.lastTurnCanRetry : undefined,
-    sleepState: value.sleepState === "tired" || value.sleepState === "sleeping" || value.sleepState === "awake"
-      ? value.sleepState
-      : undefined,
+    sleepState,
     tiredAt: typeof value.tiredAt === "string" ? value.tiredAt : undefined,
     sleepSuggestedAt: typeof value.sleepSuggestedAt === "string" ? value.sleepSuggestedAt : undefined,
-    sleepCheckpointAt: typeof value.sleepCheckpointAt === "string" ? value.sleepCheckpointAt : undefined,
+    sleepCheckpointAt,
+    pendingWakeNotificationId: pendingWakeNotificationAt ? pendingWakeNotificationId : undefined,
+    pendingWakeNotificationAt,
+    wakeNotificationGeneration: finiteMetadataTokenCount(value.wakeNotificationGeneration),
+    wakeNotificationAttempts: pendingWakeNotificationAt
+      ? finiteMetadataTokenCount(value.wakeNotificationAttempts)
+      : undefined,
+    wakeNotificationLastError: pendingWakeNotificationAt &&
+        typeof value.wakeNotificationLastError === "string" && value.wakeNotificationLastError
+      ? value.wakeNotificationLastError.slice(0, 1_000)
+      : undefined,
+    lastWakeNotificationId: typeof value.lastWakeNotificationId === "string" &&
+        value.lastWakeNotificationId.trim()
+      ? value.lastWakeNotificationId.trim().slice(0, 500)
+      : undefined,
+    wakeNotificationDeliveredAt: typeof value.wakeNotificationDeliveredAt === "string" &&
+        value.wakeNotificationDeliveredAt.trim()
+      ? value.wakeNotificationDeliveredAt.trim()
+      : undefined,
     pendingCompactionAt,
     pendingCompactionReason: pendingCompactionAt ? pendingCompactionReason : undefined,
     lastCompactionAt: typeof value.lastCompactionAt === "string" ? value.lastCompactionAt : undefined,

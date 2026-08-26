@@ -168,6 +168,105 @@ test("incognito inherits a stable transcript, supports meetings, and leaves pare
   }
 });
 
+test("incognito delivers the wake message only inside its disposable child conversation", async () => {
+  const stateDir = mkdtempSync(join(tmpdir(), "yourchar-incognito-wake-"));
+  const runtime = createTestRuntime({
+    stateDir,
+    seed: "incognito-wake",
+    conversationLifecycleThresholds: { tiredTokens: 1, hardSleepTokens: 1_000_000 },
+    conversationWakeComposer: async () => "我在无痕会话里睡醒啦。",
+  });
+  try {
+    const character = runtime.kernel.createCharacter({ name: "无痕唤醒角色" });
+    const normal = await runtime.kernel.openCanonicalPrivateConversation(character.id);
+    const baseline = await runtime.kernel.getConversationTranscript(normal.id);
+    const incognito = await runtime.kernel.openIncognitoConversation(character.id);
+    runtime.model.enqueue([
+      { kind: "assistant_text", text: `先聊一段无痕上下文。${"abcd".repeat(6_000)}` },
+      { kind: "assistant_text", text: "晚安，我先在这里休息一下。" },
+    ]);
+    await runtime.kernel.sendMessage(incognito.id, { text: "先聊一句" });
+    await runtime.kernel.sendMessage(incognito.id, { text: "晚安咯" });
+    await runtime.kernel.flushConversationWakeNotifications(incognito.id);
+
+    const childTranscript = await runtime.kernel.getConversationTranscript(incognito.id);
+    assert.ok(childTranscript.some((message) =>
+      message.role === "assistant" && message.content.some((block) =>
+        block.type === "text" && block.text === "我在无痕会话里睡醒啦。")
+    ));
+    assert.equal(
+      childTranscript.filter((message) =>
+        message.role === "custom" && message.customType === "rp-agent/conversation_wake"
+      ).length,
+      1,
+    );
+    assert.deepEqual(
+      jsonValue(await runtime.kernel.getConversationTranscript(normal.id)),
+      jsonValue(baseline),
+    );
+    assert.equal(runtime.kernel.getConversationMetadata(incognito.id)?.sleepState, "awake");
+    assert.equal(runtime.kernel.store.actions.some((action) =>
+      action.actionType === "conversation_wake_notification"
+    ), false, "the disposable child's action must not leak into the parent store");
+
+    await runtime.kernel.closeIncognitoConversation(incognito.id);
+    assert.deepEqual(
+      jsonValue(await runtime.kernel.getConversationTranscript(normal.id)),
+      jsonValue(baseline),
+    );
+  } finally {
+    runtime.dispose();
+    rmSync(stateDir, { recursive: true, force: true });
+  }
+});
+
+test("incognito inherits a sleeping checkpoint without replaying the source pending wake outbox", async () => {
+  const stateDir = mkdtempSync(join(tmpdir(), "yourchar-incognito-pending-wake-"));
+  const runtime = createTestRuntime({
+    stateDir,
+    seed: "incognito-pending-wake",
+    conversationLifecycleThresholds: { tiredTokens: 1, hardSleepTokens: 1_000_000 },
+    conversationWakeComposer: async () => "这条源会话醒来消息不能复制进无痕会话。",
+  });
+  try {
+    const character = runtime.kernel.createCharacter({ name: "无痕待唤醒隔离角色" });
+    const normal = await runtime.kernel.openCanonicalPrivateConversation(character.id);
+    runtime.model.enqueue([
+      { kind: "assistant_text", text: `先形成足够长的源会话上下文。${"abcd".repeat(6_000)}` },
+      { kind: "assistant_text", text: "晚安，我先休息一下。" },
+    ]);
+    await runtime.kernel.sendMessage(normal.id, {
+      mode: "sms",
+      characterId: character.id,
+      text: "先聊一句",
+    });
+    await runtime.kernel.sendMessage(normal.id, {
+      mode: "sms",
+      characterId: character.id,
+      text: "晚安咯",
+    });
+    assert.ok(runtime.kernel.getConversationMetadata(normal.id)?.pendingWakeNotificationId);
+
+    const incognito = await runtime.kernel.openIncognitoConversation(character.id);
+    const childMetadata = runtime.kernel.getConversationMetadata(incognito.id);
+    assert.equal(childMetadata?.sleepState, "sleeping");
+    assert.equal(childMetadata?.pendingWakeNotificationId, undefined);
+    assert.equal(childMetadata?.pendingWakeNotificationAt, undefined);
+    assert.equal(childMetadata?.wakeNotificationAttempts, undefined);
+    assert.equal(childMetadata?.wakeNotificationLastError, undefined);
+    assert.equal(await runtime.kernel.flushConversationWakeNotifications(incognito.id), 0);
+    assert.equal(
+      (await runtime.kernel.getConversationTranscript(incognito.id)).filter((message) =>
+        message.role === "custom" && message.customType === "rp-agent/conversation_wake"
+      ).length,
+      0,
+    );
+  } finally {
+    runtime.dispose();
+    rmSync(stateDir, { recursive: true, force: true });
+  }
+});
+
 test("closed and restarted synthetic IDs fail closed for messages, streams, scenes, and previews", async () => {
   const stateDir = mkdtempSync(join(tmpdir(), "yourchar-incognito-stale-"));
   let runtime = createTestRuntime({ stateDir, seed: "incognito-stale" });

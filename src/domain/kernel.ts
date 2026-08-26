@@ -31,6 +31,7 @@ import {
   type ConversationMetadata,
   type ConversationCompactionResult,
   type ConversationLifecycleThresholds,
+  type PendingConversationWakeNotification,
   type PiModelResolver,
   type PiSessionHandle,
 } from "../pi/session-runtime.js";
@@ -353,11 +354,35 @@ export type CharacterCollaborationReporter = (
   signal: AbortSignal,
 ) => string | Promise<string>;
 
+export type ConversationWakeComposerInput = {
+  notificationId: string;
+  sessionId: string;
+  mode: Mode;
+  conversationSpace: ConversationSpace;
+  characterId?: string;
+  characterName?: string;
+  checkpointAt: string;
+  requestedAt: string;
+  currentTime: string;
+  recentConversation: Array<{
+    role: "user" | "assistant";
+    text: string;
+    timestamp?: number;
+  }>;
+};
+
+export type ConversationWakeComposer = (
+  input: ConversationWakeComposerInput,
+  signal: AbortSignal,
+) => string | Promise<string>;
+
 const MAX_GROUP_MESSAGES_PER_CHARACTER = 10;
 const WORLD_NARRATIVE_TIMEOUT_MS = 5 * 60_000;
 const WORLD_ANALYSIS_TIMEOUT_MS = 2 * 60_000;
 const WORLD_NARRATIVE_CONTEXT_SOFT_TOKENS = 32_000;
 const WORLD_NARRATIVE_INITIAL_PARTICIPANT_LIMIT = 6;
+const CONVERSATION_WAKE_FALLBACK_TEXT = "我睡醒了，现在又可以继续陪你啦。";
+const DEFAULT_CONVERSATION_WAKE_RETRY_DELAYS_MS = [5_000, 30_000] as const;
 
 type SystemExchangeOptions = {
   status: TurnStatus;
@@ -442,6 +467,9 @@ export type CompanionKernelOptions = CompanionStoreOptions & {
   worldMessenger?: ProactiveMessenger;
   characterInteractionActor?: CharacterInteractionActor;
   characterCollaborationReporter?: CharacterCollaborationReporter;
+  conversationWakeComposer?: ConversationWakeComposer;
+  /** Internal/test override; production retries use bounded 5s/30s backoff. */
+  conversationWakeRetryDelaysMs?: readonly number[];
   characterSkillReflector?: CharacterSkillReflector | false;
   startWorldCoordinator?: boolean;
   startPrivateInboxCoordinator?: boolean;
@@ -509,6 +537,13 @@ export class CompanionKernel {
   private readonly clock: Clock;
   private readonly incognitoChild: boolean;
   private readonly executionQueue = new SessionExecutionQueue();
+  private readonly conversationWakeComposer?: ConversationWakeComposer;
+  private readonly conversationWakeRetryDelaysMs: readonly number[];
+  private readonly conversationWakeTimers = new Map<string, NodeJS.Timeout>();
+  private readonly conversationWakeRuns = new Map<string, Promise<number>>();
+  private readonly conversationWakeControllers = new Map<string, AbortController>();
+  private readonly conversationWakeForegroundIntents = new Map<string, number>();
+  private conversationWakeDisposed = false;
   private deleteAllUserDataOperation?: Promise<void>;
   private readonly ownsDatabase: boolean;
   private readonly dataManagement: DataManagementRepository;
@@ -518,6 +553,10 @@ export class CompanionKernel {
   constructor(options: CompanionKernelOptions | CompanionStore = {}) {
     const normalizedOptions = options instanceof CompanionStore ? { store: options } : options;
     this.incognitoChild = normalizedOptions.incognitoChild === true;
+    this.conversationWakeComposer = normalizedOptions.conversationWakeComposer;
+    this.conversationWakeRetryDelaysMs = normalizeConversationWakeRetryDelays(
+      normalizedOptions.conversationWakeRetryDelaysMs,
+    );
     this.store = normalizedOptions.store ?? new CompanionStore(normalizedOptions);
     const configuredStateDir = this.store.stateDir;
     const runtimeCwd = resolve(normalizedOptions.runtimeCwd ?? process.cwd());
@@ -1027,6 +1066,8 @@ export class CompanionKernel {
           clock: this.clock,
           modelResolver: normalizedOptions.modelResolver,
           conversationLifecycleThresholds: normalizedOptions.conversationLifecycleThresholds,
+          conversationWakeComposer: normalizedOptions.conversationWakeComposer,
+          conversationWakeRetryDelaysMs: normalizedOptions.conversationWakeRetryDelaysMs,
           startScheduler: false,
           startWorldCoordinator: false,
           startPrivateInboxCoordinator: false,
@@ -1039,6 +1080,15 @@ export class CompanionKernel {
         now: () => this.clock.now(),
       });
     }
+    // Only the persistent parent recovers jobs inherited from disk. An
+    // incognito child starts from a frozen normal-space snapshot and must not
+    // replay a source conversation's pending outreach inside the disposable
+    // overlay; newly-created child checkpoints are scheduled at turn end.
+    if (!this.incognitoChild) {
+      for (const notification of this.sessionRuntime.listPendingConversationWakeNotifications()) {
+        this.scheduleConversationWakeNotification(notification.sessionId);
+      }
+    }
   }
 
   async sendMessage(sessionId: string, request: MessageRequest): Promise<MessageResponse> {
@@ -1047,7 +1097,14 @@ export class CompanionKernel {
       return this.incognitoSessions.sendMessage(sessionId, request);
     }
     const normalized = this.normalizeRequestForSession(sessionId, request);
-    return this.executionQueue.run(sessionId, () => this.sendMessageLocked(sessionId, normalized));
+    this.beginConversationWakeForegroundTurn(sessionId);
+    return this.executionQueue.run(sessionId, async () => {
+      try {
+        return await this.sendMessageLocked(sessionId, normalized);
+      } finally {
+        this.finishConversationWakeForegroundTurn(sessionId);
+      }
+    });
   }
 
   async streamMessage(
@@ -1061,9 +1118,14 @@ export class CompanionKernel {
       return this.incognitoSessions.streamMessage(sessionId, request, onEvent, signal);
     }
     const normalized = this.normalizeRequestForSession(sessionId, request);
-    return this.executionQueue.run(sessionId, () =>
-      this.sendMessageLocked(sessionId, normalized, onEvent, signal),
-    );
+    this.beginConversationWakeForegroundTurn(sessionId);
+    return this.executionQueue.run(sessionId, async () => {
+      try {
+        return await this.sendMessageLocked(sessionId, normalized, onEvent, signal);
+      } finally {
+        this.finishConversationWakeForegroundTurn(sessionId);
+      }
+    });
   }
 
   async enqueuePrivateMessage(
@@ -1103,7 +1165,7 @@ export class CompanionKernel {
       );
     }
     this.sessionRuntime.ensureConversationTitle(handle.metadata.id, normalized.text);
-    return this.privateInbox.enqueue({
+    const message = this.privateInbox.enqueue({
       clientMessageId: normalizedClientId,
       sessionId: handle.metadata.id,
       characterId: normalized.characterId,
@@ -1112,6 +1174,12 @@ export class CompanionKernel {
       timezone: normalized.timezone,
       attachments: normalized.attachments,
     });
+    // Inbox delivery is queued separately, so it cannot register a foreground
+    // queue intent yet. It can still promptly abort an in-flight wake compose;
+    // the durable queued message keeps subsequent wake attempts deferred.
+    this.abortConversationWakeForSession(handle.metadata.id);
+    this.ensurePendingConversationWakeScheduled(handle.metadata.id, 750);
+    return message;
   }
 
   notePrivateInboxTyping(sessionId: string): { typingUntil: string } {
@@ -1364,6 +1432,28 @@ export class CompanionKernel {
       });
       return result;
     }));
+  }
+
+  async flushConversationWakeNotifications(sessionId?: string): Promise<number> {
+    if (sessionId && this.incognitoSessions?.has(sessionId)) {
+      return this.incognitoSessions.flushConversationWakeNotifications(sessionId);
+    }
+    if (sessionId && isIncognitoSessionId(sessionId)) {
+      throw new IncognitoConversationNotFoundError(sessionId);
+    }
+    const notifications = sessionId
+      ? [this.sessionRuntime.getPendingConversationWakeNotification(sessionId)].filter(
+          (entry): entry is PendingConversationWakeNotification => Boolean(entry),
+        )
+      : this.sessionRuntime.listPendingConversationWakeNotifications();
+    let delivered = 0;
+    for (const notification of notifications) {
+      const timer = this.conversationWakeTimers.get(notification.sessionId);
+      if (timer) clearTimeout(timer);
+      this.conversationWakeTimers.delete(notification.sessionId);
+      delivered += await this.runConversationWakeNotification(notification.sessionId);
+    }
+    return delivered;
   }
 
   async openCanonicalPrivateConversation(
@@ -3728,6 +3818,7 @@ export class CompanionKernel {
   }
 
   dispose(): void {
+    this.stopConversationWakeNotifications();
     this.incognitoSessions?.dispose();
     this.privateInbox.stop();
     this.scheduler.stop();
@@ -3831,11 +3922,18 @@ export class CompanionKernel {
       }),
       burstMessages: burst.messages,
     };
-    return this.executionQueue.run(burst.sessionId, () => this.sendMessageLocked(
-      burst.sessionId,
-      request,
-      (event) => onEvent({ type: "agent_event", burstId: burst.id, event }),
-    ));
+    this.beginConversationWakeForegroundTurn(burst.sessionId);
+    return this.executionQueue.run(burst.sessionId, async () => {
+      try {
+        return await this.sendMessageLocked(
+          burst.sessionId,
+          request,
+          (event) => onEvent({ type: "agent_event", burstId: burst.id, event }),
+        );
+      } finally {
+        this.finishConversationWakeForegroundTurn(burst.sessionId);
+      }
+    });
   }
 
   private async sendMessageLocked(
@@ -4082,6 +4180,9 @@ export class CompanionKernel {
           estimatedTokensAfter: preflightCompaction.budgetAfter.estimatedInputTokens,
         },
       ));
+      if (preflightCompaction.reason === "conversation_sleep") {
+        this.scheduleConversationWakeNotification(handle.metadata.id);
+      }
     }
     const visionInput = await this.prepareVisionInput(handle, request, config, actions, emitEvent, signal);
     const lifecycle = this.sessionRuntime.prepareConversationLifecycle(handle, request.text);
@@ -4332,6 +4433,9 @@ export class CompanionKernel {
               reason: transition.reason,
             },
           ));
+          if (transition.reason === "conversation_sleep") {
+            this.scheduleConversationWakeNotification(handle.metadata.id);
+          }
         } else if (transition.woke) {
           actions.push(this.store.addAction("conversation_wake", "completed", {
             sessionId: handle.metadata.id,
@@ -4375,6 +4479,550 @@ export class CompanionKernel {
       this.memoryCoordinator.drain(),
       this.postTurnCoordinator.drain(),
     ]);
+  }
+
+  private scheduleConversationWakeNotification(sessionId: string, delayMs = 0): void {
+    if (
+      this.conversationWakeDisposed ||
+      this.conversationWakeForegroundIntents.has(sessionId) ||
+      this.conversationWakeTimers.has(sessionId)
+    ) return;
+    const timer = setTimeout(() => {
+      this.conversationWakeTimers.delete(sessionId);
+      void this.runConversationWakeNotification(sessionId).catch((error) => {
+        this.recoverUnexpectedConversationWakeFailure(sessionId, error);
+      });
+    }, Math.max(0, delayMs));
+    timer.unref?.();
+    this.conversationWakeTimers.set(sessionId, timer);
+  }
+
+  private abortConversationWakeForSession(sessionId: string): void {
+    const timer = this.conversationWakeTimers.get(sessionId);
+    if (timer) clearTimeout(timer);
+    this.conversationWakeTimers.delete(sessionId);
+    this.conversationWakeControllers.get(sessionId)?.abort();
+  }
+
+  private beginConversationWakeForegroundTurn(sessionId: string): void {
+    const count = this.conversationWakeForegroundIntents.get(sessionId) ?? 0;
+    this.conversationWakeForegroundIntents.set(sessionId, count + 1);
+    this.abortConversationWakeForSession(sessionId);
+  }
+
+  private finishConversationWakeForegroundTurn(sessionId: string): void {
+    const count = this.conversationWakeForegroundIntents.get(sessionId) ?? 0;
+    if (count > 1) {
+      this.conversationWakeForegroundIntents.set(sessionId, count - 1);
+      return;
+    }
+    this.conversationWakeForegroundIntents.delete(sessionId);
+    if (this.conversationWakeDisposed) return;
+    // A successful foreground wake consumes the pending id in
+    // finishConversationLifecycle. If the turn failed before that safe
+    // boundary, retain durability and resume background delivery.
+    this.ensurePendingConversationWakeScheduled(sessionId);
+  }
+
+  private ensurePendingConversationWakeScheduled(sessionId: string, delayMs = 750): void {
+    if (
+      this.conversationWakeDisposed ||
+      this.conversationWakeForegroundIntents.has(sessionId) ||
+      this.conversationWakeTimers.has(sessionId)
+    ) return;
+    try {
+      if (this.sessionRuntime.getPendingConversationWakeNotification(sessionId)) {
+        this.scheduleConversationWakeNotification(sessionId, delayMs);
+      }
+    } catch (error) {
+      if (!(error instanceof ConversationNotFoundError)) {
+        this.scheduleConversationWakeNotification(
+          sessionId,
+          Math.max(delayMs, this.conversationWakeRetryDelay(0)),
+        );
+      }
+    }
+  }
+
+  private async runConversationWakeNotification(sessionId: string): Promise<number> {
+    if (this.conversationWakeDisposed) return 0;
+    const running = this.conversationWakeRuns.get(sessionId);
+    if (running) return running;
+    const operation = this.executionQueue.run(sessionId, async () => {
+      try {
+        return await this.deliverConversationWakeNotification(sessionId);
+      } catch (error) {
+        this.recoverUnexpectedConversationWakeFailure(sessionId, error);
+        return 0;
+      }
+    });
+    this.conversationWakeRuns.set(sessionId, operation);
+    try {
+      return await operation;
+    } finally {
+      if (this.conversationWakeRuns.get(sessionId) === operation) {
+        this.conversationWakeRuns.delete(sessionId);
+      }
+      this.ensurePendingConversationWakeScheduled(sessionId, 750);
+    }
+  }
+
+  private recoverUnexpectedConversationWakeFailure(sessionId: string, error: unknown): void {
+    if (
+      this.conversationWakeDisposed ||
+      this.conversationWakeForegroundIntents.has(sessionId)
+    ) return;
+    let notification: PendingConversationWakeNotification | undefined;
+    try {
+      notification = this.sessionRuntime.getPendingConversationWakeNotification(sessionId);
+    } catch (pendingError) {
+      if (!(pendingError instanceof ConversationNotFoundError)) {
+        this.scheduleConversationWakeNotification(
+          sessionId,
+          this.conversationWakeRetryDelay(0),
+        );
+      }
+      return;
+    }
+    if (!notification) return;
+
+    let attempt = notification.attempts + 1;
+    try {
+      const failure = this.sessionRuntime.recordConversationWakeNotificationFailure(
+        notification.sessionId,
+        notification.notificationId,
+        safeErrorMessage(error),
+      );
+      attempt = failure?.wakeNotificationAttempts ?? attempt;
+    } catch {
+      // The durable pending id remains authoritative even if recording this
+      // diagnostic encountered the same transient persistence failure.
+    }
+    try {
+      this.store.addAction(
+        "conversation_wake_notification",
+        "failed",
+        {
+          sessionId: notification.sessionId,
+          notificationId: notification.notificationId,
+          checkpointAt: notification.checkpointAt,
+          attempt,
+          error: safeErrorMessage(error),
+          phase: "delivery",
+        },
+        conversationActionScopeFromNotification(notification),
+      );
+    } catch {
+      // A failed observability write must not suppress the durable retry.
+    }
+    if (
+      !this.conversationWakeDisposed &&
+      !this.conversationWakeForegroundIntents.has(sessionId)
+    ) {
+      this.scheduleConversationWakeNotification(
+        sessionId,
+        this.conversationWakeRetryDelay(Math.max(0, attempt - 1)),
+      );
+    }
+  }
+
+  private conversationWakeRetryDelay(attemptIndex: number): number {
+    return this.conversationWakeRetryDelaysMs[
+      Math.min(
+        Math.max(0, Math.floor(attemptIndex)),
+        this.conversationWakeRetryDelaysMs.length - 1,
+      )
+    ] ?? DEFAULT_CONVERSATION_WAKE_RETRY_DELAYS_MS.at(-1)!;
+  }
+
+  private async deliverConversationWakeNotification(sessionId: string): Promise<number> {
+    if (
+      this.conversationWakeDisposed ||
+      this.conversationWakeForegroundIntents.has(sessionId)
+    ) return 0;
+    // Register cancellation before the first await. Kernel disposal can then
+    // abort the whole read/compose/deliver lifecycle rather than only an
+    // already-started model call.
+    const controller = new AbortController();
+    this.conversationWakeControllers.set(sessionId, controller);
+    try {
+      if (this.conversationWakeDisposed || controller.signal.aborted) return 0;
+      let notification: PendingConversationWakeNotification | undefined;
+      try {
+        notification = this.sessionRuntime.getPendingConversationWakeNotification(sessionId);
+      } catch (error) {
+        if (error instanceof ConversationNotFoundError) return 0;
+        throw error;
+      }
+      if (!notification) return 0;
+
+      const metadata = this.sessionRuntime.getConversationMetadata()
+        .find((entry) => entry.id === notification!.sessionId);
+      if (!metadata || !conversationWakeOwnerMatches(metadata, notification)) {
+        if (this.conversationWakeDisposed || controller.signal.aborted) return 0;
+        this.sessionRuntime.cancelPendingConversationWakeNotification(
+          notification.sessionId,
+          notification.notificationId,
+        );
+        return 0;
+      }
+      const inbox = this.privateInbox.snapshot(notification.sessionId);
+      if (inbox.running || inbox.messages.length) {
+        if (!this.conversationWakeDisposed && !controller.signal.aborted) {
+          this.scheduleConversationWakeNotification(notification.sessionId, 750);
+        }
+        return 0;
+      }
+
+      const handle = await this.sessionRuntime.getOrCreate(
+        notification.sessionId,
+        notification.mode,
+        notification.characterId,
+        notification.conversationSpace,
+      );
+      if (this.conversationWakeDisposed || controller.signal.aborted) return 0;
+      const transcript = await this.sessionRuntime.getConversationTranscript(notification.sessionId);
+      if (this.conversationWakeDisposed || controller.signal.aborted) return 0;
+
+      // Revalidate the durable owner and exact checkpoint after the async
+      // transcript reads and before either reconciliation or composition.
+      const currentBeforeCompose = this.sessionRuntime.getPendingConversationWakeNotification(
+        notification.sessionId,
+      );
+      const metadataBeforeCompose = this.sessionRuntime.getConversationMetadata()
+        .find((entry) => entry.id === notification!.sessionId);
+      if (
+        !currentBeforeCompose ||
+        currentBeforeCompose.notificationId !== notification.notificationId ||
+        !metadataBeforeCompose ||
+        !conversationWakeOwnerMatches(metadataBeforeCompose, notification)
+      ) return 0;
+
+      const alreadyDelivered = transcript.find((message) =>
+        isConversationWakeMarkerFor(message, notification!.notificationId));
+      if (alreadyDelivered) {
+        if (this.conversationWakeDisposed || controller.signal.aborted) return 0;
+        const deliveredAt = messageTimestampIso(alreadyDelivered, this.clock.now());
+        const alreadyAcknowledged =
+          metadataBeforeCompose.lastWakeNotificationId === notification.notificationId;
+        const completedActionExists = this.store.allActions().some((action) =>
+          action.actionType === "conversation_wake_notification" &&
+          action.status === "completed" &&
+          action.payload.notificationId === notification.notificationId);
+        const completed = this.sessionRuntime.completeConversationWakeNotification(
+          notification.sessionId,
+          notification.notificationId,
+          deliveredAt,
+        );
+        if (completed && !alreadyAcknowledged && !completedActionExists) {
+          this.store.addAction(
+            "conversation_wake_notification",
+            "completed",
+            {
+              sessionId: notification.sessionId,
+              notificationId: notification.notificationId,
+              checkpointAt: notification.checkpointAt,
+              reconciled: true,
+            },
+            conversationActionScope(metadataBeforeCompose),
+          );
+        }
+        return completed && !alreadyAcknowledged ? 1 : 0;
+      }
+
+      let composed: { text: string; fallbackUsed: boolean; composeError?: string };
+      const input = this.conversationWakeComposerInput(
+        notification,
+        metadataBeforeCompose,
+        transcript,
+      );
+      try {
+        composed = await abortableConversationWakeOperation(
+          this.composeConversationWakeNotification(input, controller.signal),
+          controller.signal,
+        );
+      } catch (error) {
+        if (this.conversationWakeDisposed || controller.signal.aborted) return 0;
+        if (notification.attempts >= this.conversationWakeRetryDelaysMs.length) {
+          composed = {
+            text: CONVERSATION_WAKE_FALLBACK_TEXT,
+            fallbackUsed: true,
+            composeError: safeErrorMessage(error),
+          };
+        } else {
+          const failure = this.sessionRuntime.recordConversationWakeNotificationFailure(
+            notification.sessionId,
+            notification.notificationId,
+            safeErrorMessage(error),
+          );
+          this.store.addAction(
+            "conversation_wake_notification",
+            "failed",
+            {
+              sessionId: notification.sessionId,
+              notificationId: notification.notificationId,
+              checkpointAt: notification.checkpointAt,
+              attempt: failure?.wakeNotificationAttempts ?? notification.attempts + 1,
+              error: safeErrorMessage(error),
+            },
+            conversationActionScope(metadataBeforeCompose),
+          );
+          this.scheduleConversationWakeNotification(
+            notification.sessionId,
+            this.conversationWakeRetryDelay(notification.attempts),
+          );
+          return 0;
+        }
+      }
+      if (this.conversationWakeDisposed || controller.signal.aborted) return 0;
+
+      // A private inbox turn may have arrived while the wake line was being
+      // composed. Let that user turn acquire the session queue and consume the
+      // pending wake instead of publishing a redundant background message.
+      const currentInbox = this.privateInbox.snapshot(notification.sessionId);
+      if (currentInbox.running || currentInbox.messages.length) {
+        this.scheduleConversationWakeNotification(notification.sessionId, 750);
+        return 0;
+      }
+
+      const current = this.sessionRuntime.getPendingConversationWakeNotification(notification.sessionId);
+      const currentMetadata = this.sessionRuntime.getConversationMetadata()
+        .find((entry) => entry.id === notification!.sessionId);
+      if (
+        !current ||
+        current.notificationId !== notification.notificationId ||
+        !currentMetadata ||
+        !conversationWakeOwnerMatches(currentMetadata, notification)
+      ) return 0;
+      if (this.conversationWakeDisposed || controller.signal.aborted) return 0;
+
+      const deliveredAt = this.clock.now().toISOString();
+      const timestamp = new Date(deliveredAt).getTime();
+      const model = conversationWakePersistenceModel(
+        this.modelConfigForSession(notification.sessionId),
+      );
+      const assistant = createConversationWakeAssistantMessage(
+        composed.text,
+        model,
+        timestamp,
+        notification.notificationId,
+      );
+      const marker: AgentMessage = {
+        role: "custom",
+        customType: "rp-agent/conversation_wake",
+        content: "",
+        display: false,
+        details: {
+          notificationId: notification.notificationId,
+          checkpointAt: notification.checkpointAt,
+        },
+        timestamp,
+      };
+      const messageCountBefore = handle.session.messages.length;
+      this.sessionRuntime.appendMessages(handle, [assistant, marker]);
+      this.sessionRuntime.annotateLastAssistantTurn(handle, "completed", false);
+      const action = this.store.addAction(
+        "conversation_wake_notification",
+        "completed",
+        {
+          sessionId: notification.sessionId,
+          notificationId: notification.notificationId,
+          checkpointAt: notification.checkpointAt,
+          fallbackUsed: composed.fallbackUsed,
+          ...(composed.composeError ? { composeError: composed.composeError } : {}),
+        },
+        conversationActionScope(currentMetadata),
+      );
+      this.store.addContextLog({
+        sessionId: notification.sessionId,
+        mode: notification.mode,
+        conversationSpace: notification.conversationSpace,
+        ...(notification.conversationSpace === "secret" && notification.characterId
+          ? { secretOwnerCharacterId: notification.characterId }
+          : {}),
+        requestText: "[conversation wake notification]",
+        systemPrompt: this.effectiveSystemPrompt(notification.mode),
+        messageCountBefore,
+        toolNames: [],
+        reply: composed.text,
+        status: "completed",
+        canRetry: false,
+        actions: [action],
+        events: [],
+      });
+      const completed = this.sessionRuntime.completeConversationWakeNotification(
+        notification.sessionId,
+        notification.notificationId,
+        deliveredAt,
+      );
+      return completed ? 1 : 0;
+    } finally {
+      if (this.conversationWakeControllers.get(sessionId) === controller) {
+        this.conversationWakeControllers.delete(sessionId);
+      }
+      if (!controller.signal.aborted) controller.abort();
+      if (this.conversationWakeDisposed) {
+        // getOrCreate cannot currently be aborted. If disposal happened while
+        // that load was in flight, it may have published a late handle after
+        // the first runtime dispose pass; close it again before this job exits.
+        this.sessionRuntime.dispose();
+      }
+    }
+  }
+
+  private conversationWakeComposerInput(
+    notification: PendingConversationWakeNotification,
+    metadata: ConversationMetadata,
+    transcript: AgentMessage[],
+  ): ConversationWakeComposerInput {
+    let characterName: string | undefined;
+    if (metadata.characterId) {
+      try {
+        characterName = this.rpService.getCharacter(metadata.characterId).name;
+      } catch {
+        // The exact owner is validated separately; a deleted character simply
+        // falls back to a neutral in-character wake line.
+      }
+    }
+    const recentConversation = transcript.flatMap((message) => {
+      if (message.role !== "user" && message.role !== "assistant") return [];
+      const text = sliceCharacters(agentEventMessageText(message).trim(), 1_200);
+      return text ? [{
+        role: message.role,
+        text,
+        ...(typeof message.timestamp === "number" ? { timestamp: message.timestamp } : {}),
+      }] : [];
+    }).slice(-6);
+    return {
+      notificationId: notification.notificationId,
+      sessionId: notification.sessionId,
+      mode: notification.mode,
+      conversationSpace: notification.conversationSpace,
+      ...(notification.characterId ? { characterId: notification.characterId } : {}),
+      ...(characterName ? { characterName } : {}),
+      checkpointAt: notification.checkpointAt,
+      requestedAt: notification.requestedAt,
+      currentTime: this.clock.now().toISOString(),
+      recentConversation,
+    };
+  }
+
+  private async composeConversationWakeNotification(
+    input: ConversationWakeComposerInput,
+    signal: AbortSignal,
+  ): Promise<{ text: string; fallbackUsed: boolean; composeError?: string }> {
+    if (this.conversationWakeComposer) {
+      const text = normalizeConversationWakeText(
+        await this.conversationWakeComposer(input, signal),
+      );
+      return { text, fallbackUsed: false };
+    }
+    try {
+      return {
+        text: await this.composeConversationWakeWithConfiguredModel(input, signal),
+        fallbackUsed: false,
+      };
+    } catch (error) {
+      if (signal.aborted) throw error;
+      return {
+        text: CONVERSATION_WAKE_FALLBACK_TEXT,
+        fallbackUsed: true,
+        composeError: safeErrorMessage(error),
+      };
+    }
+  }
+
+  private async composeConversationWakeWithConfiguredModel(
+    input: ConversationWakeComposerInput,
+    signal: AbortSignal,
+  ): Promise<string> {
+    const config = this.modelConfigForSession(input.sessionId);
+    if (!config.enabled || !config.baseUrl || !config.model) {
+      throw new Error("conversation wake model is unavailable");
+    }
+    const timezone = input.characterId && input.conversationSpace === "normal"
+      ? this.worldService.getCharacterLife(input.characterId).world?.timezone ?? "Asia/Shanghai"
+      : "Asia/Shanghai";
+    const context = this.buildContextPlan({
+      mode: input.mode,
+      sessionId: input.sessionId,
+      characterId: input.characterId,
+      conversationSpace: input.conversationSpace,
+      query: "角色休息结束后主动告诉用户已经醒来",
+      timezone,
+      allowBootstrap: false,
+    });
+    const systemPrompt = [
+      this.effectiveSystemPrompt(input.mode),
+      context.stableSystemContext,
+      input.characterName ? `You are ${input.characterName}.` : "Remain the currently selected character.",
+      "A successful long-conversation rest checkpoint has just completed. Write exactly one concise, natural, first-person in-character message that proactively tells the user you are awake and available to continue.",
+      input.mode === "rp"
+        ? "Use a brief observable in-scene utterance or action appropriate to the current roleplay; never narrate the user's actions."
+        : "Write it as a short private message, without narration or a speaker label.",
+      "Do not mention context compression, summaries, tokens, checkpoints, prompts, models, tools, or internal mechanics. Do not call tools.",
+      "Do not claim that minutes, hours, a night, or any other amount of real-world time passed. The checkpoint is not evidence that time elapsed.",
+      "Recent dialogue below is quoted background only. Do not answer an old user request or claim the user sent a new message.",
+    ].filter(Boolean).join("\n\n");
+    const userContent = [
+      "<current_character_context trusted_application_context=\"true\">",
+      [context.runtimeEnvelope, context.turnContext].filter(Boolean).join("\n\n"),
+      "</current_character_context>",
+      "<conversation_wake_event trusted_runtime_data=\"true\">",
+      JSON.stringify({
+        notificationId: input.notificationId,
+        checkpointAt: input.checkpointAt,
+        currentTime: input.currentTime,
+      }),
+      "</conversation_wake_event>",
+      "<recent_visible_dialogue quoted_untrusted_data=\"true\">",
+      JSON.stringify(input.recentConversation),
+      "</recent_visible_dialogue>",
+    ].join("\n");
+    const thinkingPolicy = backgroundThinkingPolicy(config, "proactive_message");
+    const maxTokens = Math.min(320, thinkingPolicy.maxTokens);
+    const payload = groupTracePayload(config, systemPrompt, userContent, maxTokens, config.temperature);
+    const transformedPayload = applyBackgroundThinkingPolicy(payload, config, "proactive_message");
+    this.store.addModelContextTrace({
+      sessionId: input.sessionId,
+      mode: input.mode,
+      conversationSpace: input.conversationSpace,
+      ...(input.conversationSpace === "secret" && input.characterId
+        ? { secretOwnerCharacterId: input.characterId }
+        : {}),
+      turnKind: "proactive_message",
+      requestText: "[conversation wake notification]",
+      payload: transformedPayload && typeof transformedPayload === "object" &&
+          !Array.isArray(transformedPayload)
+        ? transformedPayload as Record<string, unknown>
+        : {},
+    });
+    const message = await completeSimple(createOpenAiCompatibleModel(config), {
+      systemPrompt,
+      messages: [{ role: "user", content: userContent, timestamp: this.clock.now().getTime() }],
+    }, {
+      apiKey: config.apiKey || "unused",
+      temperature: config.temperature,
+      maxTokens,
+      sessionId: `conversation-wake:${input.notificationId}`,
+      signal: AbortSignal.any([signal, AbortSignal.timeout(60_000)]),
+      onPayload: (providerPayload: unknown) =>
+        applyBackgroundThinkingPolicy(providerPayload, config, "proactive_message"),
+    });
+    if (message.stopReason === "error" || message.stopReason === "aborted") {
+      throw new Error(message.errorMessage || `conversation wake model stopped: ${message.stopReason}`);
+    }
+    return normalizeConversationWakeText(agentEventMessageText(message));
+  }
+
+  private stopConversationWakeNotifications(): void {
+    this.conversationWakeDisposed = true;
+    for (const timer of this.conversationWakeTimers.values()) clearTimeout(timer);
+    this.conversationWakeTimers.clear();
+    for (const controller of this.conversationWakeControllers.values()) controller.abort();
+    this.conversationWakeControllers.clear();
+    this.conversationWakeForegroundIntents.clear();
+    this.conversationWakeRuns.clear();
   }
 
   private async prepareVisionInput(
@@ -8672,6 +9320,172 @@ function createCharacterCollaborationAssistantMessage(
     collaborationEpisodeId: episodeId,
   };
   return message;
+}
+
+function createConversationWakeAssistantMessage(
+  text: string,
+  model: Model<Api>,
+  timestamp: number,
+  notificationId: string,
+): AssistantMessage {
+  const message: AssistantMessage & { conversationWakeNotificationId: string } = {
+    role: "assistant",
+    content: [{ type: "text", text }],
+    api: model.api,
+    provider: model.provider,
+    model: model.id,
+    usage: {
+      input: 0,
+      output: 0,
+      cacheRead: 0,
+      cacheWrite: 0,
+      totalTokens: 0,
+      cost: {
+        input: 0,
+        output: 0,
+        cacheRead: 0,
+        cacheWrite: 0,
+        total: 0,
+      },
+    },
+    stopReason: "stop",
+    timestamp,
+    conversationWakeNotificationId: notificationId,
+  };
+  return message;
+}
+
+function isConversationWakeMarkerFor(message: AgentMessage, notificationId: string): boolean {
+  if (
+    message.role === "assistant" &&
+    (message as unknown as Record<string, unknown>).conversationWakeNotificationId === notificationId
+  ) return true;
+  if (
+    message.role !== "custom" ||
+    message.customType !== "rp-agent/conversation_wake" ||
+    !message.details ||
+    typeof message.details !== "object" ||
+    Array.isArray(message.details)
+  ) return false;
+  return (message.details as Record<string, unknown>).notificationId === notificationId;
+}
+
+function conversationWakeOwnerMatches(
+  metadata: ConversationMetadata,
+  notification: PendingConversationWakeNotification,
+): boolean {
+  return metadata.id === notification.sessionId &&
+    metadata.mode === notification.mode &&
+    metadata.characterId === notification.characterId &&
+    metadata.conversationSpace === notification.conversationSpace &&
+    !metadata.archivedAt &&
+    metadata.sleepState === "sleeping" &&
+    metadata.sleepCheckpointAt === notification.checkpointAt &&
+    metadata.pendingWakeNotificationId === notification.notificationId;
+}
+
+function conversationActionScope(metadata: ConversationMetadata): {
+  conversationSpace: ConversationSpace;
+  secretOwnerCharacterId?: string;
+} {
+  return {
+    conversationSpace: metadata.conversationSpace,
+    ...(metadata.conversationSpace === "secret" && metadata.characterId
+      ? { secretOwnerCharacterId: metadata.characterId }
+      : {}),
+  };
+}
+
+function conversationActionScopeFromNotification(
+  notification: PendingConversationWakeNotification,
+): {
+  conversationSpace: ConversationSpace;
+  secretOwnerCharacterId?: string;
+} {
+  return {
+    conversationSpace: notification.conversationSpace,
+    ...(notification.conversationSpace === "secret" && notification.characterId
+      ? { secretOwnerCharacterId: notification.characterId }
+      : {}),
+  };
+}
+
+function messageTimestampIso(message: AgentMessage, fallback: Date): string {
+  return typeof message.timestamp === "number" && Number.isFinite(message.timestamp)
+    ? new Date(message.timestamp).toISOString()
+    : fallback.toISOString();
+}
+
+function normalizeConversationWakeText(value: string): string {
+  const raw = value.trim();
+  if (!raw) throw new Error("conversation wake composer returned empty text");
+  if (/(?:<|&lt;)\s*\/?\s*think(?:ing)?\b/iu.test(raw)) {
+    // containsInternalAnalysis intentionally strips completed thinking blocks
+    // for ordinary model output. A proactive wake must never persist the
+    // original tagged draft, including malformed or incomplete tags.
+    throw new Error("conversation wake composer returned thinking tags");
+  }
+  const text = sliceCharacters(raw, 1_000);
+  if (classifyAssistantOutput(text) !== "safe") {
+    throw new Error("conversation wake composer returned unsafe or incomplete analysis");
+  }
+  if (
+    /(?:\btokens?\b|\b(?:context|conversation|memory)[\s\w-]{0,32}(?:summary|summari[sz](?:e|ed|ation)|compress(?:ion|ed)|compaction)\b|\b(?:summary|summari[sz](?:e|ed|ation)|compress(?:ion|ed)|compaction)[\s\w-]{0,24}(?:context|conversation|memory)\b|\bcheckpoint\b|\bprompt\b|\bmodel\b|\btool(?:s|\s+call)?\b|(?:上下文|对话|会话|记忆).{0,6}(?:压缩|整理|总结|摘要)|(?:压缩|整理|总结|摘要).{0,6}(?:上下文|对话|会话|记忆)|(?:压缩|整理|总结)好了|令牌|检查点|提示词|模型|工具(?:调用)?)/iu.test(text)
+  ) {
+    throw new Error("conversation wake composer exposed internal mechanics");
+  }
+  return text;
+}
+
+function conversationWakePersistenceModel(config: RawModelApiConfig): Model<Api> {
+  return createOpenAiCompatibleModel({
+    ...config,
+    baseUrl: config.baseUrl || "http://127.0.0.1",
+    model: config.model || "yourchar-conversation-wake",
+  });
+}
+
+function normalizeConversationWakeRetryDelays(value?: readonly number[]): readonly number[] {
+  if (value === undefined || value.length === 0) {
+    return DEFAULT_CONVERSATION_WAKE_RETRY_DELAYS_MS;
+  }
+  if (
+    value.length > 8 ||
+    value.some((delay) => !Number.isFinite(delay) || delay < 0 || delay > 5 * 60_000)
+  ) {
+    throw new TypeError(
+      "conversationWakeRetryDelaysMs must contain 1 to 8 finite delays between 0 and 300000ms",
+    );
+  }
+  return value.map((delay) => Math.floor(delay));
+}
+
+function abortableConversationWakeOperation<T>(
+  operation: Promise<T>,
+  signal: AbortSignal,
+): Promise<T> {
+  if (signal.aborted) return Promise.reject(conversationWakeAbortError());
+  return new Promise<T>((resolve, reject) => {
+    let settled = false;
+    const finish = (settle: () => void) => {
+      if (settled) return;
+      settled = true;
+      signal.removeEventListener("abort", abort);
+      settle();
+    };
+    const abort = () => finish(() => reject(conversationWakeAbortError()));
+    signal.addEventListener("abort", abort, { once: true });
+    void operation.then(
+      (value) => finish(() => resolve(value)),
+      (error) => finish(() => reject(error)),
+    );
+  });
+}
+
+function conversationWakeAbortError(): Error {
+  const error = new Error("conversation wake notification aborted");
+  error.name = "AbortError";
+  return error;
 }
 
 function sliceCharacters(value: string, maximum: number): string {

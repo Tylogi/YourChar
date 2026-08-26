@@ -14,6 +14,7 @@ import { VirtualClock } from "../app/clock.js";
 import {
   CompanionKernel,
   type CharacterCollaborationReporter,
+  type ConversationWakeComposer,
 } from "../domain/kernel.js";
 import { CaptureNotificationSink } from "../notifications/sink.js";
 import type {
@@ -71,6 +72,8 @@ export type CreateTestRuntimeOptions = {
   worldMessenger?: ProactiveMessenger;
   characterInteractionActor?: CharacterInteractionActor;
   characterCollaborationReporter?: CharacterCollaborationReporter;
+  conversationWakeComposer?: ConversationWakeComposer;
+  conversationWakeRetryDelaysMs?: readonly number[];
   characterSkillReflector?: CharacterSkillReflector | false;
   visionService?: VisionService;
   documentService?: DocumentConversionService;
@@ -228,6 +231,9 @@ export class TestRuntime {
       worldMessenger: options.worldMessenger,
       characterInteractionActor: options.characterInteractionActor,
       characterCollaborationReporter: options.characterCollaborationReporter,
+      conversationWakeComposer: options.conversationWakeComposer ??
+        (async () => "我睡醒了，现在又可以继续陪你啦。"),
+      conversationWakeRetryDelaysMs: options.conversationWakeRetryDelaysMs,
       characterSkillReflector: options.characterSkillReflector ?? false,
       conversationLifecycleThresholds: options.conversationLifecycleThresholds,
       subagentTimeoutMs: options.subagentTimeoutMs,

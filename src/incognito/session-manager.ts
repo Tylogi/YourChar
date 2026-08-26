@@ -104,6 +104,7 @@ type IncognitoChildKernel = {
   cancelMessage: (sessionId: string) => Promise<boolean>;
   getConversationContextBudget: (sessionId: string) => Promise<ContextBudgetSnapshot>;
   compactConversationContext: (sessionId: string) => Promise<ConversationCompactionResult>;
+  flushConversationWakeNotifications: (sessionId?: string) => Promise<number>;
   getConversationInteraction: (sessionId: string) => IncognitoInteractionView;
   transitionConversationInteraction: (
     sessionId: string,
@@ -387,6 +388,12 @@ export class IncognitoSessionManager {
     const entry = this.requireEntry(sessionId);
     return this.trackOperation(entry, () =>
       entry.child.compactConversationContext(entry.childSessionId));
+  }
+
+  async flushConversationWakeNotifications(sessionId: string): Promise<number> {
+    const entry = this.requireEntry(sessionId);
+    return this.trackOperation(entry, () =>
+      entry.child.flushConversationWakeNotifications(entry.childSessionId));
   }
 
   getInteraction(sessionId: string): IncognitoInteractionView {
@@ -694,13 +701,23 @@ export class IncognitoSessionManager {
       copySnapshotEntry(sourceFile, clonedPiSessionFile, budget);
     }
 
+    const childConversation = metadata
+      ? { ...metadata, ...(clonedPiSessionFile ? { piSessionFile: clonedPiSessionFile } : {}) }
+      : undefined;
+    if (childConversation) {
+      // A pending wake belongs to the persistent source runtime. Preserve the
+      // sleeping checkpoint so the first successful child turn can resume it,
+      // but never replay the source outbox inside the disposable overlay.
+      delete childConversation.pendingWakeNotificationId;
+      delete childConversation.pendingWakeNotificationAt;
+      delete childConversation.wakeNotificationAttempts;
+      delete childConversation.wakeNotificationLastError;
+    }
     writeFileSync(
       join(destination, "conversations.json"),
       `${JSON.stringify({
         version: 1,
-        conversations: metadata
-          ? [{ ...metadata, ...(clonedPiSessionFile ? { piSessionFile: clonedPiSessionFile } : {}) }]
-          : [],
+        conversations: childConversation ? [childConversation] : [],
       }, null, 2)}\n`,
       { encoding: "utf8", mode: 0o600, flag: "wx" },
     );

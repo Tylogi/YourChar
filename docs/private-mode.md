@@ -43,6 +43,23 @@ observability survive restart inside the private partition. Incognito mode
 instead starts from a frozen normal-space snapshot and discards its temporary
 overlay when the user leaves it or YourChar restarts.
 
+A successful conversation-sleep checkpoint also keeps its wake lifecycle
+inside the exact private partition. The pending wake-notification identifier,
+composition trace, action record, assistant message, hidden idempotency marker,
+and unread state are all scoped to that character's `secret` conversation.
+Nothing is copied into the character's normal transcript or normal unread
+list. A restart resumes the pending private job in the same partition, and a
+marker already written to the private transcript prevents a second visible
+message or a second unread increment.
+
+This wake message is an in-app conversation-lifecycle delivery. It does not use
+the world's proactive-message policy, cooldown, daily limit, quiet hours, or
+topic preferences, and it does not require proactive world messages to be
+enabled. It is never forwarded through reminders, desktop notifications,
+Feishu, WeChat, or another IM channel. If the user sends a private message
+before the background wake is delivered, that private turn wakes the character
+and cancels the queued message so the user does not receive two wake replies.
+
 Private mode is not disk encryption, a password vault, an operating-system user
 boundary, HTTP authentication, or end-to-end encryption. A local process or
 user that can read YourChar's state directory can read both spaces. The HTTP

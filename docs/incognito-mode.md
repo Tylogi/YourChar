@@ -19,6 +19,21 @@ identifier. If a verified memory-backed filesystem is unavailable, YourChar
 fails closed instead of silently placing an incognito snapshot on persistent
 storage.
 
+If an incognito conversation itself reaches a successful conversation-sleep
+checkpoint, its child runtime may append the separate in-character wake message
+to that disposable transcript. The pending identifier, hidden idempotency
+marker, child-local unread state, traces, and actions remain inside the tmpfs
+overlay; they never update the source normal conversation or its unread list.
+An inherited pending wake job from the frozen normal snapshot is not replayed
+inside the child. Closing the overlay cancels any unfinished child wake job and
+discards both its delivery state and any delivered wake message.
+
+Incognito wake delivery is in-app only. It does not use world proactive-message
+policy and cannot send through reminders, desktop notifications, Feishu,
+WeChat, or another IM channel. A user turn that reaches the child before its
+background wake message cancels that pending outreach and performs the normal
+in-turn waking transition instead, preventing duplicate wake replies.
+
 Incognito mode deliberately disables persistent or externally observable Agent
 capabilities such as schedules, reminders, world automation, character
 collaboration, IM delivery, Skill installation, subagents, shell, Workspace

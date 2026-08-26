@@ -17,6 +17,7 @@ import {
   CompanionKernel,
   RP_MEMORY_REALM,
   RP_MEMORY_SCOPE,
+  type CompanionKernelOptions,
   type MessageResponse,
 } from "../src/domain/index.js";
 import { createHttpServer } from "../src/http/router.js";
@@ -280,7 +281,7 @@ test("the turn after the index-14 kernel restart resumes in order", async () => 
   }
 });
 
-test("a rest checkpoint survives kernel restart and wakes on the next turn", async () => {
+test("a failed proactive wake survives restart and the next user turn wins without a duplicate", async () => {
   const stateDir = mkdtempSync(join(tmpdir(), "rp-agent-compaction-restart-"));
   const model = new ScriptedModelController("compaction-restart");
   let first: CompanionKernel | undefined;
@@ -291,6 +292,9 @@ test("a rest checkpoint survives kernel restart and wakes on the next turn", asy
       model,
       true,
       { tiredTokens: 12_000, hardSleepTokens: 60_000 },
+      async () => {
+        throw new Error("wake composer intentionally unavailable");
+      },
     );
     const character = first.createCharacter({ name: "苏言" });
     first.writeRpMemory({
@@ -345,6 +349,11 @@ test("a rest checkpoint survives kernel restart and wakes on the next turn", asy
     assert.ok((compactionMetadata?.lastCompactionEstimatedTokensBefore ?? 0) > 0);
     assert.ok((compactionMetadata?.lastCompactionEstimatedTokensAfter ?? Infinity) <
       (compactionMetadata?.lastCompactionEstimatedTokensBefore ?? 0));
+    await first.flushConversationWakeNotifications("compact-restart");
+    const failedWakeMetadata = first.getConversationMetadata("compact-restart");
+    assert.ok(failedWakeMetadata?.pendingWakeNotificationId);
+    assert.ok(failedWakeMetadata?.wakeNotificationAttempts);
+    assert.match(failedWakeMetadata?.wakeNotificationLastError ?? "", /intentionally unavailable/);
     first.dispose();
     first = undefined;
 
@@ -353,6 +362,9 @@ test("a rest checkpoint survives kernel restart and wakes on the next turn", asy
       model,
       false,
       { tiredTokens: 12_000, hardSleepTokens: 60_000 },
+      async () => {
+        throw new Error("wake composer intentionally unavailable");
+      },
     );
     const restoredCompactionMetadata = second.listConversationMetadata().find((entry) =>
       entry.id === "compact-restart"
@@ -367,6 +379,10 @@ test("a rest checkpoint survives kernel restart and wakes on the next turn", asy
     assert.equal(
       restoredCompactionMetadata?.lastCompactionEstimatedTokensAfter,
       compactionMetadata?.lastCompactionEstimatedTokensAfter,
+    );
+    assert.equal(
+      restoredCompactionMetadata?.pendingWakeNotificationId,
+      failedWakeMetadata?.pendingWakeNotificationId,
     );
     const beforeNextTurn = await second.getSession("compact-restart");
     assert.ok(beforeNextTurn.messages.some((message) => message.role === "compactionSummary"));
@@ -392,9 +408,692 @@ test("a rest checkpoint survives kernel restart and wakes on the next turn", asy
     assert.equal(second.listConversationMetadata().find((entry) =>
       entry.id === "compact-restart"
     )?.sleepState, "awake");
+    assert.equal(second.getConversationMetadata("compact-restart")?.pendingWakeNotificationId, undefined);
+    assert.equal(await second.flushConversationWakeNotifications("compact-restart"), 0);
+    const transcript = await second.getSession("compact-restart");
+    assert.equal(
+      transcript.messages.filter((message) =>
+        message.role === "custom" && message.customType === "rp-agent/conversation_wake"
+      ).length,
+      0,
+    );
+    assert.equal(
+      second.store.actions.filter((action) =>
+        action.actionType === "conversation_wake_notification" && action.status === "completed"
+      ).length,
+      0,
+    );
   } finally {
     first?.dispose();
     second?.dispose();
+    rmSync(stateDir, { recursive: true, force: true });
+  }
+});
+
+test("a pending wake notification retries after restart and its transcript marker prevents redelivery", async () => {
+  const stateDir = mkdtempSync(join(tmpdir(), "rp-agent-wake-restart-dedupe-"));
+  const model = new ScriptedModelController("wake-restart-dedupe");
+  let first: CompanionKernel | undefined;
+  let second: CompanionKernel | undefined;
+  let third: CompanionKernel | undefined;
+  try {
+    first = createPersistentScriptedKernel(
+      stateDir,
+      model,
+      true,
+      { tiredTokens: 1, hardSleepTokens: 1_000_000 },
+      async () => {
+        throw new Error("transient wake failure");
+      },
+    );
+    const character = first.createCharacter({ name: "重启唤醒角色" });
+    model.enqueue([
+      { kind: "assistant_text", text: `先保留连续性。${"abcd".repeat(6_000)}` },
+      { kind: "assistant_text", text: "晚安，我先休息一下。" },
+    ]);
+    await first.sendMessage("wake-restart-dedupe", {
+      mode: "sms",
+      characterId: character.id,
+      text: "先聊一句",
+    });
+    await first.sendMessage("wake-restart-dedupe", {
+      mode: "sms",
+      characterId: character.id,
+      text: "晚安咯",
+    });
+    await first.flushConversationWakeNotifications("wake-restart-dedupe");
+    const pendingId = first.getConversationMetadata("wake-restart-dedupe")?.pendingWakeNotificationId;
+    assert.ok(pendingId);
+    first.dispose();
+    first = undefined;
+
+    let successfulComposerCalls = 0;
+    second = createPersistentScriptedKernel(
+      stateDir,
+      model,
+      false,
+      { tiredTokens: 1, hardSleepTokens: 1_000_000 },
+      async () => {
+        successfulComposerCalls += 1;
+        return "我睡醒了，回来继续陪你。";
+      },
+    );
+    await second.flushConversationWakeNotifications("wake-restart-dedupe");
+    assert.equal(await second.flushConversationWakeNotifications("wake-restart-dedupe"), 0);
+    assert.equal(successfulComposerCalls, 1);
+    const delivered = second.getConversationMetadata("wake-restart-dedupe");
+    assert.equal(delivered?.sleepState, "awake");
+    assert.equal(delivered?.lastWakeNotificationId, pendingId);
+    assert.equal(delivered?.pendingWakeNotificationId, undefined);
+    const deliveredTranscript = await second.getSession("wake-restart-dedupe");
+    assert.equal(
+      deliveredTranscript.messages.filter((message) =>
+        message.role === "custom" && message.customType === "rp-agent/conversation_wake" &&
+          JSON.stringify(message.details).includes(pendingId)
+      ).length,
+      1,
+    );
+    assert.equal(
+      deliveredTranscript.messages.filter((message) => message.role === "assistant" &&
+        message.content.some((block) => block.type === "text" && block.text === "我睡醒了，回来继续陪你。"))
+        .length,
+      1,
+    );
+    second.dispose();
+    second = undefined;
+
+    const indexPath = join(stateDir, "conversations.json");
+    const index = JSON.parse(readFileSync(indexPath, "utf8")) as {
+      conversations: Array<Record<string, unknown>>;
+    };
+    const stale = index.conversations.find((entry) => entry.id === "wake-restart-dedupe");
+    assert.ok(stale);
+    stale.sleepState = "sleeping";
+    stale.pendingWakeNotificationId = pendingId;
+    stale.pendingWakeNotificationAt = new Date().toISOString();
+    delete stale.lastWakeNotificationId;
+    delete stale.wakeNotificationDeliveredAt;
+    stale.unreadCount = Math.max(0, Number(stale.unreadCount ?? 1) - 1);
+    writeFileSync(indexPath, JSON.stringify(index, null, 2), "utf8");
+
+    let duplicateComposerCalls = 0;
+    third = createPersistentScriptedKernel(
+      stateDir,
+      model,
+      false,
+      { tiredTokens: 1, hardSleepTokens: 1_000_000 },
+      async () => {
+        duplicateComposerCalls += 1;
+        return "不应重复投递";
+      },
+    );
+    assert.equal(await third.flushConversationWakeNotifications("wake-restart-dedupe"), 1);
+    assert.equal(duplicateComposerCalls, 0);
+    assert.equal(third.getConversationMetadata("wake-restart-dedupe")?.sleepState, "awake");
+    assert.equal(third.getConversationMetadata("wake-restart-dedupe")?.pendingWakeNotificationId, undefined);
+    const reconciledTranscript = await third.getSession("wake-restart-dedupe");
+    assert.equal(
+      reconciledTranscript.messages.filter((message) =>
+        message.role === "custom" && message.customType === "rp-agent/conversation_wake"
+      ).length,
+      1,
+    );
+  } finally {
+    first?.dispose();
+    second?.dispose();
+    third?.dispose();
+    rmSync(stateDir, { recursive: true, force: true });
+  }
+});
+
+test("the built-in wake composer falls back to a safe in-character line when its model call fails", async () => {
+  const stateDir = mkdtempSync(join(tmpdir(), "rp-agent-wake-model-fallback-"));
+  const model = new ScriptedModelController("wake-model-fallback");
+  const kernel = createPersistentScriptedKernel(
+    stateDir,
+    model,
+    true,
+    { tiredTokens: 1, hardSleepTokens: 1_000_000 },
+  );
+  try {
+    const character = kernel.createCharacter({ name: "回退唤醒角色" });
+    model.enqueue([
+      { kind: "assistant_text", text: `先完成一轮对话。${"abcd".repeat(6_000)}` },
+      { kind: "assistant_text", text: "晚安，我先休息一下。" },
+    ]);
+    await kernel.sendMessage("wake-model-fallback", {
+      mode: "sms",
+      characterId: character.id,
+      text: "先聊一句",
+    });
+    await kernel.sendMessage("wake-model-fallback", {
+      mode: "sms",
+      characterId: character.id,
+      text: "晚安咯",
+    });
+    await kernel.flushConversationWakeNotifications("wake-model-fallback");
+
+    assert.equal(kernel.getConversationMetadata("wake-model-fallback")?.sleepState, "awake");
+    const transcript = await kernel.getSession("wake-model-fallback");
+    assert.ok(transcript.messages.some((message) =>
+      message.role === "assistant" && message.content.some((block) =>
+        block.type === "text" && block.text === "我睡醒了，现在又可以继续陪你啦。")
+    ));
+    const action = kernel.store.actions.find((entry) =>
+      entry.actionType === "conversation_wake_notification" && entry.status === "completed"
+    );
+    assert.equal(action?.payload.fallbackUsed, true);
+    assert.equal(typeof action?.payload.composeError, "string");
+  } finally {
+    kernel.dispose();
+    rmSync(stateDir, { recursive: true, force: true });
+  }
+});
+
+test("disposing during wake composition aborts delivery without writing a message, marker, action, or unread", async () => {
+  const stateDir = mkdtempSync(join(tmpdir(), "rp-agent-wake-dispose-race-"));
+  const model = new ScriptedModelController("wake-dispose-race");
+  const composerEntered = deferredValue<void>();
+  const releaseComposer = deferredValue<string>();
+  let composerSignal: AbortSignal | undefined;
+  let kernel: CompanionKernel | undefined = createPersistentScriptedKernel(
+    stateDir,
+    model,
+    true,
+    { tiredTokens: 1, hardSleepTokens: 1_000_000 },
+    async (_input, signal) => {
+      composerSignal = signal;
+      composerEntered.resolve();
+      return releaseComposer.promise;
+    },
+  );
+  try {
+    const character = kernel.createCharacter({ name: "关闭竞态角色" });
+    model.enqueue([
+      { kind: "assistant_text", text: `先形成足够长的休息上下文。${"abcd".repeat(6_000)}` },
+      { kind: "assistant_text", text: "晚安，我先休息一下。" },
+    ]);
+    await kernel.sendMessage("wake-dispose-race", {
+      mode: "sms",
+      characterId: character.id,
+      text: "先聊一句",
+    });
+    await kernel.sendMessage("wake-dispose-race", {
+      mode: "sms",
+      characterId: character.id,
+      text: "晚安咯",
+    });
+    const pendingBeforeDispose = kernel.getConversationMetadata("wake-dispose-race")
+      ?.pendingWakeNotificationId;
+    assert.ok(pendingBeforeDispose);
+
+    const flush = kernel.flushConversationWakeNotifications("wake-dispose-race");
+    await composerEntered.promise;
+    const disposedKernel = kernel;
+    kernel.dispose();
+    kernel = undefined;
+    assert.equal(composerSignal?.aborted, true);
+    releaseComposer.resolve("这条关闭后的醒来消息绝不能落盘。");
+    assert.equal(await flush, 0);
+    await Promise.resolve();
+
+    assert.equal(
+      disposedKernel.store.actions.some((action) =>
+        action.actionType === "conversation_wake_notification"
+      ),
+      false,
+    );
+    const persistedIndex = JSON.parse(
+      readFileSync(join(stateDir, "conversations.json"), "utf8"),
+    ) as { conversations: Array<Record<string, unknown>> };
+    const persisted = persistedIndex.conversations.find((entry) => entry.id === "wake-dispose-race");
+    assert.equal(persisted?.sleepState, "sleeping");
+    assert.equal(persisted?.pendingWakeNotificationId, pendingBeforeDispose);
+    assert.equal(persisted?.unreadCount, 2);
+    const persistedPi = readdirSync(join(stateDir, "pi-sessions"))
+      .filter((name) => name.endsWith(".jsonl"))
+      .map((name) => readFileSync(join(stateDir, "pi-sessions", name), "utf8"))
+      .join("\n");
+    assert.doesNotMatch(persistedPi, /rp-agent\/conversation_wake|这条关闭后的醒来消息绝不能落盘/);
+  } finally {
+    releaseComposer.resolve("释放测试生成器");
+    kernel?.dispose();
+    rmSync(stateDir, { recursive: true, force: true });
+  }
+});
+
+test("disposing startup wake recovery closes a session handle that finishes loading late", async () => {
+  const stateDir = mkdtempSync(join(tmpdir(), "rp-agent-wake-startup-dispose-"));
+  const model = new ScriptedModelController("wake-startup-dispose");
+  let first: CompanionKernel | undefined;
+  let second: CompanionKernel | undefined;
+  const handleCreated = deferredValue<{ session: { dispose(): void } }>();
+  const releaseHandle = deferredValue<void>();
+  try {
+    first = createPersistentScriptedKernel(
+      stateDir,
+      model,
+      true,
+      { tiredTokens: 1, hardSleepTokens: 1_000_000 },
+      async () => "启动恢复不应在关闭后投递。",
+      [0],
+    );
+    const character = first.createCharacter({ name: "启动恢复竞态角色" });
+    await checkpointConversationForWake(
+      first,
+      model,
+      "wake-startup-dispose",
+      character.id,
+    );
+    const pendingId = first.getConversationMetadata("wake-startup-dispose")
+      ?.pendingWakeNotificationId;
+    assert.ok(pendingId);
+    first.dispose();
+    first = undefined;
+
+    second = createPersistentScriptedKernel(
+      stateDir,
+      model,
+      false,
+      { tiredTokens: 1, hardSleepTokens: 1_000_000 },
+      async () => "启动恢复不应在关闭后投递。",
+      [0],
+    );
+    const runtimeInternals = second.sessionRuntime as unknown as {
+      createHandle: (metadata: unknown) => Promise<{ session: { dispose(): void } }>;
+      handles: Map<string, unknown>;
+      loading: Map<string, unknown>;
+    };
+    const createHandle = runtimeInternals.createHandle.bind(second.sessionRuntime);
+    let lateHandleDisposeCalls = 0;
+    runtimeInternals.createHandle = async (metadata) => {
+      const handle = await createHandle(metadata);
+      const dispose = handle.session.dispose.bind(handle.session);
+      handle.session.dispose = () => {
+        lateHandleDisposeCalls += 1;
+        dispose();
+      };
+      handleCreated.resolve(handle);
+      await releaseHandle.promise;
+      return handle;
+    };
+
+    const flush = second.flushConversationWakeNotifications("wake-startup-dispose");
+    await handleCreated.promise;
+    const disposedKernel = second;
+    second.dispose();
+    second = undefined;
+    releaseHandle.resolve();
+    assert.equal(await flush, 0);
+    assert.equal(runtimeInternals.handles.size, 0);
+    assert.equal(runtimeInternals.loading.size, 0);
+    assert.equal(lateHandleDisposeCalls, 1);
+    const persisted = readConversationIndex(join(stateDir, "conversations.json"))
+      .conversations.find((entry) => entry.id === "wake-startup-dispose") as
+        | (Record<string, unknown> & { pendingWakeNotificationId?: string; sleepState?: string })
+        | undefined;
+    assert.equal(persisted?.pendingWakeNotificationId, pendingId);
+    assert.equal(persisted?.sleepState, "sleeping");
+    assert.equal(
+      disposedKernel.store.actions.some((action) =>
+        action.actionType === "conversation_wake_notification"
+      ),
+      false,
+    );
+  } finally {
+    releaseHandle.resolve();
+    first?.dispose();
+    second?.dispose();
+    rmSync(stateDir, { recursive: true, force: true });
+  }
+});
+
+test("a direct user turn aborts an in-flight wake composer that ignores its signal", async () => {
+  const stateDir = mkdtempSync(join(tmpdir(), "rp-agent-wake-user-preempts-"));
+  const model = new ScriptedModelController("wake-user-preempts");
+  const composerEntered = deferredValue<void>();
+  const releaseComposer = deferredValue<string>();
+  let composerSignal: AbortSignal | undefined;
+  const kernel = createPersistentScriptedKernel(
+    stateDir,
+    model,
+    true,
+    { tiredTokens: 1, hardSleepTokens: 1_000_000 },
+    async (_input, signal) => {
+      composerSignal = signal;
+      composerEntered.resolve();
+      // Intentionally ignore the abort signal. The kernel must race this
+      // promise with cancellation so the foreground queue is still released.
+      return releaseComposer.promise;
+    },
+    [0],
+  );
+  try {
+    const character = kernel.createCharacter({ name: "用户抢先唤醒角色" });
+    await checkpointConversationForWake(
+      kernel,
+      model,
+      "wake-user-preempts",
+      character.id,
+    );
+    const wakeFlush = kernel.flushConversationWakeNotifications("wake-user-preempts");
+    await composerEntered.promise;
+
+    model.enqueue([{ kind: "assistant_text", text: "你先叫醒我了，我们直接继续吧。" }]);
+    const foreground = await settlesWithin(
+      kernel.sendMessage("wake-user-preempts", {
+        mode: "sms",
+        characterId: character.id,
+        text: "醒了吗？",
+      }),
+      1_500,
+      "foreground user turn remained blocked behind the aborted wake composer",
+    );
+    assert.equal(foreground.reply, "你先叫醒我了，我们直接继续吧。");
+    assert.equal(await wakeFlush, 0);
+    assert.equal(composerSignal?.aborted, true);
+    assert.equal(kernel.getConversationMetadata("wake-user-preempts")?.sleepState, "awake");
+    assert.equal(
+      kernel.getConversationMetadata("wake-user-preempts")?.pendingWakeNotificationId,
+      undefined,
+    );
+    const transcript = await kernel.getSession("wake-user-preempts");
+    assert.equal(
+      transcript.messages.filter((message) =>
+        message.role === "custom" && message.customType === "rp-agent/conversation_wake"
+      ).length,
+      0,
+    );
+    assert.doesNotMatch(JSON.stringify(transcript.messages), /忽略信号后的醒来消息/);
+    assert.equal(
+      kernel.store.actions.some((action) => action.actionType === "conversation_wake_notification"),
+      false,
+    );
+  } finally {
+    releaseComposer.resolve("忽略信号后的醒来消息绝不能投递。");
+    kernel.dispose();
+    rmSync(stateDir, { recursive: true, force: true });
+  }
+});
+
+test("a streaming user turn aborts an in-flight wake composer that ignores its signal", async () => {
+  const stateDir = mkdtempSync(join(tmpdir(), "rp-agent-wake-stream-preempts-"));
+  const model = new ScriptedModelController("wake-stream-preempts");
+  const composerEntered = deferredValue<void>();
+  const releaseComposer = deferredValue<string>();
+  let composerSignal: AbortSignal | undefined;
+  const kernel = createPersistentScriptedKernel(
+    stateDir,
+    model,
+    true,
+    { tiredTokens: 1, hardSleepTokens: 1_000_000 },
+    async (_input, signal) => {
+      composerSignal = signal;
+      composerEntered.resolve();
+      return releaseComposer.promise;
+    },
+    [0],
+  );
+  try {
+    const character = kernel.createCharacter({ name: "流式抢先唤醒角色" });
+    await checkpointConversationForWake(
+      kernel,
+      model,
+      "wake-stream-preempts",
+      character.id,
+    );
+    const wakeFlush = kernel.flushConversationWakeNotifications("wake-stream-preempts");
+    await composerEntered.promise;
+
+    model.enqueue([{ kind: "assistant_text", text: "流式消息先到了，我们直接继续吧。" }]);
+    const foreground = await settlesWithin(
+      kernel.streamMessage("wake-stream-preempts", {
+        mode: "sms",
+        characterId: character.id,
+        text: "醒了吗？",
+      }, () => undefined),
+      1_500,
+      "streaming user turn remained blocked behind the aborted wake composer",
+    );
+    assert.equal(foreground.reply, "流式消息先到了，我们直接继续吧。");
+    assert.equal(await wakeFlush, 0);
+    assert.equal(composerSignal?.aborted, true);
+    assert.equal(kernel.getConversationMetadata("wake-stream-preempts")?.sleepState, "awake");
+    assert.equal(
+      kernel.getConversationMetadata("wake-stream-preempts")?.pendingWakeNotificationId,
+      undefined,
+    );
+    const transcript = await kernel.getSession("wake-stream-preempts");
+    assert.equal(
+      transcript.messages.filter((message) =>
+        message.role === "custom" && message.customType === "rp-agent/conversation_wake"
+      ).length,
+      0,
+    );
+    assert.equal(
+      kernel.store.actions.some((action) => action.actionType === "conversation_wake_notification"),
+      false,
+    );
+  } finally {
+    releaseComposer.resolve("忽略信号后的流式醒来消息绝不能投递。");
+    kernel.dispose();
+    rmSync(stateDir, { recursive: true, force: true });
+  }
+});
+
+test("internal-mechanics wake drafts retry and persist only the deterministic safe fallback", async (t) => {
+  const cases = [
+    {
+      label: "thinking tags",
+      draft: "<think>reasoning</think>我醒了",
+      expectedError: /thinking tags/,
+    },
+    {
+      label: "pending tool protocol",
+      draft: "Call:",
+      expectedError: /unsafe or incomplete analysis/,
+    },
+    {
+      label: "English conversation summary",
+      draft: "I summarized the conversation and woke up.",
+      expectedError: /internal mechanics/,
+    },
+    {
+      label: "Chinese conversation summary",
+      draft: "会话整理好了，我醒了。",
+      expectedError: /internal mechanics/,
+    },
+  ] as const;
+
+  for (const [index, fixture] of cases.entries()) {
+    await t.test(fixture.label, async () => {
+      const stateDir = mkdtempSync(join(tmpdir(), `rp-agent-wake-output-guard-${index}-`));
+      const model = new ScriptedModelController(`wake-output-guard-${index}`);
+      let composerCalls = 0;
+      const sessionId = `wake-output-guard-${index}`;
+      const kernel = createPersistentScriptedKernel(
+        stateDir,
+        model,
+        true,
+        { tiredTokens: 1, hardSleepTokens: 1_000_000 },
+        async () => {
+          composerCalls += 1;
+          return fixture.draft;
+        },
+        [0],
+      );
+      try {
+        const character = kernel.createCharacter({ name: `醒来文案防护角色 ${index}` });
+        await checkpointConversationForWake(kernel, model, sessionId, character.id);
+        await kernel.flushConversationWakeNotifications(sessionId);
+        await waitForCondition(
+          () => kernel.getConversationMetadata(sessionId)?.sleepState === "awake",
+          3_000,
+          `${fixture.label} wake did not reach its safe fallback`,
+        );
+
+        assert.equal(composerCalls, 2);
+        const transcript = await kernel.getSession(sessionId);
+        const serialized = JSON.stringify(transcript.messages);
+        assert.equal(serialized.includes(fixture.draft), false);
+        assert.match(serialized, /我睡醒了，现在又可以继续陪你啦。/);
+        const completed = kernel.store.actions.find((action) =>
+          action.actionType === "conversation_wake_notification" && action.status === "completed"
+        );
+        assert.equal(completed?.payload.fallbackUsed, true);
+        assert.match(String(completed?.payload.composeError ?? ""), fixture.expectedError);
+        assert.equal(
+          kernel.store.actions.filter((action) =>
+            action.actionType === "conversation_wake_notification" && action.status === "failed"
+          ).length,
+          1,
+        );
+      } finally {
+        kernel.dispose();
+        rmSync(stateDir, { recursive: true, force: true });
+      }
+    });
+  }
+});
+
+test("a transient transcript read failure automatically retries the pending wake in-process", async () => {
+  const stateDir = mkdtempSync(join(tmpdir(), "rp-agent-wake-transcript-retry-"));
+  const model = new ScriptedModelController("wake-transcript-retry");
+  let composerCalls = 0;
+  const kernel = createPersistentScriptedKernel(
+    stateDir,
+    model,
+    true,
+    { tiredTokens: 1, hardSleepTokens: 1_000_000 },
+    async () => {
+      composerCalls += 1;
+      return "瞬态读取恢复后，我醒来啦。";
+    },
+    [0],
+  );
+  const originalTranscript = kernel.sessionRuntime.getConversationTranscript.bind(kernel.sessionRuntime);
+  try {
+    const character = kernel.createCharacter({ name: "瞬态恢复角色" });
+    await checkpointConversationForWake(
+      kernel,
+      model,
+      "wake-transcript-retry",
+      character.id,
+    );
+    let transcriptFailures = 1;
+    kernel.sessionRuntime.getConversationTranscript = async (sessionId) => {
+      if (transcriptFailures > 0) {
+        transcriptFailures -= 1;
+        throw new Error("transient transcript read failure");
+      }
+      return originalTranscript(sessionId);
+    };
+
+    await waitForCondition(
+      () => kernel.getConversationMetadata("wake-transcript-retry")?.sleepState === "awake",
+      3_000,
+      "transient transcript failure stranded the pending wake",
+    );
+    assert.equal(transcriptFailures, 0);
+    assert.equal(composerCalls, 1, "the failed read happens before composition");
+    const transcript = await kernel.getSession("wake-transcript-retry");
+    assert.match(JSON.stringify(transcript.messages), /瞬态读取恢复后，我醒来啦。/);
+    assert.equal(
+      transcript.messages.filter((message) =>
+        message.role === "custom" && message.customType === "rp-agent/conversation_wake"
+      ).length,
+      1,
+    );
+    assert.ok(kernel.store.actions.some((action) =>
+      action.actionType === "conversation_wake_notification" && action.status === "failed" &&
+      action.payload.phase === "delivery"
+    ));
+    assert.ok(kernel.store.actions.some((action) =>
+      action.actionType === "conversation_wake_notification" && action.status === "completed"
+    ));
+  } finally {
+    kernel.sessionRuntime.getConversationTranscript = originalTranscript;
+    kernel.dispose();
+    rmSync(stateDir, { recursive: true, force: true });
+  }
+});
+
+test("retracting an inbox message that aborted active wake composition lets the watchdog deliver", async () => {
+  const stateDir = mkdtempSync(join(tmpdir(), "rp-agent-wake-inbox-watchdog-"));
+  const model = new ScriptedModelController("wake-inbox-watchdog");
+  const composerEntered = deferredValue<void>();
+  const releaseFirstComposer = deferredValue<string>();
+  let composerCalls = 0;
+  let firstComposerSignal: AbortSignal | undefined;
+  const kernel = createPersistentScriptedKernel(
+    stateDir,
+    model,
+    true,
+    { tiredTokens: 1, hardSleepTokens: 1_000_000 },
+    async (_input, signal) => {
+      composerCalls += 1;
+      if (composerCalls === 1) {
+        firstComposerSignal = signal;
+        composerEntered.resolve();
+        // Exercise cancellation even when an injected composer ignores signal.
+        return releaseFirstComposer.promise;
+      }
+      return "队列撤回后，我回来找你了。";
+    },
+    [0],
+    false,
+  );
+  try {
+    const character = kernel.createCharacter({ name: "Inbox 看门狗角色" });
+    const conversation = await kernel.openCanonicalPrivateConversation(character.id);
+    await checkpointConversationForWake(
+      kernel,
+      model,
+      conversation.id,
+      character.id,
+    );
+    const firstWake = kernel.flushConversationWakeNotifications(conversation.id);
+    await composerEntered.promise;
+    const queued = await kernel.enqueuePrivateMessage(
+      conversation.id,
+      {
+        mode: "sms",
+        characterId: character.id,
+        text: "这条消息会立即撤回",
+      },
+      "wake-inbox-watchdog-message",
+    );
+    assert.equal(queued.status, "queued");
+    assert.equal(
+      await settlesWithin(
+        firstWake,
+        1_500,
+        "inbox enqueue did not release the wake queue after aborting composition",
+      ),
+      0,
+    );
+    assert.equal(firstComposerSignal?.aborted, true);
+    kernel.retractQueuedPrivateMessage(conversation.id, queued.id);
+    assert.equal(kernel.privateInboxSnapshot(conversation.id).messages.length, 0);
+
+    await waitForCondition(
+      () => kernel.getConversationMetadata(conversation.id)?.sleepState === "awake",
+      3_000,
+      "retracted inbox message left the pending wake stranded",
+    );
+    assert.equal(composerCalls, 2);
+    assert.equal(kernel.getConversationMetadata(conversation.id)?.pendingWakeNotificationId, undefined);
+    const transcript = await kernel.getSession(conversation.id);
+    assert.match(JSON.stringify(transcript.messages), /队列撤回后，我回来找你了。/);
+    assert.equal(
+      transcript.messages.filter((message) =>
+        message.role === "custom" && message.customType === "rp-agent/conversation_wake"
+      ).length,
+      1,
+    );
+  } finally {
+    releaseFirstComposer.resolve("被 inbox 中止的旧醒来文案绝不能投递。");
+    kernel.dispose();
     rmSync(stateDir, { recursive: true, force: true });
   }
 });
@@ -524,6 +1223,9 @@ function createPersistentScriptedKernel(
   model: ScriptedModelController,
   configure = true,
   conversationLifecycleThresholds?: { tiredTokens: number; hardSleepTokens: number },
+  conversationWakeComposer?: CompanionKernelOptions["conversationWakeComposer"],
+  conversationWakeRetryDelaysMs?: readonly number[],
+  startPrivateInboxCoordinator?: boolean,
 ): CompanionKernel {
   const kernel = new CompanionKernel({
     stateDir,
@@ -531,6 +1233,9 @@ function createPersistentScriptedKernel(
     startScheduler: false,
     quietHours: false,
     conversationLifecycleThresholds,
+    conversationWakeComposer,
+    conversationWakeRetryDelaysMs,
+    startPrivateInboxCoordinator,
   });
   if (configure) {
     kernel.patchModelApiConfig({
@@ -541,6 +1246,68 @@ function createPersistentScriptedKernel(
     });
   }
   return kernel;
+}
+
+function deferredValue<T>(): { promise: Promise<T>; resolve: (value: T) => void } {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((settle) => {
+    resolve = settle;
+  });
+  return { promise, resolve };
+}
+
+async function checkpointConversationForWake(
+  kernel: CompanionKernel,
+  model: ScriptedModelController,
+  sessionId: string,
+  characterId: string,
+): Promise<void> {
+  model.enqueue([
+    { kind: "assistant_text", text: `先形成足够长的休息上下文。${"abcd".repeat(6_000)}` },
+    { kind: "assistant_text", text: "晚安，我先休息一下。" },
+  ]);
+  await kernel.sendMessage(sessionId, {
+    mode: "sms",
+    characterId,
+    text: "先聊一句",
+  });
+  await kernel.sendMessage(sessionId, {
+    mode: "sms",
+    characterId,
+    text: "晚安咯",
+  });
+  assert.ok(kernel.getConversationMetadata(sessionId)?.pendingWakeNotificationId);
+}
+
+async function settlesWithin<T>(
+  operation: Promise<T>,
+  timeoutMs: number,
+  message: string,
+): Promise<T> {
+  let timeout: NodeJS.Timeout | undefined;
+  try {
+    return await Promise.race([
+      operation,
+      new Promise<never>((_resolve, reject) => {
+        timeout = setTimeout(() => reject(new Error(message)), timeoutMs);
+      }),
+    ]);
+  } finally {
+    if (timeout) clearTimeout(timeout);
+  }
+}
+
+async function waitForCondition(
+  predicate: () => boolean,
+  timeoutMs: number,
+  message: string,
+): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    if (predicate()) return;
+    await new Promise<void>((resolve) => setTimeout(resolve, 10));
+  }
+  assert.fail(message);
 }
 
 type ConversationIndexFixture = {
