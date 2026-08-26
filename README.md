@@ -23,6 +23,7 @@ and adds the RP companion domain on top:
 - direct or independent Vision MCP image understanding for text-only primary models;
 - optional isolated private-chat subagents for bounded work, research, planning, and review;
 - automatic SOUL-derived functional roles, multiple exclusive versioned Skills per character, Skill-aware same-world delegation, and reviewed self-improvement proposals;
+- opt-in character-bound Skill management with inactive workflow drafts, character/space-private Pi Agent Skill resource packages, remote quarantine review, and local-only installation confirmation;
 - optional per-character trust/bond state, decaying tension and affect, with trusted bounded updates;
 - a 2000-character profile summary plus durable reality/global memory;
 - persistent, retryable post-turn Memory Coordinator jobs with trusted review;
@@ -64,7 +65,8 @@ development milestones, and Agent-oriented test contracts are documented in
 [`docs/development-spec.md`](docs/development-spec.md).
 The reusable MCP module and proactive-event pattern is documented in
 [`docs/mcp-agent-modules.md`](docs/mcp-agent-modules.md).
-Module lifecycle and user-profile rules are documented in
+Shared/private Agent Skill package lifecycle, character management permission,
+review boundaries, module lifecycle, and user-profile rules are documented in
 [`docs/agent-modules-and-user-profile.md`](docs/agent-modules-and-user-profile.md).
 Character identity and migration rules are documented in
 [`docs/character-soul.md`](docs/character-soul.md).
@@ -118,8 +120,9 @@ Deterministic functional completeness, independent LLM-as-Judge quality scoring,
 target-model sandbox routing, aggregate labels, and report interpretation are
 documented in
 [`docs/model-adaptation-evaluation.md`](docs/model-adaptation-evaluation.md).
-Character collaboration profiles, Skill-only routing, exclusive Skill packages,
-task evaluation, and reviewed Skill improvement are documented in
+Character collaboration profiles, the distinction between character-owned
+workflows and private Agent Skill packages, Skill-only routing, scoped review,
+child-runtime boundaries, and reviewed Skill improvement are documented in
 [`docs/character-organization-v2.md`](docs/character-organization-v2.md).
 
 The deterministic Agent test control API is disabled by default. Start a
@@ -197,6 +200,11 @@ Tavily Key and optional HTTPS proxy status use `/api/settings/tavily`; its
 connection diagnostic uses `POST /api/v1/diagnostics/tavily/test`.
 MinerU endpoint and optional Bearer token settings use `/api/settings/mineru`;
 its connection diagnostic uses `POST /api/v1/diagnostics/mineru/test`.
+Character-owned workflow review uses
+`/api/v1/characters/{id}/owned-skills/*`. Character-private Agent Skill package
+inventory and enablement use `/api/v1/characters/{id}/skill-packages/*`, while
+short-lived local review and confirmation use
+`/api/v1/characters/{id}/skill-package-stages/*`.
 The one host-side Git identity is managed from **Settings → Repository** through
 `/api/settings/git-access`. Repository URLs are supplied in normal character
 conversation instead of being pre-registered as Projects or application
@@ -264,6 +272,16 @@ per-commit fencing, deterministic startup replay, verified schema-v3 backups,
 staged restore, and metadata-only Vault Health UI/API. Markdown remains the
 authority; SQLite, FTS, journal checkpoints, mirrors, and context state remain
 rebuildable runtime data.
+
+Character Skill self-management is a separate Agent permission and defaults
+off. When enabled, a role can maintain only its own current-space workflow
+drafts and private Agent Skill enablement, and can stage only a URL stated in
+the current user message. It cannot activate drafts, confirm installation,
+install globally, change permissions, update, or uninstall packages. Local
+confirmation reviews and publishes the exact quarantined resource package;
+Skill text and resources never grant tools or permissions. Incognito and
+generic subagents receive no management surface. See the linked character and
+module documents for their narrower read-only snapshot behavior.
 
 The old Python implementation was intentionally removed from the working tree.
 It remains available through Git history.

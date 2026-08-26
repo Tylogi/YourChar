@@ -1125,6 +1125,12 @@ test("server serves chat UI and debug model traces", async () => {
     assert.match(html, /id="newCharacterOwnedSkillBtn"/);
     assert.match(html, /id="characterOwnedSkillDialog"/);
     assert.match(html, /执行后生成改进提案/);
+    assert.match(html, /id="characterOwnedSkillsTitle">专属工作法/);
+    assert.match(html, /id="characterSkillPackagesTitle">扩展 Skill 包/);
+    assert.match(html, /id="characterSkillPackageStageList"/);
+    assert.match(html, /id="characterSkillPackageManifest"/);
+    assert.match(html, /id="characterSkillPackageMarkdown"/);
+    assert.match(html, /完整 SKILL\.md/);
     assert.match(html, /function renderCharacterOwnedSkills/);
     assert.match(html, /function reviewCharacterOwnedSkillProposal/);
     assert.match(html, /controlPlaneFetch\(withConversationSpace\(/);
@@ -1132,6 +1138,83 @@ test("server serves chat UI and debug model traces", async () => {
     assert.match(html, /function loadCharacterFunction/);
     assert.match(html, /function saveCharacterFunction/);
     assert.match(html, /collaboration-profile/);
+    const characterSkillPackageScript = inlineScript.match(
+      /function clearCharacterSkillPackageState\(\)[\s\S]*?(?=\n    async function loadCharacterFunction)/,
+    )?.[0] ?? "";
+    assert.match(characterSkillPackageScript, /\/skill-packages/);
+    assert.match(characterSkillPackageScript, /\/skill-package-stages/);
+    assert.match(characterSkillPackageScript, /controlPlaneFetch\(characterSkillPackageStageUrl/);
+    assert.match(characterSkillPackageScript, /encodeURIComponent\(stageId\) \+ "\/review"/);
+    assert.match(characterSkillPackageScript, /controlPlaneFetch\(characterSkillPackageUrl/);
+    assert.match(characterSkillPackageScript, /encodeURIComponent\(packageName\) \+ "\/review"/);
+    assert.match(characterSkillPackageScript, /stageId,[\s\S]*?characterId: scope\.characterId,[\s\S]*?conversationSpace: scope\.conversationSpace/);
+    assert.match(characterSkillPackageScript, /name: packageName,[\s\S]*?characterId: scope\.characterId,[\s\S]*?conversationSpace: scope\.conversationSpace/);
+    assert.match(characterSkillPackageScript, /window\.confirm\(/);
+    assert.match(characterSkillPackageScript, /digest: stage\.digest/);
+    assert.match(characterSkillPackageScript, /enabled: true/);
+    assert.match(characterSkillPackageScript, /characterSkillPackageMarkdown\.textContent/);
+    assert.match(characterSkillPackageScript, /pre\.textContent = typeof stage\?\.skillMarkdown/);
+    assert.doesNotMatch(
+      characterSkillPackageScript,
+      /renderMarkdown\([^)]*skillMarkdown|innerHTML\s*=\s*[^;]*skillMarkdown/,
+    );
+    const characterSkillScopeScript = inlineScript.match(
+      /function captureCharacterSkillPackageScope[\s\S]*?(?=\n    function characterSkillPackageUrl)/,
+    )?.[0] ?? "";
+    assert.match(characterSkillScopeScript, /scope\.requestId === state\.characterSkillPackageRequestId/);
+    assert.match(characterSkillScopeScript, /scope\.spaceEpoch === state\.conversationSpaceEpoch/);
+    assert.match(characterSkillScopeScript, /scope\.viewEpoch === state\.conversationViewEpoch/);
+    assert.match(characterSkillScopeScript, /scope\.sessionId === state\.activeSessionId/);
+    assert.match(characterSkillScopeScript, /scope\.characterId === state\.workspaceCharacterId/);
+    assert.match(characterSkillScopeScript, /scope\.conversationSpace === state\.conversationSpace/);
+    const characterSkillScopeState: Record<string, any> = {
+      workspaceCharacterId: character.id,
+      selectedCharacterId: character.id,
+      conversationSpace: "secret",
+      conversationSpaceEpoch: 4,
+      conversationViewEpoch: 9,
+      activeSessionId: "character-skill-session-a",
+      characterSkillPackageRequestId: 6,
+      uiMode: "characters",
+      characterTab: "capabilities",
+    };
+    const characterSkillScopeContext: Record<string, any> = {
+      state: characterSkillScopeState,
+      captureCharacterWorkspaceScope() {
+        return {
+          characterId: characterSkillScopeState.workspaceCharacterId,
+          conversationSpace: characterSkillScopeState.conversationSpace,
+        };
+      },
+    };
+    new Script(
+      characterSkillScopeScript +
+      "\nthis.captureCharacterSkillPackageScopeForTest = captureCharacterSkillPackageScope;" +
+      "\nthis.characterSkillPackageScopeIsCurrentForTest = characterSkillPackageScopeIsCurrent;",
+    ).runInNewContext(characterSkillScopeContext);
+    const currentCharacterSkillScope =
+      characterSkillScopeContext.captureCharacterSkillPackageScopeForTest(6);
+    assert.equal(
+      characterSkillScopeContext.characterSkillPackageScopeIsCurrentForTest(currentCharacterSkillScope),
+      true,
+    );
+    characterSkillScopeState.characterSkillPackageRequestId += 1;
+    assert.equal(characterSkillScopeContext.characterSkillPackageScopeIsCurrentForTest(currentCharacterSkillScope), false);
+    characterSkillScopeState.characterSkillPackageRequestId = 6;
+    characterSkillScopeState.conversationSpaceEpoch += 1;
+    assert.equal(characterSkillScopeContext.characterSkillPackageScopeIsCurrentForTest(currentCharacterSkillScope), false);
+    characterSkillScopeState.conversationSpaceEpoch = 4;
+    characterSkillScopeState.conversationViewEpoch += 1;
+    assert.equal(characterSkillScopeContext.characterSkillPackageScopeIsCurrentForTest(currentCharacterSkillScope), false);
+    characterSkillScopeState.conversationViewEpoch = 9;
+    characterSkillScopeState.activeSessionId = "character-skill-session-b";
+    assert.equal(characterSkillScopeContext.characterSkillPackageScopeIsCurrentForTest(currentCharacterSkillScope), false);
+    characterSkillScopeState.activeSessionId = "character-skill-session-a";
+    characterSkillScopeState.workspaceCharacterId = "another-character";
+    assert.equal(characterSkillScopeContext.characterSkillPackageScopeIsCurrentForTest(currentCharacterSkillScope), false);
+    characterSkillScopeState.workspaceCharacterId = character.id;
+    characterSkillScopeState.selectedCharacterId = "another-character";
+    assert.equal(characterSkillScopeContext.characterSkillPackageScopeIsCurrentForTest(currentCharacterSkillScope), false);
     assert.doesNotMatch(html, /function-profile/);
     assert.doesNotMatch(html, /skill-versions/);
     assert.doesNotMatch(html, /自动更新档案/);
@@ -1178,6 +1261,18 @@ test("server serves chat UI and debug model traces", async () => {
     assert.match(html, /loadCharacters/);
     assert.match(html, /id="managementPage"/);
     assert.match(html, /能力模块/);
+    assert.match(html, /角色 Skill 自主管理/);
+    assert.match(html, /id="characterSkillManagePermissionInput"[^>]+data-permission="characterSkillManageEnabled"/);
+    assert.match(html, /id="characterSkillManagePermissionLabel">已关闭/);
+    assert.match(html, /permissions\.characterSkillManageEnabled/);
+    const permissionPatchScript = inlineScript.match(
+      /async function patchAgentPermissions\(patch\)[\s\S]*?(?=\n    function renderAgentModules)/,
+    )?.[0] ?? "";
+    assert.match(
+      permissionPatchScript,
+      /controlPlaneFetch\("\/api\/v1\/agent-permissions", \{[\s\S]*?method: "PATCH"/,
+    );
+    assert.doesNotMatch(permissionPatchScript, /fetch\("\/api\/v1\/agent-permissions"/);
     assert.match(html, /用户画像/);
     assert.match(html, /id="userInsightList"/);
     assert.match(html, /画像形成记录/);

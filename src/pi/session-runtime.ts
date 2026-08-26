@@ -72,10 +72,13 @@ import {
   createGitMcpBridge,
   createWorldMcpBridge,
   createInteractionMcpBridge,
+  createCharacterSkillMcpBridge,
   type McpPiBridge,
   type SubagentRequest,
   type SubagentResult,
 } from "../mcp/index.js";
+import type { CharacterCapabilityService } from "../organization/service.js";
+import type { CharacterAgentSkillPackageService } from "../modules/character-skill-packages.js";
 import type { UserProfileService } from "../profile/service.js";
 import type { RpService } from "../rp/service.js";
 import type { ScheduleService } from "../schedule/service.js";
@@ -231,6 +234,8 @@ export type PiSessionRuntimeOptions = {
   worldCoordinator: WorldAutonomyCoordinator;
   characterInteractionCoordinator: CharacterInteractionCoordinator;
   interactionService: InteractionService;
+  characterCapabilities?: CharacterCapabilityService;
+  characterSkillPackages?: CharacterAgentSkillPackageService;
   stateDir?: string | false;
   cwd?: string;
   clock?: Clock;
@@ -359,6 +364,8 @@ export class PiSessionRuntime {
   private readonly worldCoordinator: WorldAutonomyCoordinator;
   private readonly characterInteractionCoordinator: CharacterInteractionCoordinator;
   private readonly interactionService: InteractionService;
+  private readonly characterCapabilities?: CharacterCapabilityService;
+  private readonly characterSkillPackages?: CharacterAgentSkillPackageService;
   private readonly stateDir?: string;
   private readonly cwd: string;
   private readonly workspaceDir: string;
@@ -383,6 +390,7 @@ export class PiSessionRuntime {
   private readonly loading = new Map<string, Promise<PiSessionHandle>>();
   private readonly detachedMessages = new Map<string, AgentMessage[]>();
   private readonly pendingCacheBreakReasons = new Map<string, string>();
+  private readonly pendingCapabilityRefreshes = new Set<string>();
   private readonly activeSubagentCounts = new Map<string, number>();
   private readonly activeSubagents = new Set<AgentSession>();
   private readonly canonicalDirectLoading = new Map<string, Promise<PiSessionHandle>>();
@@ -407,6 +415,8 @@ export class PiSessionRuntime {
     this.worldCoordinator = options.worldCoordinator;
     this.characterInteractionCoordinator = options.characterInteractionCoordinator;
     this.interactionService = options.interactionService;
+    this.characterCapabilities = options.characterCapabilities;
+    this.characterSkillPackages = options.characterSkillPackages;
     this.stateDir = options.stateDir === false ? undefined : options.stateDir ?? options.store.stateDir;
     this.cwd = resolve(options.cwd ?? process.cwd());
     this.workspaceDir = resolve(options.workspaceDir);
@@ -495,7 +505,15 @@ export class PiSessionRuntime {
       }
     }
 
-    const cached = this.handles.get(id);
+    let cached = this.handles.get(id);
+    if (cached && this.pendingCapabilityRefreshes.has(id) && !cached.session.isStreaming) {
+      if (!this.piSessionDir) this.detachedMessages.set(id, [...cached.session.messages]);
+      cached.session.dispose();
+      await Promise.allSettled(cached.mcpBridges.map((bridge) => bridge.close()));
+      this.handles.delete(id);
+      this.pendingCapabilityRefreshes.delete(id);
+      cached = undefined;
+    }
     if (cached) {
       return cached;
     }
@@ -504,6 +522,9 @@ export class PiSessionRuntime {
       return pending;
     }
 
+    // A session without a cached handle will be created with the latest
+    // capabilities now; do not carry the refresh marker into the next turn.
+    this.pendingCapabilityRefreshes.delete(id);
     const load = this.createHandle(this.metadata.get(id)!);
     this.loading.set(id, load);
     try {
@@ -1090,12 +1111,14 @@ export class PiSessionRuntime {
   }
 
   invalidateCapabilities(reason = "capabilities_rebuilt"): void {
+    this.pendingCapabilityRefreshes.clear();
     for (const metadata of this.metadata.values()) this.pendingCacheBreakReasons.set(metadata.id, reason);
     this.closeHandles(true);
   }
 
   invalidateSessionCapabilities(sessionId: string, reason = "capabilities_rebuilt"): void {
     const id = normalizeSessionId(sessionId);
+    this.pendingCapabilityRefreshes.delete(id);
     if (this.loading.has(id)) throw new Error(`Session ${id} is loading and cannot rebuild capabilities`);
     const handle = this.handles.get(id);
     if (!handle) {
@@ -1108,6 +1131,37 @@ export class PiSessionRuntime {
     for (const bridge of handle.mcpBridges) void bridge.close();
     this.handles.delete(id);
     this.pendingCacheBreakReasons.set(id, reason);
+  }
+
+  /**
+   * Tool calls execute inside the handle they are changing, so rebuilding that
+   * handle synchronously would dispose an active AgentSession. Mark it now and
+   * rebuild at the next turn boundary instead.
+   */
+  requestSessionCapabilityRefresh(
+    sessionId: string,
+    reason = "character_skills_changed",
+  ): void {
+    const id = normalizeSessionId(sessionId);
+    if (!this.metadata.has(id)) throw new ConversationNotFoundError(id);
+    this.pendingCacheBreakReasons.set(id, reason);
+    this.pendingCapabilityRefreshes.add(id);
+  }
+
+  requestCharacterSkillCapabilityRefresh(
+    characterId: string,
+    conversationSpace: ConversationSpace,
+  ): void {
+    const normalizedCharacterId = normalizeCharacterId(characterId);
+    for (const metadata of this.metadata.values()) {
+      if (
+        metadata.characterId === normalizedCharacterId &&
+        metadata.conversationSpace === conversationSpace
+      ) {
+        this.pendingCacheBreakReasons.set(metadata.id, "character_skills_changed");
+        this.pendingCapabilityRefreshes.add(metadata.id);
+      }
+    }
   }
 
   assertCapabilitiesIdle(): void {
@@ -1304,6 +1358,7 @@ export class PiSessionRuntime {
           parentSessionId: metadata.id,
           mode: metadata.mode,
           conversationSpace: metadata.conversationSpace,
+          characterId: metadata.characterId,
           ...(metadata.conversationSpace === "secret" && metadata.characterId
             ? { secretOwnerCharacterId: metadata.characterId }
             : {}),
@@ -1361,6 +1416,29 @@ export class PiSessionRuntime {
       }));
     }
     const permissions = this.permissionCatalog.get();
+    if (
+      !this.incognitoChild &&
+      metadata.characterId &&
+      this.characterCapabilities &&
+      this.characterSkillPackages &&
+      permissions.characterSkillManageEnabled
+    ) {
+      mcpBridges.push(await createCharacterSkillMcpBridge({
+        characterCapabilities: this.characterCapabilities,
+        privatePackageService: this.characterSkillPackages,
+        moduleCatalog: this.moduleCatalog,
+        store: this.store,
+        sessionId: metadata.id,
+        characterId: metadata.characterId,
+        conversationSpace: metadata.conversationSpace,
+        currentUserText: () => toolState.currentUserText,
+        actions: () => toolState.actions,
+        requestCapabilityRefresh: () => this.requestCharacterSkillCapabilityRefresh(
+          metadata.characterId!,
+          metadata.conversationSpace,
+        ),
+      }));
+    }
     if (!this.incognitoChild && this.moduleCatalog.isEnabled(memoryCoordinatorMcpModuleId)) {
       const realm = metadata.mode === "rp" ? "roleplay" as const : "reality" as const;
       if (realm === "reality" || metadata.characterId) {
@@ -1395,7 +1473,10 @@ export class PiSessionRuntime {
         actions: () => toolState.actions,
       }));
     }
-    const enabledSkills = this.moduleCatalog.enabledSkills(metadata.conversationSpace);
+    const enabledSkills = this.moduleCatalog.enabledSkills(
+      metadata.conversationSpace,
+      metadata.characterId,
+    );
     const skillReadTool = createSkillReadTool(
       enabledSkills,
       this.cwd,
@@ -1524,6 +1605,7 @@ export class PiSessionRuntime {
     parentSessionId: string;
     mode: Mode;
     conversationSpace: ConversationSpace;
+    characterId?: string;
     secretOwnerCharacterId?: string;
     workspace: ScopedWorkspace;
     request: SubagentRequest;
@@ -1608,7 +1690,10 @@ export class PiSessionRuntime {
         }));
       }
 
-      const enabledSkills = this.moduleCatalog.enabledSkills(input.conversationSpace);
+      const enabledSkills = this.moduleCatalog.enabledSkills(
+        input.conversationSpace,
+        input.characterId,
+      );
       const skillReadTool = createSkillReadTool(
         enabledSkills,
         this.cwd,
@@ -1642,7 +1727,7 @@ export class PiSessionRuntime {
         input.timezone,
         this.clock.now(),
         childTools.map((tool) => tool.name),
-        this.moduleCatalog.skillContext(input.conversationSpace),
+        this.moduleCatalog.skillContext(input.conversationSpace, input.characterId),
       );
       const payloadOptions = this.providerPayloadOptions?.(input.parentSessionId) ?? {};
       const extensionFactory: ExtensionFactory = (pi) => {
@@ -3091,6 +3176,11 @@ const mutatingTools = new Set([
   "propose_meeting",
   "begin_meeting",
   "end_meeting",
+  "create_current_character_skill_draft",
+  "revise_current_character_skill_draft",
+  "set_current_character_private_skill_enabled",
+  "request_current_character_skill_install",
+  "cancel_current_character_skill_install",
 ]);
 
 function isCharacterScheduleInput(input: unknown): boolean {

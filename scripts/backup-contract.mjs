@@ -11,7 +11,7 @@ import { DatabaseSync } from "node:sqlite";
 import { parseDocument } from "yaml";
 
 export const BACKUP_SCHEMA_VERSION = 3;
-export const MAX_DATABASE_SCHEMA_VERSION = 46;
+export const MAX_DATABASE_SCHEMA_VERSION = 47;
 const V1_FRONTMATTER_KEYS = [
   "schemaVersion", "id", "kind", "realm", "scope", "type", "characterId", "sessionId",
   "validity", "confirmed", "sourceSessionId", "sourceMessageId", "createdAt", "updatedAt",
@@ -113,6 +113,13 @@ export function validateBackupDirectory(root, manifest) {
       actualFiles.some((file) => file.path.startsWith("skills/"))
   ) {
     throw new Error("backup installed Skill metadata does not match payload");
+  }
+  if (
+    manifest.containsCharacterAgentSkills !== undefined &&
+    Boolean(manifest.containsCharacterAgentSkills) !==
+      actualFiles.some((file) => file.path.startsWith("character-agent-skills/"))
+  ) {
+    throw new Error("backup character Agent Skill metadata does not match payload");
   }
   const imRuntimePresent = actualFiles.some((file) => file.path.startsWith("im-runtime/"));
   const imCredentialsPresent = existsSync(join(root, "im-runtime", "credentials.json"));

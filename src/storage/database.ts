@@ -2726,6 +2726,47 @@ const migrations: Migration[] = [
       END;
     `,
   },
+  {
+    version: 47,
+    sql: `
+      CREATE TABLE character_agent_skill_packages (
+        character_id TEXT NOT NULL REFERENCES characters(id) ON DELETE CASCADE,
+        conversation_space TEXT NOT NULL
+          CHECK (conversation_space IN ('normal', 'secret')),
+        name TEXT NOT NULL CHECK (length(name) BETWEEN 1 AND 64),
+        description TEXT NOT NULL CHECK (length(description) BETWEEN 1 AND 1024),
+        enabled INTEGER NOT NULL DEFAULT 0 CHECK (enabled IN (0, 1)),
+        source_requested_url TEXT NOT NULL,
+        source_resolved_url TEXT NOT NULL,
+        source_final_url TEXT NOT NULL,
+        source_package_path TEXT,
+        source_requested_ref TEXT,
+        source_resolved_commit TEXT,
+        archive_sha256 TEXT NOT NULL CHECK (length(archive_sha256) = 64),
+        digest TEXT NOT NULL CHECK (length(digest) = 64),
+        manifest_json TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        PRIMARY KEY(character_id, conversation_space, name)
+      );
+      CREATE INDEX character_agent_skill_packages_enabled_idx
+        ON character_agent_skill_packages(
+          character_id, conversation_space, enabled, name
+        );
+      CREATE TRIGGER character_agent_skill_packages_limit_insert
+      BEFORE INSERT ON character_agent_skill_packages
+      FOR EACH ROW
+      WHEN (
+        SELECT COUNT(*)
+        FROM character_agent_skill_packages
+        WHERE character_id = NEW.character_id
+          AND conversation_space = NEW.conversation_space
+      ) >= 12
+      BEGIN
+        SELECT RAISE(ABORT, 'a character can install at most 12 private Skill packages per space');
+      END;
+    `,
+  },
 ];
 
 export class AppDatabase {

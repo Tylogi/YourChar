@@ -88,6 +88,7 @@ export class DataManagementRepository {
         DELETE FROM private_message_inbox;
         DELETE FROM interaction_transition_events;
         DELETE FROM conversation_interaction_states;
+        DELETE FROM character_agent_skill_packages;
         DELETE FROM character_owned_skill_proposals;
         DELETE FROM character_owned_skill_evaluations;
         DELETE FROM character_owned_skill_versions;

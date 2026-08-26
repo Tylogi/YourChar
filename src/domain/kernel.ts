@@ -103,6 +103,12 @@ import {
   type AgentSkillStageInput,
 } from "../modules/skill-installer.js";
 import {
+  CharacterAgentSkillPackageService,
+  type CharacterAgentSkillConfirmInput,
+  type CharacterAgentSkillEnabledInput,
+  type CharacterAgentSkillPackageScope,
+} from "../modules/character-skill-packages.js";
+import {
   CharacterCapabilityRepository,
   CharacterCapabilityService,
   characterSkillReflectionUserPrompt,
@@ -398,6 +404,15 @@ export class PrivateInboxMutationError extends Error {
   }
 }
 
+export class ControlPlaneBusyError extends Error {
+  readonly code = "CONTROL_PLANE_BUSY";
+
+  constructor(message = "trusted control-plane operations are unavailable while an Agent turn is active") {
+    super(message);
+    this.name = "ControlPlaneBusyError";
+  }
+}
+
 export type CompanionKernelOptions = CompanionStoreOptions & {
   store?: CompanionStore;
   clock?: Clock;
@@ -418,6 +433,7 @@ export type CompanionKernelOptions = CompanionStoreOptions & {
   mineruService?: MineruService;
   gitService?: GitAccessService;
   skillInstaller?: AgentSkillInstallerService | false;
+  characterSkillPackages?: CharacterAgentSkillPackageService | false;
   tavilyBaseUrl?: string;
   memoryExtractor?: MemoryExtractor;
   relationshipExtractor?: RelationshipExtractor;
@@ -452,6 +468,7 @@ export class CompanionKernel {
   readonly groupChatService: GroupChatService;
   readonly moduleCatalog: AgentModuleCatalog;
   readonly skillInstaller?: AgentSkillInstallerService;
+  readonly characterSkillPackages?: CharacterAgentSkillPackageService;
   readonly permissionCatalog: AgentPermissionCatalog;
   readonly profileService: UserProfileService;
   readonly avatarService: AvatarService;
@@ -560,6 +577,19 @@ export class CompanionKernel {
       cwd: runtimeCwd,
       stateDir: this.store.stateDir,
     });
+    this.characterSkillPackages = this.incognitoChild ||
+        normalizedOptions.characterSkillPackages === false ||
+        !this.store.stateDir
+      ? undefined
+      : normalizedOptions.characterSkillPackages ?? new CharacterAgentSkillPackageService({
+          database: this.database,
+          stateDir: this.store.stateDir,
+          isSkillNameAvailable: (name) => !this.moduleCatalog.listModules().some((module) =>
+            module.type === "skill" && module.name === name),
+        });
+    if (this.characterSkillPackages) {
+      this.moduleCatalog.attachCharacterSkillPackages(this.characterSkillPackages);
+    }
     this.skillInstaller = this.incognitoChild || normalizedOptions.skillInstaller === false
       ? undefined
       : normalizedOptions.skillInstaller ?? (this.store.stateDir
@@ -862,6 +892,8 @@ export class CompanionKernel {
         worldCoordinator: this.worldCoordinator,
         characterInteractionCoordinator: this.characterInteractionCoordinator,
         interactionService: this.interactionService,
+        characterCapabilities: this.characterCapabilities,
+        characterSkillPackages: this.characterSkillPackages,
         stateDir: normalizedOptions.stateDir,
         cwd: runtimeCwd,
         clock: this.clock,
@@ -975,8 +1007,12 @@ export class CompanionKernel {
         sourceDatabase: this.database.connection,
         tmpRoot: normalizedOptions.incognitoTmpRoot,
         listSourceMetadata: () => this.sessionRuntime.getConversationMetadata(),
-        listNormalSkillPackages: () => this.moduleCatalog.enabledSkills("normal")
-          .map((skill) => ({ baseDir: skill.baseDir, filePath: skill.filePath })),
+        listNormalSkillPackages: (characterId) => this.moduleCatalog.enabledSkills("normal", characterId)
+          .map((skill) => ({
+            name: skill.name,
+            baseDir: skill.baseDir,
+            filePath: skill.filePath,
+          })),
         withSnapshotLock: (sessionId, operation) => this.executionQueue.run(
           sessionId ?? "__yourchar_incognito_global_snapshot__",
           async () => {
@@ -1655,6 +1691,7 @@ export class CompanionKernel {
     input: CharacterOwnedSkillCreateInput,
     conversationSpace: ConversationSpace = "normal",
   ) {
+    this.assertCharacterSkillControlPlaneIdle();
     return this.store.withActionScope(
       characterConversationActionScope(characterId, conversationSpace),
       () => this.characterCapabilities.createOwnedSkill(characterId, input, conversationSpace),
@@ -1667,6 +1704,7 @@ export class CompanionKernel {
     input: CharacterOwnedSkillUpdateInput,
     conversationSpace: ConversationSpace = "normal",
   ) {
+    this.assertCharacterSkillControlPlaneIdle();
     return this.store.withActionScope(
       characterConversationActionScope(characterId, conversationSpace),
       () => this.characterCapabilities.updateOwnedSkill(
@@ -1701,6 +1739,7 @@ export class CompanionKernel {
     },
     conversationSpace: ConversationSpace = "normal",
   ) {
+    this.assertCharacterSkillControlPlaneIdle();
     return this.store.withActionScope(
       characterConversationActionScope(characterId, conversationSpace),
       () => this.characterCapabilities.createOwnedSkillVersion(
@@ -1718,6 +1757,7 @@ export class CompanionKernel {
     versionId: string,
     conversationSpace: ConversationSpace = "normal",
   ) {
+    this.assertCharacterSkillControlPlaneIdle();
     return this.store.withActionScope(
       characterConversationActionScope(characterId, conversationSpace),
       () => this.characterCapabilities.activateOwnedSkillVersion(
@@ -1760,6 +1800,7 @@ export class CompanionKernel {
     decision: "approve" | "reject",
     conversationSpace: ConversationSpace = "normal",
   ) {
+    this.assertCharacterSkillControlPlaneIdle();
     return this.store.withActionScope(
       characterConversationActionScope(characterId, conversationSpace),
       () => decision === "approve"
@@ -2574,6 +2615,10 @@ export class CompanionKernel {
           character.id,
           conversationSpace,
         );
+        const agentSkillPackages = this.characterSkillPackages?.list({
+          characterId: character.id,
+          conversationSpace,
+        }) ?? [];
         return {
           ...(conversationSpace === "normal"
             ? { collaborationProfile: this.characterCapabilities.ensureCollaborationProfile(character.id) }
@@ -2595,6 +2640,16 @@ export class CompanionKernel {
               skill.id,
               conversationSpace,
             ),
+          })),
+          agentSkillPackages: agentSkillPackages.map((skill) => ({
+            package: skill,
+            ...(skill.integrity === "verified"
+              ? { skillMarkdown: this.characterSkillPackages!.readPackageSkillMarkdown({
+                  characterId: character.id,
+                  conversationSpace,
+                  name: skill.name,
+                }) }
+              : {}),
           })),
         };
       }),
@@ -2709,6 +2764,7 @@ export class CompanionKernel {
   }
 
   deleteAllUserData(): Promise<void> {
+    this.assertControlPlaneIdle();
     if (this.deleteAllUserDataOperation) return this.deleteAllUserDataOperation;
     const operation = this.performDeleteAllUserData();
     this.deleteAllUserDataOperation = operation;
@@ -2741,6 +2797,7 @@ export class CompanionKernel {
       this.scheduler.stop();
       this.worldCoordinator.stop();
       this.sessionRuntime.deleteAllConversations();
+      this.characterSkillPackages?.clearAll();
       this.memoryVault.deleteAll();
       this.dataManagement.deleteAllUserData();
       this.imMediaStore.clearInboundAttachments();
@@ -2868,7 +2925,7 @@ export class CompanionKernel {
   }
 
   setAgentSkillEnabledSpaces(moduleId: string, spaces: ConversationSpace[]) {
-    this.sessionRuntime.assertCapabilitiesIdle();
+    this.assertCharacterSkillControlPlaneIdle();
     if (spaces.includes("secret") && !spaces.includes("normal")) {
       this.enforcePrivateShellNetworkIsolation("secret_only_skill_enabled", true);
     }
@@ -2888,6 +2945,7 @@ export class CompanionKernel {
         "INSTALLER_UNAVAILABLE",
       );
     }
+    this.assertCharacterSkillControlPlaneIdle();
     try {
       const stage = await this.skillInstaller.stage(input, signal);
       try {
@@ -2934,7 +2992,7 @@ export class CompanionKernel {
         "SPACES_INVALID",
       );
     }
-    this.sessionRuntime.assertCapabilitiesIdle();
+    this.assertCharacterSkillControlPlaneIdle();
     if (enabledSpaces.includes("secret") && !enabledSpaces.includes("normal")) {
       this.enforcePrivateShellNetworkIsolation("secret_only_skill_install", true);
     }
@@ -3000,7 +3058,111 @@ export class CompanionKernel {
 
   cancelAgentSkillInstall(stageId: string): boolean {
     if (!this.skillInstaller) return false;
+    this.assertCharacterSkillControlPlaneIdle();
     return this.skillInstaller.cancel(stageId);
+  }
+
+  listCharacterAgentSkillPackages(input: CharacterAgentSkillPackageScope) {
+    return this.requireCharacterSkillPackages().list(input);
+  }
+
+  listCharacterAgentSkillStages(input: CharacterAgentSkillPackageScope) {
+    return this.requireCharacterSkillPackages().listStages(input);
+  }
+
+  getCharacterAgentSkillStage(input: CharacterAgentSkillPackageScope & { stageId: string }) {
+    return this.requireCharacterSkillPackages().getStage(input);
+  }
+
+  assertCharacterSkillControlPlaneIdle(): void {
+    this.assertControlPlaneIdle();
+  }
+
+  assertControlPlaneIdle(): void {
+    try {
+      this.sessionRuntime.assertCapabilitiesIdle();
+    } catch {
+      throw new ControlPlaneBusyError();
+    }
+  }
+
+  readCharacterAgentSkillMarkdown(
+    input: CharacterAgentSkillPackageScope & { name: string },
+  ) {
+    this.assertCharacterSkillControlPlaneIdle();
+    return this.requireCharacterSkillPackages().readPackageSkillMarkdown(input);
+  }
+
+  confirmCharacterAgentSkillPackage(input: CharacterAgentSkillConfirmInput) {
+    this.assertCharacterSkillControlPlaneIdle();
+    const service = this.requireCharacterSkillPackages();
+    const staged = service.getStage(input);
+    if (!staged || staged.digest !== input.digest) {
+      throw new AgentSkillInstallerError(
+        "character Skill review was not found or no longer matches the reviewed digest",
+        "STAGE_DIGEST_MISMATCH",
+      );
+    }
+    const installed = service.confirm(input);
+    this.store.addAction("confirm_character_agent_skill", "completed", {
+      characterId: input.characterId,
+      packageName: installed.name,
+      digest: installed.digest,
+      enabled: installed.enabled,
+      fileCount: installed.manifest.length,
+    }, characterConversationActionScope(input.characterId, input.conversationSpace));
+    this.rebuildCharacterSkillCapabilities(input);
+    return installed;
+  }
+
+  cancelCharacterAgentSkillStage(
+    input: CharacterAgentSkillPackageScope & { stageId: string; digest?: string },
+  ) {
+    this.assertCharacterSkillControlPlaneIdle();
+    const cancelled = this.requireCharacterSkillPackages().cancel(input);
+    this.store.addAction("cancel_character_agent_skill_review", "completed", {
+      characterId: input.characterId,
+      stageId: input.stageId,
+      cancelled,
+    }, characterConversationActionScope(input.characterId, input.conversationSpace));
+    return cancelled;
+  }
+
+  setCharacterAgentSkillEnabled(input: CharacterAgentSkillEnabledInput) {
+    this.assertCharacterSkillControlPlaneIdle();
+    const updated = this.requireCharacterSkillPackages().setEnabled(input);
+    this.store.addAction("set_character_agent_skill_enabled", "completed", {
+      characterId: input.characterId,
+      packageName: updated.name,
+      enabled: updated.enabled,
+      integrity: updated.integrity,
+    }, characterConversationActionScope(input.characterId, input.conversationSpace));
+    this.rebuildCharacterSkillCapabilities(input);
+    return updated;
+  }
+
+  private requireCharacterSkillPackages(): CharacterAgentSkillPackageService {
+    if (!this.characterSkillPackages) {
+      throw new AgentSkillInstallerError(
+        "character Skill packages require a persistent YourChar state directory",
+        "INSTALLER_UNAVAILABLE",
+      );
+    }
+    return this.characterSkillPackages;
+  }
+
+  private rebuildCharacterSkillCapabilities(scope: CharacterAgentSkillPackageScope): void {
+    for (const metadata of this.sessionRuntime.getConversationMetadata()) {
+      if (
+        metadata.characterId === scope.characterId &&
+        metadata.conversationSpace === scope.conversationSpace
+      ) {
+        this.sessionRuntime.invalidateSessionCapabilities(
+          metadata.id,
+          "character_skills_changed",
+        );
+      }
+    }
   }
 
   private assertAgentSkillNameAvailable(name: string): void {
@@ -3008,6 +3170,18 @@ export class CompanionKernel {
       module.type === "skill" && module.name === name)) {
       throw new AgentSkillInstallerError(
         `Skill name ${name} collides with an existing Agent Skill`,
+        "SKILL_NAME_CONFLICT",
+      );
+    }
+    const privateCollision = this.database.connection.prepare(`
+      SELECT 1 AS present
+      FROM character_agent_skill_packages
+      WHERE name = ?
+      LIMIT 1
+    `).get(name) as { present?: number } | undefined;
+    if (privateCollision?.present === 1) {
+      throw new AgentSkillInstallerError(
+        `Skill name ${name} collides with an existing character-private Skill`,
         "SKILL_NAME_CONFLICT",
       );
     }
@@ -3138,6 +3312,7 @@ export class CompanionKernel {
       "context_log_summaries",
       "model_context_traces",
       "character_owned_skill_packages",
+      "character_agent_skill_packages",
     ]) {
       const row = this.database.connection.prepare(
         `SELECT 1 AS present FROM ${table} WHERE conversation_space = 'secret' LIMIT 1`,
@@ -3177,7 +3352,7 @@ export class CompanionKernel {
   }
 
   patchAgentPermissions(patch: AgentPermissionsPatch) {
-    this.sessionRuntime.assertCapabilitiesIdle();
+    this.assertControlPlaneIdle();
     if (
       patch.networkEnabled === true &&
       (this.hasPrivateState() || this.incognitoSessions?.requiresShellNetworkIsolation())
@@ -3193,6 +3368,7 @@ export class CompanionKernel {
       networkEnabled: permissions.networkEnabled,
       userProfileWriteEnabled: permissions.userProfileWriteEnabled,
       characterSoulWriteEnabled: permissions.characterSoulWriteEnabled,
+      characterSkillManageEnabled: permissions.characterSkillManageEnabled,
       realityMemoryWriteEnabled: permissions.realityMemoryWriteEnabled,
       characterMemoryWriteEnabled: permissions.characterMemoryWriteEnabled,
     });
@@ -3566,6 +3742,7 @@ export class CompanionKernel {
     this.mineruService.dispose();
     this.tavilyService.dispose();
     this.skillInstaller?.dispose();
+    this.characterSkillPackages?.dispose();
     this.memoryVault.dispose();
     if (this.ownsDatabase) {
       this.database.close();
@@ -7146,7 +7323,10 @@ export class CompanionKernel {
     allowBootstrap?: boolean;
   }): ContextPlan {
     const isSecret = input.conversationSpace === "secret";
-    const genericSkillContext = this.moduleCatalog.skillContext(input.conversationSpace);
+    const genericSkillContext = this.moduleCatalog.skillContext(
+      input.conversationSpace,
+      input.characterId,
+    );
     const workbenchSkill = input.characterId
       ? this.characterCapabilities.getTaskSkill(input.characterId, input.conversationSpace)
       : undefined;

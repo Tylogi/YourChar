@@ -124,6 +124,18 @@ export type AgentSkillInstallReceipt = {
   manifest: AgentSkillManifestEntry[];
 };
 
+export type AgentSkillPackageVerificationInput = {
+  rootDirectory: string;
+  digest: string;
+  manifest: readonly AgentSkillManifestEntry[];
+  limits?: Partial<SkillInstallerLimits>;
+};
+
+export type AgentSkillPackageVerificationResult = {
+  digest: string;
+  manifest: AgentSkillManifestEntry[];
+};
+
 export type AgentSkillConfirmInput = {
   stageId: string;
   digest: string;
@@ -430,6 +442,15 @@ export class AgentSkillInstallerService {
     return stage ? cloneStageResult(stage.result) : undefined;
   }
 
+  /** Return defensive review snapshots for trusted control-plane inventory. */
+  listStages(): AgentSkillStageResult[] {
+    this.cleanupExpired();
+    return [...this.stages.values()]
+      .map((stage) => cloneStageResult(stage.result))
+      .sort((left, right) => left.expiresAt.localeCompare(right.expiresAt)
+        || left.stageId.localeCompare(right.stageId));
+  }
+
   cleanupExpired(): number {
     let removed = 0;
     for (const [stageId, stage] of this.stages) {
@@ -604,6 +625,95 @@ export class AgentSkillInstallerService {
       removeOwnedPath(join(this.quarantineDirectory, entry.name), this.quarantineDirectory);
     }
   }
+}
+
+/**
+ * Revalidate a published package against a manifest persisted outside the
+ * installer's process-local rollback state. This is the load-time integrity
+ * boundary used by durable package registries.
+ */
+export function verifyAgentSkillPackage(
+  input: AgentSkillPackageVerificationInput,
+): AgentSkillPackageVerificationResult {
+  const limits = validateLimits({ ...defaults, ...input.limits });
+  if (!sha256Pattern.test(input.digest)) {
+    throw new AgentSkillInstallerError(
+      "persisted Skill digest must be exactly 64 lowercase hexadecimal characters",
+      "PERSISTED_MANIFEST_INVALID",
+    );
+  }
+  if (!Array.isArray(input.manifest) || input.manifest.length === 0 || input.manifest.length > limits.maximumFiles) {
+    throw new AgentSkillInstallerError(
+      "persisted Skill manifest has an invalid file count",
+      "PERSISTED_MANIFEST_INVALID",
+    );
+  }
+  const expected: AgentSkillManifestEntry[] = [];
+  let totalBytes = 0;
+  let previousPath = "";
+  for (const entry of input.manifest) {
+    if (!entry || typeof entry !== "object") {
+      throw new AgentSkillInstallerError(
+        "persisted Skill manifest contains an invalid entry",
+        "PERSISTED_MANIFEST_INVALID",
+      );
+    }
+    let path: string;
+    try {
+      path = validateArchivePath(entry.path, false, limits);
+    } catch (error) {
+      throw new AgentSkillInstallerError(
+        "persisted Skill manifest contains an invalid path",
+        "PERSISTED_MANIFEST_INVALID",
+        { cause: error },
+      );
+    }
+    if (path <= previousPath) {
+      throw new AgentSkillInstallerError(
+        "persisted Skill manifest paths must be unique and sorted",
+        "PERSISTED_MANIFEST_INVALID",
+      );
+    }
+    if (!Number.isSafeInteger(entry.size) || entry.size < 0 || entry.size > limits.maximumEntryBytes) {
+      throw new AgentSkillInstallerError(
+        "persisted Skill manifest contains an invalid file size",
+        "PERSISTED_MANIFEST_INVALID",
+      );
+    }
+    if (!sha256Pattern.test(entry.sha256)) {
+      throw new AgentSkillInstallerError(
+        "persisted Skill manifest contains an invalid file digest",
+        "PERSISTED_MANIFEST_INVALID",
+      );
+    }
+    totalBytes += entry.size;
+    if (totalBytes > limits.maximumUnpackedBytes) {
+      throw new AgentSkillInstallerError(
+        "persisted Skill manifest exceeds verification limits",
+        "PERSISTED_MANIFEST_INVALID",
+      );
+    }
+    expected.push({ path, size: entry.size, sha256: entry.sha256 });
+    previousPath = path;
+  }
+  if (!expected.some((entry) => entry.path === "SKILL.md") || manifestDigest(expected) !== input.digest) {
+    throw new AgentSkillInstallerError(
+      "persisted Skill manifest does not match its package digest",
+      "PERSISTED_MANIFEST_INVALID",
+    );
+  }
+  const observed = inspectInstalledPackage(resolve(input.rootDirectory), limits);
+  if (
+    observed.digest !== input.digest
+    || !sameManifest(observed.manifest, expected)
+    || !sameStrings(observed.directories, directoriesForManifest(expected))
+  ) {
+    throw new AgentSkillInstallerError(
+      "installed Skill package no longer matches its persisted manifest",
+      "PACKAGE_CHANGED",
+    );
+  }
+  return { digest: observed.digest, manifest: cloneManifest(observed.manifest) };
 }
 
 async function productionTransport(

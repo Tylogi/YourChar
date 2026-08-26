@@ -17,6 +17,7 @@ const permissionKeys = {
   network: "permission:workspace-network",
   userProfileWrite: "permission:user-profile-write",
   characterSoulWrite: "permission:character-soul-write",
+  characterSkillManage: "permission:character-skill-manage",
   realityMemoryWrite: "permission:reality-memory-write",
   characterMemoryWrite: "permission:character-memory-write",
 } as const;
@@ -52,6 +53,7 @@ export class AgentPermissionCatalog {
       networkEnabled: shellEnabled && (settings.get(permissionKeys.network) ?? false),
       userProfileWriteEnabled: settings.get(permissionKeys.userProfileWrite) ?? true,
       characterSoulWriteEnabled: settings.get(permissionKeys.characterSoulWrite) ?? false,
+      characterSkillManageEnabled: settings.get(permissionKeys.characterSkillManage) ?? false,
       realityMemoryWriteEnabled: settings.get(permissionKeys.realityMemoryWrite) ?? false,
       characterMemoryWriteEnabled: settings.get(permissionKeys.characterMemoryWrite) ?? false,
       workspaceDir: this.workspaceDir,
@@ -82,6 +84,7 @@ export class AgentPermissionCatalog {
       this.persist(permissionKeys.network, next.networkEnabled);
       this.persist(permissionKeys.userProfileWrite, next.userProfileWriteEnabled);
       this.persist(permissionKeys.characterSoulWrite, next.characterSoulWriteEnabled);
+      this.persist(permissionKeys.characterSkillManage, next.characterSkillManageEnabled);
       this.persist(permissionKeys.realityMemoryWrite, next.realityMemoryWriteEnabled);
       this.persist(permissionKeys.characterMemoryWrite, next.characterMemoryWriteEnabled);
     });
@@ -111,13 +114,26 @@ export class AgentPermissionCatalog {
     const soulWrite = secret
       ? "Character SOUL.md writing is unavailable in secret conversation space."
       : characterSoulStatus(permissions.characterSoulWriteEnabled, context);
+    const characterSkillManage = permissions.characterSkillManageEnabled
+      ? context?.characterId
+        ? "Current-character Skill draft and private package management are authorized through character-bound tools."
+        : "Character Skill management is authorized but unavailable because this session has no character."
+      : "Character Skill draft and private package management are disabled.";
     const realityMemoryWrite = permissions.realityMemoryWriteEnabled
       ? "Reality memory proposals are authorized. The trusted background Coordinator may auto-capture low-risk facts backed by an exact user quote; sensitive facts remain pending. Confirmation and deletion otherwise remain control-plane only."
       : "Reality memory Agent proposals and automatic daily-fact capture are disabled."
     const characterMemoryWrite = permissions.characterMemoryWriteEnabled
       ? "Current-character RP memory proposals are authorized; confirmation and deletion remain control-plane only."
       : "Character RP memory Agent proposals are disabled."
-    return [workspace, shell, profileWrite, soulWrite, realityMemoryWrite, characterMemoryWrite]
+    return [
+      workspace,
+      shell,
+      profileWrite,
+      soulWrite,
+      characterSkillManage,
+      realityMemoryWrite,
+      characterMemoryWrite,
+    ]
       .map((status) => `Capability status: ${status}`)
       .join("\n");
   }
@@ -182,6 +198,7 @@ function assertPatch(patch: AgentPermissionsPatch): void {
     "networkEnabled",
     "userProfileWriteEnabled",
     "characterSoulWriteEnabled",
+    "characterSkillManageEnabled",
     "realityMemoryWriteEnabled",
     "characterMemoryWriteEnabled",
   ] as const) {

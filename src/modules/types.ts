@@ -10,6 +10,7 @@ export type AgentPermissions = {
   networkEnabled: boolean;
   userProfileWriteEnabled: boolean;
   characterSoulWriteEnabled: boolean;
+  characterSkillManageEnabled: boolean;
   realityMemoryWriteEnabled: boolean;
   characterMemoryWriteEnabled: boolean;
   workspaceDir: string;
@@ -24,6 +25,7 @@ export type AgentPermissionsPatch = Partial<
     | "networkEnabled"
     | "userProfileWriteEnabled"
     | "characterSoulWriteEnabled"
+    | "characterSkillManageEnabled"
     | "realityMemoryWriteEnabled"
     | "characterMemoryWriteEnabled"
   >

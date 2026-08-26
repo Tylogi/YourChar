@@ -12,3 +12,4 @@ export * from "./relationship-server.js";
 export * from "./web-reader-server.js";
 export * from "./world-server.js";
 export * from "./interaction-server.js";
+export * from "./character-skill-server.js";

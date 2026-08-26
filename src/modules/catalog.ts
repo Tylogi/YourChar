@@ -14,6 +14,19 @@ type SkillSpaceSettingRow = {
   secret_enabled: number;
 };
 
+export type CharacterSkillPackageProvider = {
+  effectivePackageLocations(input: {
+    characterId: string;
+    conversationSpace: ConversationSpace;
+  }): Array<{
+    name: string;
+    description: string;
+    baseDir: string;
+    filePath: string;
+    digest: string;
+  }>;
+};
+
 export const scheduleMcpModuleId = "mcp:schedule";
 export const userProfileMcpModuleId = "mcp:user-profile";
 export const tavilySearchMcpModuleId = "mcp:tavily-search";
@@ -253,6 +266,7 @@ const mcpDetails: Record<string, string> = {
 export class AgentModuleCatalog {
   private readonly cwd: string;
   private readonly agentDir: string;
+  private characterSkillPackages?: CharacterSkillPackageProvider;
 
   constructor(
     private readonly database: AppDatabase,
@@ -263,6 +277,10 @@ export class AgentModuleCatalog {
     this.agentDir = options.stateDir
       ? join(resolve(options.stateDir), "pi-agent")
       : join(this.cwd, EPHEMERAL_STATE_DIRECTORY_NAME);
+  }
+
+  attachCharacterSkillPackages(provider: CharacterSkillPackageProvider): void {
+    this.characterSkillPackages = provider;
   }
 
   listModules(): AgentModule[] {
@@ -513,15 +531,32 @@ export class AgentModuleCatalog {
     return this.listModules().find((entry) => entry.id === moduleId)?.enabled ?? false;
   }
 
-  enabledSkills(conversationSpace: ConversationSpace = "normal"): Skill[] {
+  enabledSkills(
+    conversationSpace: ConversationSpace = "normal",
+    characterId?: string,
+  ): Skill[] {
     const enabled = new Set(this.listModules().filter((entry) =>
       entry.type === "skill" && entry.enabledSpaces?.includes(conversationSpace)
     ).map((entry) => entry.id));
-    return this.discoverSkills().filter((skill) => enabled.has(skillModuleId(skill)));
+    const shared = this.discoverSkills().filter((skill) => enabled.has(skillModuleId(skill)));
+    if (!characterId || !this.characterSkillPackages) return shared;
+
+    const personal = this.loadCharacterSkills(characterId, conversationSpace);
+    const names = new Set(shared.map((skill) => skill.name));
+    for (const skill of personal) {
+      if (names.has(skill.name)) {
+        throw new Error(`character Skill ${skill.name} collides with a shared Agent Skill`);
+      }
+      names.add(skill.name);
+    }
+    return [...shared, ...personal];
   }
 
-  skillContext(conversationSpace: ConversationSpace = "normal"): string {
-    return formatSkillsForPrompt(this.enabledSkills(conversationSpace));
+  skillContext(
+    conversationSpace: ConversationSpace = "normal",
+    characterId?: string,
+  ): string {
+    return formatSkillsForPrompt(this.enabledSkills(conversationSpace, characterId));
   }
 
   contextStatus(conversationSpace: ConversationSpace = "normal"): string {
@@ -577,6 +612,35 @@ export class AgentModuleCatalog {
     return candidates.filter((skill) => !candidates.some((other) =>
       other !== skill && isStrictlyWithin(resolve(skill.baseDir), resolve(other.baseDir))
     ));
+  }
+
+  private loadCharacterSkills(
+    characterId: string,
+    conversationSpace: ConversationSpace,
+  ): Skill[] {
+    const locations = this.characterSkillPackages?.effectivePackageLocations({
+      characterId,
+      conversationSpace,
+    }) ?? [];
+    if (!locations.length) return [];
+
+    const expected = new Map(locations.map((location) => [resolve(location.filePath), location]));
+    const loaded = loadSkills({
+      cwd: this.cwd,
+      agentDir: this.agentDir,
+      skillPaths: [...expected.keys()],
+      includeDefaults: false,
+    });
+    const skills = loaded.skills.filter((skill) => {
+      const filePath = resolve(skill.filePath);
+      const location = expected.get(filePath);
+      if (!location) return false;
+      return resolve(skill.baseDir) === resolve(location.baseDir) && skill.name === location.name;
+    });
+    if (skills.length !== expected.size) {
+      throw new Error("one or more enabled character Skill packages could not be loaded safely");
+    }
+    return skills;
   }
 
   private displayPath(path: string): string {

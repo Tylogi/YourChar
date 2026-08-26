@@ -28,6 +28,7 @@ import {
   CharacterTaskRoutingError,
   InteractionValidationError,
   PrivateInboxMutationError,
+  ControlPlaneBusyError,
   ModelApiConfigValidationError,
   IncognitoConversationNotFoundError,
   IncognitoOperationUnsupportedError,
@@ -137,6 +138,7 @@ import {
   AgentSkillInstallerError,
   type AgentSkillStageResult,
 } from "../modules/skill-installer.js";
+import type { CharacterAgentSkillPackage } from "../modules/character-skill-packages.js";
 import {
   ImIntegrationError,
   isFeishuDomain,
@@ -186,6 +188,8 @@ export function createHttpServer(options: HttpServerOptions = {}) {
       }
       if (error instanceof LocalControlPlaneRequestError) {
         sendJson(response, error.status, { code: error.code, error: error.message });
+      } else if (error instanceof ControlPlaneBusyError) {
+        sendJson(response, 409, { code: error.code, error: error.message });
       } else if (error instanceof AgentSkillInstallerError) {
         sendJson(response, agentSkillInstallerHttpStatus(error.code), {
           code: error.code,
@@ -1505,6 +1509,7 @@ async function route(input: {
       return;
     }
     if (method === "PATCH") {
+      assertLocalControlPlaneMutation(input.request);
       const body = asRecord(await readJson(input.request));
       const patch: AgentPermissionsPatch = {};
       if (body.workspaceAccess !== undefined) {
@@ -1515,6 +1520,7 @@ async function route(input: {
         "networkEnabled",
         "userProfileWriteEnabled",
         "characterSoulWriteEnabled",
+        "characterSkillManageEnabled",
         "realityMemoryWriteEnabled",
         "characterMemoryWriteEnabled",
       ] as const) {
@@ -2610,6 +2616,224 @@ async function route(input: {
     return;
   }
 
+  const characterSkillPackageConfirmMatch = pathname.match(
+    /^\/api\/v1\/characters\/([^/]+)\/skill-package-stages\/([^/]+)\/confirm$/,
+  );
+  if (characterSkillPackageConfirmMatch && method === "POST") {
+    assertLocalControlPlaneMutation(input.request);
+    const characterId = decodeURIComponent(characterSkillPackageConfirmMatch[1]);
+    const stageId = decodeURIComponent(characterSkillPackageConfirmMatch[2]);
+    const conversationSpace = requestedCharacterWorkspaceSpace(url, characterId);
+    const body = asRecord(await readJson(input.request));
+    assertOnlyKeys(
+      body,
+      ["stageId", "digest", "enabled", "conversationSpace", "characterId"],
+      "Character Skill confirmation",
+    );
+    assertCharacterSkillMutationScope(body, characterId, conversationSpace);
+    assertCharacterSkillStageId(body, stageId);
+    sendJson(input.response, 201, {
+      package: kernel.confirmCharacterAgentSkillPackage({
+        characterId,
+        conversationSpace,
+        stageId,
+        digest: requiredStringValue(body.digest, "digest"),
+        enabled: requiredBoolean(body.enabled, "enabled"),
+      }),
+    });
+    return;
+  }
+
+  const characterSkillPackageStageReviewMatch = pathname.match(
+    /^\/api\/v1\/characters\/([^/]+)\/skill-package-stages\/([^/]+)\/review$/,
+  );
+  if (characterSkillPackageStageReviewMatch && method === "POST") {
+    assertLocalControlPlaneMutation(input.request);
+    kernel.assertCharacterSkillControlPlaneIdle();
+    const characterId = decodeURIComponent(characterSkillPackageStageReviewMatch[1]);
+    const stageId = decodeURIComponent(characterSkillPackageStageReviewMatch[2]);
+    const conversationSpace = requestedCharacterWorkspaceSpace(url, characterId);
+    const body = asRecord(await readJson(input.request));
+    assertOnlyKeys(
+      body,
+      ["stageId", "conversationSpace", "characterId"],
+      "Character Skill review read",
+    );
+    assertCharacterSkillMutationScope(body, characterId, conversationSpace);
+    assertCharacterSkillStageId(body, stageId);
+    const stage = kernel.getCharacterAgentSkillStage({
+      characterId,
+      conversationSpace,
+      stageId,
+    });
+    if (!stage) {
+      throw new AgentSkillInstallerError(
+        "character Skill review was not found for this character and conversation space",
+        "STAGE_NOT_FOUND",
+      );
+    }
+    sendJson(input.response, 200, { stage: characterAgentSkillStageReviewView(stage) });
+    return;
+  }
+
+  const characterSkillPackageCancelMatch = pathname.match(
+    /^\/api\/v1\/characters\/([^/]+)\/skill-package-stages\/([^/]+)\/cancel$/,
+  );
+  if (characterSkillPackageCancelMatch && method === "POST") {
+    assertLocalControlPlaneMutation(input.request);
+    const characterId = decodeURIComponent(characterSkillPackageCancelMatch[1]);
+    const stageId = decodeURIComponent(characterSkillPackageCancelMatch[2]);
+    const conversationSpace = requestedCharacterWorkspaceSpace(url, characterId);
+    const body = asRecord(await readJson(input.request));
+    assertOnlyKeys(
+      body,
+      ["stageId", "digest", "conversationSpace", "characterId"],
+      "Character Skill review cancellation",
+    );
+    assertCharacterSkillMutationScope(body, characterId, conversationSpace);
+    assertCharacterSkillStageId(body, stageId);
+    sendJson(input.response, 200, {
+      cancelled: kernel.cancelCharacterAgentSkillStage({
+        characterId,
+        conversationSpace,
+        stageId,
+        digest: requiredStringValue(body.digest, "digest"),
+      }),
+    });
+    return;
+  }
+
+  const characterSkillPackageStageMatch = pathname.match(
+    /^\/api\/v1\/characters\/([^/]+)\/skill-package-stages\/([^/]+)$/,
+  );
+  if (characterSkillPackageStageMatch && method === "GET") {
+    const characterId = decodeURIComponent(characterSkillPackageStageMatch[1]);
+    const stageId = decodeURIComponent(characterSkillPackageStageMatch[2]);
+    const conversationSpace = requestedCharacterWorkspaceSpace(url, characterId);
+    const stage = kernel.getCharacterAgentSkillStage({
+      characterId,
+      conversationSpace,
+      stageId,
+    });
+    if (!stage) {
+      throw new AgentSkillInstallerError(
+        "character Skill review was not found for this character and conversation space",
+        "STAGE_NOT_FOUND",
+      );
+    }
+    sendJson(input.response, 200, { stage: characterAgentSkillStageSummary(stage) });
+    return;
+  }
+
+  const characterSkillPackageReviewMatch = pathname.match(
+    /^\/api\/v1\/characters\/([^/]+)\/skill-packages\/([^/]+)\/review$/,
+  );
+  if (characterSkillPackageReviewMatch && method === "POST") {
+    assertLocalControlPlaneMutation(input.request);
+    kernel.assertCharacterSkillControlPlaneIdle();
+    const characterId = decodeURIComponent(characterSkillPackageReviewMatch[1]);
+    const packageName = decodeURIComponent(characterSkillPackageReviewMatch[2]);
+    const conversationSpace = requestedCharacterWorkspaceSpace(url, characterId);
+    const body = asRecord(await readJson(input.request));
+    assertOnlyKeys(
+      body,
+      ["name", "conversationSpace", "characterId"],
+      "Character Skill package review read",
+    );
+    assertCharacterSkillMutationScope(body, characterId, conversationSpace);
+    assertCharacterSkillPackageName(body, packageName);
+    const packageSummary = kernel.listCharacterAgentSkillPackages({
+      characterId,
+      conversationSpace,
+    }).find((entry) => entry.name === packageName);
+    if (!packageSummary) {
+      throw new AgentSkillInstallerError(
+        "character Skill package was not found for this character and conversation space",
+        "SKILL_NOT_FOUND",
+      );
+    }
+    sendJson(input.response, 200, {
+      package: {
+        ...packageSummary,
+        skillMarkdown: kernel.readCharacterAgentSkillMarkdown({
+          characterId,
+          conversationSpace,
+          name: packageName,
+        }),
+      },
+    });
+    return;
+  }
+
+  const characterSkillPackageMatch = pathname.match(
+    /^\/api\/v1\/characters\/([^/]+)\/skill-packages\/([^/]+)$/,
+  );
+  if (characterSkillPackageMatch) {
+    const characterId = decodeURIComponent(characterSkillPackageMatch[1]);
+    const packageName = decodeURIComponent(characterSkillPackageMatch[2]);
+    if (method === "GET") {
+      const conversationSpace = requestedCharacterWorkspaceSpace(url, characterId);
+      const packageSummary = kernel.listCharacterAgentSkillPackages({
+        characterId,
+        conversationSpace,
+      }).find((entry) => entry.name === packageName);
+      if (!packageSummary) {
+        throw new AgentSkillInstallerError(
+          "character Skill package was not found for this character and conversation space",
+          "SKILL_NOT_FOUND",
+        );
+      }
+      sendJson(input.response, 200, { package: characterAgentSkillPackageSummary(packageSummary) });
+      return;
+    }
+    if (method === "PATCH") {
+      assertLocalControlPlaneMutation(input.request);
+      const conversationSpace = requestedCharacterWorkspaceSpace(url, characterId);
+      const body = asRecord(await readJson(input.request));
+      assertOnlyKeys(
+        body,
+        ["enabled", "conversationSpace", "characterId"],
+        "Character Skill package update",
+      );
+      assertCharacterSkillMutationScope(body, characterId, conversationSpace);
+      sendJson(input.response, 200, {
+        package: kernel.setCharacterAgentSkillEnabled({
+          characterId,
+          conversationSpace,
+          name: packageName,
+          enabled: requiredBoolean(body.enabled, "enabled"),
+        }),
+      });
+      return;
+    }
+  }
+
+  const characterSkillPackagesMatch = pathname.match(
+    /^\/api\/v1\/characters\/([^/]+)\/skill-packages$/,
+  );
+  if (characterSkillPackagesMatch && method === "GET") {
+    const characterId = decodeURIComponent(characterSkillPackagesMatch[1]);
+    const conversationSpace = requestedCharacterWorkspaceSpace(url, characterId);
+    sendJson(input.response, 200, {
+      packages: kernel.listCharacterAgentSkillPackages({ characterId, conversationSpace })
+        .map(characterAgentSkillPackageSummary),
+    });
+    return;
+  }
+
+  const characterSkillPackageStagesMatch = pathname.match(
+    /^\/api\/v1\/characters\/([^/]+)\/skill-package-stages$/,
+  );
+  if (characterSkillPackageStagesMatch && method === "GET") {
+    const characterId = decodeURIComponent(characterSkillPackageStagesMatch[1]);
+    const conversationSpace = requestedCharacterWorkspaceSpace(url, characterId);
+    sendJson(input.response, 200, {
+      stages: kernel.listCharacterAgentSkillStages({ characterId, conversationSpace })
+        .map(characterAgentSkillStageSummary),
+    });
+    return;
+  }
+
   const characterOwnedSkillsMatch = pathname.match(
     /^\/api\/v1\/characters\/([^/]+)\/owned-skills$/,
   );
@@ -3417,6 +3641,9 @@ async function route(input: {
   }
 
   if (pathname === "/api/v1/export" && method === "GET") {
+    // Exports contain reviewed Skill source and Markdown.  Refuse them while a
+    // model turn is active so a networked shell cannot impersonate the local UI.
+    kernel.assertCharacterSkillControlPlaneIdle();
     const conversationSpace = requestedConversationSpace(url);
     const characterId = requestedConversationCharacterId(url, conversationSpace);
     input.response.writeHead(200, {
@@ -4162,6 +4389,48 @@ function requiredConversationSpace(value: unknown): "normal" | "secret" {
   throw new SyntaxError("conversationSpace must be normal or secret");
 }
 
+function assertCharacterSkillMutationScope(
+  body: Record<string, unknown>,
+  characterId: string,
+  conversationSpace: ConversationSpace,
+): void {
+  const bodyCharacterId = requiredStringValue(body.characterId, "characterId");
+  const bodyConversationSpace = requiredConversationSpace(body.conversationSpace);
+  if (
+    body.characterId !== bodyCharacterId ||
+    bodyCharacterId !== characterId ||
+    bodyConversationSpace !== conversationSpace
+  ) {
+    throw new ConversationNotFoundError(characterId);
+  }
+}
+
+function assertCharacterSkillStageId(
+  body: Record<string, unknown>,
+  routeStageId: string,
+): void {
+  const bodyStageId = requiredStringValue(body.stageId, "stageId");
+  if (body.stageId !== bodyStageId || bodyStageId !== routeStageId) {
+    throw new AgentSkillInstallerError(
+      "character Skill review does not match the requested stage",
+      "STAGE_NOT_FOUND",
+    );
+  }
+}
+
+function assertCharacterSkillPackageName(
+  body: Record<string, unknown>,
+  routePackageName: string,
+): void {
+  const bodyPackageName = requiredStringValue(body.name, "name");
+  if (body.name !== bodyPackageName || bodyPackageName !== routePackageName) {
+    throw new AgentSkillInstallerError(
+      "character Skill package does not match the requested package",
+      "SKILL_NOT_FOUND",
+    );
+  }
+}
+
 function requiredSecretConversationCharacterId(
   body: Record<string, unknown>,
   conversationSpace: ConversationSpace,
@@ -4457,7 +4726,11 @@ function workspaceFileHttpStatus(code: WorkspaceFileError["code"]): number {
 }
 
 function agentSkillInstallerHttpStatus(code: string): number {
-  if (code === "STAGE_NOT_FOUND") return 404;
+  if (
+    code === "STAGE_NOT_FOUND" ||
+    code === "SKILL_NOT_FOUND" ||
+    code === "CHARACTER_NOT_FOUND"
+  ) return 404;
   if (
     code === "STAGE_EXPIRED" ||
     code === "STAGE_DIGEST_MISMATCH" ||
@@ -4519,6 +4792,52 @@ function agentSkillStageView(stage: AgentSkillStageResult) {
     totalBytes: stage.metadata.unpackedBytes,
     expiresAt: stage.expiresAt,
     skillMarkdown: stage.skillMarkdown,
+  };
+}
+
+function characterAgentSkillStageReviewView(stage: AgentSkillStageResult) {
+  return {
+    ...stage,
+    reviewId: stage.stageId,
+  };
+}
+
+function characterAgentSkillStageSummary(stage: AgentSkillStageResult) {
+  const source = agentSkillSafeSourceSummary(stage.source);
+  return {
+    reviewId: stage.stageId,
+    name: stage.metadata.name,
+    description: stage.metadata.description,
+    digest: stage.digest,
+    fileCount: stage.metadata.files,
+    expiresAt: stage.expiresAt,
+    ...source,
+  };
+}
+
+function characterAgentSkillPackageSummary(skill: CharacterAgentSkillPackage) {
+  return {
+    name: skill.name,
+    description: skill.description,
+    enabled: skill.enabled,
+    digest: skill.digest,
+    fileCount: skill.manifest.length,
+    integrity: skill.integrity,
+    ...agentSkillSafeSourceSummary(skill.source),
+  };
+}
+
+function agentSkillSafeSourceSummary(source: AgentSkillStageResult["source"]) {
+  let sourceHost = "";
+  try {
+    sourceHost = new URL(source.requestedUrl).hostname.toLowerCase();
+  } catch {
+    // Persisted corrupt provenance must not make the safe inventory endpoint fail.
+  }
+  return {
+    ...(sourceHost ? { sourceHost } : {}),
+    ...(source.requestedRef ? { ref: source.requestedRef } : {}),
+    ...(source.resolvedCommit ? { commit: source.resolvedCommit } : {}),
   };
 }
 

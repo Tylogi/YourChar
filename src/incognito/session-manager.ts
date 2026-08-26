@@ -159,7 +159,11 @@ export type IncognitoSessionManagerOptions = {
   sourceDatabase: DatabaseSync;
   tmpRoot?: string;
   listSourceMetadata: () => ConversationMetadata[];
-  listNormalSkillPackages: () => Array<{ baseDir: string; filePath: string }>;
+  listNormalSkillPackages: (characterId: string) => Array<{
+    name: string;
+    baseDir: string;
+    filePath: string;
+  }>;
   withSnapshotLock: <T>(sessionId: string | undefined, operation: () => Promise<T>) => Promise<T>;
   createChild: (stateDir: string) => IncognitoChildKernel;
   now?: () => Date;
@@ -231,7 +235,12 @@ export class IncognitoSessionManager {
             "the source conversation changed while creating its snapshot",
           );
         }
-        await this.createStableSnapshot(sourceStateDir, rootDir, source);
+        await this.createStableSnapshot(
+          sourceStateDir,
+          rootDir,
+          normalizedCharacterId,
+          source,
+        );
         this.assertAccepting();
       });
       this.assertAccepting();
@@ -611,6 +620,7 @@ export class IncognitoSessionManager {
   private async createStableSnapshot(
     sourceStateDir: string,
     destination: string,
+    characterId: string,
     metadata?: ConversationMetadata,
   ): Promise<void> {
     const sourceAppDir = resolve(this.options.sourceAppDir ?? process.cwd());
@@ -619,7 +629,7 @@ export class IncognitoSessionManager {
       const skillsBefore = normalSkillSnapshotBindings(
         sourceStateDir,
         sourceAppDir,
-        this.options.listNormalSkillPackages(),
+        this.options.listNormalSkillPackages(characterId),
       );
       const before = snapshotSourceFingerprint(
         sourceStateDir,
@@ -631,7 +641,7 @@ export class IncognitoSessionManager {
       const skillsAfter = normalSkillSnapshotBindings(
         sourceStateDir,
         sourceAppDir,
-        this.options.listNormalSkillPackages(),
+        this.options.listNormalSkillPackages(characterId),
       );
       const after = snapshotSourceFingerprint(
         sourceStateDir,
@@ -719,6 +729,7 @@ export class IncognitoSessionManager {
           .filter((entry) => entry.conversationSpace === "secret")
           .map((entry) => entry.id),
       );
+      configureIncognitoSkillSnapshot(clone, normalSkills, this.now().toISOString());
     } finally {
       clone.close();
     }
@@ -1014,6 +1025,7 @@ function auditPayloadConversationSpace(payloadJson: string): "normal" | "secret"
 }
 
 type SkillSnapshotBinding = {
+  skillName: string;
   sourceDir: string;
   destinationRelative: string;
 };
@@ -1021,12 +1033,18 @@ type SkillSnapshotBinding = {
 function normalSkillSnapshotBindings(
   sourceStateDir: string,
   sourceAppDir: string,
-  packages: Array<{ baseDir: string; filePath: string }>,
+  packages: Array<{ name: string; baseDir: string; filePath: string }>,
 ): SkillSnapshotBinding[] {
   const roots = [
     {
       source: join(sourceStateDir, "skills"),
       destination: "skills",
+    },
+    {
+      source: join(sourceStateDir, "character-agent-skills"),
+      // Private packages are flattened into the disposable app discovery tree.
+      // The child has no package-management service or persisted binding surface.
+      destination: `${INCOGNITO_APP_SNAPSHOT_DIRECTORY}/skills`,
     },
     ...APP_SKILL_DIRECTORIES.map((path) => ({
       source: join(sourceAppDir, path),
@@ -1042,7 +1060,7 @@ function normalSkillSnapshotBindings(
     return [{ ...entry, source: lexical }];
   });
 
-  const destinations = new Map<string, string>();
+  const destinations = new Map<string, { skillName: string; sourceDir: string }>();
   for (const skill of packages) {
     const baseDir = resolve(skill.baseDir);
     const filePath = resolve(skill.filePath);
@@ -1063,16 +1081,51 @@ function normalSkillSnapshotBindings(
     const nested = relative(root.source, baseDir);
     const destinationRelative = `${root.destination}/${nested}`;
     const existing = destinations.get(destinationRelative);
-    if (existing && existing !== baseDir) {
+    if (
+      existing &&
+      (existing.sourceDir !== baseDir || existing.skillName !== skill.name)
+    ) {
       throw new IncognitoUnavailableError(
         `normal Skill packages collide in the disposable snapshot: ${destinationRelative}`,
       );
     }
-    destinations.set(destinationRelative, baseDir);
+    destinations.set(destinationRelative, {
+      skillName: skill.name,
+      sourceDir: baseDir,
+    });
   }
   return [...destinations]
-    .map(([destinationRelative, sourceDir]) => ({ sourceDir, destinationRelative }))
+    .map(([destinationRelative, binding]) => ({
+      ...binding,
+      destinationRelative,
+    }))
     .sort((left, right) => left.destinationRelative.localeCompare(right.destinationRelative));
+}
+
+function configureIncognitoSkillSnapshot(
+  database: DatabaseSync,
+  skills: readonly SkillSnapshotBinding[],
+  updatedAt: string,
+): void {
+  const enableSkill = database.prepare(`
+    INSERT INTO agent_skill_space_settings(
+      module_id, normal_enabled, secret_enabled, updated_at
+    ) VALUES (?, 1, 0, ?)
+    ON CONFLICT(module_id) DO UPDATE SET
+      normal_enabled = 1,
+      secret_enabled = 0,
+      updated_at = excluded.updated_at
+  `);
+  for (const name of new Set(skills.map((skill) => skill.skillName))) {
+    enableSkill.run(`skill:${name}`, updatedAt);
+  }
+  database.prepare(`
+    INSERT INTO agent_module_settings(module_id, enabled, updated_at)
+    VALUES ('permission:character-skill-manage', 0, ?)
+    ON CONFLICT(module_id) DO UPDATE SET
+      enabled = 0,
+      updated_at = excluded.updated_at
+  `).run(updatedAt);
 }
 
 function snapshotSourceFingerprint(

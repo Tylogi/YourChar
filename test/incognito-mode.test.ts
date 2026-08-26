@@ -18,6 +18,7 @@ import { tmpdir } from "node:os";
 import { join, relative } from "node:path";
 import test from "node:test";
 import { Worker } from "node:worker_threads";
+import { strToU8, zipSync } from "fflate";
 import {
   CompanionKernel,
   IncognitoConversationNotFoundError,
@@ -26,8 +27,9 @@ import {
 } from "../src/domain/index.js";
 import { createHttpServer } from "../src/http/router.js";
 import { relationshipStateMcpModuleId } from "../src/modules/catalog.js";
+import { CharacterAgentSkillPackageService } from "../src/modules/character-skill-packages.js";
 import { AppDatabase } from "../src/storage/database.js";
-import { createTestRuntime } from "../src/testing/runtime.js";
+import { createTestRuntime, ScriptedModelController } from "../src/testing/runtime.js";
 
 const tmpfsRoot = "/dev/shm";
 const snapshotPrefix = "yourchar-incognito-";
@@ -367,6 +369,118 @@ test("snapshot physically excludes private Vault data and secret-only Skill pack
     await runtime.kernel.closeIncognitoConversation(incognito.id);
   } finally {
     runtime.dispose();
+    rmSync(stateDir, { recursive: true, force: true });
+  }
+});
+
+test("incognito freezes enabled character-private Skills as read-only capabilities", async () => {
+  const stateDir = mkdtempSync(join(tmpdir(), "yourchar-incognito-character-skill-"));
+  const database = new AppDatabase(join(stateDir, "rp-agent.sqlite"));
+  const model = new ScriptedModelController("incognito-character-skill");
+  const packageService = new CharacterAgentSkillPackageService({
+    database,
+    stateDir,
+    resolveHostname: async () => [{ address: "93.184.216.34", family: 4 }],
+    transport: async () => ({
+      response: new Response(toArrayBuffer(zipSync({
+        "bundle/SKILL.md": strToU8([
+          "---",
+          "name: incognito-private-workflow",
+          "description: INCOGNITO_PRIVATE_SKILL_DESCRIPTION_SENTINEL",
+          "---",
+          "",
+          "# Frozen private workflow",
+          "",
+          "INCOGNITO_PRIVATE_SKILL_BODY_SENTINEL",
+          "",
+        ].join("\n")),
+      })), { headers: { "content-type": "application/zip" } }),
+    }),
+  });
+  const kernel = new CompanionKernel({
+    stateDir,
+    database,
+    characterSkillPackages: packageService,
+    modelResolver: model.resolver,
+    startScheduler: false,
+    startWorldCoordinator: false,
+    startPrivateInboxCoordinator: false,
+    characterSkillReflector: false,
+    imGateway: false,
+  });
+  try {
+    kernel.patchModelApiConfig({
+      enabled: true,
+      baseUrl: "http://test.invalid/v1",
+      model: "scripted-model",
+      temperature: 0,
+    });
+    const character = kernel.createCharacter({ name: "无痕 Skill 角色" });
+    kernel.patchAgentPermissions({ characterSkillManageEnabled: true });
+    const stage = await packageService.stage({
+      characterId: character.id,
+      conversationSpace: "normal",
+      sourceUrl: "https://downloads.example.com/incognito-private-workflow.zip",
+    });
+    packageService.confirm({
+      characterId: character.id,
+      conversationSpace: "normal",
+      stageId: stage.stageId,
+      digest: stage.digest,
+      enabled: true,
+    });
+    await kernel.openCanonicalPrivateConversation(character.id);
+
+    const rootsBefore = listSnapshotRoots();
+    const incognito = await kernel.openIncognitoConversation(character.id);
+    const root = listSnapshotRoots().find((path) => !rootsBefore.includes(path));
+    assert.ok(root);
+    const privateSkillPath = join(
+      root,
+      "app-snapshot",
+      "skills",
+      createHash("sha256").update(character.id).digest("hex"),
+      "normal",
+      "skills",
+      "incognito-private-workflow",
+      "SKILL.md",
+    );
+    assert.equal(existsSync(privateSkillPath), true);
+
+    model.enqueue([
+      { kind: "tool_call", name: "read", arguments: { path: privateSkillPath } },
+      { kind: "assistant_text", text: "已按冻结的私有 Skill 处理。" },
+    ]);
+    const response = await kernel.sendMessage(incognito.id, {
+      text: "读取并使用你的私有工作法。",
+    });
+    assert.equal(response.status, "completed", JSON.stringify(response));
+    assert.equal(model.requests.length, 2, JSON.stringify(model.requests));
+    const firstRequest = model.requests.at(-2)!;
+    assert.match(firstRequest.systemPrompt, /INCOGNITO_PRIVATE_SKILL_DESCRIPTION_SENTINEL/u);
+    assert.equal(firstRequest.toolNames.includes("read"), true);
+    for (const toolName of [
+      "create_current_character_skill_draft",
+      "revise_current_character_skill_draft",
+      "request_current_character_skill_install",
+      "set_current_character_private_skill_enabled",
+    ]) {
+      assert.equal(firstRequest.toolNames.includes(toolName), false);
+    }
+    assert.doesNotMatch(
+      JSON.stringify(firstRequest.providerPayload),
+      /Current-character Skill draft and private package management are authorized/u,
+    );
+    assert.match(
+      JSON.stringify(model.requests.at(-1)?.messages),
+      /INCOGNITO_PRIVATE_SKILL_BODY_SENTINEL/u,
+    );
+
+    await kernel.closeIncognitoConversation(incognito.id);
+    assert.equal(existsSync(root), false);
+  } finally {
+    kernel.dispose();
+    database.close();
     rmSync(stateDir, { recursive: true, force: true });
   }
 });
@@ -711,6 +825,12 @@ function listRegularFiles(root: string): string[] {
 
 function skillMarkdown(name: string, sentinel: string): string {
   return `---\nname: ${name}\ndescription: Snapshot isolation fixture.\n---\n\n${sentinel}\n`;
+}
+
+function toArrayBuffer(value: Uint8Array): ArrayBuffer {
+  const copy = new Uint8Array(value.byteLength);
+  copy.set(value);
+  return copy.buffer;
 }
 
 async function observeVacuumFileDescriptors(

@@ -118,6 +118,34 @@ export class CharacterCapabilityRepository {
       .find((entry) => entry.slug === slug);
   }
 
+  findOwnedSkillBySourceTask(
+    characterId: string,
+    conversationSpace: ConversationSpace,
+    sourceTaskId: string,
+  ): CharacterOwnedSkillPackage | undefined {
+    const row = this.database.connection.prepare(`
+      SELECT version.package_id
+      FROM character_owned_skill_versions version
+      JOIN character_owned_skill_packages package ON package.id = version.package_id
+      WHERE version.character_id = ?
+        AND version.conversation_space = ?
+        AND version.source_task_id = ?
+        AND package.character_id = ?
+        AND package.conversation_space = ?
+      ORDER BY version.created_at, version.id
+      LIMIT 1
+    `).get(
+      characterId,
+      conversationSpace,
+      sourceTaskId,
+      characterId,
+      conversationSpace,
+    ) as { package_id?: string } | undefined;
+    return row?.package_id
+      ? this.getOwnedSkill(characterId, conversationSpace, row.package_id)
+      : undefined;
+  }
+
   insertOwnedSkillPackage(skill: CharacterOwnedSkillPackage): void {
     this.database.connection.prepare(`
       INSERT INTO character_owned_skill_packages(

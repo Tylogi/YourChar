@@ -27,7 +27,7 @@ try {
     "git", "git-worktrees", "git-work-items.json", "git-runtime", "git-repository.json",
     "user-profile.md", "characters", "memory-vault", "memory-vault-state.json",
     "memory-vault-migration.json", "memory-vault-journal", "memory-vault-recovery.json", "workspace",
-    "workspace-secret", "skills", "im-runtime",
+    "workspace-secret", "skills", "character-agent-skills", "im-runtime",
     "avatars", "system-prompts", "trace-archive.json", "trace-archive",
   ]) {
     const source = join(stateDir, name);
@@ -84,6 +84,7 @@ try {
     containsMemoryVault: vault.present,
     containsSecretWorkspace: files.some((file) => file.path.startsWith("workspace-secret/")),
     containsInstalledSkills: files.some((file) => file.path.startsWith("skills/")),
+    containsCharacterAgentSkills: files.some((file) => file.path.startsWith("character-agent-skills/")),
     excludesGitWorkspaceRepositories: true,
     containsGitAccessConfig: existsSync(join(staging, "git", "access.json")),
     containsGitRegistry: existsSync(join(staging, "git", "registry.json")),

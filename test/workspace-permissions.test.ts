@@ -19,6 +19,7 @@ test("permission defaults are conservative and profile write can be disabled ind
       networkEnabled: false,
       userProfileWriteEnabled: true,
       characterSoulWriteEnabled: false,
+      characterSkillManageEnabled: false,
       realityMemoryWriteEnabled: false,
       characterMemoryWriteEnabled: false,
       workspaceDir,
@@ -209,17 +210,18 @@ test("agent permission API persists settings and prevents network without shell"
     const address = app.address();
     assert.ok(address && typeof address === "object");
     const baseUrl = `http://127.0.0.1:${address.port}`;
+    const controlHeaders = await localControlHeaders(baseUrl);
 
     const invalid = await fetch(`${baseUrl}/api/v1/agent-permissions`, {
       method: "PATCH",
-      headers: { "content-type": "application/json" },
+      headers: controlHeaders,
       body: JSON.stringify({ networkEnabled: true }),
     });
     assert.equal(invalid.status, 400);
 
     const updated = await fetch(`${baseUrl}/api/v1/agent-permissions`, {
       method: "PATCH",
-      headers: { "content-type": "application/json" },
+      headers: controlHeaders,
       body: JSON.stringify({
         workspaceAccess: "read_write",
         shellEnabled: true,
@@ -241,6 +243,7 @@ test("agent permission API persists settings and prevents network without shell"
       networkEnabled: true,
       userProfileWriteEnabled: false,
       characterSoulWriteEnabled: true,
+      characterSkillManageEnabled: false,
       realityMemoryWriteEnabled: false,
       characterMemoryWriteEnabled: false,
       workspaceDir: join(stateDir, "workspace"),
@@ -281,6 +284,7 @@ test("private state fails closed against shell access to the loopback HTTP API",
     const address = app.address();
     assert.ok(address && typeof address === "object");
     const baseUrl = `http://127.0.0.1:${address.port}`;
+    const controlHeaders = await localControlHeaders(baseUrl);
     const secretUrl = `${baseUrl}/api/v1/sessions?conversationSpace=secret&characterId=${encodeURIComponent(character.id)}`;
 
     runtime.model.enqueue([
@@ -313,7 +317,7 @@ test("private state fails closed against shell access to the loopback HTTP API",
 
     const permissionResponse = await fetch(`${baseUrl}/api/v1/agent-permissions`, {
       method: "PATCH",
-      headers: { "content-type": "application/json" },
+      headers: controlHeaders,
       body: JSON.stringify({ networkEnabled: true }),
     });
     assert.equal(permissionResponse.status, 400);
@@ -570,6 +574,20 @@ test("operational backup and restore include normal/secret Workspaces and servic
     rmSync(root, { recursive: true, force: true });
   }
 });
+
+async function localControlHeaders(baseUrl: string): Promise<Record<string, string>> {
+  const bootstrap = await fetch(`${baseUrl}/`);
+  const cookie = bootstrap.headers.get("set-cookie")?.split(";", 1)[0];
+  await bootstrap.body?.cancel();
+  assert.ok(cookie, "the UI bootstrap must issue the local-control cookie");
+  return {
+    "content-type": "application/json",
+    cookie,
+    origin: baseUrl,
+    "sec-fetch-mode": "cors",
+    "sec-fetch-site": "same-origin",
+  };
+}
 
 function hasRole(value: unknown, role: string): boolean {
   return Boolean(value && typeof value === "object" && "role" in value && value.role === role);

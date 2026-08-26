@@ -176,6 +176,17 @@ export class CharacterCapabilityService {
     conversationSpace: ConversationSpace = "normal",
   ): CharacterOwnedSkillPackage {
     this.rpService.getCharacter(characterId);
+    const sourceTaskId = input.sourceTaskId
+      ? requiredText(input.sourceTaskId, 300, "sourceTaskId")
+      : undefined;
+    if (sourceTaskId) {
+      const existing = this.repository.findOwnedSkillBySourceTask(
+        characterId,
+        conversationSpace,
+        sourceTaskId,
+      );
+      if (existing) return existing;
+    }
     if (this.repository.listOwnedSkills(characterId, conversationSpace).length >= OWNED_SKILLS_PER_CHARACTER_MAX) {
       throw new CharacterCapabilityValidationError(
         `a character can own at most ${OWNED_SKILLS_PER_CHARACTER_MAX} Skills in one space`,
@@ -223,7 +234,7 @@ export class CharacterCapabilityService {
         : createdBy === "migration"
           ? "legacy_migration"
           : "manual",
-      ...(input.sourceTaskId ? { sourceTaskId: input.sourceTaskId } : {}),
+      ...(sourceTaskId ? { sourceTaskId } : {}),
       contentHash: characterSkillContentHash(markdown),
       createdAt: now,
       ...(activate ? { activatedAt: now } : {}),
