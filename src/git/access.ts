@@ -5,7 +5,9 @@ import {
   closeSync,
   constants,
   existsSync,
+  fchmodSync,
   fstatSync,
+  fsyncSync,
   lstatSync,
   mkdirSync,
   openSync,
@@ -47,9 +49,11 @@ import type {
 
 const accessVersion = "yourchar-git-access-v1" as const;
 const maximumOutputBytes = 128 * 1024;
+const maximumMetadataOutputBytes = 8 * 1024 * 1024;
 const maximumDiffBytes = 64 * 1024;
 const maximumChangedFiles = 1_000;
 const maximumChangedBytes = 64 * 1024 * 1024;
+const maximumIndexBytes = 64 * 1024 * 1024;
 const maximumCommitMessageCharacters = 500;
 const localOperationTimeoutMs = 120_000;
 const remoteOperationTimeoutMs = 180_000;
@@ -87,6 +91,11 @@ type ParsedRemote = {
   path: string;
   canonicalUrl: string;
   key: string;
+};
+
+type GitIndexSnapshot = {
+  bytes: Buffer;
+  mode: number;
 };
 
 export type GitAccessRunner = (input: {
@@ -343,34 +352,87 @@ export class GitAccessService {
       const checkout = await this.requireCheckout(remote, signal);
       const message = requireCommitMessage(input.message);
       const before = await this.statusAt(remote, checkout, signal);
-      const staged = await this.git(["diff", "--cached", "--name-only", "--"], checkout, signal);
-      if (staged.stdout.trim()) {
-        throw new GitRepositoryOperationError("The repository already has staged changes; resolve them before an Agent commit");
-      }
       const paths = await this.changedPaths(checkout, signal);
       if (!paths.length) throw new GitRepositoryOperationError("Repository has no changes to commit");
-      this.scanChangedFiles(checkout, paths);
-      await this.git(["add", "-A", "--"], checkout, signal);
+      this.assertNoInProgressOperation(checkout);
+      this.assertChangedPathsSafe(checkout, paths);
+      const originalIndex = this.snapshotIndex(checkout);
+      let expectedTree: string;
+      try {
+        await this.git(["-c", "advice.addEmbeddedRepo=false", "add", "-A", "--"], checkout, signal);
+        expectedTree = await this.writeTree(checkout, signal);
+        await this.scanCommitRange(checkout, before.head, expectedTree, signal);
+      } catch (error) {
+        this.restoreIndex(checkout, originalIndex);
+        throw error;
+      }
+
+      const authorName = `${sanitizeAuthorName(input.characterName)} via YourChar`;
+      const authorEmail = `${slugIdentity(input.characterId)}@yourchar.local`;
+      let commit: string;
       try {
         await this.git([
-          "-c", `user.name=${sanitizeAuthorName(input.characterName)} via YourChar`,
-          "-c", `user.email=${slugIdentity(input.characterId)}@yourchar.local`,
+          "-c", `user.name=${authorName}`,
+          "-c", `user.email=${authorEmail}`,
           "-c", "commit.gpgSign=false",
-          "commit", "--no-gpg-sign", "--no-verify", "-m", message,
+          "commit", "--quiet", "--no-gpg-sign", "--no-verify", "--cleanup=verbatim", "-m", message,
         ], checkout, signal);
+        commit = await this.revParse(checkout, "HEAD", signal);
       } catch (error) {
-        await this.git(["reset", "--mixed", "HEAD", "--"], checkout).catch(() => undefined);
-        throw error;
+        const observedHead = await this.revParse(checkout, "HEAD").catch(() => undefined);
+        if (observedHead === before.head) {
+          this.restoreIndex(checkout, originalIndex);
+          throw error;
+        }
+        if (!observedHead || !await this.commitMatches(
+          checkout,
+          observedHead,
+          before.head,
+          expectedTree,
+          authorName,
+          authorEmail,
+          message,
+        )) {
+          throw new GitRepositoryOperationError(
+            "Git commit ended ambiguously after HEAD changed; inspect the repository before retrying",
+          );
+        }
+        commit = observedHead;
       }
-      const commit = await this.revParse(checkout, "HEAD", signal);
+
+      let after: GitAccessRepository;
       try {
-        await this.scanCommitRange(checkout, before.head, commit, signal);
+        if (!await this.commitMatches(
+          checkout,
+          commit,
+          before.head,
+          expectedTree,
+          authorName,
+          authorEmail,
+          message,
+        )) {
+          throw new GitRepositoryOperationError("Git created an unexpected commit; inspect the repository before retrying");
+        }
+        after = await this.statusAt(remote, checkout);
         this.approveCommit(remote.key, commit);
       } catch (error) {
-        await this.git(["reset", "--mixed", "HEAD^", "--"], checkout).catch(() => undefined);
+        const observedHead = await this.revParse(checkout, "HEAD").catch(() => undefined);
+        if (observedHead === commit) {
+          try {
+            await this.git(["reset", "--quiet", "--mixed", before.head, "--"], checkout);
+            this.restoreIndex(checkout, originalIndex);
+          } catch {
+            throw new GitRepositoryOperationError(
+              "Git commit validation failed and automatic rollback could not restore the repository; inspect it manually",
+            );
+          }
+        } else if (observedHead !== before.head) {
+          throw new GitRepositoryOperationError(
+            "Git commit validation failed after HEAD changed unexpectedly; inspect the repository manually",
+          );
+        }
         throw error;
       }
-      const after = await this.statusAt(remote, checkout, signal);
       return { ...after, commit, changedPaths: paths.length };
     });
   }
@@ -455,7 +517,7 @@ export class GitAccessService {
     const remoteHead = await this.revParse(checkout, remoteRef, signal);
     if (before.head !== remoteHead) {
       if (await this.gitExit(["merge-base", "--is-ancestor", before.head, remoteHead], checkout, signal)) {
-        await this.git(["merge", "--ff-only", remoteHead], checkout, signal);
+        await this.git(["merge", "--quiet", "--ff-only", remoteHead], checkout, signal);
       } else if (!await this.gitExit(["merge-base", "--is-ancestor", remoteHead, before.head], checkout, signal)) {
         throw new GitRepositoryOperationError("Local and remote history diverged; manual reconciliation is required");
       }
@@ -470,7 +532,12 @@ export class GitAccessService {
     await this.assertSafeLocalConfiguration(checkout, signal);
     const branch = requireBranch((await this.git(["branch", "--show-current"], checkout, signal)).stdout.trim());
     const head = await this.revParse(checkout, "HEAD", signal);
-    const porcelain = await this.git(["status", "--porcelain=v1", "--untracked-files=all"], checkout, signal);
+    const porcelain = await this.git(
+      ["status", "--porcelain=v1", "--untracked-files=all"],
+      checkout,
+      signal,
+      { maxOutputBytes: maximumMetadataOutputBytes },
+    );
     const workspacePath = relative(this.workspaceDir, checkout).split(sep).join("/");
     return {
       remoteUrl: remote.canonicalUrl,
@@ -606,7 +673,12 @@ export class GitAccessService {
   }
 
   private async changedPaths(checkout: string, signal?: AbortSignal): Promise<string[]> {
-    const result = await this.git(["status", "--porcelain=v1", "-z", "--untracked-files=all"], checkout, signal);
+    const result = await this.git(
+      ["status", "--porcelain=v1", "-z", "--untracked-files=all"],
+      checkout,
+      signal,
+      { maxOutputBytes: maximumMetadataOutputBytes },
+    );
     const records = result.stdout.split("\0").filter(Boolean);
     const paths: string[] = [];
     for (let index = 0; index < records.length; index += 1) {
@@ -620,13 +692,14 @@ export class GitAccessService {
         paths.push(renamed);
       }
     }
-    return [...new Set(paths)];
+    const unique = [...new Set(paths)];
+    if (unique.length > maximumChangedFiles) throw new GitRepositoryOperationError("Commit changes too many paths");
+    return unique;
   }
 
-  private scanChangedFiles(checkout: string, paths: string[]): void {
+  private assertChangedPathsSafe(checkout: string, paths: string[]): void {
     if (paths.length > maximumChangedFiles) throw new GitRepositoryOperationError("Commit changes too many paths");
     const realCheckout = realpathSync(checkout);
-    let total = 0;
     for (const path of paths) {
       assertRelativeGitPath(path);
       if (sensitivePathPattern.test(path) || forbiddenTrackedPathPattern.test(path)) {
@@ -642,39 +715,161 @@ export class GitAccessService {
       if (realCandidate !== realCheckout && !realCandidate.startsWith(`${realCheckout}${sep}`)) {
         throw new GitRepositoryOperationError(`Changed path resolves outside repository: ${path}`);
       }
-      if (!stats.isFile()) continue;
-      total += stats.size;
-      if (total > maximumChangedBytes) throw new GitRepositoryOperationError("Commit content exceeds the safety limit");
-      if (stats.size <= 2 * 1024 * 1024) scanCredentialContent(readFileSync(candidate), path);
+    }
+  }
+
+  private assertNoInProgressOperation(checkout: string): void {
+    const gitDirectory = join(checkout, ".git");
+    assertRealDirectory(gitDirectory, "Repository .git directory");
+    const operationMarkers = [
+      "MERGE_HEAD",
+      "CHERRY_PICK_HEAD",
+      "REVERT_HEAD",
+      "REBASE_HEAD",
+      "rebase-apply",
+      "rebase-merge",
+      "sequencer",
+    ];
+    if (operationMarkers.some((entry) => pathEntryExists(join(gitDirectory, entry)))) {
+      throw new GitRepositoryOperationError(
+        "The repository has an in-progress merge, rebase, cherry-pick, or revert; finish or abort it before an Agent commit",
+      );
+    }
+  }
+
+  private snapshotIndex(checkout: string): GitIndexSnapshot {
+    const gitDirectory = join(checkout, ".git");
+    assertRealDirectory(gitDirectory, "Repository .git directory");
+    const indexPath = join(gitDirectory, "index");
+    if (pathEntryExists(join(gitDirectory, "index.lock"))) {
+      throw new GitRepositoryOperationError("The repository index is locked by another Git operation");
+    }
+    assertRegularFile(indexPath, "Repository index");
+    const before = lstatSync(indexPath);
+    if (before.size > maximumIndexBytes) throw new GitRepositoryOperationError("Repository index exceeds the safety limit");
+    const bytes = readFileSync(indexPath);
+    const after = lstatSync(indexPath);
+    if (
+      before.dev !== after.dev ||
+      before.ino !== after.ino ||
+      before.size !== after.size ||
+      before.mtimeMs !== after.mtimeMs ||
+      bytes.length !== before.size
+    ) {
+      throw new GitRepositoryOperationError("Repository index changed while it was being captured");
+    }
+    return { bytes, mode: before.mode & 0o777 };
+  }
+
+  private restoreIndex(checkout: string, snapshot: GitIndexSnapshot): void {
+    const gitDirectory = join(checkout, ".git");
+    assertRealDirectory(gitDirectory, "Repository .git directory");
+    const indexPath = join(gitDirectory, "index");
+    if (pathEntryExists(join(gitDirectory, "index.lock"))) {
+      throw new GitRepositoryOperationError("Repository index remained locked during rollback");
+    }
+    if (pathEntryExists(indexPath)) assertRegularFile(indexPath, "Repository index");
+    const temporary = join(gitDirectory, `.index.yourchar-${process.pid}-${randomBytes(6).toString("hex")}`);
+    const descriptor = openSync(
+      temporary,
+      constants.O_CREAT | constants.O_EXCL | constants.O_WRONLY | constants.O_NOFOLLOW,
+      snapshot.mode,
+    );
+    try {
+      writeFileSync(descriptor, snapshot.bytes);
+      fchmodSync(descriptor, snapshot.mode);
+      fsyncSync(descriptor);
+      if (!fstatSync(descriptor).isFile()) throw new GitRepositoryOperationError("Repository index rollback target is invalid");
+    } catch (error) {
+      closeSync(descriptor);
+      rmSync(temporary, { force: true });
+      throw error;
+    }
+    closeSync(descriptor);
+    try {
+      renameSync(temporary, indexPath);
+      const directoryDescriptor = openSync(gitDirectory, constants.O_RDONLY | constants.O_DIRECTORY);
+      try { fsyncSync(directoryDescriptor); } finally { closeSync(directoryDescriptor); }
+    } catch (error) {
+      rmSync(temporary, { force: true });
+      throw error;
     }
   }
 
   private async scanCommitRange(checkout: string, base: string, head: string, signal?: AbortSignal): Promise<void> {
     requireObjectId(base);
     requireObjectId(head);
-    const changed = await this.git(["diff", "--name-only", "-z", `${base}..${head}`, "--"], checkout, signal);
-    const changedPaths = new Set(changed.stdout.split("\0").filter(Boolean));
-    if (changedPaths.size > maximumChangedFiles) throw new GitRepositoryOperationError("Commit changes too many paths");
-    const tree = await this.git(["ls-tree", "-r", "-z", head], checkout, signal);
+    const changed = await this.git([
+      "diff-tree", "--no-commit-id", "-r", "--raw", "-z", "--no-abbrev", "--no-renames",
+      base, head, "--",
+    ], checkout, signal, { maxOutputBytes: maximumMetadataOutputBytes });
+    const records = changed.stdout.split("\0");
+    if (records.at(-1) === "") records.pop();
+    if (records.length % 2 !== 0) throw new GitRepositoryOperationError("Git returned incomplete changed-entry metadata");
+    const zeroObjectId = /^0{40,64}$/u;
+    const oldObjectIds = new Set<string>();
+    const newEntries: Array<{ objectId: string; path: string }> = [];
+    let changedPaths = 0;
+    for (let index = 0; index < records.length; index += 2) {
+      const header = records[index]!;
+      const path = records[index + 1]!;
+      const match = /^:(\d{6}) (\d{6}) ([a-f0-9]{40,64}) ([a-f0-9]{40,64}) ([AMDT])$/u.exec(header);
+      if (!match) throw new GitRepositoryOperationError("Git returned invalid changed-entry metadata");
+      const [, , newMode, oldObjectId, newObjectId] = match;
+      changedPaths += 1;
+      if (changedPaths > maximumChangedFiles) throw new GitRepositoryOperationError("Commit changes too many paths");
+      assertRelativeGitPath(path);
+      if (sensitivePathPattern.test(path) || forbiddenTrackedPathPattern.test(path)) {
+        throw new GitRepositoryOperationError(`Refusing to push sensitive or control file: ${path}`);
+      }
+      if (!zeroObjectId.test(oldObjectId!)) oldObjectIds.add(oldObjectId!);
+      if (zeroObjectId.test(newObjectId!)) continue;
+      if (newMode !== "100644" && newMode !== "100755") {
+        throw new GitRepositoryOperationError(`Refusing to push non-regular entry: ${path}`);
+      }
+      newEntries.push({ objectId: newObjectId!, path });
+    }
+
     let total = 0;
-    for (const entry of tree.stdout.split("\0").filter(Boolean)) {
-      const match = /^(\d{6})\s+(?:blob|commit)\s+([a-f0-9]{40,64})\t(.+)$/u.exec(entry);
-      if (!match) throw new GitRepositoryOperationError("Git returned an invalid tree entry");
-      const [, mode, objectId, path] = match;
-      if (!changedPaths.has(path!)) continue;
-      assertRelativeGitPath(path!);
-      if (mode !== "100644" && mode !== "100755") throw new GitRepositoryOperationError(`Refusing to push non-regular entry: ${path}`);
-      if (sensitivePathPattern.test(path!) || forbiddenTrackedPathPattern.test(path!)) throw new GitRepositoryOperationError(`Refusing to push sensitive or control file: ${path}`);
-      const size = Number((await this.git(["cat-file", "-s", objectId!], checkout, signal)).stdout.trim());
+    const scannedObjects = new Set<string>();
+    for (const entry of newEntries) {
+      if (oldObjectIds.has(entry.objectId)) continue;
+      if (scannedObjects.has(entry.objectId)) continue;
+      const size = Number((await this.git(["cat-file", "-s", entry.objectId], checkout, signal)).stdout.trim());
       if (!Number.isSafeInteger(size) || size < 0) throw new GitRepositoryOperationError("Git returned an invalid blob size");
       total += size;
       if (total > maximumChangedBytes) throw new GitRepositoryOperationError("Commit content exceeds the safety limit");
       if (size <= 2 * 1024 * 1024) {
-        const blob = await this.git(["cat-file", "blob", objectId!], checkout, signal, { maxOutputBytes: 2 * 1024 * 1024 + 1024 });
-        scanCredentialContent(Buffer.from(blob.stdout, "utf8"), path!);
+        const blob = await this.git(["cat-file", "blob", entry.objectId], checkout, signal, { maxOutputBytes: 2 * 1024 * 1024 + 1024 });
+        scanCredentialContent(Buffer.from(blob.stdout, "utf8"), entry.path);
       }
+      scannedObjects.add(entry.objectId);
     }
-    for (const path of changedPaths) assertRelativeGitPath(path);
+  }
+
+  private async writeTree(checkout: string, signal?: AbortSignal): Promise<string> {
+    return requireObjectId((await this.git(["write-tree"], checkout, signal)).stdout.trim());
+  }
+
+  private async commitMatches(
+    checkout: string,
+    commit: string,
+    parent: string,
+    tree: string,
+    authorName: string,
+    authorEmail: string,
+    message: string,
+    signal?: AbortSignal,
+  ): Promise<boolean> {
+    const result = await this.git([
+      "show", "-s", "--no-show-signature", "--format=%P%x00%T%x00%an%x00%ae%x00%B", commit, "--",
+    ], checkout, signal);
+    const [actualParents, actualTree, actualName, actualEmail, ...body] = result.stdout.split("\0");
+    return actualParents === parent &&
+      actualTree === tree &&
+      actualName === authorName &&
+      actualEmail === authorEmail &&
+      body.join("\0").trimEnd() === message;
   }
 
   private approveCommit(repositoryKey: string, commit: string): void {
@@ -783,6 +978,7 @@ export class GitAccessService {
       GIT_SEQUENCE_EDITOR: "/bin/false",
       SSH_ASKPASS: "/bin/false",
       GIT_LFS_SKIP_SMUDGE: "1",
+      GIT_LITERAL_PATHSPECS: "1",
       GIT_SSH_VARIANT: "ssh",
       GIT_SSH_COMMAND: this.sshCommand(trustOnFirstUse),
     };
@@ -1228,30 +1424,75 @@ function shellQuote(value: string): string {
 
 async function spawnGitCommand(input: Parameters<GitAccessRunner>[0]): Promise<GitCommandResult> {
   return new Promise((resolvePromise, reject) => {
-    const child = spawn(input.command, input.args, { cwd: input.cwd, env: input.env, stdio: ["ignore", "pipe", "pipe"] });
+    const child = spawn(input.command, input.args, {
+      cwd: input.cwd,
+      env: input.env,
+      detached: process.platform !== "win32",
+      stdio: ["ignore", "pipe", "pipe"],
+    });
     const stdout: Buffer[] = [];
     const stderr: Buffer[] = [];
     let bytes = 0;
     let settled = false;
+    let terminalError: Error | undefined;
+    let timeoutTimer: NodeJS.Timeout | undefined;
+    let killTimer: NodeJS.Timeout | undefined;
     const finish = (error?: Error, result?: GitCommandResult) => {
       if (settled) return;
       settled = true;
-      clearTimeout(timer);
+      if (timeoutTimer) clearTimeout(timeoutTimer);
+      if (killTimer) clearTimeout(killTimer);
       input.signal?.removeEventListener("abort", abort);
       if (error) reject(error); else resolvePromise(result!);
     };
-    const abort = () => { child.kill("SIGTERM"); finish(new GitRepositoryOperationError("Git operation was cancelled")); };
+    const signalProcess = (signal: NodeJS.Signals) => {
+      try {
+        if (process.platform !== "win32" && child.pid) process.kill(-child.pid, signal);
+        else child.kill(signal);
+      } catch {
+        try { child.kill(signal); } catch { /* The process may already be closing. */ }
+      }
+    };
+    const terminate = (error: Error) => {
+      if (terminalError || settled) return;
+      terminalError = error;
+      signalProcess("SIGTERM");
+      killTimer = setTimeout(() => signalProcess("SIGKILL"), 2_000);
+      killTimer.unref?.();
+    };
+    const abort = () => terminate(new GitRepositoryOperationError("Git operation was cancelled"));
     const capture = (target: Buffer[], chunk: Buffer) => {
+      if (terminalError) return;
       bytes += chunk.length;
-      if (bytes > input.maxOutputBytes) { child.kill("SIGTERM"); finish(new GitRepositoryOperationError("Git command output exceeded the safety limit")); return; }
+      if (bytes > input.maxOutputBytes) {
+        terminate(new GitRepositoryOperationError("Git command output exceeded the safety limit"));
+        return;
+      }
       target.push(chunk);
     };
     child.stdout.on("data", (chunk: Buffer) => capture(stdout, chunk));
     child.stderr.on("data", (chunk: Buffer) => capture(stderr, chunk));
-    child.once("error", (error) => finish(new GitRepositoryOperationError(`Unable to run git: ${error.message}`)));
-    child.once("close", (code) => finish(undefined, { stdout: Buffer.concat(stdout).toString("utf8"), stderr: Buffer.concat(stderr).toString("utf8"), exitCode: code ?? -1 }));
-    const timer = setTimeout(() => { child.kill("SIGTERM"); finish(new GitRepositoryOperationError(`Git command timed out after ${input.timeoutMs} ms`)); }, input.timeoutMs);
-    timer.unref?.();
+    child.once("error", (error) => {
+      if (!terminalError) finish(new GitRepositoryOperationError(`Unable to run git: ${error.message}`));
+    });
+    child.once("close", (code) => {
+      if (terminalError) {
+        signalProcess("SIGKILL");
+        finish(terminalError);
+      }
+      else finish(undefined, {
+        stdout: Buffer.concat(stdout).toString("utf8"),
+        stderr: Buffer.concat(stderr).toString("utf8"),
+        exitCode: code ?? -1,
+      });
+    });
+    timeoutTimer = setTimeout(() => {
+      terminate(new GitRepositoryOperationError(`Git command timed out after ${input.timeoutMs} ms`));
+    }, input.timeoutMs);
+    timeoutTimer.unref?.();
     if (input.signal?.aborted) abort(); else input.signal?.addEventListener("abort", abort, { once: true });
   });
 }
+
+/** @internal Exposed only for lifecycle regression tests. */
+export const __spawnGitCommandForTest = spawnGitCommand;
