@@ -1520,8 +1520,84 @@ test("server serves chat UI and debug model traces", async () => {
       /async function openModuleDetailFromList\(event\)[\s\S]*?async function toggleAgentModule/,
     )?.[0] ?? "";
     assert.match(moduleDetailScript, /withConversationSpace\(/);
-    assert.match(moduleDetailScript, /state\.conversationSpaceEpoch !== scope\.epoch/);
-    assert.match(moduleDetailScript, /state\.selectedCharacterId !== scope\.characterId/);
+    assert.match(moduleDetailScript, /fetch\("\/api\/v1\/subagent-settings"\)/);
+    assert.match(moduleDetailScript, /id="subagentSettingsForm"/);
+    assert.match(moduleDetailScript, /subagentSettingsFieldHtml\("subagentMaxConcurrentTasks"/);
+    assert.match(moduleDetailScript, /subagentSettingsFieldHtml\("subagentMaxWorkModelCalls"/);
+    assert.match(moduleDetailScript, /subagentSettingsFieldHtml\("subagentMaxOutputTokens"/);
+    assert.match(moduleDetailScript, /subagentSettingsFieldHtml\("subagentMaxResultCharacters"/);
+    assert.match(moduleDetailScript, /subagentSettingsFieldHtml\("subagentTimeoutSeconds"/);
+    assert.match(moduleDetailScript, /maxWorkModelCalls \+ 1/);
+    assert.match(moduleDetailScript, /timeoutSeconds \+ 30/);
+    assert.match(moduleDetailScript, /设置仅影响之后开始的委派任务/);
+    assert.match(moduleDetailScript, /绝对上限：并发 8、工作模型 64 轮/);
+    assert.match(moduleDetailScript, /受当前模型真实 context window 与模型服务支持限制/);
+    assert.match(moduleDetailScript, /多路并发结果共享当前父回合的 Subagent 结果上下文预算/);
+    assert.match(moduleDetailScript, /expectedRevision: record\.subagentSettings\.revision/);
+    assert.match(moduleDetailScript, /controlPlaneFetch\("\/api\/v1\/subagent-settings", \{/);
+    assert.match(moduleDetailScript, /method: "PATCH"/);
+    assert.match(moduleDetailScript, /CONTROL_PLANE_BUSY/);
+    assert.match(moduleDetailScript, /当前有角色回合正在运行，请等待结束后再保存/);
+    assert.match(moduleDetailScript, /SUBAGENT_SETTINGS_CONFLICT/);
+    assert.match(moduleDetailScript, /设置已被其他窗口更新，请重新打开模块详情/);
+    assert.match(moduleDetailScript, /SUBAGENT_SETTINGS_INVALID/);
+    assert.match(moduleDetailScript, /请输入 .* 之间的整数/);
+    const moduleDetailScopeScript = inlineScript.match(
+      /function captureModuleDetailScope[\s\S]*?(?=\n    function closeModuleDetail)/,
+    )?.[0] ?? "";
+    assert.match(moduleDetailScopeScript, /scope\.requestId === state\.moduleDetailRequestId/);
+    assert.match(moduleDetailScopeScript, /scope\.epoch === state\.conversationSpaceEpoch/);
+    assert.match(moduleDetailScopeScript, /scope\.characterId === state\.selectedCharacterId/);
+    assert.match(moduleDetailScopeScript, /state\.uiMode === "management" && state\.managementTab === "modules"/);
+    const moduleDetailScopeState = {
+      moduleDetailRequestId: 7,
+      conversationSpaceEpoch: 4,
+      conversationSpace: "secret",
+      selectedCharacterId: "character-a",
+      uiMode: "management",
+      managementTab: "modules",
+    };
+    const moduleDetailScopeContext: Record<string, any> = { state: moduleDetailScopeState };
+    new Script(
+      moduleDetailScopeScript +
+      "\nthis.captureModuleDetailScopeForTest = captureModuleDetailScope;" +
+      "\nthis.moduleDetailScopeIsCurrentForTest = moduleDetailScopeIsCurrent;",
+    ).runInNewContext(moduleDetailScopeContext);
+    const currentModuleDetailScope = moduleDetailScopeContext.captureModuleDetailScopeForTest(
+      "mcp:subagent",
+      7,
+    );
+    assert.equal(
+      moduleDetailScopeContext.moduleDetailScopeIsCurrentForTest(currentModuleDetailScope),
+      true,
+    );
+    moduleDetailScopeState.moduleDetailRequestId += 1;
+    assert.equal(
+      moduleDetailScopeContext.moduleDetailScopeIsCurrentForTest(currentModuleDetailScope),
+      false,
+      "an older module-detail response cannot replace a newer request",
+    );
+    moduleDetailScopeState.moduleDetailRequestId = 7;
+    moduleDetailScopeState.selectedCharacterId = "character-b";
+    assert.equal(
+      moduleDetailScopeContext.moduleDetailScopeIsCurrentForTest(currentModuleDetailScope),
+      false,
+      "a Subagent settings response cannot cross into another character view",
+    );
+    moduleDetailScopeState.selectedCharacterId = "character-a";
+    moduleDetailScopeState.conversationSpace = "normal";
+    assert.equal(
+      moduleDetailScopeContext.moduleDetailScopeIsCurrentForTest(currentModuleDetailScope),
+      false,
+      "a Subagent settings response cannot cross conversation spaces",
+    );
+    moduleDetailScopeState.conversationSpace = "secret";
+    moduleDetailScopeState.managementTab = "profile";
+    assert.equal(
+      moduleDetailScopeContext.moduleDetailScopeIsCurrentForTest(currentModuleDetailScope),
+      false,
+      "a closed capability view ignores late settings responses",
+    );
     assert.match(html, />仅普通<\/option>/);
     assert.match(html, />仅私密<\/option>/);
     assert.match(html, />普通 \+ 私密<\/option>/);

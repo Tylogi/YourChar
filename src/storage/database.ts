@@ -2767,6 +2767,42 @@ const migrations: Migration[] = [
       END;
     `,
   },
+  {
+    version: 48,
+    sql: `
+      CREATE TABLE subagent_runtime_settings (
+        singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
+        max_concurrent_tasks INTEGER NOT NULL
+          CHECK (max_concurrent_tasks BETWEEN 1 AND 8),
+        max_work_model_calls INTEGER NOT NULL
+          CHECK (max_work_model_calls BETWEEN 1 AND 64),
+        max_output_tokens INTEGER NOT NULL
+          CHECK (max_output_tokens BETWEEN 512 AND 65536),
+        max_result_characters INTEGER NOT NULL
+          CHECK (max_result_characters BETWEEN 1000 AND 200000),
+        timeout_seconds INTEGER NOT NULL
+          CHECK (timeout_seconds BETWEEN 60 AND 3600),
+        revision INTEGER NOT NULL DEFAULT 0 CHECK (revision >= 0),
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      );
+      INSERT INTO subagent_runtime_settings(
+        singleton,
+        max_concurrent_tasks,
+        max_work_model_calls,
+        max_output_tokens,
+        max_result_characters,
+        timeout_seconds,
+        revision,
+        created_at,
+        updated_at
+      ) VALUES (
+        1, 4, 32, 16384, 64000, 1800, 0,
+        strftime('%Y-%m-%dT%H:%M:%fZ', 'now'),
+        strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+      );
+    `,
+  },
 ];
 
 export class AppDatabase {

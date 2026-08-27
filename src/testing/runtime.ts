@@ -59,6 +59,8 @@ export type CapturedModelRequest = {
   systemPrompt: string;
   messages: unknown[];
   toolNames: string[];
+  /** Effective timeout passed by Pi to the registered provider implementation. */
+  providerTimeoutMs: number | undefined;
   providerPayload: { messages: unknown[]; tools: unknown[]; [key: string]: unknown };
 };
 
@@ -144,7 +146,7 @@ export class ScriptedModelController {
         tools: context.tools ?? [],
       };
       await options?.onPayload?.(providerPayload, model as Model<Api>);
-      this.captureRequest(context, providerPayload);
+      this.captureRequest(context, providerPayload, options?.timeoutMs);
       if (response.delayMs) await new Promise((resolve) => setTimeout(resolve, response.delayMs));
       if (response.kind === "assistant_text") {
         const message = fauxAssistantMessage(response.thinking === undefined
@@ -195,12 +197,14 @@ export class ScriptedModelController {
   private captureRequest(
     context: Context,
     providerPayload: { messages: unknown[]; tools: unknown[] },
+    providerTimeoutMs: number | undefined,
   ): void {
     this.requests.push({
       sequence: this.requests.length + 1,
       systemPrompt: context.systemPrompt ?? "",
       messages: context.messages.map(canonicalUnknownMessage),
       toolNames: context.tools?.map((tool) => tool.name) ?? [],
+      providerTimeoutMs,
       providerPayload: {
         ...jsonClone(providerPayload),
         messages: providerPayload.messages.map(canonicalUnknownMessage),

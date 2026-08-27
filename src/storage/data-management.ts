@@ -52,6 +52,15 @@ export class DataManagementRepository {
         SET wechat_typing_enabled = 1,
             updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
         WHERE singleton = 1;
+        UPDATE subagent_runtime_settings
+        SET max_concurrent_tasks = 4,
+            max_work_model_calls = 32,
+            max_output_tokens = 16384,
+            max_result_characters = 64000,
+            timeout_seconds = 1800,
+            revision = revision + 1,
+            updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+        WHERE singleton = 1;
         DELETE FROM notification_outbox;
         DELETE FROM reminder_occurrences;
         DELETE FROM proactive_messages;

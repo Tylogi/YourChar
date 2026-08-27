@@ -3,26 +3,33 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
+import { SubagentSettingsService } from "../src/modules/subagent-settings.js";
 import {
   maximumSubagentRuntimeTimeoutMs,
   subagentMcpRequestTimeoutMs,
 } from "../src/mcp/subagent-server.js";
 import {
+  defaultSubagentMaxResultCharacters,
   defaultSubagentMaxOutputTokens,
   defaultSubagentTimeoutMs,
   maxConcurrentSubagentsPerSession,
   maxSubagentTotalModelCalls,
   maxSubagentWorkModelCalls,
+  subagentHttpIdleTimeoutMs,
 } from "../src/pi/session-runtime.js";
+import { AppDatabase } from "../src/storage/database.js";
 import { createTestRuntime } from "../src/testing/index.js";
 
 test("subagent deadlines are finite and the MCP envelope stays 30 seconds wider", () => {
-  assert.equal(defaultSubagentTimeoutMs, 600_000);
-  assert.equal(defaultSubagentMaxOutputTokens, 4_096);
-  assert.equal(maxSubagentWorkModelCalls, 16);
-  assert.equal(maxSubagentTotalModelCalls, 17);
+  assert.equal(defaultSubagentTimeoutMs, 1_800_000);
+  assert.equal(defaultSubagentMaxOutputTokens, 16_384);
+  assert.equal(defaultSubagentMaxResultCharacters, 64_000);
+  assert.equal(maxSubagentWorkModelCalls, 32);
+  assert.equal(maxSubagentTotalModelCalls, 33);
   assert.equal(maxConcurrentSubagentsPerSession, 4);
-  assert.equal(subagentMcpRequestTimeoutMs(defaultSubagentTimeoutMs), 630_000);
+  assert.equal(subagentHttpIdleTimeoutMs, 0);
+  assert.equal(subagentMcpRequestTimeoutMs(defaultSubagentTimeoutMs), 1_830_000);
+  assert.equal(subagentMcpRequestTimeoutMs(3_600_000), 3_630_000);
   assert.equal(
     subagentMcpRequestTimeoutMs(maximumSubagentRuntimeTimeoutMs),
     2_147_483_647,
@@ -90,6 +97,8 @@ test("private Pi session delegates to an isolated read-only subagent and resumes
     assert.match(parentInitial.systemPrompt, /私聊角色秘密/);
     assert.match(childInitial.systemPrompt, /isolated reviewer subagent/);
     assert.doesNotMatch(childInitial.systemPrompt, /私聊角色秘密/);
+    assert.equal(childInitial.providerTimeoutMs, 2_147_483_647);
+    assert.notEqual(childInitial.providerTimeoutMs, 300_000);
     assert.deepEqual(
       childInitial.toolNames.sort(),
       ["list_workspace", "read", "read_document"],
@@ -161,6 +170,10 @@ test("a short hard deadline times out a subagent without activity-based extensio
     assert.equal(delegations.filter((action) => action.status === "completed").length, 0);
     assert.equal(delegations[0].payload.failureKind, "timeout");
     assert.equal(delegations[0].payload.retryable, true);
+    const childRequest = runtime.model.requests.find((request) =>
+      request.systemPrompt.includes("isolated reviewer subagent")
+    );
+    assert.equal(childRequest?.providerTimeoutMs, 2_147_483_647);
   } finally {
     runtime.dispose();
   }
@@ -214,7 +227,201 @@ test("a longer hard deadline allows multiple child model rounds and a final resu
   }
 });
 
-test("sixteen work rounds receive one tool-free forced-finalization round", async () => {
+test("a delegated result above the old 32k parent-context limit reaches the parent intact", async () => {
+  const runtime = createTestRuntime({ seed: "subagent-large-result" });
+  const tailMarker = "SUBAGENT_LARGE_RESULT_TAIL_9f3a";
+  const childOutput = `Review report\n${"0123456789".repeat(3_500)}\n${tailMarker}`;
+  assert.ok(childOutput.length > 32_000 && childOutput.length < defaultSubagentMaxResultCharacters);
+  try {
+    const configured = runtime.kernel.patchSubagentSettings({
+      maxOutputTokens: 65_536,
+      maxResultCharacters: 100_000,
+    }, runtime.kernel.getSubagentSettings().revision);
+    runtime.kernel.setAgentModuleEnabled("mcp:subagent", true);
+    runtime.model.enqueue([
+      {
+        kind: "tool_call",
+        name: "delegate_task",
+        arguments: { role: "reviewer", task: "Return the complete synthetic review report." },
+      },
+      { kind: "assistant_text", text: childOutput },
+      { kind: "assistant_text", text: "长审查报告已完整接收。" },
+    ]);
+
+    const response = await runtime.kernel.sendMessage("subagent-large-result", {
+      mode: "sms",
+      text: "委派一次长报告测试。",
+    });
+
+    assert.equal(response.status, "completed");
+    const delegation = response.actions.find((action) => action.actionType === "delegate_subagent");
+    assert.ok(delegation);
+    assert.equal(delegation.status, "completed");
+    assert.equal(delegation.payload.truncated, false);
+    assert.equal(delegation.payload.maxResultCharacters, configured.maxResultCharacters);
+
+    const childTrace = runtime.kernel.recentModelContextTraces(20).find((trace) =>
+      trace.turnKind === "subagent" && trace.sessionId.startsWith("subagent:subagent-large-result:")
+    );
+    assert.equal(childTrace?.payload.max_tokens, 65_536);
+
+    const parentFinalTrace = runtime.kernel.recentModelContextTraces(20).find((trace) =>
+      trace.sessionId === "subagent-large-result" && trace.turnKind === "user" &&
+      JSON.stringify(trace.payload).includes(tailMarker)
+    );
+    assert.ok(parentFinalTrace, "the parent provider request must contain the end of the delegated result");
+    const parentToolTexts = providerToolMessageTexts(parentFinalTrace.payload);
+    assert.equal(parentToolTexts.length, 1);
+    assert.ok(parentToolTexts[0].length > 32_000);
+    assert.match(parentToolTexts[0], new RegExp(tailMarker, "u"));
+    assert.doesNotMatch(parentToolTexts[0], /Subagent output truncated|Tool result compacted/u);
+
+    const storedSession = await runtime.kernel.getSession("subagent-large-result");
+    const stored = JSON.stringify(storedSession.messages);
+    assert.match(stored, new RegExp(tailMarker, "u"));
+    assert.doesNotMatch(stored, /Subagent output truncated|Tool result compacted/u);
+  } finally {
+    runtime.dispose();
+  }
+});
+
+test("parallel delegated results share one configured parent-context pool", async () => {
+  const runtime = createTestRuntime({ seed: "subagent-large-parallel-results" });
+  const tails = Array.from({ length: maxConcurrentSubagentsPerSession }, (_, index) =>
+    `PARALLEL_SUBAGENT_TAIL_${index + 1}_7bc2`
+  );
+  const childOutputs = tails.map((tail, index) =>
+    `Parallel report ${index + 1}\n${String(index + 1).repeat(34_000)}\n${tail}`
+  );
+  try {
+    runtime.kernel.setAgentModuleEnabled("mcp:subagent", true);
+    runtime.model.enqueue([
+      {
+        kind: "tool_calls",
+        calls: childOutputs.map((_, index) => ({
+          name: "delegate_task",
+          arguments: { role: "reviewer", task: `Return synthetic parallel report ${index + 1}.` },
+        })),
+      },
+      ...childOutputs.map((text) => ({ kind: "assistant_text" as const, text })),
+      { kind: "assistant_text", text: "四份并行报告已汇总。" },
+    ]);
+
+    const response = await runtime.kernel.sendMessage("subagent-large-parallel-results", {
+      mode: "sms",
+      text: "并行委派四份长报告。",
+    });
+
+    assert.equal(response.status, "completed");
+    const delegations = response.actions.filter((action) => action.actionType === "delegate_subagent");
+    assert.equal(delegations.length, maxConcurrentSubagentsPerSession);
+    assert.ok(delegations.every((action) =>
+      action.status === "completed" && action.payload.truncated === false
+    ));
+
+    const parentFinalTrace = runtime.kernel.recentModelContextTraces(20).find((trace) =>
+      trace.sessionId === "subagent-large-parallel-results" && trace.turnKind === "user" &&
+      tails.every((tail) => JSON.stringify(trace.payload).includes(tail))
+    );
+    assert.ok(parentFinalTrace);
+    const parentToolTexts = providerToolMessageTexts(parentFinalTrace.payload);
+    assert.equal(parentToolTexts.length, maxConcurrentSubagentsPerSession);
+    const totalCharacters = parentToolTexts.reduce((total, text) => total + text.length, 0);
+    assert.ok(totalCharacters <= defaultSubagentMaxResultCharacters + 2_048);
+    assert.ok(parentToolTexts.every((text) => /Tool result compacted/u.test(text)));
+    for (const tail of tails) {
+      assert.ok(parentToolTexts.some((text) => text.includes(tail)), `missing ${tail}`);
+    }
+
+    const storedSession = await runtime.kernel.getSession("subagent-large-parallel-results");
+    const stored = JSON.stringify(storedSession.messages);
+    for (const tail of tails) assert.match(stored, new RegExp(tail, "u"));
+    assert.doesNotMatch(stored, /Tool result compacted/u);
+  } finally {
+    runtime.dispose();
+  }
+});
+
+test("a running delegated task keeps its admission-time settings snapshot", async () => {
+  const root = mkdtempSync(join(tmpdir(), "yourchar-subagent-runtime-snapshot-"));
+  const runtime = createTestRuntime({
+    stateDir: root,
+    workspaceDir: join(root, "workspace"),
+    seed: "subagent-settings-snapshot",
+  });
+  let concurrentDatabase: AppDatabase | undefined;
+  try {
+    const initial = runtime.kernel.patchSubagentSettings({
+      maxWorkModelCalls: 4,
+      maxOutputTokens: 20_000,
+      timeoutSeconds: 60,
+    }, runtime.kernel.getSubagentSettings().revision);
+    runtime.kernel.patchAgentPermissions({ workspaceAccess: "read_only" });
+    runtime.kernel.uploadWorkspaceFile({
+      directory: "uploads",
+      name: "snapshot-note.txt",
+      bytes: Buffer.from("snapshot evidence\n", "utf8"),
+    });
+    runtime.kernel.setAgentModuleEnabled("mcp:subagent", true);
+    runtime.model.enqueue([
+      {
+        kind: "tool_call",
+        name: "delegate_task",
+        arguments: { role: "reviewer", task: "Read the note twice, then return the evidence." },
+      },
+      {
+        kind: "tool_call",
+        name: "read",
+        arguments: { path: "uploads/snapshot-note.txt" },
+        delayMs: 100,
+      },
+      {
+        kind: "tool_call",
+        name: "read",
+        arguments: { path: "uploads/snapshot-note.txt" },
+      },
+      { kind: "assistant_text", text: "Snapshot evidence was read twice." },
+      { kind: "assistant_text", text: "运行中的子任务沿用了启动时预算。" },
+    ]);
+
+    const pending = runtime.kernel.sendMessage("subagent-settings-snapshot", {
+      mode: "sms",
+      text: "委派快照测试。",
+    });
+    await waitFor(() => runtime.model.requests.some((request) =>
+      /isolated reviewer subagent/u.test(request.systemPrompt)
+    ));
+    // Deliberately bypass the public idle-only Kernel mutation to simulate a
+    // concurrent low-level settings writer after task admission.
+    concurrentDatabase = new AppDatabase(join(root, "rp-agent.sqlite"));
+    new SubagentSettingsService(concurrentDatabase, runtime.clock).patch({
+      maxWorkModelCalls: 1,
+      maxOutputTokens: 512,
+      timeoutSeconds: 3_600,
+    }, initial.revision);
+
+    const response = await pending;
+    assert.equal(response.status, "completed");
+    const delegation = response.actions.find((action) => action.actionType === "delegate_subagent");
+    assert.ok(delegation);
+    assert.equal(delegation.status, "completed");
+    assert.equal(delegation.payload.modelCalls, 3);
+    assert.equal(delegation.payload.toolCalls, 2);
+    const childTraces = runtime.kernel.recentModelContextTraces(20).filter((trace) =>
+      trace.turnKind === "subagent" && trace.sessionId.startsWith("subagent:subagent-settings-snapshot:")
+    );
+    assert.equal(childTraces.length, 3);
+    assert.ok(childTraces.every((trace) => trace.payload.max_tokens === 20_000));
+    assert.equal(runtime.kernel.getSubagentSettings().maxWorkModelCalls, 1);
+    assert.equal(runtime.kernel.getSubagentSettings().maxOutputTokens, 512);
+  } finally {
+    concurrentDatabase?.close();
+    runtime.dispose();
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("thirty-two work rounds receive one tool-free forced-finalization round", async () => {
   const runtime = createTestRuntime({ seed: "subagent-forced-finalization" });
   try {
     runtime.kernel.patchAgentPermissions({ workspaceAccess: "read_only" });
@@ -263,7 +470,7 @@ test("sixteen work rounds receive one tool-free forced-finalization round", asyn
       JSON.stringify(forcedFinalTrace.payload.messages),
       /Finalization-only request: do not call tools\./u,
     );
-    assert.equal(forcedFinalTrace.payload.max_tokens, 4_096);
+    assert.equal(forcedFinalTrace.payload.max_tokens, 16_384);
     const delegation = response.actions.find((action) => action.actionType === "delegate_subagent");
     assert.ok(delegation);
     assert.equal(delegation.status, "completed");
@@ -275,7 +482,7 @@ test("sixteen work rounds receive one tool-free forced-finalization round", asyn
   }
 });
 
-test("a tool call attempted during forced finalization is rejected without an eighteenth model request", async () => {
+test("a tool call attempted during forced finalization is rejected without another model request", async () => {
   const runtime = createTestRuntime({ seed: "subagent-forced-final-tool-rejection" });
   const sensitiveTask = "private-task-body-must-not-enter-audit";
   try {
@@ -386,7 +593,7 @@ test("five parallel delegations admit four and return a retryable capacity error
     assert.ok(parentAfterDelegation);
     assert.match(
       JSON.stringify(parentAfterDelegation.messages),
-      /Subagent failed \(capacity;[\s\S]*At most four[\s\S]*Retry after/u,
+      /Subagent failed \(capacity;[\s\S]*configured per-session Subagent concurrency limit is full[\s\S]*Retry after/u,
     );
   } finally {
     runtime.dispose();
@@ -615,4 +822,26 @@ async function waitFor(predicate: () => boolean, timeoutMs = 1_000): Promise<voi
     if (Date.now() >= deadline) throw new Error("timed out waiting for subagent test condition");
     await new Promise((resolve) => setTimeout(resolve, 5));
   }
+}
+
+function providerToolMessageTexts(payload: Record<string, unknown>): string[] {
+  if (!Array.isArray(payload.messages)) return [];
+  return payload.messages.flatMap((message) => {
+    if (!message || typeof message !== "object" || Array.isArray(message)) return [];
+    const record = message as Record<string, unknown>;
+    if (record.role !== "tool" && record.role !== "toolResult") return [];
+    return [providerMessageContentText(record.content)];
+  });
+}
+
+function providerMessageContentText(content: unknown): string {
+  if (typeof content === "string") return content;
+  if (!Array.isArray(content)) return "";
+  return content.flatMap((block) => {
+    if (!block || typeof block !== "object" || Array.isArray(block)) return [];
+    const record = block as Record<string, unknown>;
+    if (typeof record.text === "string") return [record.text];
+    if (typeof record.content === "string") return [record.content];
+    return [];
+  }).join("\n");
 }

@@ -111,6 +111,10 @@ import {
   type CharacterAgentSkillUninstallInput,
 } from "../modules/character-skill-packages.js";
 import {
+  SubagentSettingsService,
+  type SubagentSettingsPatch,
+} from "../modules/subagent-settings.js";
+import {
   CharacterCapabilityRepository,
   CharacterCapabilityService,
   characterSkillReflectionUserPrompt,
@@ -499,6 +503,8 @@ export class CompanionKernel {
   readonly skillInstaller?: AgentSkillInstallerService;
   readonly characterSkillPackages?: CharacterAgentSkillPackageService;
   readonly permissionCatalog: AgentPermissionCatalog;
+  /** Low-level persistent service; normal callers should use the guarded Kernel methods. */
+  readonly subagentSettingsService: SubagentSettingsService;
   readonly profileService: UserProfileService;
   readonly avatarService: AvatarService;
   readonly systemPromptService: SystemPromptService;
@@ -584,6 +590,7 @@ export class CompanionKernel {
         this.store.stateDir ? join(this.store.stateDir, "rp-agent.sqlite") : ":memory:",
         { tempStoreMemory: this.incognitoChild },
       );
+    this.subagentSettingsService = new SubagentSettingsService(this.database, this.clock);
     this.imIntegrations = new ImIntegrationService(
       new ImRepository(this.database),
       this.incognitoChild || normalizedOptions.imGateway === false
@@ -957,6 +964,7 @@ export class CompanionKernel {
           !(this.incognitoSessions?.requiresShellNetworkIsolation() ?? false),
         conversationLifecycleThresholds: normalizedOptions.conversationLifecycleThresholds,
         subagentTimeoutMs: normalizedOptions.subagentTimeoutMs,
+        subagentSettings: () => this.subagentSettingsService.snapshot(),
         incognitoChild: this.incognitoChild,
         providerPayloadOptions: (appSessionId) => {
           const binding = this.modelBindingForSession(appSessionId);
@@ -983,7 +991,6 @@ export class CompanionKernel {
             // transient in-person meeting preset intended for dialogue style.
             subagent: {
               temperature: config.temperature,
-              maxTokens: config.maxTokens,
               model: config.model,
               chatTemplateKwargs: interactiveThinkingTemplateKwargs(config),
               reasoningEffort: config.reasoningEffort,
@@ -2806,6 +2813,7 @@ export class CompanionKernel {
       ),
       agentModules: this.moduleCatalog.listModules(),
       agentPermissions: this.permissionCatalog.get(),
+      subagentSettings: this.subagentSettingsService.get(),
       tavily: this.tavilyService.getConfig(),
       ...(conversationSpace === "normal" ? { userProfile: this.profileService.get() } : {}),
       systemPrompts: this.getSystemPrompts(),
@@ -2960,6 +2968,27 @@ export class CompanionKernel {
 
   listAgentModules() {
     return this.moduleCatalog.listModules();
+  }
+
+  getSubagentSettings() {
+    return this.subagentSettingsService.get();
+  }
+
+  patchSubagentSettings(patch: SubagentSettingsPatch, expectedRevision: number) {
+    this.assertControlPlaneIdle();
+    const settings = this.subagentSettingsService.patch(patch, expectedRevision);
+    if (settings.revision !== expectedRevision) {
+      this.store.addAction("set_subagent_settings", "completed", {
+        maxConcurrentTasks: settings.maxConcurrentTasks,
+        maxWorkModelCalls: settings.maxWorkModelCalls,
+        maxOutputTokens: settings.maxOutputTokens,
+        maxResultCharacters: settings.maxResultCharacters,
+        timeoutSeconds: settings.timeoutSeconds,
+        revision: settings.revision,
+      });
+      this.sessionRuntime.invalidateCapabilities("subagent_settings_changed");
+    }
+    return settings;
   }
 
   private requireRevisionMetadata(sessionId: string) {

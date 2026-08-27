@@ -31,7 +31,7 @@ import { AppDatabase } from "../src/storage/database.js";
 const sourceUrl = "https://downloads.example.com/private-skill.zip";
 const publicAddress = { address: "93.184.216.34", family: 4 as const };
 
-test("schema 47 and the character Skill management permission are durable and conservative", () => {
+test("schema 48 and the character Skill management permission are durable and conservative", () => {
   const root = mkdtempSync(join(tmpdir(), "yourchar-character-skill-schema-"));
   const database = new AppDatabase(join(root, "state.sqlite"));
   const clock = new VirtualClock("2026-08-26T10:00:00.000Z");
@@ -39,7 +39,7 @@ test("schema 47 and the character Skill management permission are durable and co
     const schema = database.connection.prepare(
       "SELECT MAX(version) AS version FROM schema_migrations",
     ).get() as { version: number };
-    assert.equal(Number(schema.version), 47);
+    assert.equal(Number(schema.version), 48);
     const columns = database.connection.prepare(
       "PRAGMA table_info(character_agent_skill_packages)",
     ).all() as Array<{ name: string }>;

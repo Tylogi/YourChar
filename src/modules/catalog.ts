@@ -147,7 +147,9 @@ const mcpDetails: Record<string, string> = {
 - The parent must provide a self-contained task and only the supporting context the child needs.
 - Child tools are read-only: enabled Skill files, read-only Workspace and MarkItDown document conversion, configured Tavily Search, and configured Vision MCP.
 - The child cannot change schedules, memory, user profile, SOUL.md, scenes, or Workspace files and cannot create another subagent.
-- A task has up to 16 work model calls plus one reserved no-tool finalization call, 10 minutes of hard wall-clock time, and 12,000 output characters. Activity does not extend the deadline. At most four tasks may run concurrently per private session.
+- Budgets are persistent and configurable from this module's settings. Defaults are 32 work model calls plus one reserved no-tool finalization call, 30 minutes of hard wall-clock time, 16,384 output tokens per model call, and 64,000 final-result characters. At most four tasks run concurrently per private session by default. Activity does not extend the deadline.
+- Delegated provider requests have no independent five-minute idle cutoff; the configured hard deadline and caller cancellation remain authoritative.
+- Absolute configurable ceilings are 64 work calls, 60 minutes, 65,536 output tokens, 200,000 result characters, and eight concurrent tasks. Parallel results may share the parent model's active context budget.
 - Delegation is metered and disabled while composing background reminder messages.
 `,
   [memoryCoordinatorMcpModuleId]: `# Memory Coordinator MCP

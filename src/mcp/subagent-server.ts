@@ -29,6 +29,8 @@ export type SubagentResult = {
   durationMs: number;
   truncated: boolean;
   forcedFinalization: boolean;
+  /** Frozen per-task result limit, used to budget the parent model's active tool context. */
+  maxResultCharacters: number;
 };
 
 export const subagentFailureKinds = [
@@ -87,7 +89,7 @@ export function createSubagentMcpServer(context: SubagentMcpContext): McpServer 
     {
       title: "Delegate isolated task",
       description:
-        "Run one bounded task in an isolated subagent context. Use this for independent research, planning, or review that materially benefits from a separate context. Do not delegate ordinary conversation. Up to four calls in one response may run in parallel; if more tasks are needed, wait for that batch to finish before starting the next batch. Never include secrets or unnecessary private data.",
+        "Run one bounded task in an isolated subagent context. Use this for independent research, planning, or review that materially benefits from a separate context. Do not delegate ordinary conversation. Calls in one response may run in parallel up to the configured per-session limit (default four, absolute maximum eight); if more tasks are needed, wait for that batch to finish before starting the next batch. Never include secrets or unnecessary private data.",
       inputSchema: z.object({
         role: z.enum(subagentRoles).default("worker").describe(
           "worker for general execution, researcher for evidence gathering, planner for decomposition, or reviewer for independent critique.",
@@ -120,6 +122,7 @@ export function createSubagentMcpServer(context: SubagentMcpContext): McpServer 
           durationMs: result.durationMs,
           truncated: result.truncated,
           forcedFinalization: result.forcedFinalization,
+          maxResultCharacters: result.maxResultCharacters,
         }));
         const usage = `${result.modelCalls} model call(s), ${result.toolCalls} tool call(s), ` +
           `${result.inputTokens + result.outputTokens} tokens, ${result.durationMs} ms`;
@@ -199,10 +202,10 @@ function publicSubagentFailureMessage(failure: SubagentFailureDiagnostic): strin
   const usage = `${failure.modelCalls} model call(s), ${failure.toolCalls} tool call(s), ` +
     `${failure.inputTokens + failure.outputTokens} tokens, ${failure.durationMs} ms`;
   const guidance = {
-    capacity: "At most four subagents may run concurrently per session. Retry after the current batch finishes.",
+    capacity: "The configured per-session Subagent concurrency limit is full. Retry after the current batch finishes.",
     cancelled: "The delegated task was cancelled.",
     timeout: "The delegated task reached its hard wall-clock deadline. Retry with a smaller task.",
-    model_budget: "The delegated task exhausted its work-call budget and reserved finalization call. Split the task before retrying.",
+    model_budget: "The delegated task exhausted its configured work-call budget and reserved finalization call. Split the task before retrying.",
     finalization_failed: "The reserved no-tool finalization call did not produce a usable final result. Split the task before retrying.",
     model_unavailable: "The delegated model is unavailable. Check the current character model binding.",
     empty_result: "The delegated model returned no usable final text.",

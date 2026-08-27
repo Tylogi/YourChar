@@ -1552,6 +1552,37 @@ export function renderAppHtml(): string {
       overflow: auto;
     }
     .module-detail-meta { margin-bottom: 12px; color: var(--muted); font-size: 11px; }
+    .subagent-settings {
+      margin-top: 18px;
+      padding-top: 16px;
+      border-top: 1px solid var(--line);
+      display: grid;
+      gap: 12px;
+    }
+    .subagent-settings-head { display: grid; gap: 4px; }
+    .subagent-settings-head h3 { margin: 0; font-size: 14px; }
+    .subagent-settings-head p,
+    .subagent-settings-note { margin: 0; color: var(--muted); font-size: 11px; line-height: 1.55; }
+    .subagent-settings-grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 10px 12px;
+    }
+    .subagent-settings-field { min-width: 0; display: grid; gap: 5px; color: var(--muted); font-size: 11px; }
+    .subagent-settings-field input { width: 100%; min-width: 0; }
+    .subagent-settings-field small { color: var(--muted); font-size: 10px; line-height: 1.4; }
+    .subagent-settings-runtime {
+      padding: 10px 11px;
+      border: 1px solid #dce7df;
+      border-radius: 7px;
+      background: #f6faf7;
+      color: #3f5b48;
+      font-size: 11px;
+      line-height: 1.55;
+    }
+    .subagent-settings-actions { display: flex; align-items: center; justify-content: flex-end; gap: 10px; }
+    .subagent-settings-state { min-height: 16px; margin-right: auto; color: var(--muted); font-size: 11px; }
+    .subagent-settings-state.error { color: var(--danger); }
     .message-edit-form { padding: 16px; display: grid; gap: 12px; }
     .message-edit-form textarea { min-height: 150px; max-height: 46vh; resize: vertical; }
     .character-channel-dialog {
@@ -2530,6 +2561,10 @@ export function renderAppHtml(): string {
       .module-row .module-detail-button { grid-column: 1; justify-self: start; }
       .module-row .toggle { grid-column: 2; grid-row: 2; justify-self: start; }
       .module-row .module-space-select { grid-column: 2; grid-row: 2; justify-self: start; }
+      .subagent-settings-grid { grid-template-columns: 1fr; }
+      .subagent-settings-actions { align-items: stretch; flex-direction: column; }
+      .subagent-settings-state { width: 100%; margin-right: 0; }
+      .subagent-settings-actions button { width: 100%; }
       .agent-skill-install-fields { grid-template-columns: 1fr; }
       .agent-skill-install-fields button { width: 100%; }
       .agent-skill-install-summary { grid-template-columns: 1fr; }
@@ -6524,6 +6559,8 @@ export function renderAppHtml(): string {
       workspaceFileDirectory: "",
       workspaceFiles: [],
       agentModules: [],
+      moduleDetailRequestId: 0,
+      moduleDetailData: null,
       agentSkillInstallStage: null,
       agentSkillInstallRequestId: 0,
       agentPermissions: null,
@@ -7421,7 +7458,15 @@ export function renderAppHtml(): string {
     nodes.closeCharacterChannelBtn.addEventListener("click", closeCharacterChannel);
     nodes.characterChannelDialog.addEventListener("cancel", (event) => { event.preventDefault(); closeCharacterChannel(); });
     nodes.characterChannelDialog.addEventListener("click", (event) => { if (event.target === nodes.characterChannelDialog) closeCharacterChannel(); });
-    nodes.closeModuleDetailBtn.addEventListener("click", () => nodes.moduleDetailDialog.close());
+    nodes.closeModuleDetailBtn.addEventListener("click", closeModuleDetail);
+    nodes.moduleDetailDialog.addEventListener("cancel", (event) => {
+      event.preventDefault();
+      closeModuleDetail();
+    });
+    nodes.moduleDetailDialog.addEventListener("click", (event) => {
+      if (event.target === nodes.moduleDetailDialog) closeModuleDetail();
+    });
+    nodes.moduleDetailContent.addEventListener("submit", saveSubagentSettings);
     nodes.closeWorkspaceFilePreviewBtn.addEventListener("click", () => nodes.workspaceFilePreviewDialog.close());
     nodes.workspaceFilePreviewDialog.addEventListener("cancel", (event) => { event.preventDefault(); nodes.workspaceFilePreviewDialog.close(); });
     nodes.closeChatImageBtn.addEventListener("click", closeChatImagePreview);
@@ -7756,6 +7801,7 @@ export function renderAppHtml(): string {
       }
       if (mode !== "management") {
         void clearAgentSkillInstallStage({ deleteRemote: true });
+        if (nodes.moduleDetailDialog.open) closeModuleDetail();
       }
       if (mode !== "settings" && state.uiMode === "settings" && state.settingsTab === "im") {
         deactivateImSettingsView();
@@ -7811,6 +7857,7 @@ export function renderAppHtml(): string {
     function setManagementTab(tab) {
       if (tab !== "modules") {
         void clearAgentSkillInstallStage({ deleteRemote: true });
+        if (nodes.moduleDetailDialog.open) closeModuleDetail();
       }
       state.managementTab = tab;
       nodes.modulesTabBtn.classList.toggle("active", tab === "modules");
@@ -9628,6 +9675,8 @@ export function renderAppHtml(): string {
       closeMessageEditDialog();
       closeCharacterChannel();
       closeChatImagePreview();
+      ++state.moduleDetailRequestId;
+      state.moduleDetailData = null;
       if (nodes.moduleDetailDialog.open) nodes.moduleDetailDialog.close();
       nodes.moduleDetailTitle.textContent = "模块详情";
       nodes.moduleDetailContent.innerHTML = "";
@@ -15769,48 +15818,208 @@ export function renderAppHtml(): string {
       return [];
     }
 
-    async function openModuleDetailFromList(event) {
-      const button = event.target.closest("button[data-module-detail]");
-      if (!button) return;
-      const scope = {
+    function captureModuleDetailScope(moduleId, requestId = state.moduleDetailRequestId) {
+      return {
+        requestId,
         epoch: state.conversationSpaceEpoch,
         conversationSpace: state.conversationSpace,
         characterId: state.selectedCharacterId,
-        moduleId: button.dataset.moduleDetail
+        moduleId
       };
+    }
+
+    function moduleDetailScopeIsCurrent(scope) {
+      return Boolean(
+        scope && scope.requestId === state.moduleDetailRequestId &&
+        scope.epoch === state.conversationSpaceEpoch &&
+        scope.conversationSpace === state.conversationSpace &&
+        scope.characterId === state.selectedCharacterId &&
+        state.uiMode === "management" && state.managementTab === "modules"
+      );
+    }
+
+    function closeModuleDetail() {
+      ++state.moduleDetailRequestId;
+      state.moduleDetailData = null;
+      if (nodes.moduleDetailDialog.open) nodes.moduleDetailDialog.close();
+      nodes.moduleDetailTitle.textContent = "模块详情";
+      nodes.moduleDetailContent.innerHTML = "";
+    }
+
+    async function openModuleDetailFromList(event) {
+      const button = event.target.closest("button[data-module-detail]");
+      if (!button) return;
+      const requestId = ++state.moduleDetailRequestId;
+      const scope = captureModuleDetailScope(button.dataset.moduleDetail, requestId);
       if (scope.conversationSpace === "secret" && !scope.characterId) return;
+      state.moduleDetailData = null;
+      nodes.moduleDetailTitle.textContent = "模块详情";
+      nodes.moduleDetailContent.innerHTML = '<div class="muted">正在加载模块详情...</div>';
+      if (!nodes.moduleDetailDialog.open) nodes.moduleDetailDialog.showModal();
       button.disabled = true;
       try {
-        const response = await fetch(withConversationSpace(
-          "/api/v1/agent-modules/" + encodeURIComponent(scope.moduleId),
-          scope.conversationSpace,
-          scope.characterId
-        ));
-        const body = await response.json();
-        if (
-          state.conversationSpaceEpoch !== scope.epoch ||
-          state.conversationSpace !== scope.conversationSpace ||
-          state.selectedCharacterId !== scope.characterId
-        ) return;
-        if (!response.ok) throw new Error(body.error || "模块详情加载失败");
-        const detail = body.detail || {};
-        nodes.moduleDetailTitle.textContent = detail.module?.name || "模块详情";
-        nodes.moduleDetailContent.innerHTML = '<div class="module-detail-meta">' +
-          escapeHtml([detail.module?.type?.toUpperCase(), detail.module?.source, detail.module?.enabled ? "已启用" : "已关闭"].filter(Boolean).join(" · ")) +
-          '</div><div class="markdown-body">' + renderMarkdown(detail.content || "暂无详情") + '</div>';
-        nodes.moduleDetailDialog.showModal();
-        refreshIcons();
+        const [detailResponse, settingsResponse] = await Promise.all([
+          fetch(withConversationSpace(
+            "/api/v1/agent-modules/" + encodeURIComponent(scope.moduleId),
+            scope.conversationSpace,
+            scope.characterId
+          )),
+          scope.moduleId === "mcp:subagent"
+            ? fetch("/api/v1/subagent-settings")
+            : Promise.resolve(null)
+        ]);
+        const [detailBody, settingsBody] = await Promise.all([
+          detailResponse.json(),
+          settingsResponse ? settingsResponse.json() : Promise.resolve(null)
+        ]);
+        if (!moduleDetailScopeIsCurrent(scope)) return;
+        if (!detailResponse.ok) throw new Error(detailBody.error || "模块详情加载失败");
+        if (settingsResponse && !settingsResponse.ok) {
+          throw new Error(settingsBody?.error || "Subagent 设置加载失败");
+        }
+        state.moduleDetailData = {
+          scope,
+          detail: detailBody.detail || {},
+          subagentSettings: settingsBody?.settings || null
+        };
+        renderModuleDetail();
       } catch (error) {
-        if (
-          state.conversationSpaceEpoch === scope.epoch &&
-          state.conversationSpace === scope.conversationSpace &&
-          state.selectedCharacterId === scope.characterId
-        ) {
-          setStatus(error.message || String(error), true);
+        if (moduleDetailScopeIsCurrent(scope)) {
+          const message = error.message || String(error);
+          nodes.moduleDetailContent.innerHTML = '<div class="error" role="alert">' +
+            escapeHtml("模块详情加载失败：" + message) + '</div>';
+          setStatus(message, true);
         }
       } finally {
         button.disabled = false;
       }
+    }
+
+    function renderModuleDetail(subagentStateMessage = "", subagentStateError = false) {
+      const record = state.moduleDetailData;
+      if (!record || !moduleDetailScopeIsCurrent(record.scope)) return;
+      const detail = record.detail || {};
+      nodes.moduleDetailTitle.textContent = detail.module?.name || "模块详情";
+      nodes.moduleDetailContent.innerHTML = '<div class="module-detail-meta">' +
+        escapeHtml([
+          detail.module?.type?.toUpperCase(),
+          detail.module?.source,
+          detail.module?.enabled ? "已启用" : "已关闭"
+        ].filter(Boolean).join(" · ")) +
+        '</div><div class="markdown-body">' + renderMarkdown(detail.content || "暂无详情") + '</div>' +
+        (record.scope.moduleId === "mcp:subagent" && record.subagentSettings
+          ? subagentSettingsFormHtml(record.subagentSettings, subagentStateMessage, subagentStateError)
+          : "");
+      refreshIcons();
+    }
+
+    function subagentSettingsFormHtml(settings, stateMessage = "", stateError = false) {
+      const maxWorkModelCalls = Number(settings.maxWorkModelCalls || 0);
+      const timeoutSeconds = Number(settings.timeoutSeconds || 0);
+      return '<form id="subagentSettingsForm" class="subagent-settings">' +
+        '<div class="subagent-settings-head"><h3>任务预算设置</h3>' +
+          '<p>设置仅影响之后开始的委派任务；已经运行中的任务继续使用其启动时预算。</p></div>' +
+        '<div class="subagent-settings-grid">' +
+          subagentSettingsFieldHtml("subagentMaxConcurrentTasks", "并发任务", settings.maxConcurrentTasks, 1, 8, "每个私聊会话同时运行的任务数") +
+          subagentSettingsFieldHtml("subagentMaxWorkModelCalls", "工作模型轮数", settings.maxWorkModelCalls, 1, 64, "可使用只读工具的模型调用上限") +
+          subagentSettingsFieldHtml("subagentMaxOutputTokens", "单次输出 tokens", settings.maxOutputTokens, 512, 65536, "每次子 Agent 模型调用的输出上限") +
+          subagentSettingsFieldHtml("subagentMaxResultCharacters", "最终结果字符数", settings.maxResultCharacters, 1000, 200000, "回传给父角色的最终文本上限") +
+          subagentSettingsFieldHtml("subagentTimeoutSeconds", "总超时秒数", settings.timeoutSeconds, 60, 3600, "硬总时限；活动不会延长") +
+        '</div>' +
+        '<div id="subagentSettingsRuntime" class="subagent-settings-runtime">' +
+          '当前每项任务最多进行 ' + escapeHtml(maxWorkModelCalls) +
+          ' 轮工作模型调用；若仍未完成，第 ' + escapeHtml(maxWorkModelCalls + 1) +
+          ' 轮会自动禁用工具并强制收尾。MCP 请求超时为 ' + escapeHtml(timeoutSeconds + 30) +
+          ' 秒（总时限 ' + escapeHtml(timeoutSeconds) + ' 秒 + 30 秒）。</div>' +
+        '<p class="subagent-settings-note">绝对上限：并发 8、工作模型 64 轮、单次输出 65,536 tokens、最终结果 200,000 字符、总超时 3,600 秒。高输出或结果值仍受当前模型真实 context window 与模型服务支持限制；多路并发结果共享当前父回合的 Subagent 结果上下文预算，不保证每路上限都能完整注入。</p>' +
+        '<div class="subagent-settings-actions"><span id="subagentSettingsState" class="subagent-settings-state' +
+          (stateError ? ' error' : '') + '" role="status" aria-live="polite">' +
+          escapeHtml(stateMessage || (settings.updatedAt ? "更新于 " + formatTraceTime(settings.updatedAt) : "")) +
+          '</span><button id="saveSubagentSettingsBtn" class="primary" type="submit">保存任务预算</button></div>' +
+      '</form>';
+    }
+
+    function subagentSettingsFieldHtml(id, label, value, min, max, hint) {
+      return '<label class="subagent-settings-field" for="' + id + '"><span>' + escapeHtml(label) + '</span>' +
+        '<input id="' + id + '" name="' + id + '" type="number" required step="1" min="' + min +
+        '" max="' + max + '" value="' + escapeHtml(String(value ?? "")) + '" />' +
+        '<small>' + escapeHtml(hint) + ' · ' + min.toLocaleString() + '–' + max.toLocaleString() + '</small></label>';
+    }
+
+    async function saveSubagentSettings(event) {
+      const form = event.target.closest("#subagentSettingsForm");
+      if (!form) return;
+      event.preventDefault();
+      const record = state.moduleDetailData;
+      if (!record || record.scope.moduleId !== "mcp:subagent" || !record.subagentSettings) return;
+      const fields = [
+        ["maxConcurrentTasks", "subagentMaxConcurrentTasks", 1, 8],
+        ["maxWorkModelCalls", "subagentMaxWorkModelCalls", 1, 64],
+        ["maxOutputTokens", "subagentMaxOutputTokens", 512, 65536],
+        ["maxResultCharacters", "subagentMaxResultCharacters", 1000, 200000],
+        ["timeoutSeconds", "subagentTimeoutSeconds", 60, 3600]
+      ];
+      const patch = {};
+      for (const [key, id, min, max] of fields) {
+        const input = form.querySelector("#" + id);
+        const value = Number(input?.value);
+        if (!Number.isInteger(value) || value < min || value > max) {
+          const status = form.querySelector("#subagentSettingsState");
+          status.textContent = "请输入 " + min.toLocaleString() + "–" + max.toLocaleString() + " 之间的整数。";
+          status.classList.add("error");
+          input?.focus();
+          return;
+        }
+        patch[key] = value;
+      }
+      const requestId = ++state.moduleDetailRequestId;
+      const scope = { ...record.scope, requestId };
+      state.moduleDetailData = { ...record, scope };
+      setSubagentSettingsBusy(true);
+      const status = form.querySelector("#subagentSettingsState");
+      status.textContent = "正在保存任务预算...";
+      status.classList.remove("error");
+      try {
+        const response = await controlPlaneFetch("/api/v1/subagent-settings", {
+          method: "PATCH",
+          body: JSON.stringify({
+            expectedRevision: record.subagentSettings.revision,
+            ...patch
+          })
+        });
+        const body = await response.json();
+        if (!moduleDetailScopeIsCurrent(scope)) return;
+        if (!response.ok) {
+          if (body.code === "CONTROL_PLANE_BUSY") {
+            throw new Error("当前有角色回合正在运行，请等待结束后再保存。");
+          }
+          if (body.code === "SUBAGENT_SETTINGS_CONFLICT") {
+            throw new Error("设置已被其他窗口更新，请重新打开模块详情，核对最新值后再保存。");
+          }
+          if (body.code === "SUBAGENT_SETTINGS_INVALID") {
+            throw new Error("设置值不在允许范围，请检查后重试。");
+          }
+          throw new Error(body.error || "Subagent 设置保存失败");
+        }
+        state.moduleDetailData = { ...state.moduleDetailData, subagentSettings: body.settings };
+        renderModuleDetail("已保存 · 仅影响之后开始的任务");
+        setStatus("Subagent 任务预算已更新");
+      } catch (error) {
+        if (!moduleDetailScopeIsCurrent(scope)) return;
+        const currentStatus = nodes.moduleDetailContent.querySelector("#subagentSettingsState");
+        if (currentStatus) {
+          currentStatus.textContent = error.message || String(error);
+          currentStatus.classList.add("error");
+        }
+        setSubagentSettingsBusy(false);
+        setStatus(error.message || String(error), true);
+      }
+    }
+
+    function setSubagentSettingsBusy(busy) {
+      nodes.moduleDetailContent.querySelectorAll("#subagentSettingsForm input, #subagentSettingsForm button").forEach((control) => {
+        control.disabled = busy;
+      });
     }
 
     async function toggleAgentModule(event) {

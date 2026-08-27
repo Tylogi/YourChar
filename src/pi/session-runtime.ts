@@ -83,6 +83,13 @@ import {
 import type { CharacterCapabilityService } from "../organization/service.js";
 import type { CharacterAgentSkillPackageService } from "../modules/character-skill-packages.js";
 import {
+  defaultSubagentSettings,
+  freezeSubagentSettingsSnapshot,
+  maximumSubagentSettings,
+  type SubagentSettingsSnapshot,
+  type SubagentSettingsValues,
+} from "../modules/subagent-settings.js";
+import {
   beginCharacterSkillRemoteInstall,
   finishCharacterSkillRemoteInstall,
 } from "../modules/character-skill-turn-policy.js";
@@ -122,6 +129,7 @@ import type { ContextBudgetSnapshot, ContextEconomicsPlan, ContextPlan } from ".
 import { createSandboxedShellTool } from "./sandboxed-shell-tool.js";
 import { createDocumentReadTool } from "./document-read-tool.js";
 import { createSkillReadTool } from "./skill-read-tool.js";
+import { createSubagentProviderHttpTransport } from "./subagent-provider-transport.js";
 import { createWorkspaceTools } from "./workspace-tools.js";
 import {
   createWorkspaceAttachmentMarker,
@@ -135,17 +143,24 @@ import { createTurnContextMessage, TURN_CONTEXT_CUSTOM_TYPE } from "./turn-conte
 // Pi's generic estimator uses characters/4, while Chinese dialogue is much denser.
 // 4k estimated tokens retains roughly 8-16k real conversational tokens here.
 const roleplayRecentContextTokens = 4_096;
-export const maxConcurrentSubagentsPerSession = 4;
-export const maxSubagentWorkModelCalls = 16;
+export const maxConcurrentSubagentsPerSession = defaultSubagentSettings.maxConcurrentTasks;
+export const maxSubagentWorkModelCalls = defaultSubagentSettings.maxWorkModelCalls;
 export const maxSubagentTotalModelCalls = maxSubagentWorkModelCalls + 1;
-export const defaultSubagentMaxOutputTokens = 4_096;
+export const defaultSubagentMaxOutputTokens = defaultSubagentSettings.maxOutputTokens;
+export const defaultSubagentMaxResultCharacters = defaultSubagentSettings.maxResultCharacters;
 export const subagentForcedFinalizationInstruction =
   "Finalization-only request: do not call tools. Use only the evidence already gathered, return the best complete final work product now, and state any material evidence gaps explicitly.";
-const maxSubagentOutputCharacters = 12_000;
-export const defaultSubagentTimeoutMs = 600_000;
+export const defaultSubagentTimeoutMs = defaultSubagentSettings.timeoutSeconds * 1_000;
+/** Disable Pi's independent 5-minute provider idle timeout for delegated tasks. */
+export const subagentHttpIdleTimeoutMs = 0;
 const historicalToolResultContextCharacters = 6_000;
 const currentToolResultContextCharacters = 48_000;
 const maxCurrentToolResultCharacters = 32_000;
+const subagentResultContextEnvelopeCharacters = 2_048;
+// One delegated result may use its configured result budget plus a bounded MCP
+// usage/header envelope. Parallel delegated results share this total budget.
+const maxCurrentSubagentResultContextCharacters =
+  maximumSubagentSettings.maxResultCharacters + subagentResultContextEnvelopeCharacters;
 const historicalToolCallArgumentCharacters = 1_200;
 const currentToolCallArgumentCharacters = 8_000;
 const maxPiSessionHeaderBytes = 64 * 1_024;
@@ -262,11 +277,15 @@ export type ProviderPayloadOptions = {
   /** Config-only child settings. These intentionally exclude meeting-preset overrides. */
   subagent?: {
     temperature?: number;
-    maxTokens?: number;
     model?: string;
     chatTemplateKwargs?: Record<string, string | number | boolean | null>;
     reasoningEffort?: ModelReasoningEffort;
   };
+};
+
+type SubagentRunSettingsSnapshot = SubagentSettingsSnapshot & {
+  /** Millisecond projection; may use the internal test-only override. */
+  readonly timeoutMs: number;
 };
 
 export type PiSessionRuntimeOptions = {
@@ -313,6 +332,8 @@ export type PiSessionRuntimeOptions = {
   conversationLifecycleThresholds?: Partial<ConversationLifecycleThresholds>;
   /** Internal/test-only hard wall-clock limit for one delegated subagent task. */
   subagentTimeoutMs?: number;
+  /** Persistent settings provider. One immutable snapshot is taken per delegated task. */
+  subagentSettings?: () => SubagentSettingsValues;
   /**
    * Incognito children operate on a disposable tmpfs snapshot. They may read
    * inherited context and mutate only their temporary interaction/workspace
@@ -448,7 +469,8 @@ export class PiSessionRuntime {
   private readonly canonicalDirectLoading = new Map<string, Promise<PiSessionHandle>>();
   private readonly legacyDirectMigrationTargets = new Map<string, string>();
   private readonly conversationLifecycleThresholds: Partial<ConversationLifecycleThresholds>;
-  private readonly subagentTimeoutMs: number;
+  private readonly subagentTimeoutMsOverride?: number;
+  private readonly subagentSettings: () => SubagentSettingsValues;
   private readonly incognitoChild: boolean;
 
   constructor(options: PiSessionRuntimeOptions) {
@@ -492,7 +514,10 @@ export class PiSessionRuntime {
     this.conversationLifecycleThresholds = normalizeConversationLifecycleThresholds(
       options.conversationLifecycleThresholds,
     );
-    this.subagentTimeoutMs = normalizeSubagentTimeoutMs(options.subagentTimeoutMs);
+    this.subagentTimeoutMsOverride = options.subagentTimeoutMs === undefined
+      ? undefined
+      : normalizeSubagentTimeoutMs(options.subagentTimeoutMs);
+    this.subagentSettings = options.subagentSettings ?? (() => defaultSubagentSettings);
     this.incognitoChild = options.incognitoChild === true;
     this.conversationIndexPath = this.stateDir ? join(this.stateDir, "conversations.json") : undefined;
     this.piSessionDir = this.stateDir ? join(this.stateDir, "pi-sessions") : undefined;
@@ -1662,7 +1687,9 @@ export class PiSessionRuntime {
       mcpBridges.push(await createSubagentMcpBridge({
         store: this.store,
         sessionId: metadata.id,
-        runtimeTimeoutMs: this.subagentTimeoutMs,
+        // Settings mutation requires an idle control plane and rebuilds this
+        // bridge, so its envelope and the task snapshot cannot race.
+        runtimeTimeoutMs: this.subagentRuntimeTimeoutMsSnapshot(),
         actions: () => toolState.actions,
         run: (request, signal) => this.runSubagent({
           parentSessionId: metadata.id,
@@ -1974,6 +2001,19 @@ export class PiSessionRuntime {
     }
   }
 
+  private subagentRunSettingsSnapshot(): SubagentRunSettingsSnapshot {
+    const settings = freezeSubagentSettingsSnapshot(this.subagentSettings());
+    return Object.freeze({
+      ...settings,
+      timeoutMs: this.subagentTimeoutMsOverride ?? settings.timeoutSeconds * 1_000,
+    });
+  }
+
+  private subagentRuntimeTimeoutMsSnapshot(): number {
+    if (this.subagentTimeoutMsOverride !== undefined) return this.subagentTimeoutMsOverride;
+    return freezeSubagentSettingsSnapshot(this.subagentSettings()).timeoutSeconds * 1_000;
+  }
+
   private async runSubagent(input: {
     parentSessionId: string;
     mode: Mode;
@@ -1992,11 +2032,13 @@ export class PiSessionRuntime {
         emptySubagentFailureDiagnostic("cancelled", false),
       );
     }
+    const subagentSettings = this.subagentRunSettingsSnapshot();
+    const maxTotalModelCalls = subagentSettings.maxWorkModelCalls + 1;
     const startedAt = performance.now();
     const active = this.activeSubagentCounts.get(input.parentSessionId) ?? 0;
-    if (active >= maxConcurrentSubagentsPerSession) {
+    if (active >= subagentSettings.maxConcurrentTasks) {
       throw new SubagentRunError(
-        `Subagent capacity is full: at most ${maxConcurrentSubagentsPerSession} subagents may run concurrently per session`,
+        `Subagent capacity is full: at most ${subagentSettings.maxConcurrentTasks} subagents may run concurrently per session`,
         emptySubagentFailureDiagnostic("capacity", true),
       );
     }
@@ -2007,8 +2049,12 @@ export class PiSessionRuntime {
     const modelRegistry = ModelRegistry.inMemory(authStorage);
     const settingsManager = SettingsManager.inMemory({
       compaction: { enabled: false },
+      // The frozen Subagent wall-clock deadline owns cancellation. Pi maps 0
+      // to an effectively unbounded SDK request timeout instead of 300000 ms.
+      httpIdleTimeoutMs: subagentHttpIdleTimeoutMs,
     });
     const sessionManager = SessionManager.inMemory(input.workspace.dir);
+    let providerTransport: ReturnType<typeof createSubagentProviderHttpTransport> | undefined;
     const childBridges: McpPiBridge[] = [];
     let child: AgentSession | undefined;
     let modelCalls = 0;
@@ -2021,8 +2067,10 @@ export class PiSessionRuntime {
     const timeout = setTimeout(() => {
       timedOut = true;
       void child?.abort();
-    }, this.subagentTimeoutMs);
+    }, subagentSettings.timeoutMs);
     try {
+      const taskProviderTransport = createSubagentProviderHttpTransport();
+      providerTransport = taskProviderTransport;
       const permissions = this.permissionCatalog.get();
       const childWorkspaceAccess = permissions.workspaceAccess === "off" ? "off" : "read_only";
       if (
@@ -2116,11 +2164,11 @@ export class PiSessionRuntime {
       const childPayloadOptions = payloadOptions.subagent ?? {};
       const extensionFactory: ExtensionFactory = (pi) => {
         pi.on("before_provider_request", (event) => {
-          if (modelCalls >= maxSubagentTotalModelCalls) {
+          if (modelCalls >= maxTotalModelCalls) {
             modelBudgetExceeded = true;
             void child?.abort();
             throw new Error(
-              `Subagent exceeded the ${maxSubagentWorkModelCalls}-call work budget and reserved finalization call`,
+              `Subagent exceeded the ${subagentSettings.maxWorkModelCalls}-call work budget and reserved finalization call`,
             );
           }
           modelCalls += 1;
@@ -2129,7 +2177,7 @@ export class PiSessionRuntime {
           if (typeof childPayloadOptions.temperature === "number") {
             payload.temperature = childPayloadOptions.temperature;
           }
-          payload.max_tokens = normalizedSubagentMaxOutputTokens(childPayloadOptions.maxTokens);
+          payload.max_tokens = subagentSettings.maxOutputTokens;
           let configuredPayload = applyConfiguredReasoningEffort(payload, {
             model: childPayloadOptions.model,
             reasoningEffort: childPayloadOptions.reasoningEffort,
@@ -2140,7 +2188,7 @@ export class PiSessionRuntime {
               ...childPayloadOptions.chatTemplateKwargs,
             };
           }
-          if (modelCalls === maxSubagentTotalModelCalls) {
+          if (modelCalls === maxTotalModelCalls) {
             forcedFinalization = true;
             configuredPayload = forceSubagentFinalizationPayload(configuredPayload);
           }
@@ -2226,13 +2274,16 @@ export class PiSessionRuntime {
         tools: childTools.map((tool) => tool.name),
         customTools: childTools,
       }));
+      const childStreamFn = child.agent.streamFn;
+      child.agent.streamFn = (model, context, options) =>
+        taskProviderTransport.run(() => childStreamFn(model, context, options));
       this.activeSubagents.add(child);
 
       let promptError: unknown;
       try {
         if (input.signal?.aborted) throw abortError("Subagent task was cancelled");
         if (timedOut) {
-          throw new Error(`Subagent timed out after ${this.subagentTimeoutMs / 1_000} seconds`);
+          throw new Error(`Subagent timed out after ${subagentSettings.timeoutMs / 1_000} seconds`);
         }
         await child.prompt(subagentTaskPrompt(input.request), {
           expandPromptTemplates: false,
@@ -2243,11 +2294,11 @@ export class PiSessionRuntime {
       }
       if (input.signal?.aborted) throw abortError("Subagent task was cancelled");
       if (timedOut) {
-        throw new Error(`Subagent timed out after ${this.subagentTimeoutMs / 1_000} seconds`);
+        throw new Error(`Subagent timed out after ${subagentSettings.timeoutMs / 1_000} seconds`);
       }
       if (modelBudgetExceeded) {
         throw new Error(
-          `Subagent exceeded the ${maxSubagentWorkModelCalls}-call work budget and reserved finalization call`,
+          `Subagent exceeded the ${subagentSettings.maxWorkModelCalls}-call work budget and reserved finalization call`,
         );
       }
       if (promptError) throw promptError;
@@ -2262,9 +2313,13 @@ export class PiSessionRuntime {
         throw new Error("Subagent output contained internal analysis and was blocked");
       }
       const characters = [...rawOutput];
-      const truncated = characters.length > maxSubagentOutputCharacters;
+      const truncated = characters.length > subagentSettings.maxResultCharacters;
+      const truncationMarker = "\n\n[Subagent output truncated]";
       const output = truncated
-        ? `${characters.slice(0, maxSubagentOutputCharacters).join("")}\n\n[Subagent output truncated]`
+        ? `${characters.slice(
+            0,
+            subagentSettings.maxResultCharacters - [...truncationMarker].length,
+          ).join("")}${truncationMarker}`
         : rawOutput;
       const stats = child.getSessionStats();
       return {
@@ -2277,6 +2332,7 @@ export class PiSessionRuntime {
         durationMs: Math.round(performance.now() - startedAt),
         truncated,
         forcedFinalization,
+        maxResultCharacters: subagentSettings.maxResultCharacters,
       };
     } catch (error) {
       if (error instanceof SubagentRunError) throw error;
@@ -2309,7 +2365,10 @@ export class PiSessionRuntime {
         this.activeSubagents.delete(child);
         child.dispose();
       }
-      await Promise.allSettled(childBridges.map((bridge) => bridge.close()));
+      await Promise.allSettled([
+        ...childBridges.map((bridge) => bridge.close()),
+        ...(providerTransport ? [providerTransport.close()] : []),
+      ]);
       const remaining = (this.activeSubagentCounts.get(input.parentSessionId) ?? 1) - 1;
       if (remaining > 0) this.activeSubagentCounts.set(input.parentSessionId, remaining);
       else this.activeSubagentCounts.delete(input.parentSessionId);
@@ -3342,6 +3401,13 @@ function compactProviderToolHistory(
   const currentResultIndexes = messages.flatMap((message, index) =>
     message.role === "toolResult" && index > latestUserIndex ? [index] : []
   );
+  const currentSubagentResultIndexes = currentResultIndexes.filter((index) => {
+    const message = messages[index];
+    return message.role === "toolResult" && message.toolName === "delegate_task";
+  });
+  const currentOrdinaryResultIndexes = currentResultIndexes.filter((index) =>
+    !currentSubagentResultIndexes.includes(index)
+  );
 
   const historicalLimits = new Map<number, number>();
   let historicalRemaining = historicalToolResultContextCharacters;
@@ -3360,12 +3426,30 @@ function compactProviderToolHistory(
     }
   }
 
-  const currentLimit = currentResultIndexes.length
+  const currentLimit = currentOrdinaryResultIndexes.length
     ? Math.min(
         maxCurrentToolResultCharacters,
-        Math.max(256, Math.floor(currentToolResultContextCharacters / currentResultIndexes.length)),
+        Math.max(256, Math.floor(
+          currentToolResultContextCharacters / currentOrdinaryResultIndexes.length,
+        )),
       )
     : maxCurrentToolResultCharacters;
+  const currentSubagentTotalLimit = currentSubagentResultIndexes.length
+    ? Math.min(
+        maxCurrentSubagentResultContextCharacters,
+        Math.max(...currentSubagentResultIndexes.map((index) => {
+          const message = messages[index];
+          return message.role === "toolResult"
+            ? subagentToolResultConfiguredContextLimit(message)
+            : 0;
+        })),
+      )
+    : 0;
+  const currentSubagentLimit = currentSubagentResultIndexes.length
+    ? Math.max(256, Math.floor(
+        currentSubagentTotalLimit / currentSubagentResultIndexes.length,
+      ))
+    : 0;
   const removedCallIds = new Set(historicalResultIndexes.flatMap((index) => {
     if (historicalLimits.has(index)) return [];
     const message = messages[index];
@@ -3378,7 +3462,11 @@ function compactProviderToolHistory(
   for (const [index, message] of messages.entries()) {
     if (message.role === "toolResult") {
       const historical = index < latestUserIndex;
-      const limit = historical ? historicalLimits.get(index) : currentLimit;
+      const limit = historical
+        ? historicalLimits.get(index)
+        : message.toolName === "delegate_task"
+          ? Math.min(currentSubagentLimit, subagentToolResultConfiguredContextLimit(message))
+          : currentLimit;
       if (limit === undefined) {
         reasons.add("historical_tool_context_filtered");
         changed = true;
@@ -3434,6 +3522,19 @@ function compactProviderToolHistory(
   return changed
     ? { messages: output, reason: [...reasons].join("+") }
     : { messages };
+}
+
+function subagentToolResultConfiguredContextLimit(
+  message: Extract<AgentMessage, { role: "toolResult" }>,
+): number {
+  const configured = isRecord(message.details) &&
+      Number.isSafeInteger(message.details.maxResultCharacters)
+    ? Number(message.details.maxResultCharacters)
+    : defaultSubagentSettings.maxResultCharacters;
+  return Math.min(
+    maximumSubagentSettings.maxResultCharacters + subagentResultContextEnvelopeCharacters,
+    Math.max(256, configured + subagentResultContextEnvelopeCharacters),
+  );
 }
 
 function compactToolResultMessage(
@@ -3661,13 +3762,6 @@ function pendingConversationWakeNotification(
     requestedAt,
     attempts: Math.max(0, Math.floor(metadata.wakeNotificationAttempts ?? 0)),
   };
-}
-
-function normalizedSubagentMaxOutputTokens(value?: number): number {
-  if (typeof value !== "number" || !Number.isFinite(value) || value <= 0) {
-    return defaultSubagentMaxOutputTokens;
-  }
-  return Math.min(16_384, Math.max(1, Math.floor(value)));
 }
 
 function forceSubagentFinalizationPayload(

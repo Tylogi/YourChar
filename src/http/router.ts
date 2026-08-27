@@ -81,6 +81,11 @@ import { SystemPromptValidationError } from "../profile/system-prompt-service.js
 import { CharacterSoulValidationError } from "../rp/soul.js";
 import { AgentPermissionValidationError } from "../modules/permissions.js";
 import type { AgentPermissionsPatch, WorkspaceAccess } from "../modules/types.js";
+import {
+  SubagentSettingsConflictError,
+  SubagentSettingsValidationError,
+  type SubagentSettingsPatch,
+} from "../modules/index.js";
 import { TavilyApiError, TavilyConfigurationError } from "../tavily/service.js";
 import type { TavilyApiConfigPatch } from "../tavily/types.js";
 import { VisionApiError, VisionConfigurationError } from "../vision/service.js";
@@ -303,6 +308,15 @@ export function createHttpServer(options: HttpServerOptions = {}) {
         sendJson(response, 422, { code: error.code, error: error.message });
       } else if (error instanceof AgentPermissionValidationError) {
         sendJson(response, 400, { code: "AGENT_PERMISSION_INVALID", error: error.message });
+      } else if (error instanceof SubagentSettingsValidationError) {
+        sendJson(response, 400, { code: error.code, error: error.message });
+      } else if (error instanceof SubagentSettingsConflictError) {
+        sendJson(response, 409, {
+          code: error.code,
+          error: error.message,
+          expectedRevision: error.expectedRevision,
+          actualRevision: error.actualRevision,
+        });
       } else if (error instanceof ModelApiConfigValidationError) {
         sendJson(response, 400, { code: error.code, error: error.message });
       } else if (error instanceof WorkspaceFileError) {
@@ -460,6 +474,7 @@ async function route(input: {
       debugModelTraces: "GET /api/debug/model-traces",
       debugContextEconomics: "GET /api/debug/context-economics",
       agentModules: "GET /api/v1/agent-modules",
+      subagentSettings: "GET/PATCH /api/v1/subagent-settings",
       agentPermissions: "GET/PATCH /api/v1/agent-permissions",
       userProfile: "GET/PATCH /api/v1/user-profile",
       userInsights: "GET /api/v1/user-insights",
@@ -1463,6 +1478,46 @@ async function route(input: {
   if (pathname === "/api/v1/agent-modules" && method === "GET") {
     sendJson(input.response, 200, { modules: kernel.listAgentModules() });
     return;
+  }
+
+  if (pathname === "/api/v1/subagent-settings") {
+    if (method === "GET") {
+      sendJson(input.response, 200, { settings: kernel.getSubagentSettings() });
+      return;
+    }
+    if (method === "PATCH") {
+      assertLocalControlPlaneMutation(input.request);
+      const body = asRecord(await readJson(input.request));
+      assertOnlyKeys(
+        body,
+        [
+          "expectedRevision",
+          "maxConcurrentTasks",
+          "maxWorkModelCalls",
+          "maxOutputTokens",
+          "maxResultCharacters",
+          "timeoutSeconds",
+        ],
+        "Subagent settings update",
+      );
+      const patch: SubagentSettingsPatch = {};
+      for (const key of [
+        "maxConcurrentTasks",
+        "maxWorkModelCalls",
+        "maxOutputTokens",
+        "maxResultCharacters",
+        "timeoutSeconds",
+      ] as const) {
+        if (body[key] !== undefined) patch[key] = requiredNumber(body[key], key);
+      }
+      sendJson(input.response, 200, {
+        settings: kernel.patchSubagentSettings(
+          patch,
+          requiredNumber(body.expectedRevision, "expectedRevision"),
+        ),
+      });
+      return;
+    }
   }
 
   if (pathname === "/api/v1/agent-skills/install/preview" && method === "POST") {

@@ -63,10 +63,30 @@ runtime composes background reminder messages.
 
 - task: at most 4,000 Unicode characters;
 - supporting context: at most 8,000 Unicode characters;
-- final output: at most 12,000 Unicode characters;
-- model calls: at most 16 work calls plus one reserved tool-free finalization call per child;
-- hard wall time: at most 10 minutes; model or tool activity never extends it;
-- concurrency: at most 4 children per parent session.
+- final output: 64,000 Unicode characters by default, configurable from 1,000 to 200,000;
+- per-call model output: 16,384 tokens by default, configurable from 512 to 65,536;
+- model calls: 32 work calls by default, configurable from 1 to 64, plus one reserved tool-free finalization call per child;
+- hard wall time: 30 minutes by default, configurable from 60 to 3,600 seconds; model or tool activity never extends it;
+- concurrency: 4 children per parent session by default, configurable from 1 to 8.
+
+These values are stored in the singleton Subagent runtime settings row. Updates
+use a revision compare-and-swap so an older settings page cannot overwrite a
+newer edit. Each delegated task freezes all five values once at admission;
+later settings changes affect only new tasks. Settings mutation requires an idle
+control plane and rebuilds existing session capabilities. The MCP transport
+deadline is derived from the handle's task deadline with 30 seconds of grace,
+so the child runtime remains the authoritative timeout.
+
+Delegated provider requests disable Pi and Undici's independent five-minute
+idle cutoffs with a child-scoped direct transport. The configured hard wall
+time and caller cancellation remain authoritative; this does not change the
+transport behavior of parent sessions or unrelated application requests.
+
+The current turn gives delegated results their own active-context pool. A
+single result can use its configured result limit plus a small MCP envelope;
+parallel delegated results share that configured total. Provider context-window
+limits can still require compaction even though the full bounded result remains
+in the transcript.
 
 Parent cancellation propagates to the child. Child sessions are in-memory and
 disposed after the tool finishes; only the MCP result, audit metadata, and

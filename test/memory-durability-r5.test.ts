@@ -428,6 +428,13 @@ test("backup v3 preserves Vault v4 secret memories and staged restore rejects co
   try {
     kernel = createKernel(stateDir, "backup");
     kernel.updateUserProfile("# 用户画像\n\n- R5 backup source");
+    const backedUpSubagentSettings = kernel.patchSubagentSettings({
+      maxConcurrentTasks: 5,
+      maxWorkModelCalls: 40,
+      maxOutputTokens: 24_000,
+      maxResultCharacters: 90_000,
+      timeoutSeconds: 2_400,
+    }, 0);
     const secretOwner = kernel.createCharacter({ name: "R5 Secret Backup Owner" });
     const secretMemory = kernel.memoryLifecycle.captureAuthorized({
       conversationSpace: "secret",
@@ -448,7 +455,7 @@ test("backup v3 preserves Vault v4 secret memories and staged restore rejects co
     sourceAfterBackup.dispose();
     const manifest = JSON.parse(readFileSync(join(backupDir, "backup-manifest.json"), "utf8"));
     assert.equal(manifest.schemaVersion, 3);
-    assert.equal(manifest.database.schemaVersion, 47);
+    assert.equal(manifest.database.schemaVersion, 48);
     assert.equal(manifest.database.integrityCheck, "ok");
     assert.equal(manifest.vault.projectionConsistent, true);
     assert.ok(manifest.files.some((entry: { path: string }) => entry.path === "memory-vault/reality/user-profile.md"));
@@ -462,6 +469,7 @@ test("backup v3 preserves Vault v4 secret memories and staged restore rejects co
     execFileSync(process.execPath, ["scripts/restore-state.mjs", backupDir, restoredDir], { cwd: process.cwd() });
     const restored = createKernel(restoredDir, "backup-restored");
     assert.match(restored.getUserProfile().markdown, /R5 backup source/);
+    assert.deepEqual(restored.getSubagentSettings(), backedUpSubagentSettings);
     assert.deepEqual(restored.memoryLifecycle.list({
       query: "R5_SECRET_BACKUP_SENTINEL",
       realm: "reality",
