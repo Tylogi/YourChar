@@ -1498,7 +1498,7 @@ async function runDesktopWorkflow(browser, baseUrl, outputDir) {
   const subagentModule = page.locator(".module-row").filter({ hasText: "Subagent Delegation MCP" });
   const relationshipModule = page.locator(".module-row").filter({ hasText: "Relationship State MCP" });
   await subagentModule.getByRole("button", { name: "查看 Subagent Delegation MCP 详情" }).click();
-  await page.locator("#moduleDetailContent").filter({ hasText: "delegate_task" }).filter({ hasText: "three tasks" }).waitFor();
+  await page.locator("#moduleDetailContent").filter({ hasText: "delegate_task" }).filter({ hasText: "four tasks" }).waitFor();
   await page.getByRole("button", { name: "关闭模块详情" }).click();
   await relationshipModule.getByRole("button", { name: "查看 Relationship State MCP 详情" }).click();
   await page.locator("#moduleDetailContent").filter({ hasText: "get_relationship_state" }).filter({ hasText: "bounded changes" }).waitFor();

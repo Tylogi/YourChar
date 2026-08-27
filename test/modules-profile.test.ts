@@ -49,7 +49,7 @@ test("module toggles rebuild Pi capabilities and profile context without losing 
     assert.match(runtime.kernel.getAgentModuleDetail("mcp:schedule").content, /calendar=character/);
     assert.match(runtime.kernel.getAgentModuleDetail("mcp:schedule").content, /never reminders or system notifications/);
     assert.match(runtime.kernel.getAgentModuleDetail("mcp:subagent").content, /delegate_task/);
-    assert.match(runtime.kernel.getAgentModuleDetail("mcp:subagent").content, /At most three tasks/);
+    assert.match(runtime.kernel.getAgentModuleDetail("mcp:subagent").content, /At most four tasks/);
     assert.match(runtime.kernel.getAgentModuleDetail("mcp:mineru").content, /uploads the entire selected/);
     const gitDetail = runtime.kernel.getAgentModuleDetail("mcp:git").content;
     assert.match(gitDetail, /git_open_repository/);

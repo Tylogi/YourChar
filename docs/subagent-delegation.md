@@ -64,9 +64,9 @@ runtime composes background reminder messages.
 - task: at most 4,000 Unicode characters;
 - supporting context: at most 8,000 Unicode characters;
 - final output: at most 12,000 Unicode characters;
-- model calls: at most 8 per child;
+- model calls: at most 16 work calls plus one reserved tool-free finalization call per child;
 - hard wall time: at most 10 minutes; model or tool activity never extends it;
-- concurrency: at most 3 children per parent session.
+- concurrency: at most 4 children per parent session.
 
 Parent cancellation propagates to the child. Child sessions are in-memory and
 disposed after the tool finishes; only the MCP result, audit metadata, and

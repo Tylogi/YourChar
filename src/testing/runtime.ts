@@ -46,6 +46,10 @@ export type ScriptedModelResponse = (
       usage?: { input: number; output: number; cacheRead?: number; cacheWrite?: number };
     }
   | { kind: "tool_call"; name: string; arguments: Record<string, unknown>; id?: string }
+  | {
+      kind: "tool_calls";
+      calls: Array<{ name: string; arguments: Record<string, unknown>; id?: string }>;
+    }
   | { kind: "provider_error"; message: string }
   | { kind: "stream_chunks"; chunks: string[] }
 ) & { delayMs?: number };
@@ -55,7 +59,7 @@ export type CapturedModelRequest = {
   systemPrompt: string;
   messages: unknown[];
   toolNames: string[];
-  providerPayload: { messages: unknown[]; tools: unknown[] };
+  providerPayload: { messages: unknown[]; tools: unknown[]; [key: string]: unknown };
 };
 
 export type CreateTestRuntimeOptions = {
@@ -167,6 +171,17 @@ export class ScriptedModelController {
           errorMessage: response.message,
         });
       }
+      if (response.kind === "tool_calls") {
+        return fauxAssistantMessage(
+          response.calls.map((call) => {
+            this.toolCallSequence += 1;
+            return fauxToolCall(call.name, call.arguments, {
+              id: call.id ?? `test-tool-${this.toolCallSequence}`,
+            });
+          }),
+          { stopReason: "toolUse" },
+        );
+      }
       this.toolCallSequence += 1;
       return fauxAssistantMessage(
         fauxToolCall(response.name, response.arguments, {
@@ -187,8 +202,9 @@ export class ScriptedModelController {
       messages: context.messages.map(canonicalUnknownMessage),
       toolNames: context.tools?.map((tool) => tool.name) ?? [],
       providerPayload: {
+        ...jsonClone(providerPayload),
         messages: providerPayload.messages.map(canonicalUnknownMessage),
-        tools: jsonClone(providerPayload.tools),
+        tools: Array.isArray(providerPayload.tools) ? jsonClone(providerPayload.tools) : [],
       },
     });
   }

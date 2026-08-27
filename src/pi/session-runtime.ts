@@ -65,6 +65,7 @@ import {
   createScheduleMcpBridge,
   createSubagentMcpBridge,
   maximumSubagentRuntimeTimeoutMs,
+  SubagentRunError,
   createTavilyMcpBridge,
   createWebReaderMcpBridge,
   createUserProfileMcpBridge,
@@ -77,6 +78,7 @@ import {
   type McpPiBridge,
   type SubagentRequest,
   type SubagentResult,
+  type SubagentFailureKind,
 } from "../mcp/index.js";
 import type { CharacterCapabilityService } from "../organization/service.js";
 import type { CharacterAgentSkillPackageService } from "../modules/character-skill-packages.js";
@@ -133,8 +135,12 @@ import { createTurnContextMessage, TURN_CONTEXT_CUSTOM_TYPE } from "./turn-conte
 // Pi's generic estimator uses characters/4, while Chinese dialogue is much denser.
 // 4k estimated tokens retains roughly 8-16k real conversational tokens here.
 const roleplayRecentContextTokens = 4_096;
-const maxConcurrentSubagentsPerSession = 3;
-const maxSubagentModelCalls = 8;
+export const maxConcurrentSubagentsPerSession = 4;
+export const maxSubagentWorkModelCalls = 16;
+export const maxSubagentTotalModelCalls = maxSubagentWorkModelCalls + 1;
+export const defaultSubagentMaxOutputTokens = 4_096;
+export const subagentForcedFinalizationInstruction =
+  "Finalization-only request: do not call tools. Use only the evidence already gathered, return the best complete final work product now, and state any material evidence gaps explicitly.";
 const maxSubagentOutputCharacters = 12_000;
 export const defaultSubagentTimeoutMs = 600_000;
 const historicalToolResultContextCharacters = 6_000;
@@ -253,6 +259,14 @@ export type ProviderPayloadOptions = {
   chatTemplateKwargs?: Record<string, string | number | boolean | null>;
   requireThinking?: boolean;
   reasoningEffort?: ModelReasoningEffort;
+  /** Config-only child settings. These intentionally exclude meeting-preset overrides. */
+  subagent?: {
+    temperature?: number;
+    maxTokens?: number;
+    model?: string;
+    chatTemplateKwargs?: Record<string, string | number | boolean | null>;
+    reasoningEffort?: ModelReasoningEffort;
+  };
 };
 
 export type PiSessionRuntimeOptions = {
@@ -1972,14 +1986,22 @@ export class PiSessionRuntime {
     actions: ActionRecord[];
     signal?: AbortSignal;
   }): Promise<SubagentResult> {
-    if (input.signal?.aborted) throw abortError("Subagent task was cancelled before it started");
+    if (input.signal?.aborted) {
+      throw new SubagentRunError(
+        "Subagent task was cancelled before it started",
+        emptySubagentFailureDiagnostic("cancelled", false),
+      );
+    }
+    const startedAt = performance.now();
     const active = this.activeSubagentCounts.get(input.parentSessionId) ?? 0;
     if (active >= maxConcurrentSubagentsPerSession) {
-      throw new Error(`No more than ${maxConcurrentSubagentsPerSession} subagents may run concurrently per session`);
+      throw new SubagentRunError(
+        `Subagent capacity is full: at most ${maxConcurrentSubagentsPerSession} subagents may run concurrently per session`,
+        emptySubagentFailureDiagnostic("capacity", true),
+      );
     }
     this.activeSubagentCounts.set(input.parentSessionId, active + 1);
 
-    const startedAt = performance.now();
     const childSessionId = `subagent:${input.parentSessionId}:${this.store.idGenerator.next("run")}`;
     const authStorage = AuthStorage.inMemory();
     const modelRegistry = ModelRegistry.inMemory(authStorage);
@@ -1991,6 +2013,8 @@ export class PiSessionRuntime {
     let child: AgentSession | undefined;
     let modelCalls = 0;
     let modelBudgetExceeded = false;
+    let forcedFinalization = false;
+    let forcedFinalizationFailed = false;
     let timedOut = false;
     const abort = () => void child?.abort();
     input.signal?.addEventListener("abort", abort, { once: true });
@@ -2089,27 +2113,36 @@ export class PiSessionRuntime {
         this.moduleCatalog.skillContext(input.conversationSpace, input.characterId),
       );
       const payloadOptions = this.providerPayloadOptions?.(input.parentSessionId) ?? {};
+      const childPayloadOptions = payloadOptions.subagent ?? {};
       const extensionFactory: ExtensionFactory = (pi) => {
         pi.on("before_provider_request", (event) => {
-          modelCalls += 1;
-          if (modelCalls > maxSubagentModelCalls) {
+          if (modelCalls >= maxSubagentTotalModelCalls) {
             modelBudgetExceeded = true;
             void child?.abort();
-            throw new Error(`Subagent exceeded the ${maxSubagentModelCalls}-call model budget`);
+            throw new Error(
+              `Subagent exceeded the ${maxSubagentWorkModelCalls}-call work budget and reserved finalization call`,
+            );
           }
+          modelCalls += 1;
           if (!isRecord(event.payload)) return undefined;
           const payload = { ...event.payload };
-          if (typeof payloadOptions.temperature === "number") payload.temperature = payloadOptions.temperature;
-          payload.max_tokens = Math.min(payloadOptions.maxTokens ?? 2_000, 4_000);
-          const configuredPayload = applyConfiguredReasoningEffort(payload, {
-            model: payloadOptions.model,
-            reasoningEffort: payloadOptions.reasoningEffort,
+          if (typeof childPayloadOptions.temperature === "number") {
+            payload.temperature = childPayloadOptions.temperature;
+          }
+          payload.max_tokens = normalizedSubagentMaxOutputTokens(childPayloadOptions.maxTokens);
+          let configuredPayload = applyConfiguredReasoningEffort(payload, {
+            model: childPayloadOptions.model,
+            reasoningEffort: childPayloadOptions.reasoningEffort,
           }) as Record<string, unknown>;
-          if (payloadOptions.chatTemplateKwargs) {
+          if (childPayloadOptions.chatTemplateKwargs) {
             configuredPayload.chat_template_kwargs = {
               ...(isRecord(configuredPayload.chat_template_kwargs) ? configuredPayload.chat_template_kwargs : {}),
-              ...payloadOptions.chatTemplateKwargs,
+              ...childPayloadOptions.chatTemplateKwargs,
             };
+          }
+          if (modelCalls === maxSubagentTotalModelCalls) {
+            forcedFinalization = true;
+            configuredPayload = forceSubagentFinalizationPayload(configuredPayload);
           }
           this.store.addModelContextTrace({
             sessionId: childSessionId,
@@ -2123,6 +2156,40 @@ export class PiSessionRuntime {
             payload: configuredPayload,
           });
           return configuredPayload;
+        });
+        pi.on("message_end", (event) => {
+          if (
+            !forcedFinalization ||
+            event.message.role !== "assistant" ||
+            !assistantHasToolCall(event.message)
+          ) return undefined;
+          const content = event.message.content.filter((block) => block?.type !== "toolCall");
+          if (agentMessageText({ ...event.message, content }).trim()) {
+            return {
+              message: {
+                ...event.message,
+                content,
+                stopReason: "stop",
+              },
+            };
+          }
+          forcedFinalizationFailed = true;
+          return {
+            message: {
+              ...event.message,
+              content: [],
+              stopReason: "error",
+              errorMessage: "Subagent forced finalization attempted another tool call",
+            },
+          };
+        });
+        pi.on("tool_call", () => {
+          if (!forcedFinalization) return undefined;
+          forcedFinalizationFailed = true;
+          return {
+            block: true,
+            reason: "Subagent tools are disabled during the reserved finalization call.",
+          };
         });
       };
       const resourceLoader = new DefaultResourceLoader({
@@ -2179,7 +2246,9 @@ export class PiSessionRuntime {
         throw new Error(`Subagent timed out after ${this.subagentTimeoutMs / 1_000} seconds`);
       }
       if (modelBudgetExceeded) {
-        throw new Error(`Subagent exceeded the ${maxSubagentModelCalls}-call model budget`);
+        throw new Error(
+          `Subagent exceeded the ${maxSubagentWorkModelCalls}-call work budget and reserved finalization call`,
+        );
       }
       if (promptError) throw promptError;
 
@@ -2207,7 +2276,32 @@ export class PiSessionRuntime {
         outputTokens: stats.tokens.output,
         durationMs: Math.round(performance.now() - startedAt),
         truncated,
+        forcedFinalization,
       };
+    } catch (error) {
+      if (error instanceof SubagentRunError) throw error;
+      const stats = child?.getSessionStats();
+      const failureKind = classifySubagentFailure({
+        error,
+        cancelled: input.signal?.aborted === true,
+        timedOut,
+        modelBudgetExceeded,
+        forcedFinalizationFailed,
+      });
+      throw new SubagentRunError(
+        `Subagent failed with ${failureKind}`,
+        {
+          failureKind,
+          modelCalls,
+          toolCalls: stats?.toolCalls ?? 0,
+          inputTokens: stats?.tokens.input ?? 0,
+          outputTokens: stats?.tokens.output ?? 0,
+          durationMs: Math.round(performance.now() - startedAt),
+          forcedFinalization,
+          retryable: subagentFailureIsRetryable(failureKind),
+        },
+        error,
+      );
     } finally {
       clearTimeout(timeout);
       input.signal?.removeEventListener("abort", abort);
@@ -3567,6 +3661,82 @@ function pendingConversationWakeNotification(
     requestedAt,
     attempts: Math.max(0, Math.floor(metadata.wakeNotificationAttempts ?? 0)),
   };
+}
+
+function normalizedSubagentMaxOutputTokens(value?: number): number {
+  if (typeof value !== "number" || !Number.isFinite(value) || value <= 0) {
+    return defaultSubagentMaxOutputTokens;
+  }
+  return Math.min(16_384, Math.max(1, Math.floor(value)));
+}
+
+function forceSubagentFinalizationPayload(
+  payload: Record<string, unknown>,
+): Record<string, unknown> {
+  const messages = Array.isArray(payload.messages) ? [...payload.messages] : [];
+  const systemIndex = messages.findIndex((message) =>
+    isRecord(message) && message.role === "system" && typeof message.content === "string"
+  );
+  if (systemIndex >= 0) {
+    const current = messages[systemIndex] as Record<string, unknown>;
+    messages[systemIndex] = {
+      ...current,
+      content: `${String(current.content)}\n\n${subagentForcedFinalizationInstruction}`,
+    };
+  } else {
+    messages.unshift({ role: "system", content: subagentForcedFinalizationInstruction });
+  }
+  return {
+    ...payload,
+    messages,
+    tools: [],
+    tool_choice: "none",
+    parallel_tool_calls: false,
+  };
+}
+
+function emptySubagentFailureDiagnostic(
+  failureKind: SubagentFailureKind,
+  retryable: boolean,
+) {
+  return {
+    failureKind,
+    modelCalls: 0,
+    toolCalls: 0,
+    inputTokens: 0,
+    outputTokens: 0,
+    durationMs: 0,
+    forcedFinalization: false,
+    retryable,
+  };
+}
+
+function classifySubagentFailure(input: {
+  error: unknown;
+  cancelled: boolean;
+  timedOut: boolean;
+  modelBudgetExceeded: boolean;
+  forcedFinalizationFailed: boolean;
+}): SubagentFailureKind {
+  if (input.cancelled) return "cancelled";
+  if (input.timedOut) return "timeout";
+  if (input.modelBudgetExceeded) return "model_budget";
+  if (input.forcedFinalizationFailed) return "finalization_failed";
+  const message = input.error instanceof Error ? input.error.message : "";
+  if (message === "Subagent model is unavailable") return "model_unavailable";
+  if (message === "Subagent did not return a final result") return "empty_result";
+  if (message === "Subagent output contained internal analysis and was blocked") {
+    return "output_guard";
+  }
+  return "runtime_error";
+}
+
+function subagentFailureIsRetryable(failureKind: SubagentFailureKind): boolean {
+  return failureKind === "capacity" ||
+    failureKind === "timeout" ||
+    failureKind === "model_unavailable" ||
+    failureKind === "empty_result" ||
+    failureKind === "runtime_error";
 }
 
 function normalizeSubagentTimeoutMs(value?: number): number {

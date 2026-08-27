@@ -28,7 +28,42 @@ export type SubagentResult = {
   outputTokens: number;
   durationMs: number;
   truncated: boolean;
+  forcedFinalization: boolean;
 };
+
+export const subagentFailureKinds = [
+  "capacity",
+  "cancelled",
+  "timeout",
+  "model_budget",
+  "finalization_failed",
+  "model_unavailable",
+  "empty_result",
+  "output_guard",
+  "runtime_error",
+] as const;
+export type SubagentFailureKind = typeof subagentFailureKinds[number];
+
+export type SubagentFailureDiagnostic = {
+  failureKind: SubagentFailureKind;
+  modelCalls: number;
+  toolCalls: number;
+  inputTokens: number;
+  outputTokens: number;
+  durationMs: number;
+  forcedFinalization: boolean;
+  retryable: boolean;
+};
+
+export class SubagentRunError extends Error {
+  readonly diagnostic: SubagentFailureDiagnostic;
+
+  constructor(message: string, diagnostic: SubagentFailureDiagnostic, cause?: unknown) {
+    super(message, cause === undefined ? undefined : { cause });
+    this.name = "SubagentRunError";
+    this.diagnostic = diagnostic;
+  }
+}
 
 export type SubagentMcpContext = {
   store: CompanionStore;
@@ -52,7 +87,7 @@ export function createSubagentMcpServer(context: SubagentMcpContext): McpServer 
     {
       title: "Delegate isolated task",
       description:
-        "Run one bounded task in an isolated subagent context. Use this for independent research, planning, or review that materially benefits from a separate context. Do not delegate ordinary conversation. Multiple calls in one response may run in parallel. Never include secrets or unnecessary private data.",
+        "Run one bounded task in an isolated subagent context. Use this for independent research, planning, or review that materially benefits from a separate context. Do not delegate ordinary conversation. Up to four calls in one response may run in parallel; if more tasks are needed, wait for that batch to finish before starting the next batch. Never include secrets or unnecessary private data.",
       inputSchema: z.object({
         role: z.enum(subagentRoles).default("worker").describe(
           "worker for general execution, researcher for evidence gathering, planner for decomposition, or reviewer for independent critique.",
@@ -84,6 +119,7 @@ export function createSubagentMcpServer(context: SubagentMcpContext): McpServer 
           outputTokens: result.outputTokens,
           durationMs: result.durationMs,
           truncated: result.truncated,
+          forcedFinalization: result.forcedFinalization,
         }));
         const usage = `${result.modelCalls} model call(s), ${result.toolCalls} tool call(s), ` +
           `${result.inputTokens + result.outputTokens} tokens, ${result.durationMs} ms`;
@@ -95,8 +131,23 @@ export function createSubagentMcpServer(context: SubagentMcpContext): McpServer 
           structuredContent: result,
         };
       } catch (error) {
-        context.actions().push(context.store.addAction("delegate_subagent", "failed", audit));
-        throw error;
+        const failure = safeSubagentFailureDiagnostic(error);
+        context.actions().push(context.store.addAction("delegate_subagent", "failed", {
+          ...audit,
+          ...failure,
+        }));
+        return {
+          isError: true,
+          content: [{
+            type: "text" as const,
+            text: publicSubagentFailureMessage(failure),
+          }],
+          structuredContent: {
+            ok: false,
+            role: input.role,
+            failure,
+          },
+        };
       }
     },
   );
@@ -128,4 +179,35 @@ export function subagentMcpRequestTimeoutMs(value: number): number {
     );
   }
   return value + subagentBridgeTimeoutGraceMs;
+}
+
+export function safeSubagentFailureDiagnostic(error: unknown): SubagentFailureDiagnostic {
+  if (error instanceof SubagentRunError) return { ...error.diagnostic };
+  return {
+    failureKind: "runtime_error",
+    modelCalls: 0,
+    toolCalls: 0,
+    inputTokens: 0,
+    outputTokens: 0,
+    durationMs: 0,
+    forcedFinalization: false,
+    retryable: true,
+  };
+}
+
+function publicSubagentFailureMessage(failure: SubagentFailureDiagnostic): string {
+  const usage = `${failure.modelCalls} model call(s), ${failure.toolCalls} tool call(s), ` +
+    `${failure.inputTokens + failure.outputTokens} tokens, ${failure.durationMs} ms`;
+  const guidance = {
+    capacity: "At most four subagents may run concurrently per session. Retry after the current batch finishes.",
+    cancelled: "The delegated task was cancelled.",
+    timeout: "The delegated task reached its hard wall-clock deadline. Retry with a smaller task.",
+    model_budget: "The delegated task exhausted its work-call budget and reserved finalization call. Split the task before retrying.",
+    finalization_failed: "The reserved no-tool finalization call did not produce a usable final result. Split the task before retrying.",
+    model_unavailable: "The delegated model is unavailable. Check the current character model binding.",
+    empty_result: "The delegated model returned no usable final text.",
+    output_guard: "The delegated result was blocked by the output safety guard.",
+    runtime_error: "The delegated task failed inside its isolated runtime. A bounded retry may succeed.",
+  }[failure.failureKind];
+  return `Subagent failed (${failure.failureKind}; ${usage}). ${guidance}`;
 }

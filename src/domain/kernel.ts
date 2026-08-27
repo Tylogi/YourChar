@@ -979,6 +979,15 @@ export class CompanionKernel {
             chatTemplateKwargs: interactiveThinkingTemplateKwargs(config),
             requireThinking: requiresInteractiveThinking(config),
             reasoningEffort: config.reasoningEffort,
+            // Delegated workers inherit the character's model binding, not a
+            // transient in-person meeting preset intended for dialogue style.
+            subagent: {
+              temperature: config.temperature,
+              maxTokens: config.maxTokens,
+              model: config.model,
+              chatTemplateKwargs: interactiveThinkingTemplateKwargs(config),
+              reasoningEffort: config.reasoningEffort,
+            },
           };
         },
         providerPayloadTransform: (input) => {

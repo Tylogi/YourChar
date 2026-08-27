@@ -7,11 +7,21 @@ import {
   maximumSubagentRuntimeTimeoutMs,
   subagentMcpRequestTimeoutMs,
 } from "../src/mcp/subagent-server.js";
-import { defaultSubagentTimeoutMs } from "../src/pi/session-runtime.js";
+import {
+  defaultSubagentMaxOutputTokens,
+  defaultSubagentTimeoutMs,
+  maxConcurrentSubagentsPerSession,
+  maxSubagentTotalModelCalls,
+  maxSubagentWorkModelCalls,
+} from "../src/pi/session-runtime.js";
 import { createTestRuntime } from "../src/testing/index.js";
 
 test("subagent deadlines are finite and the MCP envelope stays 30 seconds wider", () => {
   assert.equal(defaultSubagentTimeoutMs, 600_000);
+  assert.equal(defaultSubagentMaxOutputTokens, 4_096);
+  assert.equal(maxSubagentWorkModelCalls, 16);
+  assert.equal(maxSubagentTotalModelCalls, 17);
+  assert.equal(maxConcurrentSubagentsPerSession, 4);
   assert.equal(subagentMcpRequestTimeoutMs(defaultSubagentTimeoutMs), 630_000);
   assert.equal(
     subagentMcpRequestTimeoutMs(maximumSubagentRuntimeTimeoutMs),
@@ -114,6 +124,7 @@ test("private Pi session delegates to an isolated read-only subagent and resumes
       trace.turnKind === "subagent" && trace.sessionId.startsWith("subagent:subagent-private-session:")
     );
     assert.equal(subagentTrace?.payload.reasoning_effort, "xhigh");
+    assert.equal(subagentTrace?.payload.max_tokens, defaultSubagentMaxOutputTokens);
   } finally {
     runtime.dispose();
   }
@@ -144,10 +155,12 @@ test("a short hard deadline times out a subagent without activity-based extensio
     assert.equal(response.status, "completed");
     assert.equal(response.reply, "委派超过了固定时限。");
     const session = await runtime.kernel.getSession("subagent-hard-timeout");
-    assert.match(JSON.stringify(session.messages), /Subagent timed out after 0\.03 seconds/u);
+    assert.match(JSON.stringify(session.messages), /Subagent failed \(timeout;/u);
     const delegations = response.actions.filter((action) => action.actionType === "delegate_subagent");
     assert.equal(delegations.filter((action) => action.status === "failed").length, 1);
     assert.equal(delegations.filter((action) => action.status === "completed").length, 0);
+    assert.equal(delegations[0].payload.failureKind, "timeout");
+    assert.equal(delegations[0].payload.retryable, true);
   } finally {
     runtime.dispose();
   }
@@ -196,6 +209,237 @@ test("a longer hard deadline allows multiple child model rounds and a final resu
     assert.ok(delegation);
     assert.equal(delegation.payload.modelCalls, 2);
     assert.equal(delegation.payload.toolCalls, 1);
+  } finally {
+    runtime.dispose();
+  }
+});
+
+test("sixteen work rounds receive one tool-free forced-finalization round", async () => {
+  const runtime = createTestRuntime({ seed: "subagent-forced-finalization" });
+  try {
+    runtime.kernel.patchAgentPermissions({ workspaceAccess: "read_only" });
+    runtime.kernel.uploadWorkspaceFile({
+      directory: "uploads",
+      name: "budget-note.txt",
+      bytes: Buffer.from("bounded evidence\n", "utf8"),
+    });
+    runtime.kernel.setAgentModuleEnabled("mcp:subagent", true);
+    runtime.model.enqueue([
+      {
+        kind: "tool_call",
+        name: "delegate_task",
+        arguments: {
+          role: "reviewer",
+          task: "Inspect the note thoroughly, then return a bounded final report.",
+        },
+      },
+      ...Array.from({ length: maxSubagentWorkModelCalls }, () => ({
+        kind: "tool_call" as const,
+        name: "read",
+        arguments: { path: "uploads/budget-note.txt" },
+      })),
+      { kind: "assistant_text", text: "Forced final report: bounded evidence was verified." },
+      { kind: "assistant_text", text: "子任务在收尾回合完成，并确认了 bounded evidence。" },
+    ]);
+
+    const response = await runtime.kernel.sendMessage("subagent-forced-finalization", {
+      mode: "sms",
+      text: "请委派审查这条记录。",
+    });
+
+    assert.equal(response.status, "completed");
+    assert.match(response.reply, /bounded evidence/u);
+    const childRequests = runtime.model.requests.filter((request) =>
+      /isolated reviewer subagent/u.test(request.systemPrompt)
+    );
+    assert.equal(childRequests.length, maxSubagentTotalModelCalls);
+    const forcedFinalTrace = runtime.kernel.recentModelContextTraces(20).find((trace) =>
+      trace.turnKind === "subagent" && trace.payload.tool_choice === "none"
+    );
+    assert.ok(forcedFinalTrace);
+    assert.deepEqual(forcedFinalTrace.payload.tools, []);
+    assert.equal(forcedFinalTrace.payload.parallel_tool_calls, false);
+    assert.match(
+      JSON.stringify(forcedFinalTrace.payload.messages),
+      /Finalization-only request: do not call tools\./u,
+    );
+    assert.equal(forcedFinalTrace.payload.max_tokens, 4_096);
+    const delegation = response.actions.find((action) => action.actionType === "delegate_subagent");
+    assert.ok(delegation);
+    assert.equal(delegation.status, "completed");
+    assert.equal(delegation.payload.modelCalls, maxSubagentTotalModelCalls);
+    assert.equal(delegation.payload.toolCalls, maxSubagentWorkModelCalls);
+    assert.equal(delegation.payload.forcedFinalization, true);
+  } finally {
+    runtime.dispose();
+  }
+});
+
+test("a tool call attempted during forced finalization is rejected without an eighteenth model request", async () => {
+  const runtime = createTestRuntime({ seed: "subagent-forced-final-tool-rejection" });
+  const sensitiveTask = "private-task-body-must-not-enter-audit";
+  try {
+    runtime.kernel.patchAgentPermissions({ workspaceAccess: "read_only" });
+    runtime.kernel.uploadWorkspaceFile({
+      directory: "uploads",
+      name: "forced-final-note.txt",
+      bytes: Buffer.from("one line\n", "utf8"),
+    });
+    runtime.kernel.setAgentModuleEnabled("mcp:subagent", true);
+    runtime.model.enqueue([
+      {
+        kind: "tool_call",
+        name: "delegate_task",
+        arguments: { role: "reviewer", task: sensitiveTask },
+      },
+      ...Array.from({ length: maxSubagentWorkModelCalls }, () => ({
+        kind: "tool_call" as const,
+        name: "read",
+        arguments: { path: "uploads/forced-final-note.txt" },
+      })),
+      {
+        kind: "tool_call",
+        name: "read",
+        arguments: { path: "uploads/forced-final-note.txt" },
+      },
+      { kind: "assistant_text", text: "子任务按预算边界安全停止。" },
+    ]);
+
+    const response = await runtime.kernel.sendMessage("subagent-forced-final-tool-rejection", {
+      mode: "sms",
+      text: "委派一个边界检查。",
+    });
+
+    assert.equal(response.status, "completed");
+    assert.equal(response.reply, "子任务按预算边界安全停止。");
+    const childRequests = runtime.model.requests.filter((request) =>
+      /isolated reviewer subagent/u.test(request.systemPrompt)
+    );
+    assert.equal(childRequests.length, maxSubagentTotalModelCalls);
+    const forcedFinalTrace = runtime.kernel.recentModelContextTraces(20).find((trace) =>
+      trace.turnKind === "subagent" && trace.payload.tool_choice === "none"
+    );
+    assert.ok(forcedFinalTrace);
+    assert.deepEqual(forcedFinalTrace.payload.tools, []);
+    const failed = response.actions.find((action) =>
+      action.actionType === "delegate_subagent" && action.status === "failed"
+    );
+    assert.ok(failed);
+    assert.equal(failed.payload.failureKind, "finalization_failed");
+    assert.equal(failed.payload.modelCalls, maxSubagentTotalModelCalls);
+    assert.equal(failed.payload.toolCalls, maxSubagentWorkModelCalls);
+    assert.equal(failed.payload.forcedFinalization, true);
+    assert.equal(typeof failed.payload.inputTokens, "number");
+    assert.equal(typeof failed.payload.outputTokens, "number");
+    assert.equal(typeof failed.payload.durationMs, "number");
+    assert.equal(typeof failed.payload.retryable, "boolean");
+    assert.doesNotMatch(JSON.stringify(failed.payload), new RegExp(sensitiveTask, "u"));
+  } finally {
+    runtime.dispose();
+  }
+});
+
+test("five parallel delegations admit four and return a retryable capacity error for the fifth", async () => {
+  const runtime = createTestRuntime({ seed: "subagent-concurrency-capacity" });
+  const sensitiveTask = "capacity-task-body-must-not-enter-audit";
+  try {
+    runtime.kernel.setAgentModuleEnabled("mcp:subagent", true);
+    runtime.model.enqueue([
+      {
+        kind: "tool_calls",
+        calls: Array.from({ length: maxConcurrentSubagentsPerSession + 1 }, (_, index) => ({
+          name: "delegate_task",
+          arguments: {
+            role: "reviewer",
+            task: `${sensitiveTask}-${index + 1}`,
+          },
+        })),
+      },
+      ...Array.from({ length: maxConcurrentSubagentsPerSession }, (_, index) => ({
+        kind: "assistant_text" as const,
+        text: `Parallel review ${index + 1} completed.`,
+        delayMs: 80,
+      })),
+      { kind: "assistant_text", text: "四项已完成；第五项容量已满，可稍后重试。" },
+    ]);
+
+    const response = await runtime.kernel.sendMessage("subagent-concurrency-capacity", {
+      mode: "sms",
+      text: "并行委派五项独立审查。",
+    });
+
+    assert.equal(response.status, "completed");
+    const delegations = response.actions.filter((action) => action.actionType === "delegate_subagent");
+    assert.equal(delegations.filter((action) => action.status === "completed").length, 4);
+    assert.equal(delegations.filter((action) => action.status === "failed").length, 1);
+    const failed = delegations.find((action) => action.status === "failed");
+    assert.ok(failed);
+    assert.equal(failed.payload.failureKind, "capacity");
+    assert.equal(failed.payload.retryable, true);
+    assert.equal(failed.payload.modelCalls, 0);
+    assert.equal(failed.payload.toolCalls, 0);
+    assert.equal(failed.payload.inputTokens, 0);
+    assert.equal(failed.payload.outputTokens, 0);
+    assert.equal(typeof failed.payload.durationMs, "number");
+    assert.doesNotMatch(JSON.stringify(failed.payload), new RegExp(sensitiveTask, "u"));
+    const parentAfterDelegation = runtime.model.requests.at(-1);
+    assert.ok(parentAfterDelegation);
+    assert.match(
+      JSON.stringify(parentAfterDelegation.messages),
+      /Subagent failed \(capacity;[\s\S]*At most four[\s\S]*Retry after/u,
+    );
+  } finally {
+    runtime.dispose();
+  }
+});
+
+test("subagent file reads report the next offset and an explicit end-of-file boundary", async () => {
+  const runtime = createTestRuntime({ seed: "subagent-read-boundaries" });
+  try {
+    runtime.kernel.patchAgentPermissions({ workspaceAccess: "read_only" });
+    runtime.kernel.uploadWorkspaceFile({
+      directory: "uploads",
+      name: "paged-note.txt",
+      bytes: Buffer.from("alpha\nbeta\ngamma", "utf8"),
+    });
+    runtime.kernel.setAgentModuleEnabled("mcp:subagent", true);
+    runtime.model.enqueue([
+      {
+        kind: "tool_call",
+        name: "delegate_task",
+        arguments: { role: "reviewer", task: "Read the three-line note in two non-overlapping pages." },
+      },
+      {
+        kind: "tool_call",
+        name: "read",
+        arguments: { path: "uploads/paged-note.txt", offset: 1, limit: 2 },
+      },
+      {
+        kind: "tool_call",
+        name: "read",
+        arguments: { path: "uploads/paged-note.txt", offset: 3, limit: 2 },
+      },
+      { kind: "assistant_text", text: "Read alpha, beta, and gamma exactly once." },
+      { kind: "assistant_text", text: "分页边界清楚，三行均已读取。" },
+    ]);
+
+    const response = await runtime.kernel.sendMessage("subagent-read-boundaries", {
+      mode: "sms",
+      text: "委派读取分页文件。",
+    });
+
+    assert.equal(response.status, "completed");
+    const childRequests = runtime.model.requests.filter((request) =>
+      /isolated reviewer subagent/u.test(request.systemPrompt)
+    );
+    assert.equal(childRequests.length, 3);
+    const afterFirstRead = JSON.stringify(childRequests[1].messages);
+    assert.match(afterFirstRead, /Lines: 1-2 of 3/u);
+    assert.match(afterFirstRead, /Next offset: 3/u);
+    assert.doesNotMatch(afterFirstRead, /End of file/u);
+    const afterSecondRead = JSON.stringify(childRequests[2].messages);
+    assert.match(afterSecondRead, /Lines: 3-3 of 3/u);
+    assert.match(afterSecondRead, /End of file/u);
   } finally {
     runtime.dispose();
   }
