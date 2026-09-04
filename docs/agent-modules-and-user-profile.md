@@ -162,11 +162,11 @@ are never executed by installation or activation.
 Turning the management permission off removes the character-management MCP on
 the next capability rebuild. It does not disable an already enabled Agent Skill
 or deactivate an already active character-owned workflow; those have their own
-trusted controls. Shell network is denied for the full turn whenever autonomy
-is enabled or that turn has loaded an enabled character-private package or an
-autonomously created workflow. Turning autonomy off therefore does not let a
-loaded package reach the loopback control plane; network preference can take
-effect only on a later turn after the relevant content is disabled.
+trusted controls. Shell network is independent: enabling management, loading a
+character-private package, or activating an autonomously created workflow does
+not turn the user's network choice on or off. When networking is enabled, those
+instructions may use it immediately and can transmit information visible in the
+current turn; the settings confirmation makes that authority explicit.
 
 ### Incognito and subagent boundaries
 

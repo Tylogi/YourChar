@@ -19,6 +19,7 @@ import { backup, DatabaseSync } from "node:sqlite";
 import type { ContextBudgetSnapshot } from "../context/types.js";
 import type { MessageRequest, MessageResponse, SessionRecord } from "../domain/types.js";
 import type { InteractionEvent, InteractionState } from "../interaction/types.js";
+import type { WorldMeetingScene } from "../world/types.js";
 import type {
   ConversationCompactionResult,
   ConversationMetadata,
@@ -77,6 +78,7 @@ export type IncognitoInteractionView = {
   events: InteractionEvent[];
   canUndo: boolean;
   suggestedLocations: Array<{ id: string; name: string }>;
+  meetingScene?: WorldMeetingScene;
   liveState: {
     place?: string;
     activity?: string;
@@ -317,10 +319,6 @@ export class IncognitoSessionManager {
 
   has(sessionId: string): boolean {
     return this.entries.get(sessionId)?.state === "active";
-  }
-
-  requiresShellNetworkIsolation(): boolean {
-    return Boolean(this.openingTask) || this.entries.size > 0;
   }
 
   assertUnsupported(sessionId: string, operation: string): void {

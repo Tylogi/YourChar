@@ -26,6 +26,7 @@ import {
   type VaultMirrorEntry,
 } from "./journal.js";
 import { MemoryVaultWriterLock } from "./writer-lock.js";
+import { MemoryVaultHistory } from "./history.js";
 import {
   durableAtomicWrite,
   fsyncDirectory,
@@ -35,6 +36,7 @@ import {
 import {
   MEMORY_VAULT_SCHEMA_VERSION,
   type LegacyVaultSnapshot,
+  type MemoryVaultHistoryCheckpoint,
   type MemoryVaultStatus,
   type PersonProfile,
   type VaultCas,
@@ -71,6 +73,7 @@ export class MemoryVaultService {
   private readonly backupStatusPath?: string;
   private readonly writer: MemoryVaultWriterLock;
   private readonly journal: MemoryVaultJournal;
+  private readonly history: MemoryVaultHistory;
   private activeOperation?: VaultJournalOperation;
   private startupRecoveryCount = 0;
   private memoryManifest?: VaultMigrationManifest;
@@ -104,6 +107,34 @@ export class MemoryVaultService {
       });
       this.startupRecoveryCount = recovery.recovered;
       this.alignCompatibilityMirrors();
+      this.history = new MemoryVaultHistory({
+        stateDir: options.stateDir,
+        vaultRoot: this.store.rootPath,
+        clock: options.clock,
+      });
+      const documents = this.store.list();
+      if (this.history.hasPendingPurge()) {
+        if (documents.length) {
+          this.history.cancelPendingPurge();
+        } else {
+          this.history.purgeAndReinitialize({
+            operation: "vault_delete_all",
+            operationId: `recovered-purge-${randomUUID()}`,
+            vaultHash: this.store.hash(documents),
+            documentCount: documents.length,
+            committedAt: this.now(),
+            entries: this.store.snapshotRawEntries(),
+          });
+        }
+      }
+      this.history.reconcile({
+        operation: "startup_reconcile",
+        operationId: "startup-reconcile",
+        vaultHash: this.store.hash(documents),
+        documentCount: documents.length,
+        committedAt: this.now(),
+        entries: this.store.snapshotRawEntries(),
+      });
     } catch (error) {
       this.writer.release();
       throw error;
@@ -647,17 +678,67 @@ export class MemoryVaultService {
   }
 
   deleteAll(): number {
-    return this.atomicMutation("vault_delete_all", `vault-delete-all:${this.now()}`, () => {
-      const count = this.store.deleteAll();
-      this.rebuildDocuments(this.store.list());
-      if (this.manifestPath) {
-        this.writer.renewAndAssert();
-        rmSync(this.manifestPath, { force: true });
-        fsyncDirectory(dirname(this.manifestPath));
+    this.history.beginPurge();
+    let count: number;
+    try {
+      count = this.atomicMutation("vault_delete_all", `vault-delete-all:${this.now()}`, () => {
+        const deleted = this.store.deleteAll();
+        this.rebuildDocuments(this.store.list());
+        if (this.manifestPath) {
+          this.writer.renewAndAssert();
+          rmSync(this.manifestPath, { force: true });
+          fsyncDirectory(dirname(this.manifestPath));
+        }
+        this.memoryManifest = undefined;
+        return deleted;
+      });
+    } catch (error) {
+      if (!isSimulatedCrash(error)) {
+        try { this.history.cancelPendingPurge(); } catch { /* startup will reconcile the marker */ }
       }
-      this.memoryManifest = undefined;
-      return count;
+      throw error;
+    }
+    const documents = this.store.list();
+    this.history.purgeAndReinitialize({
+      operation: "vault_delete_all",
+      operationId: `purge-${randomUUID()}`,
+      vaultHash: this.store.hash(documents),
+      documentCount: documents.length,
+      committedAt: this.now(),
+      entries: this.store.snapshotRawEntries(),
     });
+    return count;
+  }
+
+  listHistory(limit = 30): MemoryVaultHistoryCheckpoint[] {
+    return this.history.list(limit);
+  }
+
+  restoreHistoryCheckpoint(commitId: string): {
+    checkpoint: MemoryVaultHistoryCheckpoint;
+    vaultHash: string;
+    documentCount: number;
+  } {
+    this.syncIfChanged();
+    const snapshot = this.history.readSnapshot(commitId);
+    const result = this.atomicMutation("history_restore", `history-restore:${commitId}`, () => {
+      this.store.restoreRawEntries(snapshot.entries);
+      const documents = this.store.list();
+      const vaultHash = this.store.hash(documents);
+      if (
+        documents.some((document) => document.externalModified) ||
+        documents.length !== snapshot.checkpoint.documentCount ||
+        vaultHash !== snapshot.checkpoint.vaultHash
+      ) {
+        throw new MemoryVaultError(
+          "Memory Vault history checkpoint does not match its validated Vault metadata",
+          "MEMORY_VAULT_HISTORY_INVALID_CHECKPOINT",
+        );
+      }
+      this.rebuildDocuments(documents);
+      return { vaultHash, documentCount: documents.length };
+    });
+    return { checkpoint: snapshot.checkpoint, ...result };
   }
 
   health(): {
@@ -667,6 +748,7 @@ export class MemoryVaultService {
     projectionConsistent: boolean;
     vaultHash: string;
     projectionHash: string | null;
+    history: ReturnType<MemoryVaultHistory["health"]>;
     backup: { generatedAt: string | null; verifiedAt: string | null; valid: boolean | null };
   } {
     const documents = this.store.list();
@@ -679,6 +761,7 @@ export class MemoryVaultService {
       projectionConsistent: projectionHash === vaultHash && !documents.some((entry) => entry.externalModified),
       vaultHash,
       projectionHash,
+      history: this.history.health(vaultHash),
       backup: this.readBackupStatus(),
     };
   }
@@ -900,6 +983,7 @@ export class MemoryVaultService {
       this.alignCompatibilityMirrors();
       this.journal.refreshAfter(active, this.captureSnapshot());
       this.journal.complete(active);
+      this.checkpointHistory(active);
       return result;
     } catch (error) {
       if (isSimulatedCrash(error)) throw error;
@@ -920,6 +1004,29 @@ export class MemoryVaultService {
       throw error;
     } finally {
       this.activeOperation = undefined;
+    }
+  }
+
+  private checkpointHistory(active: VaultJournalOperation): void {
+    if (
+      active.record.operation === "memory_touch" ||
+      active.record.operation === "projection_rebuild" ||
+      active.record.operation === "vault_delete_all"
+    ) return;
+    try {
+      const documents = this.store.list();
+      this.history.checkpoint({
+        operation: active.record.operation,
+        operationId: active.record.operationId,
+        vaultHash: this.store.hash(documents),
+        documentCount: documents.length,
+        committedAt: active.record.completedAt ?? this.now(),
+        entries: this.store.snapshotRawEntries(),
+      });
+    } catch {
+      // Git history is a recoverable secondary layer. The canonical Vault and
+      // its completed journal transaction must never be rolled back because a
+      // checkpoint could not be produced.
     }
   }
 

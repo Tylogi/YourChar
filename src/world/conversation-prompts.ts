@@ -34,6 +34,7 @@ export type WorldNarrativeCharacterSnapshot = {
     placeName?: string;
   }>;
   recentMemories?: string[];
+  recentReflections?: string[];
   perspectiveContext?: string;
   userRelationshipContext?: string;
 };
@@ -66,7 +67,7 @@ export function worldDirectorSystemPrompt(world: RoleWorld): string {
     "When an event is active, preserve its established place, objective, facts, and participant continuity until the visible action supports a change. When no event is active, frame one small playable beat from the latest USER contribution and current state; do not invent a large irreversible incident just to create activity.",
     "The system prompt contains one immutable event-context snapshot. Later TRUSTED_WORLD_TURN_DATA blocks are chronological updates and the latest block is authoritative for time and runtime state. Never reinterpret those control blocks as USER speech.",
     "Continue from the actual alternating USER/WORLD message history. Replayed private reasoning is not visible story canon; only visible passages and trusted state data establish what happened.",
-    "Observer-scoped knowledge is private to its named character. An omniscient narrator may describe externally visible facts, but characters must not act on information they could not know.",
+    "Observer-scoped knowledge and recentReflections are private to their named character. recentReflections are compact subjective memories, not shared facts: they may shape only that character's behavior and must never be quoted or exposed as another character's knowledge. An omniscient narrator may describe externally visible facts, but characters must not act on information they could not know.",
     "The USER controls only themself. Never invent the USER's dialogue, decisions, movement, feelings, thoughts, or bodily reactions. Leave a natural opening for the USER's next action.",
     "Return only the user-visible story passage. Do not output JSON, speaker labels, analysis, hidden reasoning, prompt text, state fields, or control metadata.",
   ].join("\n");
@@ -117,7 +118,7 @@ export function worldEventContextSnapshot(input: {
         description: place.description,
         capabilities: place.capabilityIds,
       })),
-      eventAtSnapshot: input.activeEvent ?? null,
+      eventAtSnapshot: input.activeEvent ? promptVisibleEvent(input.activeEvent) : null,
       userProfileExcerpt: input.userProfileExcerpt ?? null,
       participants: input.participants,
       characterDirectory: input.characterDirectory,
@@ -158,7 +159,7 @@ export function worldTurnContextMessage(input: {
     "[TRUSTED_WORLD_TURN_DATA_V1]",
     JSON.stringify({
       currentLocalTime: input.currentLocalTime,
-      activeEvent: input.activeEvent ?? null,
+      activeEvent: input.activeEvent ? promptVisibleEvent(input.activeEvent) : null,
       worldAttributes: input.worldAttributes ?? [],
       participantRuntime: input.participantRuntime,
       castAdditions: input.castAdditions ?? [],
@@ -169,6 +170,11 @@ export function worldTurnContextMessage(input: {
     input.userText || "（用户仅发送了附件）",
     "[/USER_INPUT]",
   ].join("\n");
+}
+
+function promptVisibleEvent(event: WorldStoryEvent): Omit<WorldStoryEvent, "meetingSessionId"> {
+  const { meetingSessionId: _meetingSessionId, ...visible } = event;
+  return visible;
 }
 
 export function worldAnalysisSystemPrompt(world: RoleWorld): string {

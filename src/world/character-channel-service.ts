@@ -15,10 +15,15 @@ import type {
   CharacterChannelSummary,
   CharacterCollaborationJob,
   CharacterCollaborationSummary,
+  CharacterInteractionReflection,
+  CharacterInteractionSceneDraft,
 } from "./types.js";
 
 const MAX_CHANNEL_TEXT = 4_000;
 const MAX_OBJECTIVE_TEXT = 2_000;
+const MAX_SCENE_TEXT = 8_000;
+const MAX_EVENT_SUMMARY = 1_200;
+const MAX_REFLECTION_SUMMARY = 600;
 
 export class CharacterChannelService {
   constructor(
@@ -105,6 +110,10 @@ export class CharacterChannelService {
       channel: this.summarize(channel),
       episodes,
       messages,
+      scenes: this.repository.listInteractionScenes(episodes.map((episode) => episode.id)),
+      reflections: this.repository.listInteractionReflectionsForEpisodes(
+        episodes.map((episode) => episode.id),
+      ),
     };
   }
 
@@ -365,6 +374,76 @@ export class CharacterChannelService {
     );
   }
 
+  saveInteractionScene(
+    episodeId: string,
+    draft: CharacterInteractionSceneDraft,
+    salience: number,
+  ) {
+    const episode = this.repository.getEpisode(episodeId);
+    if (!episode) throw new WorldValidationError(`character channel episode not found: ${episodeId}`);
+    if (episode.status !== "completed") {
+      throw new WorldValidationError("only a completed character interaction can publish a scene");
+    }
+    const channel = this.getChannel(episode.channelId);
+    const narrativeText = requiredText(draft.narrativeText, "interaction scene", MAX_SCENE_TEXT);
+    const eventSummary = requiredText(draft.eventSummary, "interaction event summary", MAX_EVENT_SUMMARY);
+    const sourcePerspectiveSummary = requiredText(
+      draft.sourcePerspectiveSummary,
+      "source character perspective",
+      MAX_REFLECTION_SUMMARY,
+    );
+    const targetPerspectiveSummary = requiredText(
+      draft.targetPerspectiveSummary,
+      "target character perspective",
+      MAX_REFLECTION_SUMMARY,
+    );
+    const now = this.clock.now().toISOString();
+    return this.repository.saveInteractionScene({
+      episodeId: episode.id,
+      channelId: channel.id,
+      worldId: channel.worldId,
+      narrativeText,
+      eventSummary,
+      createdAt: episode.completedAt ?? now,
+      updatedAt: now,
+    }, [{
+      episodeId: episode.id,
+      channelId: channel.id,
+      worldId: channel.worldId,
+      characterId: episode.initiatorCharacterId,
+      peerCharacterId: episode.targetCharacterId,
+      summary: sourcePerspectiveSummary,
+      salience: boundedUnit(salience),
+      createdAt: episode.completedAt ?? now,
+    }, {
+      episodeId: episode.id,
+      channelId: channel.id,
+      worldId: channel.worldId,
+      characterId: episode.targetCharacterId,
+      peerCharacterId: episode.initiatorCharacterId,
+      summary: targetPerspectiveSummary,
+      salience: boundedUnit(salience),
+      createdAt: episode.completedAt ?? now,
+    }]);
+  }
+
+  getInteractionScene(episodeId: string) {
+    return this.repository.getInteractionScene(episodeId);
+  }
+
+  listInteractionReflections(episodeId: string): CharacterInteractionReflection[] {
+    return this.repository.listInteractionReflections(episodeId);
+  }
+
+  listRecentInteractionReflections(input: {
+    characterId: string;
+    worldId: string;
+    peerCharacterId?: string;
+    limit?: number;
+  }): CharacterInteractionReflection[] {
+    return this.repository.listRecentInteractionReflections(input);
+  }
+
   appendCharacterMessage(input: {
     channelId: string;
     episodeId: string;
@@ -424,15 +503,21 @@ export class CharacterChannelService {
     const first = this.rpService.getCharacter(channel.firstCharacterId);
     const second = this.rpService.getCharacter(channel.secondCharacterId);
     const latest = this.repository.latestMessage(channel.id);
+    const latestScene = this.repository.latestInteractionScene(channel.id);
     const latestEpisode = this.repository.listEpisodes(channel.id, 1)[0];
     return {
       ...channel,
       characterIds: [first.id, second.id],
       characterNames: [first.name, second.name],
-      preview: latest?.content ?? "",
+      preview: latestScene?.narrativeText ?? latest?.content ?? "",
       ...(latestEpisode ? { latestEpisodeStatus: latestEpisode.status } : {}),
     };
   }
+}
+
+function boundedUnit(value: number): number {
+  if (!Number.isFinite(value)) return 0.5;
+  return Math.max(0, Math.min(1, value));
 }
 
 function canonicalPair(firstCharacterId: string, secondCharacterId: string): [string, string] {

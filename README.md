@@ -120,6 +120,9 @@ Deterministic functional completeness, independent LLM-as-Judge quality scoring,
 target-model sandbox routing, aggregate labels, and report interpretation are
 documented in
 [`docs/model-adaptation-evaluation.md`](docs/model-adaptation-evaluation.md).
+The disposable zero-memory task bench, custom hard checks, repeated trials,
+optional LLM-as-Judge scoring, and JSON/Markdown reports are documented in
+[`docs/task-bench.md`](docs/task-bench.md).
 Character collaboration profiles, the distinction between character-owned
 workflows and private Agent Skill packages, Skill-only routing, scoped review,
 child-runtime boundaries, and reviewed Skill improvement are documented in

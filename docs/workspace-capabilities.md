@@ -33,7 +33,7 @@ another space's Workspace.
 |---|---|---|
 | Workspace access | Off | `off`, `read_only`, or `read_write` |
 | Sandboxed shell | Off | Registers `bash` using Bubblewrap |
-| Shell network | Off | Shares the host network namespace only when no private state exists |
+| Shell network | Off | With explicit user authorization, shares the host network namespace for sandboxed Shell commands |
 | User Profile auto-edit | On | Registers `update_user_profile` while User Profile MCP is enabled |
 | Character SOUL auto-edit | Off | Registers the character-bound SOUL MCP in RP sessions |
 
@@ -42,15 +42,14 @@ run with an empty transient `/workspace`, a read-only workspace bind, or a
 read-write workspace bind. Disabling shell automatically disables shell network.
 Enabling network while shell is disabled is rejected.
 
-Shell network is globally fail-closed once any private conversation, private
-memory, private Workspace, or private-only Agent Skill exists. Opening or
-writing the first private item turns this switch off and rebuilds Agent
-capabilities; trying to enable it again is rejected. If a normal Agent turn is
-still running with network access, creation of the first private item waits for
-the turn to finish by rejecting that operation without creating partial private
-state. Host-side Tavily, Web Reader, Vision, and model-provider clients do not
-use the shell namespace and retain their own independent module/configuration
-boundaries.
+Shell network is an explicit, persistent user choice. Before enabling it, the UI
+warns that the Agent can contact arbitrary external services and may transmit
+conversation context, memories, Skill-influenced content, or Workspace data
+visible in the current turn. Once accepted, private data, private conversations,
+incognito overlays, enabled character-private Skills, and autonomous workflows
+do not silently rewrite or narrow that choice. Disabling Shell still disables
+Shell network. Host-side Tavily, Web Reader, Vision, and model-provider clients
+retain their own independent module/configuration boundaries.
 
 Permission overrides use reserved `permission:*` rows in
 `agent_module_settings`. They are separate from MCP and Skill module switches so
@@ -121,16 +120,18 @@ Linux shell execution requires `/usr/bin/bwrap`. The sandbox:
 - does not mount `/home`, the application repository, state root, User Profile,
   SOUL.md files, model credentials, or the host environment;
 - clears environment variables and supplies only `PATH`, `HOME`, and `LANG`;
-- keeps network isolated unless the separate network switch is enabled and no
-  private state exists;
+- keeps network isolated unless the separate network switch is explicitly
+  enabled by the user;
 - limits runtime to 120 seconds and captured output to 64 KiB;
 - records a command hash and length, exit status, duration, timeout, truncation,
   and network mode in the action audit without retaining command text.
 
-This boundary controls host filesystem and network access. It does not make
-untrusted code harmless to files in a read-write workspace. Enable shell and
-network only for tasks that need them; shell network becomes unavailable while
-private state is present so an Agent cannot call YourChar's loopback HTTP API.
+This boundary controls host filesystem mounts but does not make untrusted code
+harmless to files in a read-write Workspace. When Shell network is enabled,
+Bubblewrap shares the host network namespace: commands may access public and
+local services and may send any current-context or Workspace information the
+Agent can express. Private mode and Skill loading preserve the user's choice;
+they do not provide an outbound confidentiality guarantee.
 
 ## 5. Protected Markdown capabilities
 

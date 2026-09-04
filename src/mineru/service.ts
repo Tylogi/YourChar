@@ -171,6 +171,10 @@ export class MineruService {
     return { ...safe };
   }
 
+  getRawConfig(): StoredMineruConfig {
+    return { ...this.config };
+  }
+
   patchConfig(patch: MineruApiConfigPatch): MineruApiConfig {
     if (patch.baseUrl !== undefined) {
       if (typeof patch.baseUrl !== "string") throw new MineruConfigurationError("baseUrl must be a string");

@@ -17,6 +17,8 @@ import type {
   CharacterCollaborationReportOutcome,
   CharacterInteractionActor,
   CharacterInteractionActorInput,
+  CharacterInteractionSceneComposer,
+  CharacterInteractionSceneDraft,
   CharacterInteractionResult,
   CharacterSocialTickResult,
   WorldEventSource,
@@ -27,6 +29,7 @@ const ACTOR_TEXT_LIMIT = 4_000;
 
 export type CharacterInteractionCoordinatorOptions = {
   actor: CharacterInteractionActor;
+  sceneComposer: CharacterInteractionSceneComposer;
   onCollaborationSettled?: (
     result: CharacterInteractionResult,
     signal: AbortSignal,
@@ -164,6 +167,9 @@ export class CharacterInteractionCoordinator {
       this.start();
       this.scheduleExecutions();
       this.scheduleReports();
+      if (existingEpisode.status === "completed") {
+        await this.finalizeCompletedEpisode(existingEpisode);
+      }
       return this.resultFor(
         this.channels.getChannel(existingEpisode.channelId),
         existingEpisode,
@@ -577,6 +583,9 @@ export class CharacterInteractionCoordinator {
     try {
       const job = this.channels.repository.getCollaborationJob(claimed.id);
       if (!job) throw new Error(`collaboration job not found: ${claimed.id}`);
+      if (claimed.status === "completed") {
+        await this.finalizeCompletedEpisode(claimed, controller.signal);
+      }
       const result = this.resultFor(
         this.channels.getChannel(claimed.channelId),
         claimed,
@@ -684,6 +693,9 @@ export class CharacterInteractionCoordinator {
     assertInteractionActive(signal, claimActive);
     const current = this.channels.repository.getEpisode(episode.id) ?? episode;
     if (isTerminal(current.status)) {
+      if (current.status === "completed") {
+        await this.finalizeCompletedEpisode(current);
+      }
       this.recordCollaborationEvidence(current, routing);
       return this.resultFor(channel, current, undefined, routing);
     }
@@ -698,6 +710,7 @@ export class CharacterInteractionCoordinator {
           senderCharacterId: running.initiatorCharacterId,
           kind: running.kind === "collaboration" ? "task" : "message",
           content: opening,
+          unread: false,
         });
       }
       const existingResponse = existingMessages.find((message) =>
@@ -709,7 +722,7 @@ export class CharacterInteractionCoordinator {
           resultText: existingResponse.content,
           completed: true,
         });
-        this.settleEpisodeSafely(completed);
+        await this.finalizeCompletedEpisode(completed, signal);
         this.recordCollaborationEvidence(completed, routing);
         return this.resultFor(channel, completed, existingResponse.content, routing);
       }
@@ -760,13 +773,14 @@ export class CharacterInteractionCoordinator {
         senderCharacterId: running.targetCharacterId,
         kind: running.kind === "collaboration" ? "result" : "message",
         content: reply,
+        unread: false,
       });
       const completed = this.channels.updateEpisode(running.id, {
         status: "completed",
         resultText: reply,
         completed: true,
       });
-      this.settleEpisodeSafely(completed);
+      await this.finalizeCompletedEpisode(completed, signal);
       this.options.onAction?.("character_channel_exchange", "completed", {
         episodeId: completed.id,
         channelId: channel.id,
@@ -793,7 +807,12 @@ export class CharacterInteractionCoordinator {
     episode: CharacterChannelEpisode,
   ): Promise<CharacterInteractionResult> {
     const current = this.channels.repository.getEpisode(episode.id) ?? episode;
-    if (isTerminal(current.status)) return this.resultFor(channel, current);
+    if (isTerminal(current.status)) {
+      if (current.status === "completed") {
+        await this.finalizeCompletedEpisode(current);
+      }
+      return this.resultFor(channel, current);
+    }
     let running = this.channels.updateEpisode(current.id, { status: "running" });
     try {
       const existing = this.channels.repository.listMessages(channel.id, 500)
@@ -824,6 +843,7 @@ export class CharacterInteractionCoordinator {
           episodeId: running.id,
           senderCharacterId: running.initiatorCharacterId,
           content: opening,
+          unread: false,
         });
       }
       const tracked = await this.callTrackedActor(
@@ -855,6 +875,7 @@ export class CharacterInteractionCoordinator {
         episodeId: running.id,
         senderCharacterId: running.targetCharacterId,
         content: reply,
+        unread: false,
       });
       const completed = this.channels.updateEpisode(running.id, {
         status: "completed",
@@ -862,7 +883,7 @@ export class CharacterInteractionCoordinator {
         completed: true,
       });
       this.updateSocialTimestamps(completed);
-      this.settleEpisodeSafely(completed);
+      await this.finalizeCompletedEpisode(completed);
       this.options.onAction?.("character_social_exchange", "completed", {
         episodeId: completed.id,
         channelId: channel.id,
@@ -917,6 +938,12 @@ export class CharacterInteractionCoordinator {
       } : {}),
       ...(relationship ? { relationship } : {}),
       recentMessages: this.channels.repository.listMessages(episode.channelId, ACTOR_CONTEXT_MESSAGE_LIMIT),
+      recentReflections: this.channels.listRecentInteractionReflections({
+        characterId: actor.id,
+        worldId: episode.worldId,
+        peerCharacterId: peer.id,
+        limit: 4,
+      }),
       ...(episode.objective ? { objective: episode.objective } : {}),
       ...(openingMessage ? { openingMessage } : {}),
       ...(purpose === "collaboration_result"
@@ -991,23 +1018,145 @@ export class CharacterInteractionCoordinator {
     }
   }
 
+  private async finalizeCompletedEpisode(
+    episode: CharacterChannelEpisode,
+    signal?: AbortSignal,
+  ): Promise<void> {
+    const current = this.channels.repository.getEpisode(episode.id) ?? episode;
+    if (current.status !== "completed") return;
+    if (this.channels.getInteractionScene(current.id)) {
+      this.settleEpisodeSafely(current);
+      return;
+    }
+    const source = this.rpService.getCharacter(current.initiatorCharacterId);
+    const target = this.rpService.getCharacter(current.targetCharacterId);
+    const sourceRuntime = this.worldService.repository.getRuntime(source.id);
+    const targetRuntime = this.worldService.repository.getRuntime(target.id);
+    const messages = this.channels.repository.listMessages(current.channelId, 500)
+      .filter((message) => message.episodeId === current.id && message.senderType === "character");
+    const composerInput = {
+      episode: current,
+      world: this.worldService.getWorld(current.worldId),
+      source: {
+        characterId: source.id,
+        name: source.name,
+        soulMarkdown: source.soulMarkdown,
+        ...(sourceRuntime ? { runtime: sourceRuntime } : {}),
+        ...(sourceRuntime?.placeId ? {
+          place: this.worldService.repository.getPlace(sourceRuntime.placeId),
+        } : {}),
+        ...(this.worldConversationService.repository.getCharacterRelationship(
+          current.worldId,
+          source.id,
+          target.id,
+        ) ? {
+          relationshipToPeer:
+            this.worldConversationService.repository.getCharacterRelationship(
+              current.worldId,
+              source.id,
+              target.id,
+            ),
+        } : {}),
+        recentReflections: this.channels.listRecentInteractionReflections({
+          characterId: source.id,
+          worldId: current.worldId,
+          peerCharacterId: target.id,
+          limit: 4,
+        }),
+      },
+      target: {
+        characterId: target.id,
+        name: target.name,
+        soulMarkdown: target.soulMarkdown,
+        ...(targetRuntime ? { runtime: targetRuntime } : {}),
+        ...(targetRuntime?.placeId ? {
+          place: this.worldService.repository.getPlace(targetRuntime.placeId),
+        } : {}),
+        ...(this.worldConversationService.repository.getCharacterRelationship(
+          current.worldId,
+          target.id,
+          source.id,
+        ) ? {
+          relationshipToPeer:
+            this.worldConversationService.repository.getCharacterRelationship(
+              current.worldId,
+              target.id,
+              source.id,
+            ),
+        } : {}),
+        recentReflections: this.channels.listRecentInteractionReflections({
+          characterId: target.id,
+          worldId: current.worldId,
+          peerCharacterId: source.id,
+          limit: 4,
+        }),
+      },
+      messages,
+      currentTime: this.now(),
+      ...(signal ? { signal } : {}),
+    };
+    let draft: CharacterInteractionSceneDraft;
+    try {
+      draft = normalizeInteractionSceneDraft(
+        await this.options.sceneComposer(composerInput),
+      );
+    } catch (error) {
+      this.options.onAction?.("character_interaction_scene", "failed", {
+        episodeId: current.id,
+        channelId: current.channelId,
+        stage: "compose",
+        error: errorText(error),
+      });
+      draft = fallbackInteractionScene({
+        episode: current,
+        sourceName: source.name,
+        targetName: target.name,
+        placeName: composerInput.source.place?.name ?? composerInput.target.place?.name,
+        messages,
+      });
+    }
+    try {
+      const saved = this.channels.saveInteractionScene(
+        current.id,
+        draft,
+        interactionSalience(current),
+      );
+      this.settleEpisodeSafely(current);
+      this.options.onAction?.("character_interaction_scene", "completed", {
+        episodeId: current.id,
+        channelId: current.channelId,
+        created: saved.created,
+        reflectionCount: saved.reflections.length,
+      });
+    } catch (error) {
+      this.options.onAction?.("character_interaction_scene", "failed", {
+        episodeId: current.id,
+        channelId: current.channelId,
+        stage: "persist",
+        error: errorText(error),
+      });
+    }
+  }
+
   private settleEpisode(episode: CharacterChannelEpisode): void {
     const eventKey = `character-channel-event:${episode.id}`;
     if (this.worldService.repository.findEventByIdempotencyKey(eventKey)) return;
     const source = this.rpService.getCharacter(episode.initiatorCharacterId);
     const target = this.rpService.getCharacter(episode.targetCharacterId);
-    const messages = this.channels.repository.listMessages(episode.channelId, 500)
+    const scene = this.channels.getInteractionScene(episode.id);
+    const reflections = this.channels.listInteractionReflections(episode.id);
+    const messages = scene ? [] : this.channels.repository.listMessages(episode.channelId, 500)
       .filter((message) => message.episodeId === episode.id && message.senderType === "character");
-    const summary = episode.kind === "collaboration"
+    const summary = scene?.eventSummary ?? (episode.kind === "collaboration"
       ? `${source.name}向${target.name}请求协作，${target.name}给出了回应。`
-      : `${source.name}与${target.name}进行了一次私下交流。`;
+      : `${source.name}与${target.name}进行了一次私下交流。`);
     const now = this.clock.now().toISOString();
     this.worldService.repository.createEvent({
       id: this.idGenerator.next("world-event"),
       worldId: episode.worldId,
       type: "interaction",
       summary,
-      salience: episode.kind === "collaboration" ? 0.72 : 0.58,
+      salience: interactionSalience(episode),
       source: episode.source as WorldEventSource,
       startsAt: episode.createdAt,
       endsAt: episode.completedAt ?? now,
@@ -1023,26 +1172,37 @@ export class CharacterInteractionCoordinator {
       })
       .join("；");
     for (const character of [source, target]) {
+      const reflection = reflections.find((entry) => entry.characterId === character.id);
+      const memoryContent = reflection
+        ? `${summary}\n角色视角：${reflection.summary}`
+        : `${summary}${transcriptSummary ? ` ${transcriptSummary}` : ""}`;
       this.worldConversationService.createObservation({
         worldId: episode.worldId,
         characterId: character.id,
         knowledge: "direct",
-        summary: boundedOptional(`${summary}${transcriptSummary ? ` ${transcriptSummary}` : ""}`, 900),
-        salience: episode.kind === "collaboration" ? 0.72 : 0.58,
+        summary: boundedOptional(summary, 900),
+        salience: interactionSalience(episode),
       });
       this.rpService.writeMemory({
         realm: "roleplay",
         scope: "character",
         type: episode.kind === "collaboration" ? "plot_event" : "relationship_event",
         key: `character-channel:${episode.id}`,
-        content: boundedOptional(`${summary}${transcriptSummary ? ` ${transcriptSummary}` : ""}`, 1_000),
+        content: boundedOptional(memoryContent, 1_000),
         sourceSessionId: `character-channel-${episode.channelId}`,
         sourceMessageId: episode.id,
         characterId: character.id,
-        salience: episode.kind === "collaboration" ? 0.72 : 0.58,
+        salience: interactionSalience(episode),
         confidence: 1,
         confirmed: true,
-        tags: ["world", "character-channel", episode.worldId, episode.kind],
+        tags: [
+          "world",
+          "character-channel",
+          "character-reflection",
+          episode.worldId,
+          episode.kind,
+          character.id === source.id ? target.id : source.id,
+        ],
         idempotencyKey: `character-channel-memory:${episode.id}:${character.id}`,
       });
     }
@@ -1134,6 +1294,10 @@ export class CharacterInteractionCoordinator {
       channel: this.channels.getChannel(channel.id),
       episode: this.channels.repository.getEpisode(episode.id) ?? episode,
       messages,
+      ...(this.channels.getInteractionScene(episode.id) ? {
+        scene: this.channels.getInteractionScene(episode.id),
+      } : {}),
+      reflections: this.channels.listInteractionReflections(episode.id),
       ...(responseText || episode.resultText ? { responseText: responseText || episode.resultText } : {}),
       ...(routing ? { routing } : {}),
     };
@@ -1287,6 +1451,70 @@ function parseDecline(value: string): string | undefined {
   const normalized = value.trim();
   const match = normalized.match(/^\[DECLINE\](?::\s*|\s+)?([\s\S]*)$/iu);
   return match ? boundedOptional(match[1], 500) : undefined;
+}
+
+function interactionSalience(episode: CharacterChannelEpisode): number {
+  return episode.kind === "collaboration" ? 0.72 : 0.58;
+}
+
+function normalizeInteractionSceneDraft(
+  draft: CharacterInteractionSceneDraft,
+): CharacterInteractionSceneDraft {
+  return {
+    narrativeText: boundedRequired(draft.narrativeText, "interaction scene", 8_000),
+    eventSummary: boundedRequired(draft.eventSummary, "interaction event summary", 1_200),
+    sourcePerspectiveSummary: boundedRequired(
+      draft.sourcePerspectiveSummary,
+      "source character perspective",
+      600,
+    ),
+    targetPerspectiveSummary: boundedRequired(
+      draft.targetPerspectiveSummary,
+      "target character perspective",
+      600,
+    ),
+  };
+}
+
+function fallbackInteractionScene(input: {
+  episode: CharacterChannelEpisode;
+  sourceName: string;
+  targetName: string;
+  placeName?: string;
+  messages: CharacterChannelMessage[];
+}): CharacterInteractionSceneDraft {
+  const setting = input.placeName ? `在${input.placeName}` : "在这个世界的一隅";
+  const renderedMessages = input.messages.slice(0, 4).map((message) => {
+    const speaker = message.senderCharacterId === input.episode.initiatorCharacterId
+      ? input.sourceName
+      : input.targetName;
+    const content = boundedOptional(message.content.replace(/\s+/gu, " "), 1_400);
+    return `${speaker}说：“${content}”`;
+  });
+  const action = input.episode.kind === "collaboration"
+    ? `${input.sourceName}向${input.targetName}说明了需要协助的事情。`
+    : `${input.sourceName}先向${input.targetName}开了口。`;
+  const response = renderedMessages.length
+    ? renderedMessages.join("\n\n")
+    : `${input.targetName}听完后作出了回应。`;
+  const narrativeText = boundedRequired(
+    `${setting}，${action}\n\n${response}\n\n话音落下后，两人各自记住了这次往来中不同的部分。`,
+    "fallback interaction scene",
+    8_000,
+  );
+  const eventSummary = input.episode.kind === "collaboration"
+    ? `${input.sourceName}向${input.targetName}提出协作请求，${input.targetName}作出了回应。`
+    : `${input.sourceName}主动与${input.targetName}交谈，两人完成了一次私下互动。`;
+  return {
+    narrativeText,
+    eventSummary,
+    sourcePerspectiveSummary: input.episode.kind === "collaboration"
+      ? `我把需要帮助的事情交代给了${input.targetName}，并记住了对方的回应。`
+      : `我主动找${input.targetName}说了话，也留意到了对方回应我的方式。`,
+    targetPerspectiveSummary: input.episode.kind === "collaboration"
+      ? `${input.sourceName}来找我协助，我按自己的判断给出了回应。`
+      : `${input.sourceName}主动来找我交谈，我选择回应，并形成了自己的印象。`,
+  };
 }
 
 function boundedRequired(value: string, label: string, maximum: number): string {

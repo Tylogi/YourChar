@@ -2,16 +2,16 @@
 
 Status: implemented event-driven baseline
 Audience: product, application, model, storage, and test maintainers
-Last updated: 2026-07-21
+Last updated: 2026-09-04
 
 ## 1. Product Boundary
 
 The chat product has two visible conversation kinds:
 
 1. **Character private chat**: exactly one canonical SMS thread per character.
-   Remote messages are first person. A confirmed meeting temporarily widens the
-   same thread into observable third-person narration without creating another
-   session.
+   Remote messages are first person. Planning and confirming a meeting stay in
+   SMS, but confirmed physical interaction is handed to the character's current
+   World Scene.
 2. **World conversation**: exactly one shared timeline per world. It is a
    third-person multi-character roleplay surface backed by canonical world
    state, events, places, observations, and character-to-character relations.
@@ -21,6 +21,13 @@ either kind, and they are not migration sources for World conversations. A World
 conversation is not a renamed group chat: one world-level model performs the
 entire visible simulation, a background Analyzer maintains state, and the
 timeline has a durable event lifecycle with observer-scoped knowledge.
+
+A meeting Scene reuses that World timeline and event engine; it is not a third
+simulation stack. The active event stores the originating SMS session. Its
+initial cast contains the invited character and characters already at the same
+canonical place, while the normal World causality rules decide who actually
+appears or speaks. Ending the event synchronizes the originating interaction
+back to remote SMS.
 
 The sidebar has two top-level sections:
 
@@ -102,8 +109,8 @@ The first request in a narrative context receives one fixed System prefix:
 - world ID, name, timezone, description, and Markdown rules;
 - valid places and fixed capability IDs;
 - selected participant IDs, names, bounded SOUL.md excerpts, schedules,
-  relevant confirmed memories, observer-scoped knowledge, and relationship
-  state;
+  relevant confirmed memories, observer-scoped knowledge, up to four compact
+  character-owned interaction reflections, and relationship state;
 - the bounded User Profile when its module is enabled;
 - the event state at snapshot time, a bounded Chronicle, and at most 16 prior
   visible messages used as the event/checkpoint handoff.
@@ -137,7 +144,9 @@ rolling-summary rewriting.
 The local timestamp is authoritative for daylight, greetings, routines, and
 ambience. The World model has no MCP, shell, workspace, schedule mutation,
 profile-write, or SOUL-write capability. Schedules and memories are read-only
-state snapshots, not permissions.
+state snapshots, not permissions. Interaction reflections are subjective to
+their named owner: they may shape only that character's behavior and cannot be
+quoted as public narration or promoted to another character's knowledge.
 
 ### Analyzer
 

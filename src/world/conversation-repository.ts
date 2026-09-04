@@ -345,10 +345,11 @@ export class WorldConversationRepository {
   saveStoryEvent(event: WorldStoryEvent): WorldStoryEvent {
     this.database.connection.prepare(`
       INSERT INTO world_story_events(
-        id, world_id, place_id, title, summary, objective, status, revision,
+        id, world_id, meeting_session_id, place_id, title, summary, objective, status, revision,
         created_at, updated_at, started_at, ended_at, settlement_summary, settled_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT(id) DO UPDATE SET
+        meeting_session_id = excluded.meeting_session_id,
         place_id = excluded.place_id,
         title = excluded.title,
         summary = excluded.summary,
@@ -363,6 +364,7 @@ export class WorldConversationRepository {
     `).run(
       event.id,
       event.worldId,
+      event.meetingSessionId ?? null,
       event.placeId ?? null,
       event.title,
       event.summary,
@@ -535,6 +537,9 @@ export class WorldConversationRepository {
     return {
       id: String(row.id),
       worldId: String(row.world_id),
+      ...(optionalString(row.meeting_session_id)
+        ? { meetingSessionId: optionalString(row.meeting_session_id) }
+        : {}),
       ...(optionalString(row.place_id) ? { placeId: optionalString(row.place_id) } : {}),
       title: String(row.title),
       summary: String(row.summary),

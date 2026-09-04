@@ -74,14 +74,6 @@ export function assertLocalControlPlaneMutation(request: IncomingMessage): void 
     );
   }
 
-  const suppliedTokens = cookieValues(request, controlCookieName);
-  if (suppliedTokens.length !== 1 || !tokensEqual(suppliedTokens[0], controlToken)) {
-    throw rejected(
-      "LOCAL_CONTROL_TOKEN_REJECTED",
-      "the local control-plane capability is missing or invalid",
-    );
-  }
-
   if (
     suppliedOrigin !== expectedOrigin &&
     !isAuthenticatedLazycatUiRequest(request, suppliedOrigin, fetchSite, fetchMode, fetchDest)
@@ -89,6 +81,14 @@ export function assertLocalControlPlaneMutation(request: IncomingMessage): void 
     throw rejected(
       "LOCAL_CONTROL_ORIGIN_REJECTED",
       "a same-origin browser request is required",
+    );
+  }
+
+  const suppliedTokens = cookieValues(request, controlCookieName);
+  if (suppliedTokens.length !== 1 || !tokensEqual(suppliedTokens[0], controlToken)) {
+    throw rejected(
+      "LOCAL_CONTROL_TOKEN_REJECTED",
+      "the local control-plane capability is missing or invalid",
     );
   }
 }

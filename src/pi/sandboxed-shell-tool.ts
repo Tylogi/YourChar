@@ -20,8 +20,6 @@ export type SandboxedShellContext = {
   workspaceDir: string;
   workspaceAccess: WorkspaceAccess;
   networkEnabled: boolean;
-  /** Runtime isolation gate; unlike the persisted preference this is checked for every command. */
-  networkAllowed?: () => boolean;
   store: CompanionStore;
   sessionId: string;
   actions: () => ActionRecord[];
@@ -200,5 +198,5 @@ function sandboxArguments(
 }
 
 function effectiveNetworkEnabled(context: SandboxedShellContext): boolean {
-  return context.networkEnabled && (context.networkAllowed?.() ?? true);
+  return context.networkEnabled;
 }

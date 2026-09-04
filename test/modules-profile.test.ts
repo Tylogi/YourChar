@@ -38,6 +38,7 @@ test("module toggles rebuild Pi capabilities and profile context without losing 
       ["mcp", "Web Reader MCP", false],
       ["mcp", "World State MCP", true],
       ["skill", "daily-planning", false],
+      ["skill", "financial-report-analysis", false],
       ["skill", "roleplay-continuity", false],
     ]);
     assert.deepEqual(

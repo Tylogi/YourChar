@@ -231,6 +231,7 @@ Read metadata-only health without exposing memory bodies or credentials:
 ```bash
 curl -fsS http://127.0.0.1:8765/api/v1/memory-vault/health
 curl -fsS http://127.0.0.1:8765/api/v1/memory-vault/recovery
+curl -fsS 'http://127.0.0.1:8765/api/v1/memory-vault/history?limit=10'
 ```
 
 `writer.mode=writer` is normal for the active instance. A
@@ -242,9 +243,18 @@ or remove `memory-vault-journal`; retain the state directory and restart the
 single intended instance. The Settings Vault Health panel shows the same writer,
 journal, recovery, projection, and backup-verification metadata.
 
-## Context Economics
+The Settings page also lists recent application-managed Vault versions. Restore
+from that page so the same-origin control capability, explicit confirmation,
+Vault validation, journal transaction, and projection rebuild all run. Do not
+use `git checkout` against the live Vault. The bare history repository has no
+remote and is intentionally absent from character Agent Git access. A normal
+memory forget is an auditable soft delete; **Delete All Data** destroys the old
+history object store before starting a new empty history.
 
-The Debug page has two bounded views:
+## Debug and evaluation surfaces
+
+The Debug page includes bounded diagnostic views and disposable evaluation
+surfaces:
 
 - Provider Trace retains the latest 10 final payloads. It can contain user and
   memory text, so treat screenshots and exported diagnostics as user data.
@@ -253,6 +263,11 @@ The Debug page has two bounded views:
 - Context Economics retains the latest 100 lightweight records. It stores
   hashes, memory IDs, score reasons, section budgets, LCP evidence, and token
   counts without candidate bodies, query text, credentials, or tool arguments.
+- Built-in Feature Tests use temporary state and deterministic assertions plus
+  an optional independent Judge. See `model-adaptation-evaluation.md`.
+- Task Bench runs user-defined repeated trials in a fresh zero-memory runtime,
+  then keeps reports only in the current browser page until an explicit JSON or
+  Markdown export. See `task-bench.md`.
 
 Settings > Data also has an opt-in Provider Trace file archive. It is disabled
 by default. When enabled, every sanitized trace is appended as one JSON object

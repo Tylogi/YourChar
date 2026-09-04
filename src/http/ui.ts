@@ -494,6 +494,28 @@ export function renderAppHtml(): string {
     .vault-health-row:last-child { border-bottom: 0; }
     .vault-health-row span:first-child { color: var(--muted); }
     .vault-health-row code { overflow-wrap: anywhere; }
+    .vault-history-list {
+      display: grid;
+      gap: 8px;
+      margin-top: 10px;
+    }
+    .vault-history-entry {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto;
+      gap: 10px;
+      align-items: center;
+      padding: 10px 12px;
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      background: var(--surface);
+    }
+    .vault-history-entry-main { min-width: 0; }
+    .vault-history-entry-meta {
+      color: var(--muted);
+      font-size: 12px;
+      margin-top: 4px;
+      overflow-wrap: anywhere;
+    }
     .schedule-shell {
       max-width: 1180px;
       margin: 0 auto;
@@ -1444,95 +1466,6 @@ export function renderAppHtml(): string {
     }
     .module-detail-button { width: 32px; height: 32px; }
     .module-space-select { width: auto; min-width: 116px; height: 34px; }
-    .agent-skill-installer {
-      margin-bottom: 18px;
-      padding: 14px;
-      border: 1px solid var(--line);
-      border-radius: 8px;
-      background: #f8faf9;
-      display: grid;
-      gap: 12px;
-    }
-    .agent-skill-installer-head {
-      display: flex;
-      align-items: baseline;
-      justify-content: space-between;
-      gap: 12px;
-      flex-wrap: wrap;
-    }
-    .agent-skill-installer-head h4 { margin: 0; font-size: 14px; }
-    .agent-skill-installer-head span { color: var(--muted); font-size: 11px; }
-    .agent-skill-install-fields {
-      display: grid;
-      grid-template-columns: minmax(0, 2fr) minmax(220px, 1fr) auto;
-      align-items: end;
-      gap: 10px;
-    }
-    .agent-skill-install-fields label,
-    .agent-skill-install-space {
-      min-width: 0;
-      display: grid;
-      gap: 6px;
-      color: var(--muted);
-      font-size: 11px;
-    }
-    .agent-skill-install-preview {
-      padding-top: 12px;
-      border-top: 1px solid var(--line);
-      display: grid;
-      gap: 12px;
-    }
-    .agent-skill-install-preview[hidden] { display: none; }
-    .agent-skill-install-summary {
-      display: grid;
-      grid-template-columns: repeat(3, minmax(0, 1fr));
-      gap: 1px;
-      border: 1px solid var(--line);
-      border-radius: 6px;
-      overflow: hidden;
-      background: var(--line);
-    }
-    .agent-skill-install-summary > div {
-      min-width: 0;
-      padding: 9px 10px;
-      display: grid;
-      gap: 3px;
-      background: #ffffff;
-    }
-    .agent-skill-install-summary span { color: var(--muted); font-size: 10px; }
-    .agent-skill-install-summary strong,
-    .agent-skill-install-summary code {
-      min-width: 0;
-      overflow-wrap: anywhere;
-      font-size: 11px;
-    }
-    .agent-skill-install-review {
-      max-height: 280px;
-      padding: 10px 12px;
-      overflow: auto;
-      border: 1px solid var(--line);
-      border-radius: 6px;
-      background: #ffffff;
-    }
-    .agent-skill-install-review h5 { margin: 0 0 8px; font-size: 12px; }
-    .agent-skill-install-review pre {
-      margin: 0;
-      white-space: pre-wrap;
-      overflow-wrap: anywhere;
-      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-      font-size: 11px;
-      line-height: 1.55;
-    }
-    .agent-skill-install-actions {
-      display: flex;
-      align-items: end;
-      justify-content: flex-end;
-      gap: 8px;
-      flex-wrap: wrap;
-    }
-    .agent-skill-install-actions .agent-skill-install-space { margin-right: auto; }
-    .agent-skill-install-state { min-height: 16px; color: var(--muted); font-size: 11px; }
-    .agent-skill-install-state.error { color: var(--danger); }
     .module-detail-dialog,
     .message-edit-dialog {
       width: min(720px, calc(100vw - 28px));
@@ -1616,9 +1549,11 @@ export function renderAppHtml(): string {
     }
     .character-channel-messages {
       min-height: 0;
-      padding: 16px;
+      padding: 20px 16px;
       overflow: auto;
-      background: #ededed;
+      background:
+        radial-gradient(circle at 18% 8%, rgba(255, 255, 255, 0.8), transparent 30%),
+        #f1eee6;
       overscroll-behavior: contain;
     }
     .character-channel-episode {
@@ -1673,6 +1608,57 @@ export function renderAppHtml(): string {
       white-space: pre-wrap;
     }
     .character-channel-episode-messages { padding-inline: 4px; }
+    .character-interaction-scene {
+      width: min(100%, 590px);
+      margin: 0 auto;
+      padding: 24px clamp(18px, 5vw, 34px);
+      border: 1px solid #ded8ca;
+      border-radius: 8px;
+      background: rgba(255, 253, 247, 0.96);
+      box-shadow: 0 8px 24px rgba(78, 67, 43, 0.07);
+    }
+    .character-interaction-prose {
+      color: #34332f;
+      font-family: "Noto Serif SC", "Songti SC", "STSong", serif;
+      font-size: 14px;
+      line-height: 1.95;
+      letter-spacing: 0.015em;
+    }
+    .character-interaction-prose p { margin: 0 0 1.05em; text-indent: 2em; }
+    .character-interaction-prose p:last-child { margin-bottom: 0; }
+    .character-interaction-notes,
+    .character-interaction-audit {
+      width: min(100%, 590px);
+      margin: 10px auto 0;
+      border: 1px solid #ded8ca;
+      border-radius: 7px;
+      background: rgba(255, 253, 247, 0.86);
+    }
+    .character-interaction-notes > summary,
+    .character-interaction-audit > summary {
+      padding: 9px 12px;
+      cursor: pointer;
+      color: #696257;
+      font-size: 11px;
+      font-weight: 620;
+      list-style-position: inside;
+    }
+    .character-interaction-reflections {
+      padding: 0 12px 12px;
+      display: grid;
+      gap: 8px;
+    }
+    .character-interaction-reflection {
+      padding: 9px 10px;
+      border-left: 2px solid #9caf9d;
+      background: #f4f7f2;
+      color: #4c554d;
+      font-size: 11px;
+      line-height: 1.65;
+      white-space: pre-wrap;
+    }
+    .character-interaction-reflection strong { display: block; margin-bottom: 2px; color: #33463a; }
+    .character-interaction-audit .character-channel-episode-messages { padding: 4px 12px 0; }
     .character-channel-message {
       margin: 0 0 14px;
       display: grid;
@@ -2565,12 +2551,6 @@ export function renderAppHtml(): string {
       .subagent-settings-actions { align-items: stretch; flex-direction: column; }
       .subagent-settings-state { width: 100%; margin-right: 0; }
       .subagent-settings-actions button { width: 100%; }
-      .agent-skill-install-fields { grid-template-columns: 1fr; }
-      .agent-skill-install-fields button { width: 100%; }
-      .agent-skill-install-summary { grid-template-columns: 1fr; }
-      .agent-skill-install-actions { align-items: stretch; flex-direction: column; }
-      .agent-skill-install-actions .agent-skill-install-space { width: 100%; margin-right: 0; }
-      .agent-skill-install-actions button { width: 100%; }
       .permission-row { grid-template-columns: 1fr; }
       .permission-row .toggle { justify-self: start; }
       .permission-path { max-width: 100%; text-align: left; }
@@ -3477,6 +3457,25 @@ export function renderAppHtml(): string {
     .feature-test-history-table td { padding: 7px 6px; border-top: 1px solid var(--line); text-align: left; }
     .feature-test-history-table th { color: var(--muted); font-weight: 500; }
     .feature-test-history-table td:not(:first-child) { white-space: nowrap; font-variant-numeric: tabular-nums; }
+    .feature-test-history-table tr.active td { background: #f2f7f4; }
+    .task-bench-history-open {
+      max-width: 280px;
+      padding: 0;
+      border: 0;
+      background: transparent;
+      color: #315d47;
+      font: inherit;
+      text-align: left;
+      text-decoration: underline;
+      text-decoration-color: transparent;
+      text-underline-offset: 2px;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      cursor: pointer;
+    }
+    .task-bench-history-open:hover,
+    .task-bench-history-open:focus-visible { text-decoration-color: currentColor; }
     .feature-test-list,
     .feature-test-results { padding: 0 14px; }
     .feature-test-case {
@@ -3510,6 +3509,39 @@ export function renderAppHtml(): string {
     .feature-test-dimension strong { display: block; margin-bottom: 3px; font: 650 13px/1 Arial, sans-serif; }
     .feature-test-dimension span { display: block; color: var(--muted); font-size: 9px; }
     .feature-test-dimension p { margin: 5px 0 0; color: #505a55; font-size: 10px; line-height: 1.4; }
+    .task-bench-form { border-bottom: 1px solid var(--line); background: #ffffff; }
+    .task-bench-config { padding: 14px; display: grid; gap: 12px; }
+    .task-bench-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+    .task-bench-field { min-width: 0; display: grid; gap: 5px; }
+    .task-bench-field > span { color: var(--muted); font-size: 10px; }
+    .task-bench-field input,
+    .task-bench-field textarea,
+    .task-bench-field select { width: 100%; }
+    .task-bench-field textarea { min-height: 92px; resize: vertical; line-height: 1.5; }
+    .task-bench-field.task-bench-wide { grid-column: 1 / -1; }
+    .task-bench-advanced { border: 1px solid var(--line); background: #fafafa; }
+    .task-bench-advanced > summary { padding: 9px 10px; cursor: pointer; color: #3f4b45; font-size: 11px; }
+    .task-bench-advanced-grid { padding: 0 10px 10px; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+    .task-bench-checks { display: flex; align-items: center; gap: 16px; flex-wrap: wrap; }
+    .task-bench-checks label { display: inline-flex; align-items: center; gap: 6px; color: #46534c; font-size: 11px; }
+    .task-bench-checks input { width: 15px; height: 15px; }
+    .task-bench-upload { padding: 10px; border: 1px dashed #b8c8bf; background: #f7faf8; }
+    .task-bench-upload.task-bench-wide { grid-column: 1 / -1; }
+    .task-bench-upload-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+    .task-bench-upload-head > span { color: #415148; font-size: 11px; font-weight: 650; }
+    .task-bench-upload-actions { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+    .task-bench-upload-state { color: var(--muted); font-size: 10px; }
+    .task-bench-upload-help { margin: 7px 0 0; color: var(--muted); font-size: 10px; line-height: 1.5; }
+    .task-bench-upload-list { margin-top: 8px; display: grid; gap: 5px; }
+    .task-bench-upload-item { min-width: 0; padding: 7px 8px; border: 1px solid var(--line); background: #ffffff; display: flex; align-items: center; gap: 8px; }
+    .task-bench-upload-item > i { width: 15px; height: 15px; flex: 0 0 auto; color: #64746b; }
+    .task-bench-upload-copy { min-width: 0; flex: 1; display: grid; gap: 2px; }
+    .task-bench-upload-copy strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: #344239; font-size: 11px; }
+    .task-bench-upload-copy small { color: var(--muted); font-size: 9px; }
+    .task-bench-upload-copy small.error { color: var(--danger); }
+    .task-bench-upload-remove { flex: 0 0 auto; min-height: 26px; padding: 3px 7px; }
+    .task-bench-isolation { padding: 9px 10px; border-left: 3px solid #7e9d8b; background: #f2f7f4; color: #486052; font-size: 11px; line-height: 1.55; }
+    .task-bench-output-files { margin: 8px 0 0; color: var(--muted); font-size: 10px; line-height: 1.5; }
     .initiative-debug-panel { min-height: 0; overflow: auto; background: #f7f7f7; }
     .initiative-summary {
       padding: 12px 14px;
@@ -4712,6 +4744,10 @@ export function renderAppHtml(): string {
       .feature-test-score-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
       .feature-test-dimensions { grid-template-columns: repeat(2, minmax(0, 1fr)); }
       .feature-test-history { overflow-x: auto; }
+      .task-bench-grid,
+      .task-bench-advanced-grid { grid-template-columns: minmax(0, 1fr); }
+      .task-bench-field.task-bench-wide,
+      .task-bench-upload.task-bench-wide { grid-column: auto; }
       .settings-shell { padding: 0; }
       .management-head,
       .settings-head { align-items: flex-start; }
@@ -5206,7 +5242,7 @@ export function renderAppHtml(): string {
 	                  <label>使用模型<select id="characterModelProfile"><option value="">继承系统默认模型</option></select></label>
 	                  <label class="full">见面模式预设
 	                    <select id="characterMeetingPreset"><option value="">不启用上下文预设</option></select>
-	                    <span class="character-preset-hint">仅在角色处于现场见面状态时启用；退出见面后立即恢复 SMS 默认的系统提示词、用户画像和上下文编排。</span>
+	                    <span class="character-preset-hint">仅在该角色发起的现场见面中启用；普通空间会作为当前 World 现场的文学风格层，退出后立即恢复默认编排。</span>
 	                  </label>
 	                  <div class="full character-soul-head">
                     <h4>SOUL.md</h4>
@@ -5440,44 +5476,6 @@ export function renderAppHtml(): string {
               <h3>MCP 与 Skills</h3>
               <button id="refreshModulesBtn" class="secondary" type="button">重新扫描</button>
             </div>
-            <form id="agentSkillInstallForm" class="agent-skill-installer">
-              <div class="agent-skill-installer-head">
-                <h4>安装 Agent Skill</h4>
-                <span>先下载到临时区预检；预检不会安装或启用 Skill</span>
-              </div>
-              <div class="agent-skill-install-fields">
-                <label>
-                  <span>公开 HTTPS 地址（GitHub 目录或 ZIP）</span>
-                  <input id="agentSkillSourceUrl" type="url" inputmode="url" autocomplete="off" required placeholder="https://github.com/owner/repo/tree/main/path/to/skill" />
-                </label>
-                <label>
-                  <span>预期 Skill 内容 SHA-256（可选）</span>
-                  <input id="agentSkillExpectedSha256" inputmode="text" autocomplete="off" spellcheck="false" maxlength="64" placeholder="预检清单的 64 位十六进制摘要" />
-                </label>
-                <button id="previewAgentSkillInstallBtn" class="secondary" type="submit">下载并预检</button>
-              </div>
-              <div id="agentSkillInstallState" class="agent-skill-install-state" role="status" aria-live="polite"></div>
-              <section id="agentSkillInstallPreview" class="agent-skill-install-preview" aria-label="Skill 安装预检结果" hidden>
-                <div id="agentSkillInstallSummary" class="agent-skill-install-summary"></div>
-                <div class="agent-skill-install-review">
-                  <h5>SKILL.md 文本预览</h5>
-                  <p class="muted">这里只展示主说明；包内其他资源仅核对路径、大小与摘要，确认安装即表示信任完整文件清单。</p>
-                  <pre id="agentSkillInstallMarkdown"></pre>
-                </div>
-                <div class="agent-skill-install-actions">
-                  <label class="agent-skill-install-space">
-                    <span>安装后的可用空间</span>
-                    <select id="agentSkillInstallSpaces" aria-label="安装后的 Skill 可用空间">
-                      <option value="normal">仅普通</option>
-                      <option value="secret">仅私密</option>
-                      <option value="both">普通 + 私密</option>
-                    </select>
-                  </label>
-                  <button id="cancelAgentSkillInstallBtn" class="secondary" type="button">取消并删除预检</button>
-                  <button id="confirmAgentSkillInstallBtn" class="primary" type="button">确认安装并启用</button>
-                </div>
-              </section>
-            </form>
             <div id="moduleList" class="module-list"></div>
             <div class="permission-section">
               <div class="schedule-head">
@@ -5506,7 +5504,7 @@ export function renderAppHtml(): string {
                 <div class="permission-row">
                   <div>
                     <div class="module-name">终端网络</div>
-                    <div class="module-description">保存 Shell 网络偏好；实际访问还受私密模式、角色私有 Skill 与角色自建工作法的安全隔离约束</div>
+                    <div class="module-description">由用户明确授权 Agent 使用完整网络；开启后，当前会话与 Workspace 中可见的信息可能被发送到外部服务</div>
                   </div>
                   <label class="toggle"><span id="networkPermissionLabel">已关闭</span><input id="networkPermissionInput" type="checkbox" data-permission="networkEnabled" /></label>
                 </div>
@@ -5527,7 +5525,7 @@ export function renderAppHtml(): string {
                 <div class="permission-row">
                   <div>
                     <div class="module-name">角色 Skill 自主管理</div>
-                    <div class="module-description">允许普通角色会话中的角色自行选择公开 HTTPS 来源并下载安装；请求会向远端暴露目标主机和路径，请勿在 URL 或普通空间内容中放入秘密。下载内容会从下一回合起作为指令影响角色，并可引导使用你已开启的 Workspace 或联网工具，请仅在接受此风险时开启。私密会话不能远程安装，但仍可创建、修订本地工作法并管理已安装包；无痕会话只使用只读冻结快照，不能进行任何 Skill 管理。自治开启、本轮加载启用中的角色私有 Skill 或角色自建工作法时，Shell 有效网络会被拒绝；关闭后需停用相关项并进入下一安全回合，才按原网络偏好恢复</div>
+                    <div class="module-description">允许普通角色会话中的角色自行选择公开 HTTPS 来源并下载安装；请求会向远端暴露目标主机和路径，请勿在 URL 或普通空间内容中放入秘密。下载内容会从下一回合起作为指令影响角色，并可引导使用你已开启的 Workspace 或联网工具，请仅在接受此风险时开启。私密会话不能远程安装，但仍可创建、修订本地工作法并管理已安装包；无痕会话只使用只读冻结快照，不能进行任何 Skill 管理。此权限不会替你开启或关闭终端网络；若你同时允许联网，角色与已加载的 Skill 都可按该授权使用网络</div>
                   </div>
                   <label class="toggle"><span id="characterSkillManagePermissionLabel">已关闭</span><input id="characterSkillManagePermissionInput" type="checkbox" data-permission="characterSkillManageEnabled" /></label>
                 </div>
@@ -5663,6 +5661,7 @@ export function renderAppHtml(): string {
               <button id="debugEconomicsBtn" type="button" role="tab" aria-selected="false">Context Economics</button>
               <button id="debugInitiativeBtn" type="button" role="tab" aria-selected="false">主动决策</button>
               <button id="debugFeatureTestsBtn" type="button" role="tab" aria-selected="false">功能测试</button>
+              <button id="debugTaskBenchBtn" type="button" role="tab" aria-selected="false">任务测试台</button>
             </div>
             <button id="refreshLogsBtn" class="secondary icon-button" type="button" title="刷新日志" aria-label="刷新日志"><i data-lucide="refresh-cw" aria-hidden="true"></i></button>
           </div>
@@ -5714,6 +5713,54 @@ export function renderAppHtml(): string {
           <div id="featureTestHistory" class="feature-test-history"></div>
           <div id="featureTestResults" class="feature-test-results"></div>
           <div id="featureTestList" class="feature-test-list"></div>
+        </section>
+        <section id="taskBenchPanel" class="feature-test-panel" hidden>
+          <form id="taskBenchForm" class="task-bench-form">
+            <div class="feature-test-toolbar">
+              <label class="feature-test-field"><span>测试模式</span><select id="taskBenchTargetMode" aria-label="测试模式"><option value="character">角色 Agent</option><option value="model">通用 Agent</option></select></label>
+              <label class="feature-test-field"><span>测试角色</span><select id="taskBenchCharacter" aria-label="测试角色"><option value="">选择测试角色</option></select></label>
+              <label class="feature-test-field"><span>被测模型</span><select id="taskBenchTargetModel" aria-label="被测模型"><option value="">选择被测模型</option></select></label>
+              <label class="feature-test-field"><span>LLM Judge</span><select id="taskBenchJudgeModel" aria-label="LLM Judge"><option value="">不启用 Judge</option></select></label>
+              <label class="feature-test-field"><span>重复次数</span><select id="taskBenchRepetitions" aria-label="重复次数"><option value="1">1 次</option><option value="3" selected>3 次</option><option value="5">5 次</option></select></label>
+              <label class="feature-test-field"><span>单轮上限</span><select id="taskBenchTimeout" aria-label="单轮任务时间上限"><option value="300">5 分钟</option><option value="900">15 分钟</option><option value="1800" selected>30 分钟</option><option value="3600">60 分钟</option><option value="7200">2 小时</option></select></label>
+              <button id="runTaskBenchBtn" class="primary" type="submit"><i data-lucide="play" aria-hidden="true"></i><span>开始评测</span></button>
+              <button id="exportTaskBenchJsonBtn" class="secondary" type="button" disabled><i data-lucide="download" aria-hidden="true"></i><span>JSON</span></button>
+              <button id="exportTaskBenchMarkdownBtn" class="secondary" type="button" disabled><i data-lucide="file-text" aria-hidden="true"></i><span>Markdown</span></button>
+              <span id="taskBenchState" class="feature-test-state"></span>
+            </div>
+            <div class="task-bench-config">
+              <div class="task-bench-grid">
+                <label class="task-bench-field task-bench-wide"><span>评测名称</span><input id="taskBenchName" type="text" maxlength="160" value="临时任务评测" /></label>
+                <label class="task-bench-field task-bench-wide"><span>任务</span><textarea id="taskBenchTask" maxlength="30000" required placeholder="向角色或模型布置一个完整、可执行的任务"></textarea></label>
+                <label class="task-bench-field task-bench-wide"><span>Judge 评分标准</span><textarea id="taskBenchRubric" maxlength="12000" placeholder="例如：结论需由报告数据支持；指出至少三个主要风险；不得使用报告期后的信息"></textarea></label>
+                <div class="task-bench-upload task-bench-wide">
+                  <div class="task-bench-upload-head"><span>直接上传测试材料</span><div class="task-bench-upload-actions"><input id="taskBenchUploadInput" type="file" multiple hidden /><button id="taskBenchUploadBtn" class="secondary" type="button"><i data-lucide="paperclip" aria-hidden="true"></i><span>选择文件</span></button><span id="taskBenchUploadState" class="task-bench-upload-state">尚未上传</span></div></div>
+                  <p class="task-bench-upload-help">文件只在服务内存中临时保留，可复用于本页的多轮评测；单个不超过 20 MiB、合计不超过 80 MiB，关闭页面或一小时后自动清理。</p>
+                  <div id="taskBenchUploadList" class="task-bench-upload-list" aria-live="polite"></div>
+                </div>
+              </div>
+              <details class="task-bench-advanced">
+                <summary>测试材料、参考答案与硬性检查</summary>
+                <div class="task-bench-advanced-grid">
+                  <label class="task-bench-field task-bench-wide"><span>参考答案（仅供 Judge）</span><textarea id="taskBenchReference" maxlength="30000" placeholder="可留空；不会提供给被测角色或模型"></textarea></label>
+                  <label class="task-bench-field"><span>Workspace 测试材料路径（每行一个）</span><textarea id="taskBenchWorkspacePaths" placeholder="uploads/report.pdf"></textarea></label>
+                  <label class="task-bench-field"><span>结果必须包含（每行一个）</span><textarea id="taskBenchRequiredPhrases" placeholder="关键结论"></textarea></label>
+                  <label class="task-bench-field"><span>结果禁止包含（每行一个）</span><textarea id="taskBenchForbiddenPhrases" placeholder="无法验证的固定措辞"></textarea></label>
+                  <label class="task-bench-field"><span>必须生成的文件（每行一个精确路径）</span><textarea id="taskBenchRequiredFiles" placeholder="outputs/report.md"></textarea></label>
+                  <div class="task-bench-field"><span>计分设置</span><div class="task-bench-grid"><label class="task-bench-field"><span>通过线</span><input id="taskBenchPassThreshold" type="number" min="0" max="100" step="1" value="70" /></label><label class="task-bench-field"><span>Judge 权重</span><input id="taskBenchJudgeWeight" type="number" min="0" max="1" step="0.1" value="0.6" /></label><label class="task-bench-field task-bench-wide"><span>Judge 时间上限</span><select id="taskBenchJudgeTimeout"><option value="120">2 分钟</option><option value="300">5 分钟</option><option value="600" selected>10 分钟</option><option value="1800">30 分钟</option><option value="3600">60 分钟</option></select></label></div></div>
+                </div>
+                <div class="task-bench-checks" style="padding:0 10px 10px;">
+                  <label><input id="taskBenchRequireJson" type="checkbox" />结果必须是 JSON</label>
+                  <label><input id="taskBenchIncludeSkills" type="checkbox" checked />角色模式加载专属 Skill</label>
+                  <label><input id="taskBenchIncludePreset" type="checkbox" checked />角色模式加载预设</label>
+                </div>
+              </details>
+              <div class="task-bench-isolation">每次重复运行都会创建新的临时状态和空白 Workspace，并把所选测试材料复制进去。角色模式只复制名称、SOUL、所选预设和专属 Skill；不会复制记忆、用户画像、关系、世界或历史会话。当前已启用的工具与网络权限会被继承，但所有运行写入只发生在临时环境，评测结束后销毁。</div>
+            </div>
+          </form>
+          <div id="taskBenchReport" class="feature-test-report"></div>
+          <div id="taskBenchHistory" class="feature-test-history"></div>
+          <div id="taskBenchResults" class="feature-test-results"></div>
         </section>
         <section id="initiativeDebugPanel" class="initiative-debug-panel" hidden>
           <div class="feature-test-toolbar">
@@ -6002,7 +6049,7 @@ export function renderAppHtml(): string {
 	              <div class="meeting-preset-heading">
 	                <div>
 	                  <h3>见面模式预设</h3>
-	                  <p>导入 SillyTavern / 酒馆 JSON 预设，仅在角色进入现场见面后按启用顺序编排每轮上下文；远程私聊与约见等待继续使用 SMS 默认编排。预设中的扩展脚本不会执行。</p>
+	                  <p>导入 SillyTavern / 酒馆 JSON 预设。普通空间见面会将启用项作为当前 World 现场的文学风格层，私密兼容见面仍按启用顺序编排；远程私聊与约见等待继续使用 SMS 默认编排。预设中的扩展脚本不会执行。</p>
 	                </div>
 	              </div>
 	              <input id="meetingPresetImportInput" type="file" accept=".json,application/json" hidden />
@@ -6072,7 +6119,16 @@ export function renderAppHtml(): string {
               <div class="vault-health-row"><span>Journal</span><span id="memoryVaultJournal">unknown</span></div>
               <div class="vault-health-row"><span>Recovery</span><span id="memoryVaultRecovery">unknown</span></div>
               <div class="vault-health-row"><span>Projection</span><span id="memoryVaultProjection">unknown</span></div>
+              <div class="vault-health-row"><span>History</span><span id="memoryVaultHistoryHealth">unknown</span></div>
               <div class="vault-health-row"><span>Backup</span><span id="memoryVaultBackup">unknown</span></div>
+            </div>
+            <div class="settings-data-section">
+              <div class="okf-section-head"><h3>本地版本历史</h3><span id="memoryVaultHistoryState" class="muted">加载中...</span></div>
+              <p class="muted">由应用在 Vault 事务完成后自动记录。角色 Agent 无法访问这个仓库，恢复操作仍会经过 Vault 校验与索引事务。</p>
+              <div class="settings-actions">
+                <button id="refreshMemoryVaultHistoryBtn" class="secondary" type="button"><i data-lucide="history" aria-hidden="true"></i><span>刷新历史</span></button>
+              </div>
+              <div id="memoryVaultHistoryList" class="vault-history-list" aria-live="polite"></div>
             </div>
             <div class="settings-data-section">
               <div class="okf-section-head"><h3>Open Knowledge Format</h3><span class="okf-version">OKF v0.1</span></div>
@@ -6390,8 +6446,8 @@ export function renderAppHtml(): string {
     </dialog>
     <dialog id="characterChannelDialog" class="module-detail-dialog character-channel-dialog" aria-labelledby="characterChannelTitle">
       <div class="archived-dialog-head">
-        <h2 id="characterChannelTitle">角色通信</h2>
-        <button id="closeCharacterChannelBtn" class="secondary icon-button" type="button" title="关闭" aria-label="关闭角色通信"><i data-lucide="x" aria-hidden="true"></i></button>
+        <h2 id="characterChannelTitle">角色互动</h2>
+        <button id="closeCharacterChannelBtn" class="secondary icon-button" type="button" title="关闭" aria-label="关闭角色互动"><i data-lucide="x" aria-hidden="true"></i></button>
       </div>
       <div id="characterChannelParticipants" class="character-channel-participants"></div>
       <div id="characterChannelMessages" class="character-channel-messages"></div>
@@ -6505,6 +6561,8 @@ export function renderAppHtml(): string {
       activeWorldId: "",
       worldAbortController: null,
       currentScene: null,
+      activeMeetingScene: null,
+      meetingReturnSessionId: "",
       contextBudget: null,
       contextCompacting: false,
       characterLiveState: null,
@@ -6561,8 +6619,6 @@ export function renderAppHtml(): string {
       agentModules: [],
       moduleDetailRequestId: 0,
       moduleDetailData: null,
-      agentSkillInstallStage: null,
-      agentSkillInstallRequestId: 0,
       agentPermissions: null,
       userInsights: null,
       insightReceiptBaselines: new Map(),
@@ -6587,6 +6643,19 @@ export function renderAppHtml(): string {
       featureTestJudgeModelId: "",
       featureTestModelOptionsInitialized: false,
       featureTestsRunning: false,
+      taskBenchResult: null,
+      taskBenchReports: [],
+      taskBenchReportsLoaded: false,
+      taskBenchReportsLoading: false,
+      taskBenchReportsError: "",
+      taskBenchReportsRequestId: 0,
+      taskBenchReportRequestId: 0,
+      taskBenchTargetModelId: "",
+      taskBenchJudgeModelId: "",
+      taskBenchModelOptionsInitialized: false,
+      taskBenchRunning: false,
+      taskBenchUploading: false,
+      taskBenchUploads: [],
       conversationListOpen: false,
       conversationBatchMode: false,
       selectedSessionIds: new Set(),
@@ -6670,17 +6739,6 @@ export function renderAppHtml(): string {
       workspaceFileUploadInput: document.getElementById("workspaceFileUploadInput"),
       refreshModulesBtn: document.getElementById("refreshModulesBtn"),
       moduleList: document.getElementById("moduleList"),
-      agentSkillInstallForm: document.getElementById("agentSkillInstallForm"),
-      agentSkillSourceUrl: document.getElementById("agentSkillSourceUrl"),
-      agentSkillExpectedSha256: document.getElementById("agentSkillExpectedSha256"),
-      previewAgentSkillInstallBtn: document.getElementById("previewAgentSkillInstallBtn"),
-      agentSkillInstallState: document.getElementById("agentSkillInstallState"),
-      agentSkillInstallPreview: document.getElementById("agentSkillInstallPreview"),
-      agentSkillInstallSummary: document.getElementById("agentSkillInstallSummary"),
-      agentSkillInstallMarkdown: document.getElementById("agentSkillInstallMarkdown"),
-      agentSkillInstallSpaces: document.getElementById("agentSkillInstallSpaces"),
-      cancelAgentSkillInstallBtn: document.getElementById("cancelAgentSkillInstallBtn"),
-      confirmAgentSkillInstallBtn: document.getElementById("confirmAgentSkillInstallBtn"),
       workspacePath: document.getElementById("workspacePath"),
       permissionControls: document.getElementById("permissionControls"),
       workspaceAccessControls: document.getElementById("workspaceAccessControls"),
@@ -6752,6 +6810,7 @@ export function renderAppHtml(): string {
       initiativeSummary: document.getElementById("initiativeSummary"),
       initiativeDebugList: document.getElementById("initiativeDebugList"),
       debugFeatureTestsBtn: document.getElementById("debugFeatureTestsBtn"),
+      debugTaskBenchBtn: document.getElementById("debugTaskBenchBtn"),
       debugInitiativeBtn: document.getElementById("debugInitiativeBtn"),
       featureTestCharacter: document.getElementById("featureTestCharacter"),
       featureTestTargetModel: document.getElementById("featureTestTargetModel"),
@@ -6764,6 +6823,39 @@ export function renderAppHtml(): string {
       featureTestHistory: document.getElementById("featureTestHistory"),
       featureTestList: document.getElementById("featureTestList"),
       featureTestResults: document.getElementById("featureTestResults"),
+      taskBenchPanel: document.getElementById("taskBenchPanel"),
+      taskBenchForm: document.getElementById("taskBenchForm"),
+      taskBenchTargetMode: document.getElementById("taskBenchTargetMode"),
+      taskBenchCharacter: document.getElementById("taskBenchCharacter"),
+      taskBenchTargetModel: document.getElementById("taskBenchTargetModel"),
+      taskBenchJudgeModel: document.getElementById("taskBenchJudgeModel"),
+      taskBenchRepetitions: document.getElementById("taskBenchRepetitions"),
+      taskBenchTimeout: document.getElementById("taskBenchTimeout"),
+      taskBenchName: document.getElementById("taskBenchName"),
+      taskBenchTask: document.getElementById("taskBenchTask"),
+      taskBenchRubric: document.getElementById("taskBenchRubric"),
+      taskBenchReference: document.getElementById("taskBenchReference"),
+      taskBenchUploadInput: document.getElementById("taskBenchUploadInput"),
+      taskBenchUploadBtn: document.getElementById("taskBenchUploadBtn"),
+      taskBenchUploadState: document.getElementById("taskBenchUploadState"),
+      taskBenchUploadList: document.getElementById("taskBenchUploadList"),
+      taskBenchWorkspacePaths: document.getElementById("taskBenchWorkspacePaths"),
+      taskBenchRequiredPhrases: document.getElementById("taskBenchRequiredPhrases"),
+      taskBenchForbiddenPhrases: document.getElementById("taskBenchForbiddenPhrases"),
+      taskBenchRequiredFiles: document.getElementById("taskBenchRequiredFiles"),
+      taskBenchPassThreshold: document.getElementById("taskBenchPassThreshold"),
+      taskBenchJudgeWeight: document.getElementById("taskBenchJudgeWeight"),
+      taskBenchJudgeTimeout: document.getElementById("taskBenchJudgeTimeout"),
+      taskBenchRequireJson: document.getElementById("taskBenchRequireJson"),
+      taskBenchIncludeSkills: document.getElementById("taskBenchIncludeSkills"),
+      taskBenchIncludePreset: document.getElementById("taskBenchIncludePreset"),
+      runTaskBenchBtn: document.getElementById("runTaskBenchBtn"),
+      exportTaskBenchJsonBtn: document.getElementById("exportTaskBenchJsonBtn"),
+      exportTaskBenchMarkdownBtn: document.getElementById("exportTaskBenchMarkdownBtn"),
+      taskBenchState: document.getElementById("taskBenchState"),
+      taskBenchReport: document.getElementById("taskBenchReport"),
+      taskBenchHistory: document.getElementById("taskBenchHistory"),
+      taskBenchResults: document.getElementById("taskBenchResults"),
       traceIndex: document.getElementById("traceIndex"),
       mobileTraceSelect: document.getElementById("mobileTraceSelect"),
       traceEmpty: document.getElementById("traceEmpty"),
@@ -7252,7 +7344,11 @@ export function renderAppHtml(): string {
       memoryVaultJournal: document.getElementById("memoryVaultJournal"),
       memoryVaultRecovery: document.getElementById("memoryVaultRecovery"),
       memoryVaultProjection: document.getElementById("memoryVaultProjection"),
+      memoryVaultHistoryHealth: document.getElementById("memoryVaultHistoryHealth"),
       memoryVaultBackup: document.getElementById("memoryVaultBackup"),
+      memoryVaultHistoryState: document.getElementById("memoryVaultHistoryState"),
+      memoryVaultHistoryList: document.getElementById("memoryVaultHistoryList"),
+      refreshMemoryVaultHistoryBtn: document.getElementById("refreshMemoryVaultHistoryBtn"),
       traceArchiveEnabled: document.getElementById("traceArchiveEnabled"),
       traceArchivePath: document.getElementById("traceArchivePath"),
       traceArchiveState: document.getElementById("traceArchiveState"),
@@ -7307,9 +7403,6 @@ export function renderAppHtml(): string {
     nodes.refreshModulesBtn.addEventListener("click", loadCapabilityManagement);
     nodes.moduleList.addEventListener("change", toggleAgentModule);
     nodes.moduleList.addEventListener("click", openModuleDetailFromList);
-    nodes.agentSkillInstallForm.addEventListener("submit", previewAgentSkillInstall);
-    nodes.cancelAgentSkillInstallBtn.addEventListener("click", cancelAgentSkillInstall);
-    nodes.confirmAgentSkillInstallBtn.addEventListener("click", confirmAgentSkillInstall);
     nodes.permissionControls.addEventListener("change", toggleAgentPermission);
     nodes.workspaceAccessControls.addEventListener("click", setWorkspaceAccess);
     nodes.profileDocumentForm.addEventListener("submit", saveUserProfile);
@@ -7338,6 +7431,7 @@ export function renderAppHtml(): string {
     nodes.debugEconomicsBtn.addEventListener("click", () => setDebugDataset("economics"));
     nodes.debugInitiativeBtn.addEventListener("click", () => setDebugDataset("initiative"));
     nodes.debugFeatureTestsBtn.addEventListener("click", () => setDebugDataset("feature-tests"));
+    nodes.debugTaskBenchBtn.addEventListener("click", () => setDebugDataset("task-bench"));
     nodes.initiativeCharacterFilter.addEventListener("change", renderInitiativeDebug);
     nodes.initiativeDecisionFilter.addEventListener("change", renderInitiativeDebug);
     nodes.selectAllFeatureTestsBtn.addEventListener("click", toggleAllFeatureTests);
@@ -7349,6 +7443,20 @@ export function renderAppHtml(): string {
     nodes.featureTestJudgeModel.addEventListener("change", () => {
       state.featureTestJudgeModelId = nodes.featureTestJudgeModel.value;
     });
+    nodes.taskBenchForm.addEventListener("submit", runTaskBenchEvaluation);
+    nodes.taskBenchTargetMode.addEventListener("change", updateTaskBenchTargetMode);
+    nodes.taskBenchUploadBtn.addEventListener("click", () => nodes.taskBenchUploadInput.click());
+    nodes.taskBenchUploadInput.addEventListener("change", (event) => void uploadTaskBenchFiles(event));
+    nodes.taskBenchUploadList.addEventListener("click", (event) => void removeTaskBenchUpload(event));
+    nodes.taskBenchHistory.addEventListener("click", (event) => void openTaskBenchHistoryReport(event));
+    nodes.taskBenchTargetModel.addEventListener("change", () => {
+      state.taskBenchTargetModelId = nodes.taskBenchTargetModel.value;
+    });
+    nodes.taskBenchJudgeModel.addEventListener("change", () => {
+      state.taskBenchJudgeModelId = nodes.taskBenchJudgeModel.value;
+    });
+    nodes.exportTaskBenchJsonBtn.addEventListener("click", () => exportLatestTaskBenchReport("json"));
+    nodes.exportTaskBenchMarkdownBtn.addEventListener("click", () => exportLatestTaskBenchReport("markdown"));
     nodes.conversationTraceScopeBtn.addEventListener("click", () => setDebugTraceScope("conversation"));
     nodes.backgroundTraceScopeBtn.addEventListener("click", () => setDebugTraceScope("background"));
     nodes.traceIndex.addEventListener("click", selectTraceFromIndex);
@@ -7388,6 +7496,11 @@ export function renderAppHtml(): string {
     });
     nodes.syncMemoryVaultBtn.addEventListener("click", () => runMemoryVaultAction("sync"));
     nodes.rebuildMemoryVaultBtn.addEventListener("click", () => runMemoryVaultAction("rebuild"));
+    nodes.refreshMemoryVaultHistoryBtn.addEventListener("click", loadMemoryVaultHistory);
+    nodes.memoryVaultHistoryList.addEventListener("click", (event) => {
+      const button = event.target.closest("[data-vault-history-restore]");
+      if (button) restoreMemoryVaultHistory(button.dataset.vaultHistoryRestore);
+    });
     nodes.traceArchiveEnabled.addEventListener("change", updateTraceArchiveSetting);
     nodes.exportOkfBtn.addEventListener("click", exportOkfBundle);
     nodes.selectOkfImportBtn.addEventListener("click", () => nodes.okfImportInput.click());
@@ -7686,6 +7799,7 @@ export function renderAppHtml(): string {
     window.visualViewport?.addEventListener("resize", scheduleMobileViewportSync, { passive: true });
     window.visualViewport?.addEventListener("scroll", scheduleMobileViewportSync, { passive: true });
     window.addEventListener("pagehide", discardIncognitoConversationOnPageHide);
+    window.addEventListener("pagehide", releaseTaskBenchUploadsOnPageHide);
     window.addEventListener("focus", () => void acknowledgeVisibleConversation());
     document.addEventListener("visibilitychange", () => {
       if (document.visibilityState === "visible") void acknowledgeVisibleConversation();
@@ -7699,6 +7813,11 @@ export function renderAppHtml(): string {
       }
     }, 3000);
     window.setInterval(() => void pollIncomingMessages(), 3000);
+    window.setInterval(() => {
+      if (state.debugDataset === "task-bench" && !state.taskBenchRunning) {
+        void loadTaskBenchReports();
+      }
+    }, 5000);
 
     function renderEmojiPicker() {
       nodes.emojiPickerCategories.innerHTML = Object.entries(emojiGroups).map(([id, group]) =>
@@ -7799,10 +7918,7 @@ export function renderAppHtml(): string {
         setStatus("请先退出无痕会话，再打开管理或设置页面", true);
         return;
       }
-      if (mode !== "management") {
-        void clearAgentSkillInstallStage({ deleteRemote: true });
-        if (nodes.moduleDetailDialog.open) closeModuleDetail();
-      }
+      if (mode !== "management" && nodes.moduleDetailDialog.open) closeModuleDetail();
       if (mode !== "settings" && state.uiMode === "settings" && state.settingsTab === "im") {
         deactivateImSettingsView();
       }
@@ -7855,10 +7971,7 @@ export function renderAppHtml(): string {
     }
 
     function setManagementTab(tab) {
-      if (tab !== "modules") {
-        void clearAgentSkillInstallStage({ deleteRemote: true });
-        if (nodes.moduleDetailDialog.open) closeModuleDetail();
-      }
+      if (tab !== "modules" && nodes.moduleDetailDialog.open) closeModuleDetail();
       state.managementTab = tab;
       nodes.modulesTabBtn.classList.toggle("active", tab === "modules");
       nodes.profileTabBtn.classList.toggle("active", tab === "profile");
@@ -9654,7 +9767,6 @@ export function renderAppHtml(): string {
     function clearConversationSpaceTransientState() {
       ++state.conversationViewEpoch;
       state.conversationViewLoading = false;
-      void clearAgentSkillInstallStage({ deleteRemote: true });
       closePrivateInboxEvents();
       if (state.privateTypingHeartbeatTimer) window.clearTimeout(state.privateTypingHeartbeatTimer);
       state.privateTypingHeartbeatTimer = null;
@@ -9664,6 +9776,7 @@ export function renderAppHtml(): string {
       state.unreadConversations = [];
       state.unreadProactiveMessages = [];
       state.activeProactiveMessages = [];
+      state.meetingReturnSessionId = "";
       state.debugTracesByScope = { conversation: [], background: [] };
       state.debugEconomics = [];
       state.debugProactiveMessages = [];
@@ -10105,7 +10218,7 @@ export function renderAppHtml(): string {
       ]);
       if (!response.ok) throw new Error(body.error || "会话状态刷新失败");
       if (worldResponse && !worldResponse.ok) throw new Error(worldBody.error || "世界会话状态刷新失败");
-      if (channelResponse && !channelResponse.ok) throw new Error(channelBody.error || "角色通信状态刷新失败");
+      if (channelResponse && !channelResponse.ok) throw new Error(channelBody.error || "角色互动状态刷新失败");
       if (expectedEpoch !== state.conversationSpaceEpoch || requestedSpace !== state.conversationSpace) return false;
       state.sessions = Array.isArray(body.sessions)
         ? body.sessions.slice().sort((left, right) => String(right.updatedAt || "").localeCompare(String(left.updatedAt || "")))
@@ -10113,6 +10226,7 @@ export function renderAppHtml(): string {
       state.worldConversations = Array.isArray(worldBody.conversations)
         ? worldBody.conversations.slice().sort((left, right) => String(right.updatedAt || "").localeCompare(String(left.updatedAt || "")))
         : [];
+      syncActiveMeetingSceneFromWorldList();
       state.characterChannels = Array.isArray(channelBody.channels) ? channelBody.channels : [];
       state.worlds = state.worldConversations.map((entry) => entry.world).filter(Boolean);
       renderWorldOptions();
@@ -10146,11 +10260,12 @@ export function renderAppHtml(): string {
         if (!unreadResponse.ok) throw new Error(unreadBody.error || "未读消息状态加载失败");
         if (proactiveResponse && !proactiveResponse.ok) throw new Error(proactiveBody.error || "主动消息状态加载失败");
         if (worldResponse && !worldResponse.ok) throw new Error(worldBody.error || "世界未读状态加载失败");
-        if (channelResponse && !channelResponse.ok) throw new Error(channelBody.error || "角色通信状态加载失败");
+        if (channelResponse && !channelResponse.ok) throw new Error(channelBody.error || "角色互动状态加载失败");
         if (expectedEpoch !== state.conversationSpaceEpoch || requestedSpace !== state.conversationSpace) return;
         state.unreadConversations = Array.isArray(unreadBody.conversations) ? unreadBody.conversations : [];
         state.unreadProactiveMessages = Array.isArray(proactiveBody.messages) ? proactiveBody.messages : [];
         state.worldConversations = Array.isArray(worldBody.conversations) ? worldBody.conversations : [];
+        syncActiveMeetingSceneFromWorldList();
         state.characterChannels = Array.isArray(channelBody.channels) ? channelBody.channels : [];
         state.worlds = state.worldConversations.map((entry) => entry.world).filter(Boolean);
         const addedConversations = state.unreadConversations.filter((entry) =>
@@ -10181,7 +10296,7 @@ export function renderAppHtml(): string {
             const character = state.characters.find((entry) => entry.id === latest?.characterId) ||
               state.characters.find((entry) => entry.id === state.sessions.find((session) => session.id === latest?.sessionId)?.characterId);
             setStatus(characterChannel
-              ? characterChannel.characterNames.join(" 与 ") + " 有了新消息"
+              ? characterChannel.characterNames.join(" 与 ") + " 有了新片段"
               : worldConversation
               ? (worldConversation.world?.name || "世界") + " 有了新进展"
               : (character?.name || "角色") + " 发来一条新消息");
@@ -10207,6 +10322,12 @@ export function renderAppHtml(): string {
 
     function worldConversationUnreadCount(worldId) {
       return Number(state.worldConversations.find((entry) => entry.worldId === worldId)?.unreadCount || 0);
+    }
+
+    function syncActiveMeetingSceneFromWorldList() {
+      if (state.activeConversationKind !== "world") return;
+      state.activeMeetingScene = state.worldConversations
+        .find((entry) => entry.worldId === state.activeWorldId)?.meetingScene || null;
     }
 
     function conversationUnreadCount(sessionId) {
@@ -10273,7 +10394,7 @@ export function renderAppHtml(): string {
         ]);
         if (!response.ok) throw new Error(body.error || "会话加载失败");
         if (worldResponse && !worldResponse.ok) throw new Error(worldBody.error || "世界会话加载失败");
-        if (channelResponse && !channelResponse.ok) throw new Error(channelBody.error || "角色通信加载失败");
+        if (channelResponse && !channelResponse.ok) throw new Error(channelBody.error || "角色互动加载失败");
         if (
           expectedEpoch !== state.conversationSpaceEpoch || requestedSpace !== state.conversationSpace ||
           expectedViewEpoch !== state.conversationViewEpoch
@@ -10284,6 +10405,7 @@ export function renderAppHtml(): string {
         state.worldConversations = Array.isArray(worldBody.conversations)
           ? worldBody.conversations.slice().sort((left, right) => String(right.updatedAt || "").localeCompare(String(left.updatedAt || "")))
           : [];
+        syncActiveMeetingSceneFromWorldList();
         state.characterChannels = Array.isArray(channelBody.channels) ? channelBody.channels : [];
         state.worlds = state.worldConversations.map((entry) => entry.world).filter(Boolean);
         renderWorldOptions();
@@ -10549,6 +10671,7 @@ export function renderAppHtml(): string {
       state.privateInboxMessages = [];
       state.privateInboxRunning = false;
       state.activeProactiveMessages = [];
+      state.meetingReturnSessionId = "";
       state.contextBudget = null;
       state.characterLiveState = null;
       state.lastTurnStatus = null;
@@ -10656,6 +10779,7 @@ export function renderAppHtml(): string {
         continuity: "canonical",
         lens: session.interactionPresence === "co_present" ? "observable_scene" : "message"
       } : null;
+      state.activeMeetingScene = null;
       nodes.chatCharacterSelect.value = state.selectedCharacterId;
       setSessionControlsLocked(true);
       renderSessionOptions();
@@ -10683,6 +10807,7 @@ export function renderAppHtml(): string {
     async function applyWorldConversation(conversation) {
       if (state.conversationSpace !== "normal") return;
       const view = beginConversationView("world", conversation.worldId);
+      state.activeMeetingScene = conversation.meetingScene || null;
       resetCharacterCollaborationState();
       state.sessionDraft = false;
       state.selectedCharacterId = "";
@@ -10725,6 +10850,7 @@ export function renderAppHtml(): string {
         const detail = conversationBody.conversation;
         const index = state.worldConversations.findIndex((entry) => entry.worldId === requestedWorldId);
         if (detail && index >= 0) state.worldConversations[index] = { ...state.worldConversations[index], ...detail };
+        state.activeMeetingScene = detail?.meetingScene || null;
         state.messages = (messageBody.messages || []).map(normalizeWorldMessage).filter(Boolean);
         finishConversationViewLoading("world", requestedWorldId, expectedViewEpoch);
         updateChatIdentity();
@@ -10854,7 +10980,9 @@ export function renderAppHtml(): string {
         const time = Number.isNaN(date.getTime()) ? "" : date.toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit" });
         const members = (conversation.characterIds || []).map((id) => state.characters.find((entry) => entry.id === id)).filter(Boolean);
         const event = conversation.activeEvent;
-        const preview = event
+        const preview = conversation.meetingScene
+          ? "现场 · " + (conversation.meetingScene.location || event?.title || "见面中")
+          : event
           ? (event.status === "planned" ? "待开始 · " : "进行中 · ") + event.title
           : conversation.preview || members.length + " 位角色";
         const content = worldAvatarCluster(conversation, "compact") +
@@ -10875,7 +11003,7 @@ export function renderAppHtml(): string {
         '<span class="conversation-group-avatar"><i data-lucide="globe-2" aria-hidden="true"></i></span>' +
         '<span class="conversation-group-copy"><span class="conversation-group-title"><strong>世界</strong>' +
         conversationUnreadBadge(unreadCount, "世界未读消息") + '</span><span>' + state.worldConversations.length + ' 个世界 · ' +
-        state.characterChannels.length + ' 个角色通信</span></span>' +
+        state.characterChannels.length + ' 个角色互动</span></span>' +
         '<i class="conversation-group-chevron" data-lucide="chevron-down" aria-hidden="true"></i></button>';
       return '<section class="conversation-group' + (collapsed ? ' collapsed' : '') + '" data-conversation-group="' + sectionKey + '">' + head +
         '<div class="conversation-group-sessions"' + (collapsed && !state.conversationBatchMode ? ' hidden' : '') + '>' + items + '</div></section>';
@@ -10889,12 +11017,12 @@ export function renderAppHtml(): string {
         queued: "等待中", running: "交流中", completed: "", declined: "未继续",
         failed: "未完成", cancelled: "已取消"
       })[channel.latestEpisodeStatus] || "";
-      const preview = [status, channel.preview || "尚无消息"].filter(Boolean).join(" · ");
+      const preview = [status, channel.preview || "尚无互动"].filter(Boolean).join(" · ");
       return '<button class="conversation-item character-channel-item" type="button" data-character-channel-id="' +
         escapeHtml(channel.id) + '">' + characterChannelAvatar(channel) +
         '<span class="conversation-copy"><span class="conversation-line"><strong>' +
         escapeHtml(names.join(" 与 ")) + '</strong>' +
-        conversationUnreadBadge(Number(channel.unreadCount || 0), "角色通信未读消息") +
+        conversationUnreadBadge(Number(channel.unreadCount || 0), "角色互动未读片段") +
         '<span class="conversation-time">' + escapeHtml(time) + '</span></span>' +
         '<span class="conversation-preview">' + escapeHtml(preview) + '</span></span></button>';
     }
@@ -10944,7 +11072,7 @@ export function renderAppHtml(): string {
         ? "休息中"
         : session.sleepState === "tired" ? "有些困了" : "";
       const interaction = session.interactionPresence === "co_present"
-        ? "正在一起" + (session.interactionLocation ? " · " + session.interactionLocation : "")
+        ? "现场中" + (session.interactionLocation ? " · " + session.interactionLocation : "")
         : session.interactionPresence === "meeting_pending"
           ? "约好见面" + (session.interactionLocation ? " · " + session.interactionLocation : "")
           : "";
@@ -11619,16 +11747,21 @@ export function renderAppHtml(): string {
       }
       if (state.activeConversationKind === "world") {
         const conversation = state.worldConversations.find((entry) => entry.worldId === state.activeWorldId);
-        const memberCount = conversation?.characterIds?.length || 0;
+        const meetingScene = conversation?.meetingScene || state.activeMeetingScene;
+        const memberCount = meetingScene?.participantIds?.length || conversation?.characterIds?.length || 0;
         const event = conversation?.activeEvent;
         nodes.conversationCharacter.textContent = conversation?.world?.name || "共享世界";
-        nodes.conversationMode.textContent = "世界演绎 · " + memberCount + " 位角色";
+        nodes.conversationMode.textContent = meetingScene
+          ? "现场 · " + memberCount + " 位角色"
+          : "世界演绎 · " + memberCount + " 位角色";
         nodes.conversationHeaderAvatar.classList.add("group");
         nodes.conversationHeaderAvatar.innerHTML = worldAvatarCluster(conversation);
         setHeaderCharacterProfileTarget(null);
         if (event) {
           const status = event.status === "planned" ? "待开始" : "进行中";
-          nodes.conversationScene.textContent = status + " · " + event.title;
+          nodes.conversationScene.textContent = meetingScene
+            ? (meetingScene.location || "当前地点") + " · " + event.title
+            : status + " · " + event.title;
           nodes.conversationScene.title = [event.title, event.summary, event.objective].filter(Boolean).join(" · ");
           nodes.conversationScene.hidden = false;
           state.currentScene = { ...event, worldEvent: true };
@@ -11638,8 +11771,7 @@ export function renderAppHtml(): string {
           nodes.conversationScene.hidden = true;
           nodes.sceneInfoBtn.hidden = true;
         }
-        nodes.interactionToggleBtn.hidden = true;
-        nodes.interactionUndoBtn.hidden = true;
+        updateInteractionChrome();
         renderConversationList();
         renderMessages();
         return;
@@ -11680,6 +11812,7 @@ export function renderAppHtml(): string {
       state.interactionEvents = [];
       state.interactionCanUndo = false;
       state.interactionLocations = [];
+      state.activeMeetingScene = null;
       state.characterLiveState = null;
       updateInteractionChrome();
     }
@@ -11791,9 +11924,27 @@ export function renderAppHtml(): string {
         state.activeConversationKind === "direct"
       );
       if (state.activeConversationKind === "world") {
-        nodes.interactionToggleBtn.hidden = true;
+        const conversation = state.worldConversations.find((entry) => entry.worldId === state.activeWorldId);
+        const meetingScene = conversation?.meetingScene || state.activeMeetingScene;
+        const canReturnToSms = Boolean(!meetingScene && state.meetingReturnSessionId);
+        nodes.interactionToggleBtn.hidden = !meetingScene && !canReturnToSms;
         nodes.interactionUndoBtn.hidden = true;
-        nodes.textInput.placeholder = "推动世界中的下一幕";
+        if (meetingScene) {
+          nodes.interactionToggleBtn.innerHTML = '<i data-lucide="log-out" aria-hidden="true"></i>';
+          nodes.interactionToggleBtn.title = "结束现场";
+          nodes.interactionToggleBtn.setAttribute("aria-label", "结束现场");
+          nodes.interactionToggleBtn.disabled = state.busy;
+          nodes.textInput.placeholder = "描述你在现场说的话或正在做的事";
+        } else if (canReturnToSms) {
+          nodes.interactionToggleBtn.innerHTML = '<i data-lucide="message-circle" aria-hidden="true"></i>';
+          nodes.interactionToggleBtn.title = "返回角色私聊";
+          nodes.interactionToggleBtn.setAttribute("aria-label", "返回角色私聊");
+          nodes.interactionToggleBtn.disabled = state.busy;
+          nodes.textInput.placeholder = "现场已结束，可返回角色私聊";
+        } else {
+          nodes.textInput.placeholder = "推动世界中的下一幕";
+        }
+        refreshIcons();
         return;
       }
       if (state.activeConversationKind === "direct" && state.conversationSpace === "secret") {
@@ -11815,16 +11966,21 @@ export function renderAppHtml(): string {
       const interaction = state.interactionState;
       const location = interaction.location || "地点待定";
       if (interaction.presence === "co_present") {
+        const meetingScene = state.activeMeetingScene;
         nodes.conversationMode.textContent = incognito
           ? "无痕见面中"
-          : state.conversationSpace === "secret" ? "私密见面中" : "见面中";
-        nodes.conversationScene.textContent = "正在一起 · " + location;
+          : state.conversationSpace === "secret" ? "私密见面中" : meetingScene ? "现场已开始" : "见面中";
+        nodes.conversationScene.textContent = meetingScene
+          ? "已移至 " + location + " 的现场"
+          : "正在一起 · " + location;
         nodes.conversationScene.title = nodes.conversationScene.textContent;
         nodes.conversationScene.hidden = false;
-        nodes.interactionToggleBtn.innerHTML = '<i data-lucide="log-out" aria-hidden="true"></i>';
-        nodes.interactionToggleBtn.title = "结束见面";
-        nodes.interactionToggleBtn.setAttribute("aria-label", "结束见面");
-        nodes.textInput.placeholder = "描述你说的话或正在做的事";
+        nodes.interactionToggleBtn.innerHTML = meetingScene
+          ? '<i data-lucide="door-open" aria-hidden="true"></i>'
+          : '<i data-lucide="log-out" aria-hidden="true"></i>';
+        nodes.interactionToggleBtn.title = meetingScene ? "进入现场" : "结束见面";
+        nodes.interactionToggleBtn.setAttribute("aria-label", meetingScene ? "进入现场" : "结束见面");
+        nodes.textInput.placeholder = meetingScene ? "进入现场继续互动" : "描述你说的话或正在做的事";
       } else if (interaction.presence === "meeting_pending") {
         nodes.conversationMode.textContent = incognito
           ? "无痕·约好见面"
@@ -11857,8 +12013,16 @@ export function renderAppHtml(): string {
     }
 
     async function openInteractionControl() {
+      if (state.activeConversationKind === "world") {
+        await openWorldMeetingEndControl();
+        return;
+      }
       const interaction = state.interactionState;
       if (!interaction || state.busy || state.privateInboxRunning || state.sessionDraft) return;
+      if (interaction.presence === "co_present" && state.activeMeetingScene) {
+        await enterWorldMeetingScene(state.activeMeetingScene);
+        return;
+      }
       if (interaction.presence === "remote") {
         const suggested = state.interactionLocations[0]?.name || "";
         await openActionDialog({
@@ -11894,6 +12058,86 @@ export function renderAppHtml(): string {
       });
     }
 
+    async function enterWorldMeetingScene(scene = state.activeMeetingScene) {
+      if (!scene?.worldId || state.conversationSpace !== "normal") return false;
+      let conversation = state.worldConversations.find((entry) => entry.worldId === scene.worldId);
+      if (!conversation) {
+        await refreshConversationMetadata();
+        conversation = state.worldConversations.find((entry) => entry.worldId === scene.worldId);
+      }
+      if (!conversation) {
+        setStatus("对应的 World 现场不存在或已关闭。", true);
+        return false;
+      }
+      conversation.meetingScene = scene;
+      await applyWorldConversation(conversation);
+      setStatus("已进入" + (scene.location ? " · " + scene.location : "现场"));
+      return true;
+    }
+
+    async function openWorldMeetingEndControl() {
+      const conversation = state.worldConversations.find((entry) => entry.worldId === state.activeWorldId);
+      const scene = conversation?.meetingScene || state.activeMeetingScene;
+      if (!scene) {
+        await returnToMeetingSms();
+        return;
+      }
+      if (state.busy) return;
+      await openActionDialog({
+        title: "结束现场",
+        description: "结束“" + (scene.title || scene.location || "当前见面") + "”后，将返回发起见面的角色私聊。",
+        confirmLabel: "结束并返回私聊",
+        onConfirm: () => endWorldMeetingScene(scene)
+      });
+    }
+
+    async function returnToMeetingSms() {
+      const sessionId = state.meetingReturnSessionId;
+      if (!sessionId || state.busy) return;
+      let origin = state.sessions.find((entry) => entry.id === sessionId);
+      if (!origin) {
+        await refreshConversationMetadata();
+        origin = state.sessions.find((entry) => entry.id === sessionId);
+      }
+      if (!origin) {
+        setStatus("原角色私聊不存在或已归档。", true);
+        return;
+      }
+      await applySession(origin);
+      setStatus("已回到角色私聊");
+    }
+
+    async function endWorldMeetingScene(scene) {
+      if (!scene?.sessionId || !scene.characterId || state.busy) return;
+      state.busy = true;
+      updateInteractionChrome();
+      try {
+        const response = await fetch(withConversationSpace(
+          "/api/v1/sessions/" + encodeURIComponent(scene.sessionId) + "/interaction",
+          "normal",
+          scene.characterId
+        ), {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ action: "end", userConfirmed: true })
+        });
+        const body = await response.json().catch(() => ({}));
+        if (!response.ok) throw new Error(body.error || "现场结束失败");
+        state.activeMeetingScene = null;
+        await refreshConversationMetadata();
+        const origin = state.sessions.find((entry) => entry.id === scene.sessionId);
+        if (origin) await applySession(origin);
+        else await loadSessions();
+        setStatus("现场已结束，已回到角色私聊");
+      } catch (error) {
+        setStatus(error.message || String(error), true);
+        throw error;
+      } finally {
+        state.busy = false;
+        updateInteractionChrome();
+      }
+    }
+
     async function undoInteractionTransition() {
       if (!state.interactionCanUndo || state.busy || state.privateInboxRunning) return;
       try {
@@ -11923,6 +12167,8 @@ export function renderAppHtml(): string {
         } catch {
           // runInteractionAction already presents the API error in the shared status area.
         }
+      } else if (action === "enter-scene") {
+        await enterWorldMeetingScene(state.activeMeetingScene);
       }
     }
 
@@ -11932,6 +12178,7 @@ export function renderAppHtml(): string {
       if (!scope?.characterId) return;
       state.busy = true;
       updateInteractionChrome();
+      let meetingSceneToOpen = null;
       try {
         const response = await fetch(
           withConversationSpace(
@@ -11952,21 +12199,31 @@ export function renderAppHtml(): string {
         state.interactionEvents = Array.isArray(body.events) ? body.events : [];
         state.interactionCanUndo = Boolean(body.canUndo);
         state.interactionLocations = Array.isArray(body.suggestedLocations) ? body.suggestedLocations : [];
+        state.activeMeetingScene = body.meetingScene || null;
         state.characterLiveState = body.liveState || null;
+        meetingSceneToOpen = action === "begin" ? body.meetingScene || null : null;
         await refreshSessionMessages(true, scope.spaceEpoch, scope.viewEpoch);
         if (!directConversationScopeMatches(scope)) return;
         if (!scope.incognito) {
           await refreshConversationMetadata(scope.spaceEpoch);
           if (!directConversationScopeMatches(scope)) return;
         }
-        setStatus(action === "begin" ? "已经见面" : action === "end" ? "已回到消息交流" : "互动状态已更新");
+        if (meetingSceneToOpen) {
+          await enterWorldMeetingScene(meetingSceneToOpen);
+        } else {
+          setStatus(action === "begin" ? "已经见面" : action === "end" ? "已回到消息交流" : "互动状态已更新");
+        }
       } catch (error) {
         if (!directConversationScopeMatches(scope)) return;
         setStatus(error.message || String(error), true);
         throw error;
       } finally {
         state.busy = false;
-        if (directConversationScopeMatches(scope)) updateInteractionChrome();
+        if (
+          directConversationScopeMatches(scope) ||
+          (meetingSceneToOpen && state.activeConversationKind === "world" &&
+            state.activeWorldId === meetingSceneToOpen.worldId)
+        ) updateInteractionChrome();
       }
     }
 
@@ -12228,6 +12485,12 @@ export function renderAppHtml(): string {
       nodes.featureTestCharacter.value = state.characters.some((character) => character.id === featureCharacterBefore)
         ? featureCharacterBefore
         : state.selectedCharacterId || state.characters[0]?.id || "";
+      const taskBenchCharacterBefore = nodes.taskBenchCharacter.value;
+      nodes.taskBenchCharacter.innerHTML = '<option value="">选择测试角色</option>' + options;
+      nodes.taskBenchCharacter.value = state.characters.some((character) => character.id === taskBenchCharacterBefore)
+        ? taskBenchCharacterBefore
+        : state.selectedCharacterId || state.characters[0]?.id || "";
+      updateTaskBenchTargetMode();
       const initiativeCharacterBefore = nodes.initiativeCharacterFilter.value;
       nodes.initiativeCharacterFilter.innerHTML = '<option value="">全部角色</option>' + options;
       nodes.initiativeCharacterFilter.value = state.characters.some((character) => character.id === initiativeCharacterBefore)
@@ -15431,231 +15694,42 @@ export function renderAppHtml(): string {
       return error instanceof Error ? error.message : String(error || "操作失败");
     }
 
-    function controlPlaneFetch(path, options = {}) {
-      const headers = new Headers(options.headers || {});
-      headers.set("content-type", "application/json");
-      return fetch(path, {
-        ...options,
-        credentials: "same-origin",
-        headers
-      });
-    }
+    let controlPlaneCapabilityRefresh = null;
 
-    function captureAgentSkillInstallScope(requestId = state.agentSkillInstallRequestId) {
-      return {
-        expectedEpoch: state.conversationSpaceEpoch,
-        conversationSpace: state.conversationSpace,
-        characterId: state.selectedCharacterId,
-        requestId
+    async function controlPlaneFetch(path, options = {}) {
+      const request = () => {
+        const headers = new Headers(options.headers || {});
+        headers.set("content-type", "application/json");
+        return fetch(path, {
+          ...options,
+          credentials: "same-origin",
+          headers
+        });
       };
+      const response = await request();
+      if (response.status !== 403) return response;
+      const rejected = await response.clone().json().catch(() => ({}));
+      if (rejected.code !== "LOCAL_CONTROL_TOKEN_REJECTED") return response;
+      await refreshControlPlaneCapability();
+      return request();
     }
 
-    function agentSkillInstallScopeIsCurrent(scope) {
-      return Boolean(
-        scope && scope.expectedEpoch === state.conversationSpaceEpoch &&
-        scope.conversationSpace === state.conversationSpace &&
-        scope.characterId === state.selectedCharacterId &&
-        scope.requestId === state.agentSkillInstallRequestId &&
-        state.uiMode === "management" && state.managementTab === "modules"
-      );
-    }
-
-    function setAgentSkillInstallBusy(busy) {
-      nodes.agentSkillSourceUrl.disabled = busy;
-      nodes.agentSkillExpectedSha256.disabled = busy;
-      nodes.previewAgentSkillInstallBtn.disabled = busy;
-      nodes.agentSkillInstallSpaces.disabled = busy;
-      nodes.cancelAgentSkillInstallBtn.disabled = busy;
-      nodes.confirmAgentSkillInstallBtn.disabled = busy;
-    }
-
-    function resetAgentSkillInstallUi(preserveInputs = false) {
-      state.agentSkillInstallStage = null;
-      nodes.agentSkillInstallPreview.hidden = true;
-      nodes.agentSkillInstallSummary.innerHTML = "";
-      nodes.agentSkillInstallMarkdown.textContent = "";
-      nodes.agentSkillInstallState.textContent = "";
-      nodes.agentSkillInstallState.classList.remove("error");
-      nodes.agentSkillInstallSpaces.value = state.conversationSpace === "secret" ? "secret" : "normal";
-      if (!preserveInputs) {
-        nodes.agentSkillSourceUrl.value = "";
-        nodes.agentSkillExpectedSha256.value = "";
-      }
-      setAgentSkillInstallBusy(false);
-    }
-
-    async function deleteRemoteAgentSkillInstallStage(stageId, expectedEpoch) {
-      const response = await controlPlaneFetch(
-        "/api/v1/agent-skills/install/stages/" + encodeURIComponent(stageId),
-        { method: "DELETE" }
-      );
-      if (expectedEpoch !== state.conversationSpaceEpoch) return response.ok;
-      if (!response.ok) {
-        let message = "服务端预检暂存删除失败";
-        try {
-          const body = await response.json();
-          message = body.error || message;
-        } catch {}
-        throw new Error(message);
-      }
-      return true;
-    }
-
-    async function clearAgentSkillInstallStage({ deleteRemote = false, preserveInputs = false } = {}) {
-      const stageId = state.agentSkillInstallStage?.id || "";
-      const expectedEpoch = state.conversationSpaceEpoch;
-      ++state.agentSkillInstallRequestId;
-      resetAgentSkillInstallUi(preserveInputs);
-      if (!deleteRemote || !stageId) return true;
-      try {
-        return await deleteRemoteAgentSkillInstallStage(stageId, expectedEpoch);
-      } catch {
-        return false;
-      }
-    }
-
-    function renderAgentSkillInstallStage(stage) {
-      const fileCount = Array.isArray(stage.files)
-        ? stage.files.length
-        : Math.max(0, Number(stage.files || 0));
-      const fields = [
-        ["来源主机", stage.sourceHost || ""],
-        ["规范化来源", stage.sourceUrl || ""],
-        ...(stage.resolvedRef ? [["解析 Ref", stage.resolvedRef]] : []),
-        ...(stage.resolvedCommit ? [["解析 Commit", stage.resolvedCommit]] : []),
-        ["包目录", stage.packageName || ""],
-        ["Skill 名称", stage.skillName || ""],
-        ["说明", stage.description || "未提供"],
-        ["SHA-256", stage.sha256 || ""],
-        ["文件", fileCount.toLocaleString() + " 个"],
-        ["总大小", formatFileSize(stage.totalBytes || 0)],
-        ["预检到期", formatTraceTime(stage.expiresAt)]
-      ];
-      nodes.agentSkillInstallSummary.innerHTML = fields.map((field) =>
-        '<div><span>' + escapeHtml(field[0]) + '</span>' +
-          (field[0] === "SHA-256"
-            ? '<code>' + escapeHtml(field[1]) + '</code>'
-            : '<strong>' + escapeHtml(field[1]) + '</strong>') +
-        '</div>'
-      ).join("");
-      nodes.agentSkillInstallMarkdown.textContent = typeof stage.skillMarkdown === "string"
-        ? stage.skillMarkdown
-        : "未提供 SKILL.md 预览";
-      nodes.agentSkillInstallSpaces.value = state.conversationSpace === "secret" ? "secret" : "normal";
-      nodes.agentSkillInstallPreview.hidden = false;
-      nodes.agentSkillInstallState.textContent = "预检完成。请核对来源、摘要和 SKILL.md，再明确确认安装。";
-      nodes.agentSkillInstallState.classList.remove("error");
-    }
-
-    async function previewAgentSkillInstall(event) {
-      event.preventDefault();
-      await clearAgentSkillInstallStage({ deleteRemote: true, preserveInputs: true });
-      if (state.uiMode !== "management" || state.managementTab !== "modules") return;
-      const sourceUrl = nodes.agentSkillSourceUrl.value.trim();
-      const expectedSha256 = nodes.agentSkillExpectedSha256.value.trim().toLowerCase();
-      let parsedSourceUrl;
-      try {
-        parsedSourceUrl = new URL(sourceUrl);
-      } catch {
-        nodes.agentSkillInstallState.textContent = "请输入有效的 HTTPS 下载地址";
-        nodes.agentSkillInstallState.classList.add("error");
-        return;
-      }
-      if (parsedSourceUrl.protocol !== "https:") {
-        nodes.agentSkillInstallState.textContent = "Skill 安装只接受 HTTPS 下载地址";
-        nodes.agentSkillInstallState.classList.add("error");
-        return;
-      }
-      if (expectedSha256 && !/^[a-f0-9]{64}$/u.test(expectedSha256)) {
-        nodes.agentSkillInstallState.textContent = "SHA-256 必须是 64 位十六进制字符串";
-        nodes.agentSkillInstallState.classList.add("error");
-        return;
-      }
-      const requestId = ++state.agentSkillInstallRequestId;
-      const scope = captureAgentSkillInstallScope(requestId);
-      setAgentSkillInstallBusy(true);
-      nodes.agentSkillInstallState.textContent = "正在下载到临时区并执行安全预检...";
-      nodes.agentSkillInstallState.classList.remove("error");
-      try {
-        const response = await controlPlaneFetch("/api/v1/agent-skills/install/preview", {
-          method: "POST",
-          body: JSON.stringify({
-            sourceUrl,
-            ...(expectedSha256 ? { expectedSha256 } : {})
-          })
+    async function refreshControlPlaneCapability() {
+      if (!controlPlaneCapabilityRefresh) {
+        controlPlaneCapabilityRefresh = (async () => {
+          const response = await fetch("/", {
+            method: "GET",
+            credentials: "same-origin",
+            cache: "no-store",
+            headers: { accept: "text/html" }
+          });
+          if (response.body) await response.body.cancel();
+          if (!response.ok) throw new Error("本地控制凭证刷新失败，请刷新页面后重试");
+        })().finally(() => {
+          controlPlaneCapabilityRefresh = null;
         });
-        const body = await response.json();
-        const stage = body.stage || null;
-        if (!agentSkillInstallScopeIsCurrent(scope)) {
-          if (stage?.id) void deleteRemoteAgentSkillInstallStage(stage.id, scope.expectedEpoch).catch(() => {});
-          return;
-        }
-        if (!response.ok) {
-          if (stage?.id) void deleteRemoteAgentSkillInstallStage(stage.id, scope.expectedEpoch).catch(() => {});
-          throw new Error(body.error || "Skill 预检失败");
-        }
-        if (!stage?.id || !stage.sha256) throw new Error("预检响应缺少暂存标识或摘要");
-        state.agentSkillInstallStage = stage;
-        renderAgentSkillInstallStage(stage);
-      } catch (error) {
-        if (!agentSkillInstallScopeIsCurrent(scope)) return;
-        nodes.agentSkillInstallState.textContent = error.message || String(error);
-        nodes.agentSkillInstallState.classList.add("error");
-      } finally {
-        if (agentSkillInstallScopeIsCurrent(scope)) setAgentSkillInstallBusy(false);
       }
-    }
-
-    async function cancelAgentSkillInstall() {
-      const expectedEpoch = state.conversationSpaceEpoch;
-      const removed = await clearAgentSkillInstallStage({ deleteRemote: true });
-      if (
-        expectedEpoch !== state.conversationSpaceEpoch ||
-        state.uiMode !== "management" || state.managementTab !== "modules"
-      ) return;
-      nodes.agentSkillInstallState.textContent = removed
-        ? "预检已取消，临时下载已删除"
-        : "本地预检已清除；服务端临时下载会在到期后自动删除";
-      nodes.agentSkillInstallState.classList.toggle("error", !removed);
-    }
-
-    async function confirmAgentSkillInstall() {
-      const stage = state.agentSkillInstallStage;
-      if (!stage?.id || !stage.sha256) return;
-      const enabledSpaces = enabledSpacesForSetting(nodes.agentSkillInstallSpaces.value);
-      if (!enabledSpaces.length) return;
-      const spaceLabel = nodes.agentSkillInstallSpaces.selectedOptions[0]?.textContent || "所选空间";
-      const confirmed = window.confirm(
-        "确认安装并启用 Agent Skill “" + (stage.skillName || stage.packageName || "未命名") + "”？\\n\\n" +
-        "来源：" + (stage.sourceUrl || "未知") + "\\n" +
-        (stage.resolvedCommit ? "解析 Commit：" + stage.resolvedCommit + "\\n" : "") +
-        "SHA-256：" + stage.sha256 + "\\n" +
-        "可用空间：" + spaceLabel
-      );
-      if (!confirmed) return;
-      const scope = captureAgentSkillInstallScope(state.agentSkillInstallRequestId);
-      setAgentSkillInstallBusy(true);
-      nodes.agentSkillInstallState.textContent = "正在安装并启用 Skill...";
-      nodes.agentSkillInstallState.classList.remove("error");
-      try {
-        const response = await controlPlaneFetch("/api/v1/agent-skills/install/confirm", {
-          method: "POST",
-          body: JSON.stringify({ stageId: stage.id, sha256: stage.sha256, enabledSpaces })
-        });
-        const body = await response.json();
-        if (!agentSkillInstallScopeIsCurrent(scope)) return;
-        if (!response.ok) throw new Error(body.error || "Skill 安装失败");
-        state.agentSkillInstallStage = null;
-        ++state.agentSkillInstallRequestId;
-        resetAgentSkillInstallUi(false);
-        nodes.agentSkillInstallState.textContent = "Skill 已安装，并已按所选空间启用";
-        await loadAgentModules(scope.expectedEpoch);
-      } catch (error) {
-        if (!agentSkillInstallScopeIsCurrent(scope)) return;
-        nodes.agentSkillInstallState.textContent = error.message || String(error);
-        nodes.agentSkillInstallState.classList.add("error");
-        setAgentSkillInstallBusy(false);
-      }
+      return controlPlaneCapabilityRefresh;
     }
 
     async function loadAgentModules(expectedEpoch = state.conversationSpaceEpoch) {
@@ -15701,11 +15775,6 @@ export function renderAppHtml(): string {
       });
       setPermissionToggle(nodes.shellPermissionInput, nodes.shellPermissionLabel, permissions.shellEnabled);
       setPermissionToggle(nodes.networkPermissionInput, nodes.networkPermissionLabel, permissions.networkEnabled);
-      if (permissions.networkEnabled) {
-        nodes.networkPermissionLabel.textContent = permissions.characterSkillManageEnabled
-          ? "偏好已开启 · 当前隔离"
-          : "偏好已开启";
-      }
       setPermissionToggle(nodes.profileWritePermissionInput, nodes.profileWritePermissionLabel, permissions.userProfileWriteEnabled);
       setPermissionToggle(nodes.soulWritePermissionInput, nodes.soulWritePermissionLabel, permissions.characterSoulWriteEnabled);
       setPermissionToggle(
@@ -15720,9 +15789,7 @@ export function renderAppHtml(): string {
       nodes.networkPermissionInput.disabled = !permissions.shellEnabled;
       const networkPermissionHint = !permissions.shellEnabled
         ? "请先启用终端执行"
-        : permissions.characterSkillManageEnabled
-          ? "角色 Skill 自主管理开启期间，Shell 有效网络保持关闭；关闭后若当前回合已加载私有 Skill 或角色自建工作法，仍需停用相关项并进入下一安全回合"
-          : "这是网络偏好；当前回合加载启用中的角色私有 Skill、角色自建工作法或进入其他隔离模式时，实际网络仍会被拒绝";
+        : "开启后 Agent 可自由访问网络，并可能向外部服务发送当前可见的对话、记忆和 Workspace 内容";
       nodes.networkPermissionInput.title = networkPermissionHint;
       nodes.networkPermissionInput.closest(".toggle").title = networkPermissionHint;
       nodes.permissionRuntime.textContent = permissions.shellAvailable
@@ -15751,6 +15818,22 @@ export function renderAppHtml(): string {
     async function toggleAgentPermission(event) {
       const input = event.target.closest("input[data-permission]");
       if (!input) return;
+      if (
+        input.dataset.permission === "networkEnabled" &&
+        input.checked &&
+        !state.agentPermissions?.networkEnabled
+      ) {
+        const confirmed = window.confirm(
+          "允许 Agent 联网？\\n\\n" +
+          "开启后，Agent 可以自由访问网络，并可能向任意外部服务发送当前可见的对话、记忆和 Workspace 内容。" +
+          "私密模式和已启用的 Skill 不会自动关闭此权限。\\n\\n" +
+          "仅在你理解并接受这些风险时继续。"
+        );
+        if (!confirmed) {
+          renderAgentPermissions();
+          return;
+        }
+      }
       await patchAgentPermissions({ [input.dataset.permission]: input.checked });
     }
 
@@ -16656,6 +16739,7 @@ export function renderAppHtml(): string {
       ) return;
       const requestedSpace = scope.conversationSpace;
       const requestedSessionId = scope.sessionId;
+      const previousInteractionPresence = state.interactionState?.presence;
       const sharedStateEnabled = requestedSpace === "normal" && !scope.incognito;
       if (sharedStateEnabled) ensureCharacterCollaborationSession(requestedSessionId);
       else resetCharacterCollaborationState();
@@ -16731,6 +16815,7 @@ export function renderAppHtml(): string {
           state.interactionEvents = Array.isArray(interactionBody.events) ? interactionBody.events : [];
           state.interactionCanUndo = Boolean(interactionBody.canUndo);
           state.interactionLocations = Array.isArray(interactionBody.suggestedLocations) ? interactionBody.suggestedLocations : [];
+          state.activeMeetingScene = interactionBody.meetingScene || null;
           state.characterLiveState = interactionBody.liveState || null;
         } else {
           clearInteractionState();
@@ -16789,6 +16874,14 @@ export function renderAppHtml(): string {
         }
         updateDirectGenerationControls();
         if (sharedStateEnabled) scheduleCharacterCollaborationRefresh();
+        if (
+          previousInteractionPresence !== "co_present" &&
+          state.interactionState?.presence === "co_present" &&
+          state.activeMeetingScene
+        ) {
+          await enterWorldMeetingScene(state.activeMeetingScene);
+          return;
+        }
         if (!silent) setStatus("就绪");
       } catch (error) {
         if (!directConversationScopeMatches(scope)) return;
@@ -17361,6 +17454,13 @@ export function renderAppHtml(): string {
       const rawText = nodes.textInput.value.trim();
       if (state.incognitoTransitioning || state.privateModeTransitioning) return;
       if (state.activeConversationKind === "world") {
+        if (state.meetingReturnSessionId && !state.activeMeetingScene) {
+          const draft = nodes.textInput.value;
+          await returnToMeetingSms();
+          nodes.textInput.value = draft;
+          nodes.textInput.focus();
+          return;
+        }
         if ((!rawText && !state.pendingAttachments.length) || state.busy || state.uploadingAttachments) return;
         await sendWorldChatMessage(rawText, [...state.pendingAttachments]);
         return;
@@ -17368,6 +17468,19 @@ export function renderAppHtml(): string {
       if (state.activeConversationKind === "group") {
         if (!rawText || state.busy) return;
         await sendGroupChatMessage(rawText);
+        return;
+      }
+      if (
+        state.activeConversationKind === "direct" &&
+        state.interactionState?.presence === "co_present" &&
+        state.activeMeetingScene
+      ) {
+        const draft = nodes.textInput.value;
+        if (await enterWorldMeetingScene(state.activeMeetingScene)) {
+          nodes.textInput.value = draft;
+          nodes.textInput.focus();
+          setStatus("已切换到现场，请在这里继续互动");
+        }
         return;
       }
       if (incognitoConversationIsActive()) {
@@ -17697,7 +17810,16 @@ export function renderAppHtml(): string {
         await refreshWorldConversationList();
         if (isWorldConversationVisible(worldId)) await markWorldConversationRead(worldId);
         const outputCount = Array.isArray(finalResponse.messages) ? finalResponse.messages.length : 0;
-        setStatus(outputCount ? completionWarning || "已完成" : completionWarning || "本轮没有生成可展示内容", Boolean(completionWarning) || !outputCount);
+        if (finalResponse.meetingEnded && finalResponse.meetingSessionId) {
+          state.meetingReturnSessionId = finalResponse.meetingSessionId;
+          updateInteractionChrome();
+        }
+        setStatus(
+          finalResponse.meetingEnded
+            ? completionWarning || "现场已结束，可返回角色私聊"
+            : outputCount ? completionWarning || "已完成" : completionWarning || "本轮没有生成可展示内容",
+          Boolean(completionWarning) || !outputCount
+        );
         if (state.uiMode === "debug") await loadDebugLogs();
       } catch (error) {
         await refreshWorldMessages(true);
@@ -17719,6 +17841,7 @@ export function renderAppHtml(): string {
       const body = await response.json();
       if (!response.ok) throw new Error(body.error || "世界会话列表刷新失败");
       state.worldConversations = Array.isArray(body.conversations) ? body.conversations : [];
+      syncActiveMeetingSceneFromWorldList();
       state.worlds = state.worldConversations.map((entry) => entry.world).filter(Boolean);
       renderWorldOptions();
       renderConversationList();
@@ -18619,16 +18742,18 @@ export function renderAppHtml(): string {
         : message.interactionType === "end_meeting"
           ? "message-circle"
           : message.interactionType === "undo_transition" ? "undo-2" : "calendar-clock";
-      const pendingActions = message.interactionType === "propose_meeting" &&
+      const eventActions = message.interactionType === "propose_meeting" &&
         state.interactionState?.presence === "meeting_pending" &&
         state.interactionState?.location === message.location
         ? '<span class="interaction-event-actions">' +
             '<button class="primary" type="button" data-interaction-action="begin">我到了</button>' +
             '<button type="button" data-interaction-action="cancel">取消</button></span>'
-        : "";
+        : message.interactionType === "begin_meeting" && state.activeMeetingScene
+          ? '<span class="interaction-event-actions"><button class="primary" type="button" data-interaction-action="enter-scene">进入现场</button></span>'
+          : "";
       return '<div class="message-row interaction" role="status"><div class="interaction-event">' +
         '<span class="interaction-event-copy"><i data-lucide="' + icon + '" aria-hidden="true"></i><span>' +
-        escapeHtml(message.text) + '</span></span>' + pendingActions + '</div></div>';
+        escapeHtml(message.text) + '</span></span>' + eventActions + '</div></div>';
     }
 
     function renderMessageAttachments(attachments) {
@@ -18902,11 +19027,11 @@ export function renderAppHtml(): string {
       state.activeCharacterChannelId = channelId;
       const showLoading = !refreshOnly || !nodes.characterChannelDialog.open;
       if (showLoading) {
-        nodes.characterChannelTitle.textContent = channel?.characterNames?.join(" 与 ") || "角色通信";
+        nodes.characterChannelTitle.textContent = channel?.characterNames?.join(" 与 ") || "角色互动";
         nodes.characterChannelParticipants.innerHTML = channel
           ? characterChannelAvatar(channel) + '<strong>' + escapeHtml(channel.characterNames.join(" 与 ")) +
             '</strong><span>加载中...</span>'
-          : '<strong>角色通信</strong><span>加载中...</span>';
+          : '<strong>角色互动</strong><span>加载中...</span>';
         nodes.characterChannelMessages.innerHTML = '<div class="character-channel-empty">正在加载</div>';
       }
       if (!nodes.characterChannelDialog.open) nodes.characterChannelDialog.showModal();
@@ -18919,7 +19044,7 @@ export function renderAppHtml(): string {
           "/api/v1/character-channels/" + encodeURIComponent(channelId) + focus
         );
         const body = await response.json();
-        if (!response.ok) throw new Error(body.error || "角色通信加载失败");
+        if (!response.ok) throw new Error(body.error || "角色互动加载失败");
         if (state.activeCharacterChannelId !== channelId) return;
         state.activeCharacterChannelSnapshot = body.snapshot;
         renderCharacterChannel(body.snapshot, Boolean(refreshOnly));
@@ -18966,6 +19091,46 @@ export function renderAppHtml(): string {
       nodes.characterChannelParticipants.innerHTML = characterChannelAvatar(channel) +
         '<strong>' + escapeHtml(names.join(" 与 ")) + '</strong><span>' + escapeHtml(statusLabel) + '</span>';
       const messages = Array.isArray(snapshot.messages) ? snapshot.messages : [];
+      const scenes = Array.isArray(snapshot.scenes) ? snapshot.scenes : [];
+      const sceneByEpisodeId = new Map(scenes.map((scene) => [scene.episodeId, scene]));
+      const reflections = Array.isArray(snapshot.reflections) ? snapshot.reflections : [];
+      const reflectionsByEpisodeId = new Map();
+      for (const reflection of reflections) {
+        const current = reflectionsByEpisodeId.get(reflection.episodeId) || [];
+        current.push(reflection);
+        reflectionsByEpisodeId.set(reflection.episodeId, current);
+      }
+      const renderRawEpisodeMessages = (episodeMessages, episode) => episodeMessages.length
+        ? episodeMessages.map((message) => {
+            if (message.senderType === "system") {
+              return '<div class="character-channel-system">' +
+                escapeHtml(message.content) + '</div>';
+            }
+            const character = state.characters.find((entry) =>
+              entry.id === message.senderCharacterId
+            );
+            const fallbackIndex = channel.characterIds?.indexOf(message.senderCharacterId) ?? -1;
+            const name = character?.name || names[fallbackIndex] || "角色";
+            const time = new Date(message.createdAt);
+            const timeLabel = Number.isNaN(time.getTime()) ? "" :
+              time.toLocaleString("zh-CN", {
+                month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit"
+              });
+            return '<div class="character-channel-message">' +
+              '<span class="character-channel-message-avatar" style="--avatar-hue:' +
+                avatarHue(name) + '">' +
+                avatarImageOrInitial(character?.avatarUrl, name) + '</span>' +
+              '<div class="character-channel-message-copy">' +
+                '<span class="character-channel-message-meta">' +
+                  escapeHtml(name + (timeLabel ? " · " + timeLabel : "")) + '</span>' +
+                '<div class="character-channel-message-bubble">' +
+                  escapeHtml(message.content) + '</div></div></div>';
+          }).join("")
+        : '<div class="character-channel-system">' +
+            (episode.status === "queued" || episode.status === "running"
+              ? "互动仍在进行"
+              : "往来素材未在当前窗口中") +
+          '</div>';
       const knownEpisodeIds = new Set(episodes.map((entry) => entry.id));
       const orphanEpisodes = [];
       for (const message of messages) {
@@ -19021,43 +19186,41 @@ export function renderAppHtml(): string {
                 ? '<p class="memory-source">协作耗时 · ' + escapeHtml(timingSummary) + '</p>'
                 : '') +
               '</header>';
-            const episodeBody = episodeMessages.length
-              ? episodeMessages.map((message) => {
-                  if (message.senderType === "system") {
-                    return '<div class="character-channel-system">' +
-                      escapeHtml(message.content) + '</div>';
-                  }
-                  const character = state.characters.find((entry) =>
-                    entry.id === message.senderCharacterId
-                  );
-                  const fallbackIndex =
-                    channel.characterIds?.indexOf(message.senderCharacterId) ?? -1;
-                  const name = character?.name || names[fallbackIndex] || "角色";
-                  const time = new Date(message.createdAt);
-                  const timeLabel = Number.isNaN(time.getTime()) ? "" :
-                    time.toLocaleString("zh-CN", {
-                      month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit"
-                    });
-                  return '<div class="character-channel-message">' +
-                    '<span class="character-channel-message-avatar" style="--avatar-hue:' +
-                      avatarHue(name) + '">' +
-                      avatarImageOrInitial(character?.avatarUrl, name) + '</span>' +
-                    '<div class="character-channel-message-copy">' +
-                      '<span class="character-channel-message-meta">' +
-                        escapeHtml(name + (timeLabel ? " · " + timeLabel : "")) + '</span>' +
-                      '<div class="character-channel-message-bubble">' +
-                        escapeHtml(message.content) + '</div></div></div>';
-                }).join("")
-              : '<div class="character-channel-system">' +
-                  (episode.status === "queued" || episode.status === "running"
-                    ? "尚未有回应"
-                    : "往来内容未在当前窗口中") +
-                '</div>';
+            const rawEpisodeBody = renderRawEpisodeMessages(episodeMessages, episode);
+            const scene = sceneByEpisodeId.get(episode.id);
+            const episodeReflections = reflectionsByEpisodeId.get(episode.id) || [];
+            const sceneParagraphs = scene
+              ? String(scene.narrativeText || "").split(/\\n+/u).map((paragraph) => paragraph.trim())
+                  .filter(Boolean).map((paragraph) =>
+                    '<p>' + escapeHtml(paragraph) + '</p>').join("")
+              : "";
+            const reflectionBody = episodeReflections.map((reflection) => {
+              const character = state.characters.find((entry) => entry.id === reflection.characterId);
+              const fallbackIndex = channel.characterIds?.indexOf(reflection.characterId) ?? -1;
+              const name = character?.name || names[fallbackIndex] || "角色";
+              return '<div class="character-interaction-reflection"><strong>' +
+                escapeHtml(name + "的日记") + '</strong>' +
+                escapeHtml(reflection.summary || "") + '</div>';
+            }).join("");
+            const episodeBody = scene
+              ? '<article class="character-interaction-scene">' +
+                  '<div class="character-interaction-prose">' + sceneParagraphs + '</div>' +
+                '</article>' +
+                (reflectionBody
+                  ? '<details class="character-interaction-notes"><summary>角色视角摘要</summary>' +
+                      '<div class="character-interaction-reflections">' + reflectionBody + '</div></details>'
+                  : '') +
+                (episodeMessages.length
+                  ? '<details class="character-interaction-audit"><summary>查看角色原始往来</summary>' +
+                      '<div class="character-channel-episode-messages">' + rawEpisodeBody +
+                      '</div></details>'
+                  : '')
+              : rawEpisodeBody;
             return '<section class="character-channel-episode" data-character-channel-episode-id="' +
               escapeHtml(episode.id) + '">' + episodeHeader +
               '<div class="character-channel-episode-messages">' + episodeBody + '</div></section>';
           }).join("")
-        : '<div class="character-channel-empty">尚无角色间消息</div>';
+        : '<div class="character-channel-empty">尚无角色互动</div>';
       const renderedEpisodes = Array.from(
         nodes.characterChannelMessages.querySelectorAll("[data-character-channel-episode-id]")
       );
@@ -19504,26 +19667,39 @@ export function renderAppHtml(): string {
 
     function renderDebugDataset() {
       const featureTests = state.debugDataset === "feature-tests";
+      const taskBench = state.debugDataset === "task-bench";
       const initiative = state.debugDataset === "initiative";
       const economics = state.debugDataset === "economics";
-      const traces = !featureTests && !initiative && !economics;
+      const traces = !featureTests && !taskBench && !initiative && !economics;
       nodes.debugTracesBtn.classList.toggle("active", traces);
       nodes.debugEconomicsBtn.classList.toggle("active", economics);
       nodes.debugInitiativeBtn.classList.toggle("active", initiative);
       nodes.debugFeatureTestsBtn.classList.toggle("active", featureTests);
+      nodes.debugTaskBenchBtn.classList.toggle("active", taskBench);
       nodes.debugTracesBtn.setAttribute("aria-selected", String(traces));
       nodes.debugEconomicsBtn.setAttribute("aria-selected", String(economics));
       nodes.debugInitiativeBtn.setAttribute("aria-selected", String(initiative));
       nodes.debugFeatureTestsBtn.setAttribute("aria-selected", String(featureTests));
-      nodes.debugWorkspace.hidden = featureTests || initiative;
+      nodes.debugTaskBenchBtn.setAttribute("aria-selected", String(taskBench));
+      nodes.debugWorkspace.hidden = featureTests || taskBench || initiative;
       nodes.traceScopeTabs.hidden = !traces;
       nodes.featureTestPanel.hidden = !featureTests;
+      nodes.taskBenchPanel.hidden = !taskBench;
       nodes.initiativeDebugPanel.hidden = !initiative;
       if (featureTests) {
         renderFeatureTestCases();
         renderFeatureTestReport();
         renderFeatureTestHistory();
         renderFeatureTestResults();
+        return;
+      }
+      if (taskBench) {
+        updateTaskBenchTargetMode();
+        renderTaskBenchUploads();
+        renderTaskBenchReport();
+        renderTaskBenchHistory();
+        renderTaskBenchResults();
+        void loadTaskBenchReports();
         return;
       }
       if (initiative) {
@@ -19735,7 +19911,8 @@ export function renderAppHtml(): string {
       if (!quality) return "";
       if (quality.status !== "scored") {
         const detail = quality.error || quality.summary || (quality.status === "skipped" ? "没有可评分文本" : "Judge 调用失败");
-        return '<details class="feature-test-quality"><summary>Judge · ' + escapeHtml(quality.status === "skipped" ? "已跳过" : "评分不可用") +
+        const label = quality.status === "skipped" ? "已跳过" : quality.status === "timed_out" ? "评分超时" : "评分不可用";
+        return '<details class="feature-test-quality"><summary>Judge · ' + escapeHtml(label) +
           '</summary><p class="feature-test-quality-summary">' + escapeHtml(detail) + '</p></details>';
       }
       return '<details class="feature-test-quality"><summary>Judge · ' + escapeHtml(formatAdaptationScore(quality.score)) +
@@ -19844,6 +20021,435 @@ export function renderAppHtml(): string {
       setTimeout(() => URL.revokeObjectURL(objectUrl), 0);
     }
 
+    function updateTaskBenchTargetMode() {
+      const characterMode = nodes.taskBenchTargetMode.value === "character";
+      nodes.taskBenchCharacter.disabled = state.taskBenchRunning || !characterMode;
+      nodes.taskBenchIncludeSkills.disabled = state.taskBenchRunning || !characterMode;
+      nodes.taskBenchIncludePreset.disabled = state.taskBenchRunning || !characterMode;
+    }
+
+    async function uploadTaskBenchFiles(event) {
+      const files = Array.from(event.target.files || []);
+      event.target.value = "";
+      if (!files.length || state.taskBenchRunning || state.taskBenchUploading) return;
+      const maximumFileBytes = 20 * 1024 * 1024;
+      const maximumTotalBytes = 80 * 1024 * 1024;
+      const existingBytes = state.taskBenchUploads.reduce((total, entry) => total + Number(entry.size || 0), 0);
+      const selectedBytes = files.reduce((total, file) => total + file.size, 0);
+      const oversized = files.find((file) => file.size > maximumFileBytes);
+      if (oversized) {
+        nodes.taskBenchState.textContent = oversized.name + " 超过 20 MiB 上传限制。";
+        return;
+      }
+      if (state.taskBenchUploads.length + files.length > 20) {
+        nodes.taskBenchState.textContent = "测试材料最多 20 个文件。";
+        return;
+      }
+      if (existingBytes + selectedBytes > maximumTotalBytes) {
+        nodes.taskBenchState.textContent = "临时测试材料合计不能超过 80 MiB。";
+        return;
+      }
+      const batch = files.map((file, index) => ({
+        key: Date.now() + "-" + index + "-" + Math.random().toString(36).slice(2),
+        name: file.name,
+        size: file.size,
+        status: "queued",
+        error: "",
+        upload: null,
+        file
+      }));
+      state.taskBenchUploads.push(...batch);
+      state.taskBenchUploading = true;
+      renderTaskBenchUploads();
+      let completed = 0;
+      for (const entry of batch) {
+        entry.status = "uploading";
+        renderTaskBenchUploads();
+        try {
+          const response = await fetch("/api/v1/task-bench/uploads?name=" + encodeURIComponent(entry.name), {
+            method: "POST",
+            headers: { "content-type": entry.file.type || "application/octet-stream" },
+            body: entry.file
+          });
+          const body = await readJsonApiResponse(response, "临时材料上传");
+          if (!response.ok) throw new Error(body.error || (entry.name + " 上传失败"));
+          entry.upload = body.upload;
+          entry.status = "ready";
+          completed += 1;
+        } catch (error) {
+          entry.status = "failed";
+          entry.error = error.message || String(error);
+        } finally {
+          delete entry.file;
+          renderTaskBenchUploads();
+        }
+      }
+      state.taskBenchUploading = false;
+      const failed = batch.length - completed;
+      nodes.taskBenchState.textContent = failed
+        ? "已上传 " + completed + " 个，" + failed + " 个失败；请移除失败项后重试。"
+        : "已上传 " + completed + " 个临时测试材料。";
+      renderTaskBenchUploads();
+    }
+
+    async function removeTaskBenchUpload(event) {
+      const trigger = event.target.closest("[data-task-bench-upload-remove]");
+      if (!trigger || state.taskBenchRunning || state.taskBenchUploading) return;
+      const key = trigger.dataset.taskBenchUploadRemove || "";
+      const entry = state.taskBenchUploads.find((candidate) => candidate.key === key);
+      if (!entry) return;
+      entry.status = "removing";
+      renderTaskBenchUploads();
+      try {
+        if (entry.upload?.id) {
+          const response = await fetch("/api/v1/task-bench/uploads/" + encodeURIComponent(entry.upload.id), {
+            method: "DELETE"
+          });
+          if (!response.ok && response.status !== 404) {
+            const body = await readJsonApiResponse(response, "移除临时材料");
+            throw new Error(body.error || "移除临时材料失败");
+          }
+        }
+        state.taskBenchUploads = state.taskBenchUploads.filter((candidate) => candidate.key !== key);
+        nodes.taskBenchState.textContent = "已移除临时测试材料。";
+      } catch (error) {
+        entry.status = entry.upload ? "ready" : "failed";
+        entry.error = error.message || String(error);
+        nodes.taskBenchState.textContent = entry.error;
+      }
+      renderTaskBenchUploads();
+    }
+
+    function renderTaskBenchUploads() {
+      const uploads = state.taskBenchUploads;
+      const ready = uploads.filter((entry) => entry.status === "ready");
+      const unavailable = uploads.some((entry) => entry.status !== "ready");
+      const totalBytes = uploads.reduce((total, entry) => total + Number(entry.size || 0), 0);
+      nodes.taskBenchUploadState.textContent = state.taskBenchUploading
+        ? "正在上传 " + uploads.filter((entry) => entry.status === "uploading").length + " 个..."
+        : uploads.length
+          ? ready.length + "/" + uploads.length + " 个就绪 · " + formatFileSize(totalBytes)
+          : "尚未上传";
+      nodes.taskBenchUploadBtn.disabled = state.taskBenchRunning || state.taskBenchUploading || uploads.length >= 20;
+      nodes.runTaskBenchBtn.disabled = state.taskBenchRunning || state.taskBenchUploading || unavailable;
+      nodes.taskBenchUploadList.innerHTML = uploads.map((entry) => {
+        const detail = entry.status === "ready"
+          ? formatFileSize(entry.size) + " · 内存临时材料"
+          : entry.status === "failed"
+            ? entry.error || "上传失败"
+            : entry.status === "removing"
+              ? "正在移除..."
+              : entry.status === "uploading" ? "正在上传..." : "等待上传...";
+        return '<div class="task-bench-upload-item"><i data-lucide="file" aria-hidden="true"></i>' +
+          '<span class="task-bench-upload-copy"><strong title="' + escapeHtml(entry.name) + '">' + escapeHtml(entry.name) + '</strong>' +
+          '<small class="' + (entry.status === "failed" ? "error" : "") + '">' + escapeHtml(detail) + '</small></span>' +
+          '<button class="secondary task-bench-upload-remove" type="button" data-task-bench-upload-remove="' + escapeHtml(entry.key) + '" ' +
+          ((state.taskBenchRunning || state.taskBenchUploading || entry.status === "removing") ? "disabled" : "") + '>移除</button></div>';
+      }).join("");
+      refreshIcons();
+    }
+
+    function releaseTaskBenchUploadsOnPageHide() {
+      for (const entry of state.taskBenchUploads) {
+        if (!entry.upload?.id) continue;
+        void fetch("/api/v1/task-bench/uploads/" + encodeURIComponent(entry.upload.id), {
+          method: "DELETE",
+          keepalive: true
+        }).catch(() => undefined);
+      }
+    }
+
+    async function loadTaskBenchReports() {
+      if (state.taskBenchReportsLoading) return;
+      const previousLatestId = state.taskBenchReports[0]?.id || "";
+      const selectedId = state.taskBenchResult?.report?.id || "";
+      const followLatest = !selectedId || Boolean(previousLatestId && selectedId === previousLatestId);
+      const requestId = ++state.taskBenchReportsRequestId;
+      state.taskBenchReportsLoading = true;
+      state.taskBenchReportsError = "";
+      renderTaskBenchHistory();
+      try {
+        const response = await fetch("/api/v1/task-bench/reports?limit=50");
+        const body = await readJsonApiResponse(response, "任务评测历史");
+        if (!response.ok) throw new Error(body.error || "无法读取任务评测历史");
+        if (requestId !== state.taskBenchReportsRequestId) return;
+        state.taskBenchReports = Array.isArray(body.reports) ? body.reports : [];
+        state.taskBenchReportsLoaded = true;
+        const latest = state.taskBenchReports[0];
+        renderTaskBenchHistory();
+        if (
+          latest?.id &&
+          followLatest &&
+          latest.id !== selectedId &&
+          !state.taskBenchRunning
+        ) {
+          await loadTaskBenchReport(latest.id, selectedId ? "new" : "latest");
+        }
+      } catch (error) {
+        if (requestId !== state.taskBenchReportsRequestId) return;
+        state.taskBenchReportsError = error.message || String(error);
+        renderTaskBenchHistory();
+      } finally {
+        if (requestId === state.taskBenchReportsRequestId) {
+          state.taskBenchReportsLoading = false;
+          renderTaskBenchHistory();
+        }
+      }
+    }
+
+    async function loadTaskBenchReport(reportId, reason = "history") {
+      if (!reportId || state.taskBenchRunning) return;
+      if (state.taskBenchResult?.report?.id === reportId) {
+        renderTaskBenchReport();
+        renderTaskBenchHistory();
+        renderTaskBenchResults();
+        return;
+      }
+      const requestId = ++state.taskBenchReportRequestId;
+      try {
+        const response = await fetch("/api/v1/task-bench/reports/" + encodeURIComponent(reportId));
+        const body = await readJsonApiResponse(response, "任务评测报告");
+        if (!response.ok) throw new Error(body.error || "无法读取任务评测报告");
+        if (requestId !== state.taskBenchReportRequestId) return;
+        state.taskBenchResult = body;
+        nodes.exportTaskBenchJsonBtn.disabled = false;
+        nodes.exportTaskBenchMarkdownBtn.disabled = false;
+        if (reason === "new") {
+          nodes.taskBenchState.textContent = "检测到新的 API 评测结果，已自动载入。";
+        } else if (reason === "history") {
+          nodes.taskBenchState.textContent = "已载入历史评测：" + (body.report?.name || reportId);
+        }
+        renderTaskBenchReport();
+        renderTaskBenchHistory();
+        renderTaskBenchResults();
+      } catch (error) {
+        if (requestId === state.taskBenchReportRequestId) {
+          nodes.taskBenchState.textContent = error.message || String(error);
+        }
+      }
+    }
+
+    async function openTaskBenchHistoryReport(event) {
+      const trigger = event.target.closest("[data-task-bench-report-id]");
+      if (!trigger) return;
+      await loadTaskBenchReport(trigger.dataset.taskBenchReportId || "", "history");
+    }
+
+    async function runTaskBenchEvaluation(event) {
+      event.preventDefault();
+      if (state.taskBenchRunning || state.taskBenchUploading) return;
+      if (state.taskBenchUploads.some((entry) => entry.status !== "ready")) {
+        nodes.taskBenchState.textContent = "有临时材料尚未上传成功，请先移除失败项。";
+        return;
+      }
+      const characterMode = nodes.taskBenchTargetMode.value === "character";
+      const task = nodes.taskBenchTask.value.trim();
+      const modelProfileId = nodes.taskBenchTargetModel.value;
+      const characterId = nodes.taskBenchCharacter.value;
+      if (!task) {
+        nodes.taskBenchState.textContent = "请填写测试任务。";
+        nodes.taskBenchTask.focus();
+        return;
+      }
+      if (characterMode && !characterId) {
+        nodes.taskBenchState.textContent = "角色模式需要选择测试角色。";
+        nodes.taskBenchCharacter.focus();
+        return;
+      }
+      if (!modelProfileId) {
+        nodes.taskBenchState.textContent = "请选择被测模型。";
+        nodes.taskBenchTargetModel.focus();
+        return;
+      }
+      const passThreshold = Number(nodes.taskBenchPassThreshold.value);
+      const judgeWeight = Number(nodes.taskBenchJudgeWeight.value);
+      if (!Number.isFinite(passThreshold) || passThreshold < 0 || passThreshold > 100) {
+        nodes.taskBenchState.textContent = "通过线必须在 0 到 100 之间。";
+        return;
+      }
+      if (!Number.isFinite(judgeWeight) || judgeWeight < 0 || judgeWeight > 1) {
+        nodes.taskBenchState.textContent = "Judge 权重必须在 0 到 1 之间。";
+        return;
+      }
+      const request = {
+        name: nodes.taskBenchName.value.trim() || "临时任务评测",
+        targetMode: characterMode ? "character" : "model",
+        modelProfileId,
+        ...(characterMode ? { characterId } : {}),
+        ...(nodes.taskBenchJudgeModel.value ? { judgeModelProfileId: nodes.taskBenchJudgeModel.value } : {}),
+        task,
+        rubric: nodes.taskBenchRubric.value.trim(),
+        referenceAnswer: nodes.taskBenchReference.value.trim(),
+        repetitions: Number(nodes.taskBenchRepetitions.value),
+        timeoutSeconds: Number(nodes.taskBenchTimeout.value),
+        judgeTimeoutSeconds: Number(nodes.taskBenchJudgeTimeout.value),
+        passThreshold,
+        judgeWeight,
+        includeCharacterSkills: characterMode && nodes.taskBenchIncludeSkills.checked,
+        includeMeetingPreset: characterMode && nodes.taskBenchIncludePreset.checked,
+        workspacePaths: taskBenchLines(nodes.taskBenchWorkspacePaths.value),
+        uploadIds: state.taskBenchUploads.map((entry) => entry.upload.id),
+        assertions: {
+          requiredPhrases: taskBenchLines(nodes.taskBenchRequiredPhrases.value),
+          forbiddenPhrases: taskBenchLines(nodes.taskBenchForbiddenPhrases.value),
+          requiredFiles: taskBenchLines(nodes.taskBenchRequiredFiles.value),
+          responseMustBeJson: nodes.taskBenchRequireJson.checked
+        }
+      };
+      state.taskBenchRunning = true;
+      state.taskBenchResult = null;
+      nodes.taskBenchState.textContent = "正在创建零记忆环境并运行 " + request.repetitions + " 次（每轮最多 " + formatTaskBenchDuration(request.timeoutSeconds) + "）...";
+      nodes.runTaskBenchBtn.disabled = true;
+      nodes.exportTaskBenchJsonBtn.disabled = true;
+      nodes.exportTaskBenchMarkdownBtn.disabled = true;
+      const controls = [
+        nodes.taskBenchTargetMode, nodes.taskBenchCharacter, nodes.taskBenchTargetModel,
+        nodes.taskBenchJudgeModel, nodes.taskBenchRepetitions, nodes.taskBenchTimeout,
+        nodes.taskBenchJudgeTimeout
+      ];
+      controls.forEach((control) => { control.disabled = true; });
+      renderTaskBenchUploads();
+      renderTaskBenchReport();
+      renderTaskBenchResults();
+      try {
+        const response = await fetch("/api/v1/task-bench/run", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify(request)
+        });
+        const body = await readJsonApiResponse(response, "任务测试台");
+        if (!response.ok) throw new Error(body.error || "任务评测失败");
+        state.taskBenchResult = body;
+        const summary = body.report?.summary || {};
+        nodes.taskBenchState.textContent = "完成 · " + (summary.passedRuns || 0) + "/" + (summary.repetitions || 0) + " 次通过" +
+          (summary.timedOutRuns ? " · " + summary.timedOutRuns + " 次超时" : "");
+        nodes.exportTaskBenchJsonBtn.disabled = false;
+        nodes.exportTaskBenchMarkdownBtn.disabled = false;
+        renderTaskBenchReport();
+        renderTaskBenchResults();
+        await loadTaskBenchReports();
+      } catch (error) {
+        nodes.taskBenchState.textContent = error.message || String(error);
+      } finally {
+        state.taskBenchRunning = false;
+        nodes.runTaskBenchBtn.disabled = false;
+        nodes.taskBenchTargetMode.disabled = false;
+        nodes.taskBenchTargetModel.disabled = false;
+        nodes.taskBenchJudgeModel.disabled = false;
+        nodes.taskBenchRepetitions.disabled = false;
+        nodes.taskBenchTimeout.disabled = false;
+        nodes.taskBenchJudgeTimeout.disabled = false;
+        updateTaskBenchTargetMode();
+        renderTaskBenchUploads();
+      }
+    }
+
+    function taskBenchLines(value) {
+      return [...new Set(String(value || "").split(/\\r?\\n/u).map((entry) => entry.trim()).filter(Boolean))];
+    }
+
+    function formatTaskBenchDuration(seconds) {
+      const value = Number(seconds || 0);
+      if (value < 60) return value + " 秒";
+      if (value % 3600 === 0) return value / 3600 + " 小时";
+      if (value < 3600) return Math.round(value / 60) + " 分钟";
+      const hours = Math.floor(value / 3600);
+      const minutes = Math.round((value % 3600) / 60);
+      return hours + " 小时" + (minutes ? " " + minutes + " 分钟" : "");
+    }
+
+    function renderTaskBenchReport() {
+      const report = state.taskBenchResult?.report;
+      if (!report) {
+        nodes.taskBenchReport.innerHTML = "";
+        return;
+      }
+      const summary = report.summary || {};
+      const passRate = Number(summary.passRate || 0) * 100;
+      nodes.taskBenchReport.innerHTML = '<div class="feature-test-score-grid">' +
+        adaptationScoreCell("综合得分", summary.overallScoreMean, summary.passedRuns + "/" + summary.repetitions + " 次通过" + (summary.timedOutRuns ? " · " + summary.timedOutRuns + " 次超时" : "")) +
+        adaptationScoreCell("硬性检查", summary.hardScoreMean, Math.round(Number(summary.hardPassRate || 0) * 100) + "% 全部门槛通过") +
+        adaptationScoreCell("LLM Judge", summary.judgeScoreMean, report.judge ? Math.round(Number(summary.judgeCoverage || 0) * 100) + "% 已评分" : "未启用") +
+        adaptationScoreCell("通过率", passRate, "标准差 " + (Number.isFinite(summary.overallScoreStdDev) ? summary.overallScoreStdDev : "--")) +
+        '</div><div class="feature-test-report-meta">被测 · ' + escapeHtml(report.target?.profileName || "未知模型") +
+        (report.target?.model ? ' / ' + escapeHtml(report.target.model) : '') +
+        '　模式 · ' + escapeHtml(report.targetMode === "character" ? "角色 " + (report.character?.name || "") : "通用 Agent") +
+        '　Judge · ' + escapeHtml(report.judge?.profileName || "未启用") +
+        '　上限 · 每轮 ' + escapeHtml(formatTaskBenchDuration(report.timeouts?.taskSeconds || 1800)) +
+        (report.judge ? ' / Judge ' + escapeHtml(formatTaskBenchDuration(report.timeouts?.judgeSeconds || 600)) : '') +
+        '　权重 · 硬检查 ' + escapeHtml(Math.round(Number(report.scoring?.hardWeight || 0) * 100) + "%") +
+        ' + Judge ' + escapeHtml(Math.round(Number(report.scoring?.judgeWeight || 0) * 100) + "%") +
+        '　隔离 · 零记忆 / 每次新环境 / 已销毁' +
+        (report.target?.profileId && report.judge?.profileId === report.target.profileId ? '　注意 · 当前为同模型自评' : '') + '</div>';
+    }
+
+    function renderTaskBenchResults() {
+      const runs = state.taskBenchResult?.report?.runs || [];
+      nodes.taskBenchResults.innerHTML = runs.map((run) => {
+        const statusLabel = run.status === "timed_out" ? "超时" : run.status === "cancelled" ? "已取消" : run.status === "completed" ? "已完成" : run.status || "未知";
+        const scoreLabels = [
+          "硬检查 " + formatAdaptationScore(run.hardScore),
+          run.judge?.status === "scored" ? "Judge " + formatAdaptationScore(run.judge.score) : "",
+          "综合 " + formatAdaptationScore(run.overallScore)
+        ].filter(Boolean).map((label) => '<span>' + escapeHtml(label) + '</span>').join("");
+        const outputFiles = Array.isArray(run.outputFiles) && run.outputFiles.length
+          ? '<div class="task-bench-output-files">临时产物 · ' + run.outputFiles.map((file) => escapeHtml(file.path + " (" + file.size + " bytes)")).join("；") + '</div>'
+          : '';
+        return '<section class="feature-test-result"><div class="feature-test-result-head"><strong>Run ' + escapeHtml(String(run.index)) + '</strong>' +
+          '<span class="feature-test-result-scores"><span class="feature-test-status ' + (run.passed ? 'pass' : 'fail') + '">' + (run.passed ? 'PASS' : 'FAIL') + '</span>' + scoreLabels + '</span></div>' +
+          '<div class="memory-source">' + escapeHtml((run.durationMs || 0) + " ms · " + (run.modelRequests || 0) + " model requests · " + statusLabel) + '</div>' +
+          '<ul class="feature-test-rules">' + (run.checks || []).map((check) => '<li class="feature-test-status ' + (check.passed ? 'pass' : 'fail') + '">' +
+            (check.passed ? 'PASS · ' : 'FAIL · ') + escapeHtml(check.label || "检查") + ' <span class="muted">' + escapeHtml(check.evidence || "") + '</span></li>').join("") + '</ul>' +
+          outputFiles + renderFeatureTestQuality(run.judge) +
+          (run.reply ? '<details class="feature-test-reply"><summary>候选结果</summary><div class="markdown-body">' + renderMarkdown(run.reply) + '</div></details>' : '') +
+          (run.error ? '<p class="feature-test-quality-summary error">' + escapeHtml(run.error) + '</p>' : '') + '</section>';
+      }).join("");
+      refreshIcons();
+    }
+
+    function renderTaskBenchHistory() {
+      const historyWasOpen = Boolean(nodes.taskBenchHistory.querySelector("details")?.open);
+      if (!state.taskBenchReports.length) {
+        const message = state.taskBenchReportsLoading
+          ? "正在加载已保存的评测历史..."
+          : state.taskBenchReportsError
+            ? "评测历史加载失败：" + state.taskBenchReportsError
+            : state.taskBenchReportsLoaded ? "暂无已保存的评测结果。" : "";
+        nodes.taskBenchHistory.innerHTML = message
+          ? '<div class="feature-test-report-meta">' + escapeHtml(message) + '</div>'
+          : "";
+        return;
+      }
+      const selectedId = state.taskBenchResult?.report?.id || "";
+      const loadingLabel = state.taskBenchReportsLoading ? " · 刷新中" : "";
+      const errorLabel = state.taskBenchReportsError ? " · 刷新失败" : "";
+      nodes.taskBenchHistory.innerHTML = '<details' + (historyWasOpen ? ' open' : '') + '><summary>已保存评测历史 · ' + state.taskBenchReports.length + ' 次' + loadingLabel + errorLabel + '</summary>' +
+        '<table class="feature-test-history-table"><thead><tr><th>评测</th><th>时间</th><th>目标</th><th>模式</th><th>通过率</th><th>Judge</th><th>综合</th></tr></thead><tbody>' +
+        state.taskBenchReports.map((report) => '<tr class="' + (report.id === selectedId ? 'active' : '') + '"><td><button class="task-bench-history-open" type="button" data-task-bench-report-id="' + escapeHtml(report.id || "") + '" title="' + escapeHtml(report.name || "临时任务") + '">' + escapeHtml(report.name || "临时任务") + '</button></td><td>' +
+          escapeHtml(report.ranAt ? new Date(report.ranAt).toLocaleString("zh-CN", { hour12: false }) : "--") + '</td><td>' +
+          escapeHtml(report.target?.profileName || report.target?.model || "未知") + '</td><td>' +
+          escapeHtml(report.targetMode === "character" ? report.character?.name || "角色" : "通用 Agent") + '</td><td>' +
+          escapeHtml(Math.round(Number(report.summary?.passRate || 0) * 100) + "%") + '</td><td>' +
+          escapeHtml(formatAdaptationScore(report.summary?.judgeScoreMean)) + '</td><td>' +
+          escapeHtml(formatAdaptationScore(report.summary?.overallScoreMean)) + '</td></tr>').join("") +
+        '</tbody></table></details>';
+    }
+
+    function exportLatestTaskBenchReport(format) {
+      const result = state.taskBenchResult;
+      if (!result?.report) return;
+      const markdown = format === "markdown";
+      const content = markdown ? result.markdown : JSON.stringify(result.report, null, 2);
+      const blob = new Blob([content], { type: markdown ? "text/markdown;charset=utf-8" : "application/json" });
+      const objectUrl = URL.createObjectURL(blob);
+      const anchor = document.createElement("a");
+      const target = String(result.report.target?.model || "model").replace(/[^A-Za-z0-9._-]+/g, "-").slice(0, 60) || "model";
+      anchor.href = objectUrl;
+      anchor.download = "yourchar-task-bench-" + target + "-" + result.report.ranAt.replace(/[:.]/g, "-") + (markdown ? ".md" : ".json");
+      anchor.click();
+      setTimeout(() => URL.revokeObjectURL(objectUrl), 0);
+    }
+
     function formatAdaptationScore(score) {
       return Number.isFinite(score) ? Math.round(Number(score) * 10) / 10 + "/100" : "--";
     }
@@ -19911,9 +20517,7 @@ export function renderAppHtml(): string {
       nodes.featureTestTargetModel.value = state.featureTestTargetModelId;
 
       if (!state.featureTestModelOptionsInitialized) {
-        state.featureTestJudgeModelId = state.modelProfiles.find((profile) =>
-          profile.enabled && profile.id !== state.featureTestTargetModelId
-        )?.id ?? state.defaultModelProfileId ?? state.featureTestTargetModelId;
+        state.featureTestJudgeModelId = state.defaultModelProfileId || state.featureTestTargetModelId;
         state.featureTestModelOptionsInitialized = true;
       }
       if (state.featureTestJudgeModelId && !state.modelProfiles.some((profile) => profile.id === state.featureTestJudgeModelId)) {
@@ -19921,6 +20525,23 @@ export function renderAppHtml(): string {
       }
       nodes.featureTestJudgeModel.innerHTML = '<option value="">仅功能评分</option>' + options;
       nodes.featureTestJudgeModel.value = state.featureTestJudgeModelId;
+
+      const taskTargetCandidate = state.taskBenchTargetModelId || state.defaultModelProfileId || state.modelProfiles[0]?.id || "";
+      state.taskBenchTargetModelId = state.modelProfiles.some((profile) => profile.id === taskTargetCandidate)
+        ? taskTargetCandidate
+        : state.defaultModelProfileId || state.modelProfiles[0]?.id || "";
+      nodes.taskBenchTargetModel.innerHTML = '<option value="">选择被测模型</option>' + options;
+      nodes.taskBenchTargetModel.value = state.taskBenchTargetModelId;
+
+      if (!state.taskBenchModelOptionsInitialized) {
+        state.taskBenchJudgeModelId = state.defaultModelProfileId || state.taskBenchTargetModelId;
+        state.taskBenchModelOptionsInitialized = true;
+      }
+      if (state.taskBenchJudgeModelId && !state.modelProfiles.some((profile) => profile.id === state.taskBenchJudgeModelId)) {
+        state.taskBenchJudgeModelId = "";
+      }
+      nodes.taskBenchJudgeModel.innerHTML = '<option value="">不启用 Judge</option>' + options;
+      nodes.taskBenchJudgeModel.value = state.taskBenchJudgeModelId;
     }
 
     async function loadApiSettings(preferredId) {
@@ -20826,11 +21447,92 @@ export function renderAppHtml(): string {
           (health.journal?.lastRecoveryAt ? formatTraceTime(health.journal.lastRecoveryAt) + " · " + health.journal.lastRecoveryOutcome : "无回放");
         nodes.memoryVaultProjection.textContent = (health.projectionConsistent ? "一致" : "不一致") + " · " +
           String(health.vaultHash || "").slice(0, 12) + " / " + String(health.projectionHash || "none").slice(0, 12);
+        const history = health.history || {};
+        nodes.memoryVaultHistoryHealth.textContent = !history.enabled ? "仅内存模式" :
+          (history.available ? Number(history.checkpointCount || 0) + " 个快照" : "降级") +
+          (history.checkpointPending ? " · 待语义快照" : " · 已记录") +
+          (history.lastError ? " · " + history.lastError : "");
         nodes.memoryVaultBackup.textContent = health.backup?.generatedAt ?
           formatTraceTime(health.backup.generatedAt) + " · " +
           (health.backup.valid === true ? "已验证" : health.backup.valid === false ? "验证失败" : "未验证") : "无备份记录";
+        void loadMemoryVaultHistory();
       } catch (error) {
         nodes.memoryVaultState.textContent = error.message || String(error);
+      }
+    }
+
+    async function loadMemoryVaultHistory() {
+      nodes.refreshMemoryVaultHistoryBtn.disabled = true;
+      nodes.memoryVaultHistoryState.textContent = "加载中...";
+      try {
+        const response = await fetch("/api/v1/memory-vault/history?limit=30");
+        const body = await response.json();
+        if (!response.ok) throw new Error(body.error || "版本历史读取失败");
+        const checkpoints = Array.isArray(body.checkpoints) ? body.checkpoints : [];
+        nodes.memoryVaultHistoryState.textContent = checkpoints.length + " 个最近快照";
+        nodes.memoryVaultHistoryList.innerHTML = checkpoints.length ? checkpoints.map((checkpoint, index) => {
+          const operation = memoryVaultHistoryOperationLabel(checkpoint.operation);
+          return '<div class="vault-history-entry">' +
+            '<div class="vault-history-entry-main"><strong>' + escapeHtml(operation) + '</strong>' +
+              '<div class="vault-history-entry-meta">' + escapeHtml(formatTraceTime(checkpoint.committedAt)) +
+              ' · ' + Number(checkpoint.documentCount || 0) + ' 个文档 · ' +
+              escapeHtml(String(checkpoint.commitId || "").slice(0, 12)) + '</div></div>' +
+            '<button class="secondary" type="button" data-vault-history-restore="' +
+              escapeHtml(checkpoint.commitId) + '"' + (index === 0 ? ' disabled title="当前版本"' : '') + '>恢复</button>' +
+          '</div>';
+        }).join("") : '<div class="muted">还没有可恢复的版本。</div>';
+      } catch (error) {
+        nodes.memoryVaultHistoryState.textContent = error.message || String(error);
+        nodes.memoryVaultHistoryList.innerHTML = '<div class="error">历史暂不可用。</div>';
+      } finally {
+        nodes.refreshMemoryVaultHistoryBtn.disabled = false;
+      }
+    }
+
+    function memoryVaultHistoryOperationLabel(operation) {
+      const labels = {
+        startup_reconcile: "启动基线",
+        migration_apply: "旧数据迁移",
+        vault_sync: "外部编辑同步",
+        automatic_sync: "自动同步",
+        profile_write: "用户画像更新",
+        profile_delete: "用户画像删除",
+        person_profile_write: "人物档案更新",
+        person_profiles_ensure: "人物档案同步",
+        soul_write: "角色 SOUL 更新",
+        soul_delete: "角色 SOUL 删除",
+        souls_clear: "角色 SOUL 清理",
+        scene_write: "场景更新",
+        scene_remove: "场景删除",
+        memory_write: "记忆更新",
+        memory_pair_write: "记忆修订",
+        memory_batch_write: "批量记忆更新",
+        history_restore: "历史恢复",
+        vault_delete_all: "全量清除后的新基线"
+      };
+      return labels[operation] || operation || "Vault 更新";
+    }
+
+    async function restoreMemoryVaultHistory(commitId) {
+      if (!commitId) return;
+      const confirmation = "RESTORE_MEMORY_VAULT";
+      const restored = await openActionDialog({
+        title: "恢复 Memory Vault",
+        description: "这会用所选版本替换当前 Vault，并立即重建检索索引。当前版本仍会保留在本地历史中。输入 RESTORE_MEMORY_VAULT 确认。",
+        fieldLabel: "输入确认短语",
+        confirmLabel: "恢复此版本",
+        validate: (value) => value !== confirmation ? "确认短语不匹配，未恢复。" : "",
+        onConfirm: async (value) => {
+          const response = await controlPlaneFetch("/api/v1/memory-vault/history/restore", {
+            method: "POST",
+            body: JSON.stringify({ commitId, confirm: value })
+          });
+          const body = await response.json();
+          if (!response.ok) throw new Error(body.error || "版本恢复失败");
+        }
+      });
+      if (restored) {
+        await Promise.all([loadMemoryVaultStatus(), loadManagedMemories()]);
       }
     }
 
@@ -20898,7 +21600,7 @@ export function renderAppHtml(): string {
       const confirmation = "DELETE_ALL_DATA";
       const deleted = await openActionDialog({
         title: "删除全部数据",
-        description: "所有会话、日程、角色和记忆都将被永久删除。普通与私密 Workspace 中的用户文件，以及已安装 Skill 包，不会删除；如需清理，请另行删除这些文件。输入 DELETE_ALL_DATA 确认。",
+        description: "所有会话、日程、角色和记忆都将被永久删除，Memory Vault 的本地 Git 历史也会销毁并重建。已有离线备份不会自动删除。普通与私密 Workspace 中的用户文件，以及已安装 Skill 包，不会删除；如需清理，请另行删除这些文件。输入 DELETE_ALL_DATA 确认。",
         fieldLabel: "输入确认短语",
         confirmLabel: "删除全部数据",
         validate: (value) => value !== confirmation ? "确认短语不匹配，未删除。" : "",

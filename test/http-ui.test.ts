@@ -24,6 +24,10 @@ test("server serves chat UI and debug model traces", async () => {
     const page = await fetch(`${baseUrl}/`);
     assert.equal(page.status, 200);
     const html = await page.text();
+    assert.match(html, /id="characterChannelTitle">角色互动</u);
+    assert.match(html, /character-interaction-scene/u);
+    assert.match(html, /角色视角摘要/u);
+    assert.match(html, /查看角色原始往来/u);
     assert.match(html, /id="gitSettingsTabBtn"/u);
     assert.match(html, /id="gitSettingsPanel"/u);
     assert.match(html, /id="gitCredentialMode"/u);
@@ -46,9 +50,60 @@ test("server serves chat UI and debug model traces", async () => {
     assert.match(html, /Workspace\/repos\//u);
     assert.match(html, /无需预先登记项目、仓库或白名单/u);
     assert.match(html, /托管 Key 会随完整状态备份/u);
+    assert.match(html, /id="memoryVaultHistoryList"/u);
+    assert.match(html, /\/api\/v1\/memory-vault\/history\/restore/u);
+    assert.match(html, /角色 Agent 无法访问这个仓库/u);
+    assert.match(html, /id="debugTaskBenchBtn"/u);
+    assert.match(html, /id="taskBenchPanel"/u);
+    assert.match(html, /id="taskBenchJudgeModel"/u);
+    assert.match(html, /id="taskBenchTimeout"/u);
+    assert.match(html, /id="taskBenchJudgeTimeout"/u);
+    assert.match(html, /id="taskBenchUploadInput"/u);
+    assert.match(html, /id="taskBenchUploadList"/u);
+    assert.match(html, /id="exportTaskBenchMarkdownBtn"/u);
+    assert.match(html, /\/api\/v1\/task-bench\/uploads/u);
+    assert.match(html, /\/api\/v1\/task-bench\/run/u);
+    assert.match(html, /\/api\/v1\/task-bench\/reports/u);
+    assert.match(html, /已保存评测历史/u);
+    assert.doesNotMatch(html, /本页评测历史/u);
+    assert.match(html, /不会复制记忆、用户画像、关系、世界或历史会话/u);
+    assert.match(html, /单轮上限/u);
     const inlineScript = [...html.matchAll(/<script>([\s\S]*?)<\/script>/gu)].at(-1)?.[1] ?? "";
     assert.ok(inlineScript.length > 1_000);
     assert.doesNotThrow(() => new Script(inlineScript, { filename: "rendered-rp-agent-ui.js" }));
+    const taskBenchHistoryScript = inlineScript.match(
+      /function renderTaskBenchHistory[\s\S]*?(?=\n    function exportLatestTaskBenchReport)/,
+    )?.[0] ?? "";
+    const taskBenchHistoryNode = {
+      innerHTML: "",
+      detailsOpen: true,
+      querySelector: () => ({ open: taskBenchHistoryNode.detailsOpen }),
+    };
+    const taskBenchHistoryContext: Record<string, any> = {
+      state: {
+        taskBenchReports: [{
+          id: "report-1",
+          name: "保留展开状态",
+          ranAt: "2026-09-04T00:00:00.000Z",
+          summary: { passRate: 1, judgeScoreMean: 90, overallScoreMean: 93 },
+        }],
+        taskBenchReportsLoading: false,
+        taskBenchReportsError: "",
+        taskBenchReportsLoaded: true,
+        taskBenchResult: { report: { id: "report-1" } },
+      },
+      nodes: { taskBenchHistory: taskBenchHistoryNode },
+      escapeHtml: (value: unknown) => String(value),
+      formatAdaptationScore: (value: unknown) => String(value),
+    };
+    new Script(
+      taskBenchHistoryScript + "\nthis.renderTaskBenchHistoryForTest = renderTaskBenchHistory;",
+    ).runInNewContext(taskBenchHistoryContext);
+    taskBenchHistoryContext.renderTaskBenchHistoryForTest();
+    assert.match(taskBenchHistoryNode.innerHTML, /^<details open>/u);
+    taskBenchHistoryNode.detailsOpen = false;
+    taskBenchHistoryContext.renderTaskBenchHistoryForTest();
+    assert.match(taskBenchHistoryNode.innerHTML, /^<details>/u);
     const gitAccessSaveScript = inlineScript.match(
       /async function saveGitAccess[\s\S]*?(?=\n    async function generateGitAccessKey)/,
     )?.[0] ?? "";
@@ -1005,7 +1060,7 @@ test("server serves chat UI and debug model traces", async () => {
     assert.match(html, /id="systemPromptSettingsViewBtn"/);
     assert.match(html, /id="meetingPresetSettingsViewBtn"/);
     assert.match(html, /远程私聊与约见等待继续使用 SMS 默认编排/);
-    assert.match(html, /退出见面后立即恢复 SMS 默认的系统提示词、用户画像和上下文编排/);
+    assert.match(html, /普通空间会作为当前 World 现场的文学风格层/);
     assert.match(html, /id="meetingPresetImportInput"[^>]+accept="\.json,application\/json"/);
     assert.match(html, /id="meetingPresetImportOrder"/);
     assert.match(html, /id="meetingPresetParametersEnabled"/);
@@ -1372,14 +1427,15 @@ test("server serves chat UI and debug model traces", async () => {
     assert.match(html, /请勿在 URL 或普通空间内容中放入秘密/);
     assert.match(html, /私密会话不能远程安装，但仍可创建、修订本地工作法并管理已安装包/);
     assert.match(html, /无痕会话只使用只读冻结快照，不能进行任何 Skill 管理/);
-    assert.match(html, /角色私有 Skill 或角色自建工作法/);
-    assert.match(html, /停用相关项并进入下一安全回合/);
+    assert.match(html, /此权限不会替你开启或关闭终端网络/);
+    assert.match(html, /角色与已加载的 Skill 都可按该授权使用网络/);
     assert.match(html, /id="characterSkillManagePermissionInput"[^>]+data-permission="characterSkillManageEnabled"/);
     assert.match(html, /id="characterSkillManagePermissionLabel">已关闭/);
     assert.match(html, /permissions\.characterSkillManageEnabled/);
-    assert.match(html, /偏好已开启 · 当前隔离/);
-    assert.match(html, /这是网络偏好/);
-    assert.match(html, /实际网络仍会被拒绝/);
+    assert.match(html, /允许 Agent 联网/);
+    assert.match(html, /私密模式和已启用的 Skill 不会自动关闭此权限/);
+    assert.match(html, /仅在你理解并接受这些风险时继续/);
+    assert.doesNotMatch(html, /偏好已开启 · 当前隔离/);
     const permissionPatchScript = inlineScript.match(
       /async function patchAgentPermissions\(patch\)[\s\S]*?(?=\n    function renderAgentModules)/,
     )?.[0] ?? "";
@@ -1601,63 +1657,23 @@ test("server serves chat UI and debug model traces", async () => {
     assert.match(html, />仅普通<\/option>/);
     assert.match(html, />仅私密<\/option>/);
     assert.match(html, />普通 \+ 私密<\/option>/);
-    assert.match(html, /id="agentSkillInstallForm"/);
-    assert.match(html, /id="agentSkillSourceUrl" type="url"[^>]+placeholder="https:\/\/github\.com\/owner\/repo\/tree\/main\/path\/to\/skill"/);
-    assert.match(html, /GitHub 目录或 ZIP/);
-    assert.match(html, /id="agentSkillExpectedSha256"[^>]+maxlength="64"/);
-    assert.match(html, /id="previewAgentSkillInstallBtn"[^>]*>下载并预检<\/button>/);
-    assert.match(html, /预检不会安装或启用 Skill/);
-    assert.match(html, /id="agentSkillInstallPreview"[^>]+hidden/);
-    assert.match(html, /id="agentSkillInstallMarkdown"/);
-    assert.match(html, /SKILL\.md 文本预览/);
-    assert.match(html, /id="agentSkillInstallSpaces"/);
-    assert.match(html, /id="cancelAgentSkillInstallBtn"[^>]*>取消并删除预检<\/button>/);
-    assert.match(html, /id="confirmAgentSkillInstallBtn"[^>]*>确认安装并启用<\/button>/);
+    assert.doesNotMatch(html, /id="agentSkillInstallForm"/);
+    assert.doesNotMatch(html, /id="agentSkillSourceUrl"/);
+    assert.doesNotMatch(html, /id="agentSkillExpectedSha256"/);
+    assert.doesNotMatch(html, /\/api\/v1\/agent-skills\/install\/(?:preview|confirm|stages)/);
     assert.match(html, /function controlPlaneFetch/);
     const controlPlaneFetchScript = html.match(
-      /function controlPlaneFetch\(path, options = \{\}\)[\s\S]*?function captureAgentSkillInstallScope/,
+      /function controlPlaneFetch\(path, options = \{\}\)[\s\S]*?async function loadAgentModules/,
     )?.[0] ?? "";
     assert.match(controlPlaneFetchScript, /new Headers\(options\.headers \|\| \{\}\)/);
     assert.match(controlPlaneFetchScript, /headers\.set\("content-type", "application\/json"\)/);
     assert.match(controlPlaneFetchScript, /credentials: "same-origin"/);
+    assert.match(controlPlaneFetchScript, /response\.status !== 403/);
+    assert.match(controlPlaneFetchScript, /LOCAL_CONTROL_TOKEN_REJECTED/);
+    assert.match(controlPlaneFetchScript, /await refreshControlPlaneCapability\(\)/);
+    assert.match(controlPlaneFetchScript, /cache: "no-store"/);
+    assert.match(controlPlaneFetchScript, /return request\(\)/);
     assert.doesNotMatch(controlPlaneFetchScript, /control-token|meta\[|querySelector/);
-    const skillInstallScript = html.match(
-      /function captureAgentSkillInstallScope[\s\S]*?async function loadAgentModules/,
-    )?.[0] ?? "";
-    assert.match(skillInstallScript, /expectedEpoch: state\.conversationSpaceEpoch/);
-    assert.match(skillInstallScript, /scope\.expectedEpoch === state\.conversationSpaceEpoch/);
-    assert.match(skillInstallScript, /state\.uiMode === "management" && state\.managementTab === "modules"/);
-    assert.match(skillInstallScript, /agentSkillInstallSpaces\.value = state\.conversationSpace === "secret" \? "secret" : "normal"/);
-    assert.match(skillInstallScript, /parsedSourceUrl = new URL\(sourceUrl\)/);
-    assert.match(skillInstallScript, /parsedSourceUrl\.protocol !== "https:"/);
-    assert.match(skillInstallScript, /\/api\/v1\/agent-skills\/install\/preview/);
-    assert.match(skillInstallScript, /\/api\/v1\/agent-skills\/install\/confirm/);
-    assert.match(skillInstallScript, /\/api\/v1\/agent-skills\/install\/stages\//);
-    assert.match(skillInstallScript, /controlPlaneFetch\("\/api\/v1\/agent-skills\/install\/preview"/);
-    assert.match(skillInstallScript, /controlPlaneFetch\("\/api\/v1\/agent-skills\/install\/confirm"/);
-    assert.match(skillInstallScript, /JSON\.stringify\(\{ stageId: stage\.id, sha256: stage\.sha256, enabledSpaces \}\)/);
-    assert.match(skillInstallScript, /window\.confirm\(/);
-    assert.match(skillInstallScript, /预检完成。请核对来源、摘要和 SKILL\.md，再明确确认安装/);
-    assert.match(skillInstallScript, /agentSkillInstallMarkdown\.textContent/);
-    assert.doesNotMatch(skillInstallScript, /renderMarkdown\(stage\.skillMarkdown|innerHTML = stage\.skillMarkdown/);
-    assert.match(skillInstallScript, /\["来源主机", stage\.sourceHost/);
-    assert.match(skillInstallScript, /\["规范化来源", stage\.sourceUrl/);
-    assert.match(skillInstallScript, /stage\.resolvedRef \? \[\["解析 Ref", stage\.resolvedRef\]\]/);
-    assert.match(skillInstallScript, /stage\.resolvedCommit \? \[\["解析 Commit", stage\.resolvedCommit\]\]/);
-    assert.match(skillInstallScript, /\["包目录", stage\.packageName/);
-    assert.match(skillInstallScript, /\["Skill 名称", stage\.skillName/);
-    assert.match(skillInstallScript, /\["SHA-256", stage\.sha256/);
-    assert.match(skillInstallScript, /stage\.files\.length/);
-    assert.doesNotMatch(skillInstallScript, /stage\.files\.(?:map|join)/);
-    assert.match(skillInstallScript, /formatFileSize\(stage\.totalBytes/);
-    assert.match(skillInstallScript, /formatTraceTime\(stage\.expiresAt\)/);
-    assert.match(skillInstallScript, /"来源：" \+ \(stage\.sourceUrl \|\| "未知"\)/);
-    assert.match(skillInstallScript, /stage\.resolvedCommit \? "解析 Commit：" \+ stage\.resolvedCommit/);
-    assert.match(clearConversationSpaceScript, /clearAgentSkillInstallStage\(\{ deleteRemote: true \}\)/);
-    const uiModeScript = html.match(/function setUiMode\(mode\)[\s\S]*?function setManagementTab/)?.[0] ?? "";
-    assert.match(uiModeScript, /mode !== "management"[\s\S]*?clearAgentSkillInstallStage/);
-    const managementTabScript = html.match(/function setManagementTab\(tab\)[\s\S]*?function loadManagement/)?.[0] ?? "";
-    assert.match(managementTabScript, /tab !== "modules"[\s\S]*?clearAgentSkillInstallStage/);
     assert.match(html, /\/workspace\/files\/upload\?/);
     assert.match(html, /function activeSecretWorkspaceManagerScope\(\)/);
     assert.match(html, /session\.conversationSpace !== "secret" \|\| session\.characterId !== characterId/);

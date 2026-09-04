@@ -346,6 +346,66 @@ test("interaction HTTP controls require explicit confirmation and expose transit
   }
 });
 
+test("normal meetings move into the character's World scene with co-located characters", async () => {
+  const runtime = createTestRuntime({ seed: "interaction-world-scene" });
+  try {
+    const primary = runtime.kernel.createCharacter({ name: "见面主角" });
+    const nearby = runtime.kernel.createCharacter({ name: "同地点角色" });
+    const elsewhere = runtime.kernel.createCharacter({ name: "异地角色" });
+    const world = runtime.kernel.createWorld({ name: "见面世界" });
+    const cafe = runtime.kernel.createWorldPlace({ worldId: world.id, name: "咖啡店" });
+    const station = runtime.kernel.createWorldPlace({ worldId: world.id, name: "车站" });
+    runtime.kernel.assignCharacterWorld(primary.id, {
+      worldId: world.id,
+      currentPlaceId: station.id,
+    });
+    runtime.kernel.assignCharacterWorld(nearby.id, {
+      worldId: world.id,
+      currentPlaceId: cafe.id,
+    });
+    runtime.kernel.assignCharacterWorld(elsewhere.id, {
+      worldId: world.id,
+      currentPlaceId: station.id,
+    });
+    const conversation = await runtime.kernel.openCanonicalPrivateConversation(primary.id);
+
+    await runtime.kernel.transitionConversationInteraction(conversation.id, {
+      action: "propose",
+      placeId: cafe.id,
+    });
+    const begun = await runtime.kernel.transitionConversationInteraction(conversation.id, {
+      action: "begin",
+      userConfirmed: true,
+    });
+
+    assert.equal(begun.state.presence, "co_present");
+    assert.equal(begun.meetingScene?.worldId, world.id);
+    assert.equal(begun.meetingScene?.sessionId, conversation.id);
+    assert.deepEqual(
+      new Set(begun.meetingScene?.participantIds),
+      new Set([primary.id, nearby.id]),
+    );
+    const activeEvent = runtime.kernel.getWorldConversation(world.id).activeEvent;
+    assert.equal(activeEvent?.meetingSessionId, conversation.id);
+    assert.equal(activeEvent?.placeId, cafe.id);
+    assert.equal(runtime.kernel.listWorldConversations()[0]?.meetingScene?.location, "咖啡店");
+
+    runtime.kernel.transitionWorldStoryEvent(world.id, {
+      action: "resolve",
+      source: "user_control",
+      summary: "咖啡店的见面已经结束。",
+      participantIds: activeEvent?.participantIds,
+    });
+    assert.equal(
+      runtime.kernel.getConversationInteraction(conversation.id).state.presence,
+      "remote",
+    );
+    assert.equal(runtime.kernel.getWorldConversation(world.id).meetingScene, undefined);
+  } finally {
+    runtime.dispose();
+  }
+});
+
 test("world autonomy retains proactive work while the character is co-present and delivers it after separation", async () => {
   let deliveries = 0;
   const runtime = createTestRuntime({

@@ -345,6 +345,18 @@ export type WorldConversation = {
   updatedAt: string;
 };
 
+export type WorldMeetingScene = {
+  worldId: string;
+  eventId: string;
+  sessionId: string;
+  characterId: string;
+  participantIds: string[];
+  location: string;
+  placeId?: string;
+  title: string;
+  startedAt: string;
+};
+
 export type WorldConversationTurn = {
   id: string;
   worldId: string;
@@ -421,6 +433,7 @@ export type WorldNarrativePromptMessage = {
 export type WorldStoryEvent = {
   id: string;
   worldId: string;
+  meetingSessionId?: string;
   placeId?: string;
   title: string;
   summary: string;
@@ -540,6 +553,8 @@ export type WorldTurnResult = {
   userMessage: WorldConversationMessage;
   messages: WorldConversationMessage[];
   activeEvent?: WorldStoryEvent;
+  meetingSessionId?: string;
+  meetingEnded?: boolean;
 };
 
 export type CreatePlaceInput = {
@@ -774,6 +789,27 @@ export type CharacterChannelMessage = {
   createdAt: string;
 };
 
+export type CharacterInteractionScene = {
+  episodeId: string;
+  channelId: string;
+  worldId: string;
+  narrativeText: string;
+  eventSummary: string;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type CharacterInteractionReflection = {
+  episodeId: string;
+  channelId: string;
+  worldId: string;
+  characterId: string;
+  peerCharacterId: string;
+  summary: string;
+  salience: number;
+  createdAt: string;
+};
+
 export type CharacterChannelSummary = CharacterChannel & {
   characterIds: [string, string];
   characterNames: [string, string];
@@ -785,6 +821,8 @@ export type CharacterChannelSnapshot = {
   channel: CharacterChannelSummary;
   episodes: CharacterChannelEpisode[];
   messages: CharacterChannelMessage[];
+  scenes: CharacterInteractionScene[];
+  reflections: CharacterInteractionReflection[];
 };
 
 export type CharacterCollaborationSummary = {
@@ -833,6 +871,7 @@ export type CharacterInteractionActorInput = {
   peerPlace?: WorldPlace;
   relationship?: WorldCharacterRelationship;
   recentMessages: CharacterChannelMessage[];
+  recentReflections: CharacterInteractionReflection[];
   objective?: string;
   openingMessage?: string;
   taskIdentity?: CharacterTaskIdentity;
@@ -845,10 +884,43 @@ export type CharacterInteractionActor = (
   input: CharacterInteractionActorInput,
 ) => Promise<string>;
 
+export type CharacterInteractionSceneParticipant = {
+  characterId: string;
+  name: string;
+  soulMarkdown: string;
+  runtime?: CharacterRuntimeState;
+  place?: WorldPlace;
+  relationshipToPeer?: WorldCharacterRelationship;
+  recentReflections: CharacterInteractionReflection[];
+};
+
+export type CharacterInteractionSceneComposerInput = {
+  episode: CharacterChannelEpisode;
+  world: RoleWorld;
+  source: CharacterInteractionSceneParticipant;
+  target: CharacterInteractionSceneParticipant;
+  messages: CharacterChannelMessage[];
+  currentTime: string;
+  signal?: AbortSignal;
+};
+
+export type CharacterInteractionSceneDraft = {
+  narrativeText: string;
+  eventSummary: string;
+  sourcePerspectiveSummary: string;
+  targetPerspectiveSummary: string;
+};
+
+export type CharacterInteractionSceneComposer = (
+  input: CharacterInteractionSceneComposerInput,
+) => Promise<CharacterInteractionSceneDraft>;
+
 export type CharacterInteractionResult = {
   channel: CharacterChannel;
   episode: CharacterChannelEpisode;
   messages: CharacterChannelMessage[];
+  scene?: CharacterInteractionScene;
+  reflections: CharacterInteractionReflection[];
   responseText?: string;
   routing?: CharacterTaskRoute;
 };

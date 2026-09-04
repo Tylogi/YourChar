@@ -72,6 +72,113 @@ test("SillyTavern import takes enabled state from the selected prompt_order and 
   }
 });
 
+test("a World meeting uses its preset as one stable multi-character scene prefix", async () => {
+  const providerPayloads: Array<Record<string, unknown>> = [];
+  let characterId = "";
+  let placeId = "";
+  const modelServer = createServer(async (request, response) => {
+    const chunks: Buffer[] = [];
+    for await (const chunk of request) {
+      chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+    }
+    providerPayloads.push(JSON.parse(Buffer.concat(chunks).toString("utf8")) as Record<string, unknown>);
+    const callIndex = providerPayloads.length - 1;
+    const content = callIndex % 2 === 0
+      ? callIndex === 0
+        ? "窗边的光落在桌面上，夏瑾抬眼看向在场的人。"
+        : "谈话继续时，夏瑾把目光转向同桌的另一位角色。"
+      : JSON.stringify({
+          event: {
+            action: "advance",
+            title: "共同工作室的见面",
+            summary: "用户与夏瑾继续在共同工作室交谈。",
+            objective: "继续现场互动，直到这次见面自然结束。",
+            placeId,
+            participantIds: [characterId],
+            confidence: 0.99,
+          },
+          runtimeUpdates: [],
+          observations: [],
+          relationships: [],
+        });
+    writeChatCompletionStream(response, "world-meeting-preset", content);
+  });
+  await new Promise<void>((resolve) => modelServer.listen(0, "127.0.0.1", resolve));
+
+  const runtime = createTestRuntime({
+    seed: "meeting-preset-world-scene",
+    now: "2026-07-29T12:34:00.000Z",
+    timezone: "Asia/Shanghai",
+  });
+  try {
+    const address = modelServer.address();
+    assert.ok(address && typeof address === "object");
+    runtime.kernel.patchModelApiConfig({
+      enabled: true,
+      baseUrl: `http://127.0.0.1:${address.port}/v1`,
+      model: "world-meeting-preset",
+    });
+    runtime.kernel.updateUserProfile("# 用户画像\n\n称呼：阿澈\n");
+    const preset = runtime.kernel.importMeetingPreset({
+      name: "World 现场预设",
+      source: sillyTavernPresetSource(),
+    });
+    const character = runtime.kernel.createCharacter({
+      name: "夏瑾",
+      meetingPresetId: preset.id,
+    });
+    characterId = character.id;
+    const world = runtime.kernel.createWorld({ name: "现场世界" });
+    const place = runtime.kernel.createWorldPlace({ worldId: world.id, name: "共同工作室" });
+    placeId = place.id;
+    runtime.kernel.assignCharacterWorld(character.id, {
+      worldId: world.id,
+      currentPlaceId: place.id,
+    });
+    const conversation = await runtime.kernel.openCanonicalPrivateConversation(character.id);
+    await runtime.kernel.transitionConversationInteraction(conversation.id, {
+      action: "propose",
+      placeId: place.id,
+    });
+    await runtime.kernel.transitionConversationInteraction(conversation.id, {
+      action: "begin",
+      userConfirmed: true,
+    });
+
+    await runtime.kernel.sendWorldMessage(world.id, "第一句现场交流", runtime.timezone);
+    const firstContext = runtime.kernel.worldConversationService.repository
+      .getActiveNarrativeContext(world.id);
+    assert.ok(firstContext);
+    await runtime.kernel.sendWorldMessage(world.id, "第二句现场交流", runtime.timezone);
+    const secondContext = runtime.kernel.worldConversationService.repository
+      .getActiveNarrativeContext(world.id);
+    assert.equal(secondContext?.id, firstContext.id);
+    assert.equal(providerPayloads.length, 4);
+
+    const firstNarrative = providerPayloads[0];
+    const secondNarrative = providerPayloads[2];
+    const firstSerialized = JSON.stringify(firstNarrative);
+    const secondSerialized = JSON.stringify(secondNarrative);
+    assert.match(firstSerialized, /MEETING_WORLD_SCENE_PRESET/);
+    assert.match(firstSerialized, /PRESET_BEFORE char=夏瑾 user=阿澈 last=第一句现场交流/);
+    assert.match(secondSerialized, /PRESET_BEFORE char=夏瑾 user=阿澈 last=第一句现场交流/);
+    assert.doesNotMatch(secondSerialized, /PRESET_BEFORE[^]*last=第二句现场交流/);
+    assert.match(secondSerialized, /第二句现场交流/);
+    assert.match(secondSerialized, /multi-character/);
+    assert.doesNotMatch(providerPayloads.map((payload) => JSON.stringify(payload)).join("\n"), new RegExp(conversation.id));
+    assert.equal(firstNarrative.temperature, 0.65);
+    assert.equal(firstNarrative.top_p, 0.8);
+    assert.equal(firstNarrative.frequency_penalty, 0.15);
+    assert.equal(firstNarrative.presence_penalty, -0.2);
+    assert.equal(firstNarrative.max_tokens, 321);
+    assert.equal(firstNarrative.seed, 42);
+  } finally {
+    runtime.dispose();
+    await new Promise<void>((resolve, reject) =>
+      modelServer.close((error) => error ? reject(error) : resolve()));
+  }
+});
+
 test("a character-bound Tavern preset only orchestrates co-present turns and stops after meeting exit", async () => {
   const runtime = createTestRuntime({
     seed: "meeting-preset-runtime",

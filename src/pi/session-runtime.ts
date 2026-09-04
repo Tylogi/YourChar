@@ -22,7 +22,6 @@ import {
   SettingsManager,
   type AgentSession,
   type ExtensionFactory,
-  type Skill,
 } from "@earendil-works/pi-coding-agent";
 import type { Api, Model } from "@earendil-works/pi-ai/compat";
 import type { Clock } from "../app/clock.js";
@@ -327,7 +326,6 @@ export type PiSessionRuntimeOptions = {
   workspaceDir: string;
   workspaceFiles: WorkspaceFileService;
   workspaceWriteGuard?: (additionalBytes: number) => void;
-  shellNetworkAllowed?: () => boolean;
   workspaceRegistry?: WorkspaceScopeRegistry;
   conversationLifecycleThresholds?: Partial<ConversationLifecycleThresholds>;
   /** Internal/test-only hard wall-clock limit for one delegated subagent task. */
@@ -452,7 +450,6 @@ export class PiSessionRuntime {
   private readonly contextEconomics: ContextEconomicsRepository;
   private readonly workspaceFiles: WorkspaceFileService;
   private readonly workspaceWriteGuard?: (additionalBytes: number) => void;
-  private readonly shellNetworkAllowed?: () => boolean;
   private readonly workspaceRegistry: WorkspaceScopeRegistry;
   private readonly conversationIndexPath?: string;
   private readonly piSessionDir?: string;
@@ -506,7 +503,6 @@ export class PiSessionRuntime {
     this.contextEconomics = options.contextEconomics;
     this.workspaceFiles = options.workspaceFiles;
     this.workspaceWriteGuard = options.workspaceWriteGuard;
-    this.shellNetworkAllowed = options.shellNetworkAllowed;
     this.workspaceRegistry = options.workspaceRegistry ?? new WorkspaceScopeRegistry(
       this.workspaceDir,
       this.workspaceFiles,
@@ -625,29 +621,6 @@ export class PiSessionRuntime {
       handle.modelFingerprint = fingerprint;
     }
     this.touch(handle.metadata);
-  }
-
-  /**
-   * Freeze the effective shell-network trust decision for one whole turn.
-   * Skill-management tools may change permission/package state during that
-   * turn, but they cannot use that change to regain network in the same model
-   * generation.
-   */
-  latchShellNetworkForTurn(handle: PiSessionHandle): boolean {
-    const allowed =
-      !handle.toolState.untrustedCharacterSkillLoaded &&
-      this.characterSkillShellNetworkAllowed(handle.metadata);
-    handle.toolState.shellNetworkAllowed = allowed;
-    return allowed;
-  }
-
-  /** Recheck mutable trust state without ever reopening network in this turn. */
-  tightenShellNetworkLatchForTurn(handle: PiSessionHandle): boolean {
-    handle.toolState.shellNetworkAllowed =
-      handle.toolState.shellNetworkAllowed &&
-      !handle.toolState.untrustedCharacterSkillLoaded &&
-      this.characterSkillShellNetworkAllowed(handle.metadata);
-    return handle.toolState.shellNetworkAllowed;
   }
 
   beginCapabilityTurn(): void {
@@ -1561,11 +1534,6 @@ export class PiSessionRuntime {
       traceKind: "user",
       traceRequestText: "",
       currentUserText: "",
-      // Only private package paths are immutable in a loaded handle. Owned
-      // workflow context is rebuilt for every turn and is evaluated live by
-      // latchShellNetworkForTurn().
-      untrustedCharacterSkillLoaded: false,
-      shellNetworkAllowed: false,
       characterSkillRemoteInstallAttempts: 0,
       characterSkillRemoteInstallInFlight: false,
       successfulCharacterSkillInstallSourceUrl: undefined,
@@ -1582,6 +1550,7 @@ export class PiSessionRuntime {
       interactiveThinkingMissing: false,
       interactiveThinkingRetryCount: 0,
       interactiveThinkingRetryPrompt: undefined,
+      lengthRecoveryActive: false,
       toolCallObserved: false,
       workspaceSharePaths: [],
     };
@@ -1819,13 +1788,6 @@ export class PiSessionRuntime {
       metadata.conversationSpace,
       metadata.characterId,
     );
-    toolState.untrustedCharacterSkillLoaded ||= this.privateSkillLoadedInHandle(
-      metadata,
-      enabledSkills,
-    );
-    toolState.shellNetworkAllowed =
-      !toolState.untrustedCharacterSkillLoaded &&
-      this.characterSkillShellNetworkAllowed(metadata);
     const skillReadTool = createSkillReadTool(
       enabledSkills,
       this.cwd,
@@ -1858,8 +1820,6 @@ export class PiSessionRuntime {
           workspaceDir: workspace.dir,
           workspaceAccess: permissions.workspaceAccess,
           networkEnabled: permissions.networkEnabled,
-          networkAllowed: () =>
-            toolState.shellNetworkAllowed && (this.shellNetworkAllowed?.() ?? true),
           store: this.store,
           sessionId: metadata.id,
           actions: () => toolState.actions,
@@ -1949,56 +1909,6 @@ export class PiSessionRuntime {
       toolNames: customTools.map((tool) => tool.name),
       modelFingerprint: model ? modelFingerprint(model) : undefined,
     };
-  }
-
-  private characterSkillShellNetworkAllowed(metadata: ConversationMetadata): boolean {
-    if (this.permissionCatalog.get().characterSkillManageEnabled) return false;
-    if (!metadata.characterId) return true;
-    try {
-      if (this.characterSkillPackages?.effectivePackageLocations({
-        characterId: metadata.characterId,
-        conversationSpace: metadata.conversationSpace,
-      }).length) return false;
-      return !this.autonomousOwnedWorkflowActive(metadata);
-    } catch {
-      // Corrupt or concurrently removed Skill state must fail closed for shell
-      // network, even though Skill loading itself will also reject it.
-      return false;
-    }
-  }
-
-  private autonomousOwnedWorkflowActive(metadata: ConversationMetadata): boolean {
-    if (!metadata.characterId || !this.characterCapabilities) return false;
-    try {
-      return this.characterCapabilities
-        .listOwnedSkills(metadata.characterId, metadata.conversationSpace)
-        .some((skill) =>
-          skill.status === "active" &&
-          Boolean(skill.activeVersion) &&
-          (
-            skill.createdBy === "character" ||
-            skill.activeVersion?.source === "character_created"
-          )
-        );
-    } catch {
-      return true;
-    }
-  }
-
-  private privateSkillLoadedInHandle(
-    metadata: ConversationMetadata,
-    enabledSkills: readonly Skill[],
-  ): boolean {
-    if (!metadata.characterId || !this.characterSkillPackages) return false;
-    try {
-      const privatePaths = new Set(this.characterSkillPackages.effectivePackageLocations({
-        characterId: metadata.characterId,
-        conversationSpace: metadata.conversationSpace,
-      }).map((location) => resolve(location.filePath)));
-      return enabledSkills.some((skill) => privatePaths.has(resolve(skill.filePath)));
-    } catch {
-      return true;
-    }
   }
 
   private subagentRunSettingsSnapshot(): SubagentRunSettingsSnapshot {
@@ -2651,6 +2561,20 @@ export class PiSessionRuntime {
             timezone: toolState.timezone,
             now: this.clock.now(),
           }) ?? payload;
+          if (toolState.lengthRecoveryActive) {
+            toolState.interactiveThinkingRequired = false;
+            payload.temperature = 0;
+            const templateKwargs = isRecord(payload.chat_template_kwargs)
+              ? payload.chat_template_kwargs
+              : undefined;
+            if (options.requireThinking === true || templateKwargs) {
+              payload.chat_template_kwargs = {
+                ...templateKwargs,
+                enable_thinking: false,
+                preserve_thinking: true,
+              };
+            }
+          }
           try {
             this.store.addModelContextTrace({
               sessionId: toolState.sessionId,
@@ -3147,6 +3071,9 @@ export class PiSessionRuntime {
         changed = true;
         continue;
       }
+      if (!this.incognitoChild && migrateLegacySleepingConversationWake(normalized)) {
+        changed = true;
+      }
       this.metadata.set(normalized.id, normalized);
     }
     if (this.migrateLegacyDirectConversations()) changed = true;
@@ -3426,18 +3353,41 @@ function compactProviderToolHistory(
     }
   }
 
-  const currentLimit = currentOrdinaryResultIndexes.length
-    ? Math.min(
-        maxCurrentToolResultCharacters,
-        Math.max(256, Math.floor(
-          currentToolResultContextCharacters / currentOrdinaryResultIndexes.length,
-        )),
-      )
-    : maxCurrentToolResultCharacters;
-  const currentSubagentTotalLimit = currentSubagentResultIndexes.length
+  // Allocate the active turn's tool-result budget in message order. An earlier
+  // result's rendered form must depend only on messages that preceded it: if a
+  // later result caused us to re-divide the budget, every subsequent provider
+  // request would rewrite the prefix and invalidate the model's KV cache.
+  const currentOrdinaryLimits = new Map<number, number>();
+  let currentOrdinaryRemaining = currentToolResultContextCharacters;
+  for (const index of currentOrdinaryResultIndexes) {
+    const message = messages[index];
+    if (message.role !== "toolResult") continue;
+    const limit = Math.min(
+      maxCurrentToolResultCharacters,
+      Math.max(256, currentOrdinaryRemaining),
+    );
+    currentOrdinaryLimits.set(index, limit);
+    currentOrdinaryRemaining = Math.max(
+      0,
+      currentOrdinaryRemaining - Math.min(
+        toolResultContextCharacters(message, false),
+        limit,
+      ),
+    );
+  }
+
+  const currentSubagentBatches = new Map<number, number[]>();
+  for (const index of currentSubagentResultIndexes) {
+    const batchIndex = providerToolCallBatchIndex(messages, index);
+    const batch = currentSubagentBatches.get(batchIndex) ?? [];
+    batch.push(index);
+    currentSubagentBatches.set(batchIndex, batch);
+  }
+  const firstSubagentBatch = currentSubagentBatches.values().next().value ?? [];
+  const currentSubagentTotalLimit = firstSubagentBatch.length
     ? Math.min(
         maxCurrentSubagentResultContextCharacters,
-        Math.max(...currentSubagentResultIndexes.map((index) => {
+        Math.max(...firstSubagentBatch.map((index: number) => {
           const message = messages[index];
           return message.role === "toolResult"
             ? subagentToolResultConfiguredContextLimit(message)
@@ -3445,11 +3395,27 @@ function compactProviderToolHistory(
         })),
       )
     : 0;
-  const currentSubagentLimit = currentSubagentResultIndexes.length
-    ? Math.max(256, Math.floor(
-        currentSubagentTotalLimit / currentSubagentResultIndexes.length,
-      ))
-    : 0;
+  const currentSubagentLimits = new Map<number, number>();
+  let currentSubagentRemaining = currentSubagentTotalLimit;
+  for (const batch of currentSubagentBatches.values()) {
+    const sharedLimit = Math.max(256, Math.floor(currentSubagentRemaining / batch.length));
+    for (const index of batch) {
+      const message = messages[index];
+      if (message.role !== "toolResult") continue;
+      const limit = Math.min(
+        subagentToolResultConfiguredContextLimit(message),
+        sharedLimit,
+      );
+      currentSubagentLimits.set(index, limit);
+      currentSubagentRemaining = Math.max(
+        0,
+        currentSubagentRemaining - Math.min(
+          toolResultContextCharacters(message, false),
+          limit,
+        ),
+      );
+    }
+  }
   const removedCallIds = new Set(historicalResultIndexes.flatMap((index) => {
     if (historicalLimits.has(index)) return [];
     const message = messages[index];
@@ -3465,8 +3431,8 @@ function compactProviderToolHistory(
       const limit = historical
         ? historicalLimits.get(index)
         : message.toolName === "delegate_task"
-          ? Math.min(currentSubagentLimit, subagentToolResultConfiguredContextLimit(message))
-          : currentLimit;
+          ? currentSubagentLimits.get(index)
+          : currentOrdinaryLimits.get(index);
       if (limit === undefined) {
         reasons.add("historical_tool_context_filtered");
         changed = true;
@@ -3535,6 +3501,19 @@ function subagentToolResultConfiguredContextLimit(
     maximumSubagentSettings.maxResultCharacters + subagentResultContextEnvelopeCharacters,
     Math.max(256, configured + subagentResultContextEnvelopeCharacters),
   );
+}
+
+function providerToolCallBatchIndex(messages: AgentMessage[], resultIndex: number): number {
+  const result = messages[resultIndex];
+  if (result.role !== "toolResult") return resultIndex;
+  for (let index = resultIndex - 1; index >= 0; index -= 1) {
+    const candidate = messages[index];
+    if (candidate.role !== "assistant" || typeof candidate.content === "string") continue;
+    if (candidate.content.some((block) =>
+      block?.type === "toolCall" && block.id === result.toolCallId
+    )) return index;
+  }
+  return resultIndex;
 }
 
 function compactToolResultMessage(
@@ -3762,6 +3741,42 @@ function pendingConversationWakeNotification(
     requestedAt,
     attempts: Math.max(0, Math.floor(metadata.wakeNotificationAttempts ?? 0)),
   };
+}
+
+/**
+ * Wake notifications were added after the sleeping/checkpoint fields already
+ * existed. Upgrade an unarchived pre-outbox record into the durable wake path
+ * instead of leaving the conversation asleep forever. Reusing the persisted
+ * generation (or generation 1 for truly legacy data) also lets transcript
+ * marker reconciliation suppress a duplicate after a crash.
+ */
+function migrateLegacySleepingConversationWake(metadata: ConversationMetadata): boolean {
+  if (
+    metadata.archivedAt ||
+    metadata.sleepState !== "sleeping" ||
+    !metadata.sleepCheckpointAt ||
+    metadata.pendingWakeNotificationId ||
+    metadata.pendingWakeNotificationAt
+  ) return false;
+
+  if (metadata.lastWakeNotificationId) {
+    metadata.sleepState = "awake";
+    delete metadata.tiredAt;
+    delete metadata.sleepSuggestedAt;
+    clearPendingConversationWakeNotification(metadata);
+    return true;
+  }
+
+  const generation = Math.max(
+    1,
+    Math.floor(metadata.wakeNotificationGeneration ?? 1),
+  );
+  metadata.wakeNotificationGeneration = generation;
+  metadata.pendingWakeNotificationId = `${metadata.id}:conversation-wake:${generation}`;
+  metadata.pendingWakeNotificationAt = metadata.sleepCheckpointAt;
+  metadata.wakeNotificationAttempts = 0;
+  delete metadata.wakeNotificationLastError;
+  return true;
 }
 
 function forceSubagentFinalizationPayload(

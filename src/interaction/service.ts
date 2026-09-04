@@ -34,6 +34,13 @@ export class InteractionValidationError extends Error {
 
 type LocationInput = { placeId?: string; location?: string };
 
+export type InteractionMeetingSceneHooks = {
+  targetWorldId?: (state: InteractionState) => string | undefined;
+  assertCanBegin?: (state: InteractionState) => void;
+  didBegin?: (state: InteractionState) => void;
+  didEnd?: (state: InteractionState, summary: string) => void;
+};
+
 export class InteractionService {
   constructor(
     readonly repository: InteractionRepository,
@@ -48,7 +55,12 @@ export class InteractionService {
       errorName: string;
       errorCode?: string;
     }) => void = () => undefined,
+    private readonly meetingSceneHooks: InteractionMeetingSceneHooks = {},
   ) {}
+
+  meetingSceneWorldId(state: InteractionState): string | undefined {
+    return this.meetingSceneHooks.targetWorldId?.(state);
+  }
 
   ensure(
     sessionId: string,
@@ -127,6 +139,16 @@ export class InteractionService {
       ].join("\n");
     }
     if (state.presence === "co_present") {
+      const worldId = this.meetingSceneWorldId(state);
+      if (worldId) {
+        return [
+          `<interaction_state ${attributes} world_id="${xml(worldId)}" surface="world_scene">`,
+          `Physical co-presence is confirmed${state.location ? ` at: ${xml(state.location)}` : ""}.`,
+          "The in-person interaction now belongs to the linked World scene, not this private SMS thread. Use this thread only for a short handoff or later remote messages; do not continue the physical scene here.",
+          "The USER still controls themself. Never invent the USER's actions, speech, decisions, sensations, or inner state.",
+          "</interaction_state>",
+        ].join("\n");
+      }
       return [
         `<interaction_state ${attributes}>`,
         `Physical co-presence is confirmed${state.location ? ` at: ${xml(state.location)}` : ""}.`,
@@ -283,6 +305,7 @@ export class InteractionService {
       revision: state.revision + 1,
       updatedAt: now,
     };
+    this.meetingSceneHooks.assertCanBegin?.(after);
     let result: InteractionTransitionResult;
     try {
       result = this.applyTransition({
@@ -299,6 +322,9 @@ export class InteractionService {
       throwCanonicalMeetingConflict(error);
     }
     this.enterMeetingScene(result.state);
+    this.project("world_scene_begin", result.state, () => {
+      this.meetingSceneHooks.didBegin?.(result.state);
+    });
     return result;
   }
 
@@ -376,6 +402,9 @@ export class InteractionService {
         (state.location ? `结束在${state.location}的见面` : "结束见面"),
       idempotencyKey: input.idempotencyKey,
     });
+    this.project("world_scene_end", state, () => {
+      this.meetingSceneHooks.didEnd?.(state, result.event.summary);
+    });
     this.leaveMeetingScene(state, worldRuntimeBeforeMeeting);
     return result;
   }
@@ -421,6 +450,9 @@ export class InteractionService {
         ? `回合后分析确认已结束在${state.location}的见面`
         : "回合后分析确认见面已经结束",
       idempotencyKey,
+    });
+    this.project("world_scene_end", state, () => {
+      this.meetingSceneHooks.didEnd?.(state, result.event.summary);
     });
     this.leaveMeetingScene(state, worldRuntimeBeforeMeeting);
     return result;
@@ -481,6 +513,9 @@ export class InteractionService {
       this.repository.upsertState(after);
       this.repository.updateEventStatus(event.id, scope, "applied", { appliedAt: now });
     });
+    this.project("world_scene_end", state, () => {
+      this.meetingSceneHooks.didEnd?.(state, event.summary);
+    });
     this.leaveMeetingScene(state, worldRuntimeBeforeMeeting);
     return { state: after, event: { ...event, status: "applied", appliedAt: now } };
   }
@@ -536,6 +571,9 @@ export class InteractionService {
       summary: `已撤销：${previous.summary}`,
       now,
     });
+    if (restored.presence === "co_present") {
+      this.meetingSceneHooks.assertCanBegin?.(restored);
+    }
     try {
       this.repository.transaction(() => {
         this.repository.updateEventStatus(previous.id, scope, "reverted", { revertedAt: now });
@@ -545,8 +583,17 @@ export class InteractionService {
     } catch (error) {
       throwCanonicalMeetingConflict(error);
     }
-    if (restored.presence === "co_present") this.enterMeetingScene(restored);
-    else this.leaveMeetingScene(state, worldRuntimeBeforeMeeting);
+    if (restored.presence === "co_present") {
+      this.enterMeetingScene(restored);
+      this.project("world_scene_begin", restored, () => {
+        this.meetingSceneHooks.didBegin?.(restored);
+      });
+    } else {
+      this.project("world_scene_end", state, () => {
+        this.meetingSceneHooks.didEnd?.(state, undo.summary);
+      });
+      this.leaveMeetingScene(state, worldRuntimeBeforeMeeting);
+    }
     return { state: restored, event: undo };
   }
 

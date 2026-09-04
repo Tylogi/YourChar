@@ -148,6 +148,27 @@ export type MemoryVaultStatus = {
   lastRebuiltAt?: string;
 };
 
+export type MemoryVaultHistoryCheckpoint = {
+  commitId: string;
+  committedAt: string;
+  operation: string;
+  operationId: string;
+  vaultHash: string;
+  documentCount: number;
+};
+
+export type MemoryVaultHistoryHealth = {
+  enabled: boolean;
+  available: boolean;
+  checkpointCount: number;
+  headCommitId: string | null;
+  headVaultHash: string | null;
+  lastCheckpointAt: string | null;
+  lastOperation: string | null;
+  checkpointPending: boolean;
+  lastError: string | null;
+};
+
 export type VaultMigrationAction = "create" | "unchanged" | "preserve_vault";
 
 export type VaultMigrationItem = {

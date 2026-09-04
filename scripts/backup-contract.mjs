@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { spawnSync } from "node:child_process";
 import {
   existsSync,
   lstatSync,
@@ -11,7 +12,7 @@ import { DatabaseSync } from "node:sqlite";
 import { parseDocument } from "yaml";
 
 export const BACKUP_SCHEMA_VERSION = 3;
-export const MAX_DATABASE_SCHEMA_VERSION = 48;
+export const MAX_DATABASE_SCHEMA_VERSION = 51;
 const V1_FRONTMATTER_KEYS = [
   "schemaVersion", "id", "kind", "realm", "scope", "type", "characterId", "sessionId",
   "validity", "confirmed", "sourceSessionId", "sourceMessageId", "createdAt", "updatedAt",
@@ -148,6 +149,15 @@ export function validateBackupDirectory(root, manifest) {
   const gitWorkspaceRepositoriesPresent = actualFiles.some(
     (file) => file.path === "workspace/repos" || file.path.startsWith("workspace/repos/"),
   );
+  const memoryVaultHistoryPresent = actualFiles.some(
+    (file) => file.path.startsWith("memory-vault-history.git/"),
+  );
+  if (
+    manifest.containsMemoryVaultHistory !== undefined &&
+    Boolean(manifest.containsMemoryVaultHistory) !== memoryVaultHistoryPresent
+  ) {
+    throw new Error("backup Memory Vault history metadata does not match payload");
+  }
   if (
     manifest.excludesGitWorkspaceRepositories !== undefined &&
     (manifest.excludesGitWorkspaceRepositories !== true ||
@@ -217,6 +227,7 @@ export function validateBackupDirectory(root, manifest) {
   }
   const database = validateDatabase(join(root, "rp-agent.sqlite"));
   const vault = validateVault(root, database);
+  const memoryVaultHistory = validateMemoryVaultHistory(root);
   if (manifest.database.integrityCheck !== database.integrityCheck ||
       manifest.database.schemaVersion !== database.schemaVersion ||
       manifest.database.sha256 !== database.sha256 ||
@@ -227,7 +238,67 @@ export function validateBackupDirectory(root, manifest) {
       manifest.consistency.sqliteVaultProjection !== vault.sqliteVaultProjection) {
     throw new Error("backup consistency metadata does not match payload");
   }
+  if (
+    manifest.memoryVaultHistory !== undefined &&
+    JSON.stringify(manifest.memoryVaultHistory) !== JSON.stringify(memoryVaultHistory)
+  ) {
+    throw new Error("backup Memory Vault history integrity metadata does not match payload");
+  }
   return { database, vault };
+}
+
+export function validateMemoryVaultHistory(root) {
+  const repository = join(root, "memory-vault-history.git");
+  if (!existsSync(repository)) {
+    return { present: false, headCommitId: null, checkpointCount: 0 };
+  }
+  const status = lstatSync(repository);
+  if (!status.isDirectory() || status.isSymbolicLink()) {
+    throw new Error("Memory Vault history must be a regular non-symlink directory");
+  }
+  for (const relativePath of ["objects/info/alternates", "objects/info/http-alternates", "shallow"]) {
+    if (existsSync(join(repository, relativePath))) {
+      throw new Error("Memory Vault history cannot use alternate or shallow object storage");
+    }
+  }
+  const run = (...arguments_) => {
+    const result = spawnSync("git", [`--git-dir=${repository}`, ...arguments_], {
+      env: {
+        PATH: process.env.PATH ?? "/usr/bin:/bin",
+        LANG: "C",
+        LC_ALL: "C",
+        GIT_CONFIG_NOSYSTEM: "1",
+        GIT_CONFIG_GLOBAL: "/dev/null",
+        GIT_TERMINAL_PROMPT: "0",
+        GIT_NO_REPLACE_OBJECTS: "1",
+      },
+      encoding: "utf8",
+      maxBuffer: 16 * 1024 * 1024,
+      timeout: 30_000,
+    });
+    if (result.error) throw result.error;
+    if (result.status !== 0) {
+      const detail = String(result.stderr ?? "").trim().replace(/\s+/gu, " ").slice(0, 300);
+      throw new Error(`Memory Vault history verification failed${detail ? `: ${detail}` : ""}`);
+    }
+    return String(result.stdout ?? "").trim();
+  };
+  if (run("config", "--bool", "--get", "core.bare") !== "true") {
+    throw new Error("Memory Vault history is not a bare repository");
+  }
+  if (run("symbolic-ref", "HEAD") !== "refs/heads/main") {
+    throw new Error("Memory Vault history HEAD is not main");
+  }
+  if (run("rev-parse", "--show-object-format") !== "sha1") {
+    throw new Error("Memory Vault history has an unsupported object format");
+  }
+  run("fsck", "--full", "--strict", "--no-dangling");
+  const headCommitId = run("rev-parse", "--verify", "refs/heads/main");
+  const checkpointCount = Number(run("rev-list", "--count", "refs/heads/main"));
+  if (!/^[0-9a-f]{40}$/u.test(headCommitId) || !Number.isSafeInteger(checkpointCount) || checkpointCount < 1) {
+    throw new Error("Memory Vault history metadata is invalid");
+  }
+  return { present: true, headCommitId, checkpointCount };
 }
 
 function isCharacterSkillTransientBackupPath(path) {

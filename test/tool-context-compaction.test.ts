@@ -59,6 +59,50 @@ test("large tool results are bounded for the provider without rewriting the tran
   }
 });
 
+test("current-turn tool results retain an append-only provider prefix", async () => {
+  const root = mkdtempSync(join(tmpdir(), "rp-agent-tool-prefix-"));
+  const workspaceDir = join(root, "workspace");
+  const runtime = createTestRuntime({ seed: "tool-prefix-stability", workspaceDir });
+  try {
+    for (const [name, character] of [["first.txt", "a"], ["second.txt", "b"], ["third.txt", "c"]]) {
+      writeFileSync(join(workspaceDir, name), character.repeat(90_000), "utf8");
+    }
+    runtime.kernel.patchAgentPermissions({ workspaceAccess: "read_only" });
+    runtime.model.enqueue([
+      { kind: "tool_call", name: "read", arguments: { path: "first.txt", limit: 1 } },
+      { kind: "tool_call", name: "read", arguments: { path: "second.txt", limit: 1 } },
+      { kind: "tool_call", name: "read", arguments: { path: "third.txt", limit: 1 } },
+      { kind: "assistant_text", text: "三个文件均已读取。" },
+    ]);
+
+    await runtime.kernel.sendMessage("append-only-tool-prefix", {
+      mode: "sms",
+      text: "依次读取三个大文件",
+    });
+
+    assert.equal(runtime.model.requests.length, 4);
+    for (let index = 1; index < runtime.model.requests.length - 1; index += 1) {
+      const previous = runtime.model.requests[index].messages;
+      const next = runtime.model.requests[index + 1].messages;
+      assert.deepEqual(
+        next.slice(0, previous.length),
+        previous,
+        `provider request ${index + 1} rewrote an existing message prefix`,
+      );
+    }
+
+    const resultLengths = toolResultTexts(runtime.model.requests.at(-1)?.messages ?? [])
+      .map((text) => text.length);
+    assert.equal(resultLengths.length, 3);
+    assert.ok(resultLengths[0] <= 32_000, `first result was ${resultLengths[0]} characters`);
+    assert.ok(resultLengths[1] <= 16_000, `second result was ${resultLengths[1]} characters`);
+    assert.ok(resultLengths[2] <= 256, `third result was ${resultLengths[2]} characters`);
+  } finally {
+    runtime.dispose();
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 function toolResultText(messages: readonly unknown[]): string {
   const message = messages.find((entry) =>
     Boolean(entry && typeof entry === "object" && "role" in entry && entry.role === "toolResult")
@@ -72,6 +116,10 @@ function toolResultText(messages: readonly unknown[]): string {
       ? [block.text]
       : []
   ).join("\n");
+}
+
+function toolResultTexts(messages: readonly unknown[]): string[] {
+  return messagesWithRole(messages, "toolResult").map((message) => toolResultText([message]));
 }
 
 function messagesWithRole(messages: readonly unknown[], role: string): unknown[] {

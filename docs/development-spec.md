@@ -887,6 +887,7 @@ Implementation status: complete.
 - Add Interaction State MCP tools with actual-message arrival validation and delayed departure settlement.
 - Keep the stable SMS prompt cacheable while replacing only one bounded volatile interaction projection.
 - Add inline transition history, trusted manual controls, undo, and proactive-message suppression during co-presence.
+- Hand normal-space co-presence to the current World Scene, seed the event with co-located characters, and retain the originating SMS session for bidirectional close/return behavior. **Implemented in migration 51.**
 
 Exit gate: tool flow, evidence rejection, failure rollback, HTTP confirmation,
 context isolation, Agent test cases, and desktop/mobile browser workflows pass.

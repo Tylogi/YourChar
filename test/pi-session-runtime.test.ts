@@ -546,6 +546,118 @@ test("a pending wake notification retries after restart and its transcript marke
   }
 });
 
+test("a pre-outbox sleeping conversation migrates to one durable wake after upgrade", async () => {
+  const stateDir = mkdtempSync(join(tmpdir(), "rp-agent-legacy-sleeping-wake-"));
+  const model = new ScriptedModelController("legacy-sleeping-wake");
+  let first: CompanionKernel | undefined;
+  let second: CompanionKernel | undefined;
+  let third: CompanionKernel | undefined;
+  try {
+    first = createPersistentScriptedKernel(stateDir, model);
+    const character = first.createCharacter({ name: "旧版睡眠角色" });
+    model.enqueue([{ kind: "assistant_text", text: "这段对话会模拟升级前的睡眠记录。" }]);
+    await first.sendMessage("legacy-sleeping-wake", {
+      mode: "sms",
+      characterId: character.id,
+      text: "记住这段对话",
+    });
+    first.dispose();
+    first = undefined;
+
+    const checkpointAt = "2026-01-02T03:04:05.000Z";
+    const indexPath = join(stateDir, "conversations.json");
+    const index = JSON.parse(readFileSync(indexPath, "utf8")) as {
+      conversations: Array<Record<string, unknown>>;
+    };
+    const legacy = index.conversations.find((entry) => entry.id === "legacy-sleeping-wake");
+    assert.ok(legacy);
+    legacy.sleepState = "sleeping";
+    legacy.sleepCheckpointAt = checkpointAt;
+    legacy.lastCompactionAt = checkpointAt;
+    legacy.lastCompactionReason = "conversation_sleep";
+    legacy.lastCompactionStatus = "completed";
+    delete legacy.pendingWakeNotificationId;
+    delete legacy.pendingWakeNotificationAt;
+    delete legacy.wakeNotificationGeneration;
+    delete legacy.wakeNotificationAttempts;
+    delete legacy.wakeNotificationLastError;
+    delete legacy.lastWakeNotificationId;
+    delete legacy.wakeNotificationDeliveredAt;
+    writeFileSync(indexPath, `${JSON.stringify(index, null, 2)}\n`, "utf8");
+
+    let composerCalls = 0;
+    second = createPersistentScriptedKernel(
+      stateDir,
+      model,
+      false,
+      undefined,
+      async () => {
+        composerCalls += 1;
+        return "我醒啦，我们继续吧。";
+      },
+    );
+    const migrated = second.getConversationMetadata("legacy-sleeping-wake");
+    const migratedId = "legacy-sleeping-wake:conversation-wake:1";
+    assert.equal(migrated?.sleepState, "sleeping");
+    assert.equal(migrated?.pendingWakeNotificationId, migratedId);
+    assert.equal(migrated?.pendingWakeNotificationAt, checkpointAt);
+    assert.equal(migrated?.wakeNotificationGeneration, 1);
+    const persistedPending = JSON.parse(readFileSync(indexPath, "utf8")) as {
+      conversations: Array<Record<string, unknown>>;
+    };
+    assert.equal(
+      persistedPending.conversations.find((entry) => entry.id === "legacy-sleeping-wake")
+        ?.pendingWakeNotificationId,
+      migratedId,
+    );
+
+    assert.equal(await second.flushConversationWakeNotifications("legacy-sleeping-wake"), 1);
+    assert.equal(composerCalls, 1);
+    const delivered = second.getConversationMetadata("legacy-sleeping-wake");
+    assert.equal(delivered?.sleepState, "awake");
+    assert.equal(delivered?.pendingWakeNotificationId, undefined);
+    assert.equal(delivered?.lastWakeNotificationId, migratedId);
+    const deliveredTranscript = await second.getSession("legacy-sleeping-wake");
+    assert.equal(
+      deliveredTranscript.messages.filter((message) =>
+        message.role === "custom" &&
+        message.customType === "rp-agent/conversation_wake" &&
+        JSON.stringify(message.details).includes(migratedId)
+      ).length,
+      1,
+    );
+    second.dispose();
+    second = undefined;
+
+    let duplicateComposerCalls = 0;
+    third = createPersistentScriptedKernel(
+      stateDir,
+      model,
+      false,
+      undefined,
+      async () => {
+        duplicateComposerCalls += 1;
+        return "不应重复投递";
+      },
+    );
+    assert.equal(await third.flushConversationWakeNotifications("legacy-sleeping-wake"), 0);
+    assert.equal(duplicateComposerCalls, 0);
+    assert.equal(third.getConversationMetadata("legacy-sleeping-wake")?.sleepState, "awake");
+    const restoredTranscript = await third.getSession("legacy-sleeping-wake");
+    assert.equal(
+      restoredTranscript.messages.filter((message) =>
+        message.role === "custom" && message.customType === "rp-agent/conversation_wake"
+      ).length,
+      1,
+    );
+  } finally {
+    first?.dispose();
+    second?.dispose();
+    third?.dispose();
+    rmSync(stateDir, { recursive: true, force: true });
+  }
+});
+
 test("the built-in wake composer falls back to a safe in-character line when its model call fails", async () => {
   const stateDir = mkdtempSync(join(tmpdir(), "rp-agent-wake-model-fallback-"));
   const model = new ScriptedModelController("wake-model-fallback");

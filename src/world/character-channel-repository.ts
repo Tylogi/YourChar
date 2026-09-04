@@ -6,6 +6,8 @@ import type {
   CharacterCollaborationJob,
   CharacterCollaborationJobStatus,
   CharacterCollaborationReportStatus,
+  CharacterInteractionReflection,
+  CharacterInteractionScene,
 } from "./types.js";
 
 type Row = Record<string, unknown>;
@@ -298,6 +300,134 @@ export class CharacterChannelRepository {
         AND created_at < ?
     `).get(initiatorCharacterId, startsAt, endsAt) as Row;
     return Number(row.count ?? 0);
+  }
+
+  saveInteractionScene(
+    scene: CharacterInteractionScene,
+    reflections: CharacterInteractionReflection[],
+  ): {
+    scene: CharacterInteractionScene;
+    reflections: CharacterInteractionReflection[];
+    created: boolean;
+  } {
+    return this.database.transaction(() => {
+      const inserted = this.database.connection.prepare(`
+        INSERT INTO character_interaction_scenes(
+          episode_id, channel_id, world_id, narrative_text, event_summary,
+          created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(episode_id) DO NOTHING
+      `).run(
+        scene.episodeId,
+        scene.channelId,
+        scene.worldId,
+        scene.narrativeText,
+        scene.eventSummary,
+        scene.createdAt,
+        scene.updatedAt,
+      );
+      const created = Number(inserted.changes) === 1;
+      const insertReflection = this.database.connection.prepare(`
+        INSERT INTO character_interaction_reflections(
+          episode_id, channel_id, world_id, character_id, peer_character_id,
+          summary, salience, created_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(episode_id, character_id) DO NOTHING
+      `);
+      for (const reflection of reflections) {
+        insertReflection.run(
+          reflection.episodeId,
+          reflection.channelId,
+          reflection.worldId,
+          reflection.characterId,
+          reflection.peerCharacterId,
+          reflection.summary,
+          reflection.salience,
+          reflection.createdAt,
+        );
+      }
+      if (created) {
+        this.database.connection.prepare(`
+          UPDATE character_channels SET
+            unread_count = unread_count + 1,
+            last_unread_at = ?,
+            last_message_at = ?,
+            updated_at = ?
+          WHERE id = ?
+        `).run(scene.createdAt, scene.createdAt, scene.createdAt, scene.channelId);
+      }
+      return {
+        scene: this.getInteractionScene(scene.episodeId)!,
+        reflections: this.listInteractionReflections(scene.episodeId),
+        created,
+      };
+    });
+  }
+
+  getInteractionScene(episodeId: string): CharacterInteractionScene | undefined {
+    const row = this.database.connection.prepare(`
+      SELECT * FROM character_interaction_scenes WHERE episode_id = ?
+    `).get(episodeId) as Row | undefined;
+    return row ? mapInteractionScene(row) : undefined;
+  }
+
+  latestInteractionScene(channelId: string): CharacterInteractionScene | undefined {
+    const row = this.database.connection.prepare(`
+      SELECT * FROM character_interaction_scenes
+      WHERE channel_id = ?
+      ORDER BY created_at DESC, episode_id DESC
+      LIMIT 1
+    `).get(channelId) as Row | undefined;
+    return row ? mapInteractionScene(row) : undefined;
+  }
+
+  listInteractionScenes(episodeIds: string[]): CharacterInteractionScene[] {
+    if (!episodeIds.length) return [];
+    const placeholders = episodeIds.map(() => "?").join(", ");
+    return (this.database.connection.prepare(`
+      SELECT * FROM character_interaction_scenes
+      WHERE episode_id IN (${placeholders})
+      ORDER BY created_at, episode_id
+    `).all(...episodeIds) as Row[]).map(mapInteractionScene);
+  }
+
+  listInteractionReflections(episodeId: string): CharacterInteractionReflection[] {
+    return (this.database.connection.prepare(`
+      SELECT * FROM character_interaction_reflections
+      WHERE episode_id = ?
+      ORDER BY character_id
+    `).all(episodeId) as Row[]).map(mapInteractionReflection);
+  }
+
+  listInteractionReflectionsForEpisodes(
+    episodeIds: string[],
+  ): CharacterInteractionReflection[] {
+    if (!episodeIds.length) return [];
+    const placeholders = episodeIds.map(() => "?").join(", ");
+    return (this.database.connection.prepare(`
+      SELECT * FROM character_interaction_reflections
+      WHERE episode_id IN (${placeholders})
+      ORDER BY created_at, episode_id, character_id
+    `).all(...episodeIds) as Row[]).map(mapInteractionReflection);
+  }
+
+  listRecentInteractionReflections(input: {
+    characterId: string;
+    worldId: string;
+    peerCharacterId?: string;
+    limit?: number;
+  }): CharacterInteractionReflection[] {
+    const bounded = Math.max(1, Math.min(Math.floor(input.limit ?? 8), 32));
+    const peerClause = input.peerCharacterId ? "AND peer_character_id = ?" : "";
+    const parameters = input.peerCharacterId
+      ? [input.characterId, input.worldId, input.peerCharacterId, bounded]
+      : [input.characterId, input.worldId, bounded];
+    return (this.database.connection.prepare(`
+      SELECT * FROM character_interaction_reflections
+      WHERE character_id = ? AND world_id = ? ${peerClause}
+      ORDER BY created_at DESC, episode_id DESC
+      LIMIT ?
+    `).all(...parameters) as Row[]).map(mapInteractionReflection);
   }
 
   appendMessage(
@@ -965,6 +1095,31 @@ function mapMessage(row: Row): CharacterChannelMessage {
     ...(senderCharacterId ? { senderCharacterId } : {}),
     kind: String(row.kind) as CharacterChannelMessage["kind"],
     content: String(row.content),
+    createdAt: String(row.created_at),
+  };
+}
+
+function mapInteractionScene(row: Row): CharacterInteractionScene {
+  return {
+    episodeId: String(row.episode_id),
+    channelId: String(row.channel_id),
+    worldId: String(row.world_id),
+    narrativeText: String(row.narrative_text),
+    eventSummary: String(row.event_summary),
+    createdAt: String(row.created_at),
+    updatedAt: String(row.updated_at),
+  };
+}
+
+function mapInteractionReflection(row: Row): CharacterInteractionReflection {
+  return {
+    episodeId: String(row.episode_id),
+    channelId: String(row.channel_id),
+    worldId: String(row.world_id),
+    characterId: String(row.character_id),
+    peerCharacterId: String(row.peer_character_id),
+    summary: String(row.summary),
+    salience: Number(row.salience),
     createdAt: String(row.created_at),
   };
 }

@@ -42,11 +42,9 @@ proposals. Local Workspace read/write/edit and network-isolated MarkItDown
 document conversion remain inside the tmpfs overlay. Meeting interaction
 remains available because its database and
 event history are part of the disposable child runtime. The normal source
-conversation is never advanced by an incognito turn. While an overlay is
-opening, active, or closing, sandbox-network access is also denied to ordinary
-Agent shells so they cannot reach the loopback YourChar API. This does not
-change the saved permission preference; its effective value returns after the
-overlay has been removed.
+conversation is never advanced by an incognito turn. The incognito child has no
+Shell of its own, but opening or closing the overlay does not override the
+user's Shell-network permission for ordinary Agent conversations.
 
 “Incognito” means **YourChar does not retain the overlay locally after it is
 closed**. It is not an end-to-end no-retention guarantee. The configured model

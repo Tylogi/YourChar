@@ -2803,6 +2803,84 @@ const migrations: Migration[] = [
       );
     `,
   },
+  {
+    version: 49,
+    sql: `
+      CREATE TABLE character_interaction_scenes (
+        episode_id TEXT PRIMARY KEY
+          REFERENCES character_channel_episodes(id) ON DELETE CASCADE,
+        channel_id TEXT NOT NULL
+          REFERENCES character_channels(id) ON DELETE CASCADE,
+        world_id TEXT NOT NULL
+          REFERENCES role_worlds(id) ON DELETE CASCADE,
+        narrative_text TEXT NOT NULL CHECK (length(narrative_text) BETWEEN 1 AND 8000),
+        event_summary TEXT NOT NULL CHECK (length(event_summary) BETWEEN 1 AND 1200),
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      );
+      CREATE INDEX character_interaction_scenes_channel_idx
+        ON character_interaction_scenes(channel_id, created_at DESC, episode_id DESC);
+
+      CREATE TABLE character_interaction_reflections (
+        episode_id TEXT NOT NULL
+          REFERENCES character_channel_episodes(id) ON DELETE CASCADE,
+        channel_id TEXT NOT NULL
+          REFERENCES character_channels(id) ON DELETE CASCADE,
+        world_id TEXT NOT NULL
+          REFERENCES role_worlds(id) ON DELETE CASCADE,
+        character_id TEXT NOT NULL
+          REFERENCES characters(id) ON DELETE CASCADE,
+        peer_character_id TEXT NOT NULL
+          REFERENCES characters(id) ON DELETE CASCADE,
+        summary TEXT NOT NULL CHECK (length(summary) BETWEEN 1 AND 600),
+        salience REAL NOT NULL CHECK (salience >= 0 AND salience <= 1),
+        created_at TEXT NOT NULL,
+        PRIMARY KEY(episode_id, character_id),
+        CHECK (character_id <> peer_character_id)
+      );
+      CREATE INDEX character_interaction_reflections_character_idx
+        ON character_interaction_reflections(
+          character_id, world_id, created_at DESC, episode_id DESC
+        );
+      CREATE INDEX character_interaction_reflections_peer_idx
+        ON character_interaction_reflections(
+          character_id, peer_character_id, created_at DESC, episode_id DESC
+        );
+    `,
+  },
+  {
+    version: 50,
+    sql: `
+      CREATE TABLE task_bench_reports (
+        id TEXT PRIMARY KEY,
+        ran_at TEXT NOT NULL,
+        name TEXT NOT NULL,
+        report_json TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      );
+
+      CREATE INDEX task_bench_reports_ran_at_idx
+        ON task_bench_reports(ran_at DESC, id DESC);
+
+      CREATE TABLE task_bench_report_migrations (
+        name TEXT PRIMARY KEY,
+        completed_at TEXT NOT NULL
+      );
+    `,
+  },
+  {
+    version: 51,
+    sql: `
+      ALTER TABLE world_story_events
+        ADD COLUMN meeting_session_id TEXT
+          REFERENCES role_sessions(app_session_id) ON DELETE SET NULL;
+
+      CREATE INDEX world_story_events_meeting_session_idx
+        ON world_story_events(meeting_session_id, updated_at DESC)
+        WHERE meeting_session_id IS NOT NULL;
+    `,
+  },
 ];
 
 export class AppDatabase {

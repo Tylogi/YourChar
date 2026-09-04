@@ -101,8 +101,11 @@ export function createInteractionMcpServer(context: InteractionMcpContext): McpS
         idempotencyKey: `interaction-tool:${context.sessionId}:${toolCallId(extra)}`,
       });
       context.actions().push(context.store.addAction("begin_meeting", "completed", actionPayload(result)));
+      const worldId = context.interactionService.meetingSceneWorldId(result.state);
       return transitionResult(
-        "MEETING_BEGUN: For the remainder of this turn, use observable-scene narration. Describe only environment and the character's visible behavior/dialogue; never invent user actions or inner state.",
+        worldId
+          ? `WORLD_SCENE_OPENED: The in-person scene has moved to World ${worldId}. Send only a brief first-person SMS handoff telling the user that the scene is open; do not continue or narrate the physical encounter in this private thread.`
+          : "MEETING_BEGUN: For the remainder of this turn, use observable-scene narration. Describe only environment and the character's visible behavior/dialogue; never invent user actions or inner state.",
         result,
       );
     },

@@ -1,4 +1,7 @@
 import assert from "node:assert/strict";
+import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import test from "node:test";
 import { TurnRetryUnavailableError } from "../src/domain/kernel.js";
 import { createTestRuntime } from "../src/testing/index.js";
@@ -30,6 +33,102 @@ test("role text containing failure wording remains completed and cannot be retri
       runtime.kernel.retryLastMessage("status-completed"),
       TurnRetryUnavailableError,
     );
+  } finally {
+    runtime.dispose();
+  }
+});
+
+test("a length-truncated turn continues once and completes the pending Workspace delivery", async () => {
+  const root = mkdtempSync(join(tmpdir(), "rp-agent-length-recovery-"));
+  const workspaceDir = join(root, "workspace");
+  const runtime = createTestRuntime({
+    seed: "status-length-recovery",
+    workspaceDir,
+  });
+  try {
+    runtime.kernel.patchAgentPermissions({ workspaceAccess: "read_write" });
+    const character = runtime.kernel.createCharacter({ name: "续写角色" });
+    runtime.model.enqueue([
+      {
+        kind: "assistant_text",
+        text: "我把分析整理成文档，落盘：",
+        stopReason: "length",
+      },
+      {
+        kind: "tool_call",
+        name: "write",
+        arguments: {
+          path: "reports/analysis.md",
+          content: "# 分析报告\n\n结论已核实。\n",
+        },
+      },
+      {
+        kind: "tool_call",
+        name: "share_workspace_file",
+        arguments: { path: "reports/analysis.md" },
+      },
+      { kind: "assistant_text", text: "文档已经写好并放在附件里。" },
+    ]);
+
+    const response = await runtime.kernel.sendMessage("length-recovery", {
+      mode: "sms",
+      characterId: character.id,
+      text: "整理成 Markdown 文档给我",
+    });
+
+    assert.equal(response.status, "completed");
+    assert.equal(response.canRetry, false);
+    assert.equal(response.reply, "文档已经写好并放在附件里。");
+    assert.equal(response.attachments?.[0]?.path, "reports/analysis.md");
+    assert.equal(
+      readFileSync(join(workspaceDir, "reports/analysis.md"), "utf8"),
+      "# 分析报告\n\n结论已核实。\n",
+    );
+    assert.equal(runtime.model.requests.length, 4);
+    assert.match(runtime.model.requests[1].systemPrompt, /TRUSTED LENGTH RECOVERY/u);
+    const recoveryTrace = runtime.kernel.recentModelContextTraces(10).find((entry) =>
+      JSON.stringify(entry.payload).includes("TRUSTED LENGTH RECOVERY")
+    );
+    assert.equal(recoveryTrace?.payload.temperature, 0);
+    assert.ok(response.actions.some((action) =>
+      action.actionType === "recover_length_truncation" && action.status === "completed"));
+    assert.ok(response.actions.some((action) =>
+      action.actionType === "workspace_write" && action.status === "completed"));
+  } finally {
+    runtime.dispose();
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("an exhausted length continuation is failed and retryable before side effects", async () => {
+  const runtime = createTestRuntime({ seed: "status-length-exhausted" });
+  try {
+    const character = runtime.kernel.createCharacter({ name: "截断角色" });
+    runtime.model.enqueue([
+      { kind: "assistant_text", text: "第一份未完成草稿", stopReason: "length" },
+      { kind: "assistant_text", text: "续写仍未完成", stopReason: "length" },
+    ]);
+
+    const failed = await runtime.kernel.sendMessage("length-exhausted", {
+      mode: "sms",
+      characterId: character.id,
+      text: "请生成完整结果",
+    });
+
+    assert.equal(failed.status, "failed");
+    assert.equal(failed.canRetry, true);
+    assert.equal(failed.messageType, "system");
+    assert.equal(failed.eventType, "operation_failed");
+    assert.match(failed.reply, /输出长度上限/u);
+    assert.equal(runtime.model.requests.length, 2);
+    assert.match(runtime.model.requests[1].systemPrompt, /TRUSTED LENGTH RECOVERY/u);
+    assert.equal(runtime.kernel.listConversationMetadata()[0].lastTurnStatus, "failed");
+    assert.equal(runtime.kernel.listConversationMetadata()[0].lastTurnCanRetry, true);
+
+    runtime.model.enqueue([{ kind: "assistant_text", text: "这次已经完整完成。" }]);
+    const retried = await runtime.kernel.retryLastMessage("length-exhausted");
+    assert.equal(retried.status, "completed");
+    assert.equal(retried.reply, "这次已经完整完成。");
   } finally {
     runtime.dispose();
   }

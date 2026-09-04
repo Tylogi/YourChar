@@ -23,6 +23,7 @@ export class WorldConversationValidationError extends Error {
 
 export type WorldStoryDecisionInput = {
   action: "none" | "propose" | "begin" | "advance" | "resolve" | "cancel";
+  meetingSessionId?: string;
   title?: string;
   summary?: string;
   objective?: string;
@@ -214,6 +215,7 @@ export class WorldConversationService {
         if (current) {
           afterState = {
             ...current,
+            ...(input.meetingSessionId ? { meetingSessionId: input.meetingSessionId } : {}),
             ...(input.placeId ? { placeId: input.placeId } : {}),
             title: cleanText(input.title, current.title, 120),
             summary: cleanText(input.summary, current.summary, 1_200),
@@ -228,6 +230,7 @@ export class WorldConversationService {
           afterState = {
             id: this.idGenerator.next("world-story-event"),
             worldId,
+            ...(input.meetingSessionId ? { meetingSessionId: input.meetingSessionId } : {}),
             ...(input.placeId ? { placeId: input.placeId } : {}),
             title: cleanText(input.title, "新的事件", 120),
             summary: cleanText(input.summary, "", 1_200),

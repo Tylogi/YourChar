@@ -65,6 +65,8 @@ export class DataManagementRepository {
         DELETE FROM reminder_occurrences;
         DELETE FROM proactive_messages;
         DELETE FROM proactive_topic_policies;
+        DELETE FROM character_interaction_reflections;
+        DELETE FROM character_interaction_scenes;
         DELETE FROM character_channel_messages;
         DELETE FROM character_channel_episodes;
         DELETE FROM character_channels;
@@ -117,6 +119,7 @@ export class DataManagementRepository {
         DELETE FROM memory_context_sessions;
         DELETE FROM memory_context_items;
         DELETE FROM memory_retrieval_stats;
+        DELETE FROM task_bench_reports;
         DELETE FROM model_context_traces;
         DELETE FROM context_log_summaries;
         DELETE FROM audit_actions;

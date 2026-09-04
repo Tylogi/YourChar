@@ -30,6 +30,8 @@ import type { GitAccessService } from "../git/index.js";
 import type { WebReaderService } from "../web-reader/service.js";
 import type {
   CharacterInteractionActor,
+  CharacterInteractionSceneComposer,
+  CharacterInteractionSceneComposerInput,
   ProactiveMessenger,
   WorldPlanner,
 } from "../world/types.js";
@@ -43,6 +45,7 @@ export type ScriptedModelResponse = (
       kind: "assistant_text";
       text: string;
       thinking?: string;
+      stopReason?: "stop" | "length";
       usage?: { input: number; output: number; cacheRead?: number; cacheWrite?: number };
     }
   | { kind: "tool_call"; name: string; arguments: Record<string, unknown>; id?: string }
@@ -77,6 +80,7 @@ export type CreateTestRuntimeOptions = {
   worldPlanner?: WorldPlanner;
   worldMessenger?: ProactiveMessenger;
   characterInteractionActor?: CharacterInteractionActor;
+  characterInteractionSceneComposer?: CharacterInteractionSceneComposer | false;
   characterCollaborationReporter?: CharacterCollaborationReporter;
   conversationWakeComposer?: ConversationWakeComposer;
   conversationWakeRetryDelaysMs?: readonly number[];
@@ -149,9 +153,13 @@ export class ScriptedModelController {
       this.captureRequest(context, providerPayload, options?.timeoutMs);
       if (response.delayMs) await new Promise((resolve) => setTimeout(resolve, response.delayMs));
       if (response.kind === "assistant_text") {
-        const message = fauxAssistantMessage(response.thinking === undefined
+        const content = response.thinking === undefined
           ? response.text
-          : [fauxThinking(response.thinking), fauxText(response.text)]);
+          : [fauxThinking(response.thinking), fauxText(response.text)];
+        const message = fauxAssistantMessage(
+          content,
+          response.stopReason ? { stopReason: response.stopReason } : {},
+        );
         if (response.usage) {
           message.usage = {
             input: response.usage.input,
@@ -250,6 +258,12 @@ export class TestRuntime {
       worldPlanner: options.worldPlanner,
       worldMessenger: options.worldMessenger,
       characterInteractionActor: options.characterInteractionActor,
+      ...(options.characterInteractionSceneComposer === false
+        ? {}
+        : {
+            characterInteractionSceneComposer:
+              options.characterInteractionSceneComposer ?? deterministicInteractionScene,
+          }),
       characterCollaborationReporter: options.characterCollaborationReporter,
       conversationWakeComposer: options.conversationWakeComposer ??
         (async () => "我睡醒了，现在又可以继续陪你啦。"),
@@ -384,6 +398,32 @@ export class TestRunRegistry {
 
 export function createTestRuntime(options: CreateTestRuntimeOptions = {}): TestRuntime {
   return new TestRuntime("in-process", options);
+}
+
+async function deterministicInteractionScene(
+  input: CharacterInteractionSceneComposerInput,
+) {
+  const sourceContribution = input.messages.find((message) =>
+    message.senderCharacterId === input.source.characterId)?.content ?? "";
+  const targetContribution = [...input.messages].reverse().find((message) =>
+    message.senderCharacterId === input.target.characterId)?.content ?? "";
+  const place = input.source.place?.name ?? input.target.place?.name ?? input.world.name;
+  return {
+    narrativeText: [
+      `在${place}，${input.source.name}先向${input.target.name}开了口。`,
+      sourceContribution ? `${input.source.name}说：“${sourceContribution}”` : "",
+      targetContribution
+        ? `${input.target.name}听完后答道：“${targetContribution}”`
+        : `${input.target.name}安静地听完了。`,
+    ].filter(Boolean).join("\n\n"),
+    eventSummary: input.episode.kind === "collaboration"
+      ? `${input.source.name}向${input.target.name}提出协作请求，${input.target.name}给出了回应。`
+      : `${input.source.name}与${input.target.name}完成了一次私下互动。`,
+    sourcePerspectiveSummary:
+      `我主动找${input.target.name}进行了这次互动，并记住了对方如何回应。`,
+    targetPerspectiveSummary:
+      `${input.source.name}主动来找我，我按自己的判断作出了回应。`,
+  };
 }
 
 function canonicalMessage(message: AgentMessage) {

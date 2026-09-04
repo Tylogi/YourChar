@@ -2,7 +2,7 @@
 
 Status: implemented trial baseline with controlled initiative
 Audience: maintainers, coding agents, reviewers, and test agents
-Last updated: 2026-08-24
+Last updated: 2026-08-31
 
 ## 1. Product Contract
 
@@ -16,6 +16,7 @@ This feature gives characters a small canonical life outside the current chat:
   per character in that world);
 - the background Coordinator may create character calendar events, settle completed activities into world events and RP memories, and send a bounded proactive SMS;
 - same-world characters may use a persistent private channel for one-hop messages, bounded collaboration, and opt-in autonomous social exchanges;
+- completed character interactions are rendered as third-person scenes, while each participant keeps a separate compact subjective reflection;
 - the Agent can inspect and mutate its own fictional state through a fixed MCP.
 
 Canonical world state has two projections. A private `sms` thread lets one
@@ -39,7 +40,7 @@ Character UI / HTTP API
         |
  SQLite schema 19 + initiative schema 25 + conversation schema 26
                    + character-channel schema 29 + capability schema 30
-                   + character Skill schema 31
+                   + character Skill schema 31 + interaction-scene schema 49
         |
  WorldAutonomyCoordinator (60 s tick)
         |             |                 |                    |
@@ -114,6 +115,17 @@ Migration 29 adds:
 | `character_channel_episodes` | idempotent social, collaboration, or contact execution with source, objective, result, failure, and model-call status |
 | `character_channel_messages` | append-only character or system messages ordered within the channel |
 | `character_autonomy_policies.social_*` | independent opt-in, local-day limit, cooldown, and last-exchange time for autonomous character social activity |
+
+Migration 49 adds the presentation/context split for completed interactions:
+
+| Table | Ownership and purpose |
+|---|---|
+| `character_interaction_scenes` | one user-facing, third-person literary scene and one objective event summary per completed episode |
+| `character_interaction_reflections` | one compact, character-owned subjective summary per participant; indexed for bounded later context |
+
+The append-only channel messages remain durable acting material and an audit
+fallback for old or in-flight episodes. They are no longer the primary
+user-facing presentation once a scene exists.
 
 Character deletion cascades through its world state. Deleting a world requires
 removing all memberships first. Moving or removing a character from a world
@@ -263,19 +275,33 @@ default is one exchange with a four-hour cooldown. A tick creates at most one
 exchange per world, so increasing the number of characters cannot create an
 unbounded model-call burst.
 
-One autonomous exchange has at most two actor calls: the initiator writes an
-opening and the target independently replies or declines. Each actor uses its
-own bound model profile and SOUL. The bounded input contains the world card,
+One autonomous exchange has at most two actor calls: the initiator contributes
+an opening and the target independently replies or declines. Each actor uses
+its own bound model profile and SOUL. The bounded input contains the world card,
 trusted current time, both public runtime states, the directed relationship,
-and the latest 16 messages from that pair channel. It never contains either
+the latest 16 messages from that pair channel, and at most four compact
+reflections owned by the acting character. It never contains either
 character's private user SMS transcript, user profile, private memory store,
-tools, or model credentials.
+tools, or model credentials. Reflections are explicitly subjective and cannot
+be treated as facts known by the peer.
 
-A completed exchange creates a shared interaction event, one direct observation
-and one character-bound RP memory for each participant, and small directional
-relationship updates. Failed model calls create a visible channel status and an
-audit action. A completed visible exchange remains completed if secondary
-memory or relationship settlement fails; that failure is audited separately.
+After a successful exchange, the World Director gets one bounded composition
+call. It turns the actors' private contributions into polished third-person
+prose, an objective event summary, and two distinct first-person reflection
+summaries. The public scene may add only small connective gestures or sensory
+detail; it cannot invent consequential actions, tools, knowledge, user contact,
+or expose SOUL/relationship/reflection internals. Invalid or unavailable
+composition falls back to a deterministic third-person rendering, so actor
+work is not lost.
+
+A completed exchange creates a shared interaction event from the objective
+summary, one direct observation and one character-bound RP memory for each
+participant, and small directional relationship updates. Each RP memory
+combines the common event fact only with that character's own reflection; the
+same transcript is never copied into both perspectives. Failed actor calls
+create a visible channel status and an audit action. A completed visible
+exchange remains completed if secondary memory or relationship settlement
+fails; that failure is audited separately.
 
 ## 6. Context and Token Economics
 
@@ -311,10 +337,12 @@ and proactive calls explicitly disable thinking and use 1,200 and 640 output
 tokens respectively; providers without the MLX control use conservative 2,400
 and 1,200 fallbacks.
 
-Character-channel actor calls also disable MLX thinking. They use 900 output
+Character-channel actor and scene-composition calls also disable MLX thinking. Actor calls use 900 output
 tokens with enforced thinking-off control or a 1,600-token fallback. Their
 stable prefix is the actor SOUL plus world card; current runtime, relationship,
-objective, and bounded pair history remain in the dynamic message.
+objective, bounded pair history, and private reflection digest remain in the
+dynamic message. The scene composer uses the World Director profile and emits a
+strict bounded JSON draft before persistence.
 
 ## 7. MCP Contract
 
@@ -343,10 +371,14 @@ cannot recursively delegate, browse, mutate files, contact the user, or claim
 external work. Actor failures return a factual failed tool result instead of
 causing the source Agent to invent a response or repeatedly retry the MCP.
 
-Character channels are shown as indented two-avatar rows beneath their world in
-the conversation sidebar. Opening one shows a read-only transcript and marks
-its unread counter as read. These channels are durable across process restart
-and included in export/delete-all and operational SQLite backup flows.
+Character interactions are shown as indented two-avatar rows beneath their
+world in the conversation sidebar. Opening one shows the completed third-person
+novel scene as the primary surface. A collapsible “角色视角摘要” section shows
+the two short diary perspectives, and “查看角色原始往来” preserves the underlying
+actor material for audit. Old and in-flight episodes without a scene retain the
+raw-message fallback. Opening the latest episode marks its unread counter as
+read. These records are durable across process restart and included in
+export/delete-all and operational SQLite backup flows.
 
 `request_character_contact` is available only from a character-bound SMS
 thread. Source and target must be different characters in the same canonical
@@ -490,12 +522,14 @@ Automated coverage must preserve these rules:
 - a target decline creates no transcript message, while a send enters only the target thread and remains unread until opened;
 - character channels reject self/cross-world pairs, persist idempotent episodes, and serialize concurrent work per pair;
 - each channel actor uses its own model/SOUL and receives no private user-thread transcript or tools;
+- completed interactions persist one third-person scene plus two owner-scoped, asymmetric reflections, while legacy episodes retain a raw-message fallback;
+- later actor and World contexts receive only bounded reflections owned by that character and cannot promote them to shared facts;
 - autonomous social activity requires both opt-ins and obeys availability, story-event, quiet-hour, local-day, and cooldown gates;
 - completed channel exchanges settle only character-bound observations, memories, and directional relationships;
 - same-world setting updates preserve runtime state;
 - switching worlds cancels old plans and pending proactive work;
 - module disable removes tools and both context sections;
-- schemas 19, 25, 26, 29, and 30 survive backup/restore and delete-all;
+- schemas 19, 25, 26, 29, 30, and 49 survive backup/restore and delete-all;
 - desktop and mobile browser workflows can create, bind, plan, and simulate.
 
 The focused suites are `test/world-autonomy.test.ts` and
@@ -528,7 +562,7 @@ world history into every prompt.
 - `src/world/conversation-repository.ts`: schema-26 World timeline persistence
 - `src/world/conversation-service.ts`: events, observations, relationships, and unread state
 - `src/world/conversation-prompts.ts`: World narrative and Analyzer output contracts
-- `src/world/character-channel-repository.ts`: schema-29 pair channels, episodes, messages, and unread state
+- `src/world/character-channel-repository.ts`: schema-29 pair channels plus schema-49 scenes, reflections, and unread state
 - `src/world/character-channel-service.ts`: same-world validation and persistent channel operations
 - `src/world/character-interaction-coordinator.ts`: one-hop messaging, collaboration, autonomous social gating, and settlement
 - `src/organization/`: schema-31 automatic profiles, one versioned Skill per character, evidence, and trusted task routing

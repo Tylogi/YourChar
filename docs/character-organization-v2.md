@@ -182,12 +182,12 @@ control, or access to the host control plane. Turning it off removes management 
 does not silently disable already enabled private Agent Skills or deactivate
 active owned workflows.
 
-Shell network is denied for the whole turn whenever Skill autonomy is enabled,
-an enabled character-private package was loaded into that handle, or an active
-autonomous workflow is in context. That decision is latched before generation,
-so a Skill cannot disable itself and regain loopback access in the same turn.
-The saved network preference may become effective only on a later safe turn
-after the relevant Skill content is disabled.
+Skill autonomy, installed character-private packages, and autonomous workflows
+do not alter the Shell-network permission. If the user explicitly enables
+networking, loaded Skill instructions may exercise that authority during the
+same turn; if networking is disabled, Skill text cannot enable it. This makes
+the permission boundary visible and user-controlled instead of applying a
+hidden per-turn network latch.
 
 The current character-channel actor deliberately has no shell or general MCP
 tool access. Per-character tool permission switches, if added later, must be a

@@ -455,10 +455,12 @@ test("backup v3 preserves Vault v4 secret memories and staged restore rejects co
     sourceAfterBackup.dispose();
     const manifest = JSON.parse(readFileSync(join(backupDir, "backup-manifest.json"), "utf8"));
     assert.equal(manifest.schemaVersion, 3);
-    assert.equal(manifest.database.schemaVersion, 48);
+    assert.equal(manifest.database.schemaVersion, 51);
     assert.equal(manifest.database.integrityCheck, "ok");
     assert.equal(manifest.vault.projectionConsistent, true);
+    assert.equal(manifest.containsMemoryVaultHistory, true);
     assert.ok(manifest.files.some((entry: { path: string }) => entry.path === "memory-vault/reality/user-profile.md"));
+    assert.ok(manifest.files.some((entry: { path: string }) => entry.path === "memory-vault-history.git/HEAD"));
     const secretVaultPath = `memory-vault/secret/characters/${secretOwner.id}/memories/${secretMemory.id}.md`;
     assert.ok(manifest.files.some((entry: { path: string }) => entry.path === secretVaultPath));
     assert.match(readFileSync(join(backupDir, secretVaultPath), "utf8"), /schemaVersion: 4[\s\S]*conversationSpace: secret/);
@@ -484,6 +486,8 @@ test("backup v3 preserves Vault v4 secret memories and staged restore rejects co
       conversationSpace: "normal",
     }).length, 0);
     assert.equal(restored.getMemoryVaultHealth().projectionConsistent, true);
+    assert.equal(restored.getMemoryVaultHealth().history.available, true);
+    assert.ok(restored.listMemoryVaultHistory().length > 0);
     restored.dispose();
 
     mkdirSync(protectedDir, { recursive: true });

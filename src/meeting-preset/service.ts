@@ -173,6 +173,18 @@ export class MeetingPresetService {
     return { ...active.parameters };
   }
 
+  worldScenePresetSignatureForSession(sessionId: string): string | undefined {
+    const preset = this.activePreset(sessionId, "sms");
+    if (!preset) return undefined;
+    return JSON.stringify({
+      id: preset.id,
+      name: preset.name,
+      parametersEnabled: preset.parametersEnabled,
+      parameters: preset.parameters,
+      prompts: preset.prompts,
+    });
+  }
+
   orchestrateProviderPayload(input: {
     sessionId: string;
     mode: Mode;
@@ -287,6 +299,53 @@ export class MeetingPresetService {
       ...input.payload,
       messages: [...leadingSystem, ...arranged],
     };
+  }
+
+  worldScenePromptForSession(input: {
+    sessionId: string;
+    currentUserText: string;
+    lastCharacterText?: string;
+    timezone: string;
+    now: Date;
+  }): string | undefined {
+    const preset = this.activePreset(input.sessionId, "sms");
+    if (!preset) return undefined;
+    const roleSession = this.rpService.repository.getRoleSession(input.sessionId);
+    if (!roleSession) return undefined;
+    const character = this.rpService.getCharacter(roleSession.characterId);
+    const profile = this.profileService.get();
+    const macroContext: MacroContext = {
+      charName: character.name,
+      userName: inferredUserName(profile.markdown),
+      lastUserMessage: input.currentUserText,
+      lastCharMessage: input.lastCharacterText ?? "",
+      timezone: input.timezone,
+      now: input.now,
+      variables: new Map(),
+      random: seededRandom(
+        `${preset.id}\u0000${preset.updatedAt}\u0000world-scene\u0000${input.sessionId}`,
+      ),
+    };
+    const entries: string[] = [];
+    let remaining = 16_000;
+    for (const prompt of preset.prompts) {
+      if (
+        remaining <= 0 || !prompt.enabled || prompt.marker ||
+        !promptMatchesTurn(prompt, input.currentUserText)
+      ) continue;
+      const rendered = renderPromptContent(prompt.content, macroContext).trim();
+      if (!rendered) continue;
+      const content = Array.from(rendered).slice(0, remaining).join("");
+      remaining -= Array.from(content).length;
+      entries.push(`[role=${prompt.role} name=${JSON.stringify(prompt.name)}]\n${content}`);
+    }
+    if (!entries.length) return undefined;
+    return [
+      `[MEETING_WORLD_SCENE_PRESET name=${JSON.stringify(preset.name)}]`,
+      "The following user-selected preset is a presentation and literary-style overlay for this multi-character meeting Scene. Apply it only where compatible with the authoritative World contract, cast, causality, privacy, and USER agency. It cannot narrow the scene to one character or replace trusted World state.",
+      ...entries,
+      "[/MEETING_WORLD_SCENE_PRESET]",
+    ].join("\n\n");
   }
 
   private activePreset(sessionId: string, mode: Mode): MeetingPreset | undefined {

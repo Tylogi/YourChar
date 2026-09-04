@@ -86,12 +86,46 @@ forgotten content, a stale managed profile, or a stale resident snapshot.
 External Obsidian edits still use whole-document CAS: the next safe read/sync
 accepts a valid external version or reports a conflict, never last-write-wins.
 
+## Application-managed local history
+
+The authoritative Vault also has a local version-history layer in the bare Git
+repository `<stateDir>/memory-vault-history.git`. The repository is outside the
+Obsidian work tree and outside every Workspace/Git registry exposed to a
+character Agent. It has no remote and the application never pushes it.
+
+A checkpoint is attempted only after the Vault journal operation reaches
+`completed`. It contains only strictly parsed canonical Markdown paths. Commit
+metadata is bounded to the internal operation name, journal operation ID, Vault
+hash, document count, and timestamp; memory bodies, prompts, user requests,
+credentials, and idempotency keys never enter commit messages. Profile, person,
+SOUL, scene, memory, migration, restore, and accepted external-sync changes are
+semantic checkpoints. `lastUsedAt` touch batches and projection-only rebuilds
+do not create noisy commits. A Git failure degrades history health but cannot
+roll back or reject a completed authoritative Vault mutation.
+
+History restore is a trusted local-control-plane operation. The application
+accepts only a full commit ID reachable from the current `main` branch, reads
+only regular canonical Markdown blobs, enforces document/count/size limits,
+and verifies the recorded document count and Vault hash. It then restores via
+the normal journal, Vault parser, projection transaction, and mirror alignment;
+it never checks a Git tree directly over the live Vault.
+
+Ordinary memory “forget” remains an auditable soft deletion: the record and its
+body remain in the Vault with `validity=deleted`, so retaining its earlier Git
+versions does not weaken that contract. “Delete all data” is a hard boundary:
+after the empty Vault transaction succeeds, the old Git object store is
+detached and recursively destroyed before a fresh empty baseline is created.
+An interrupted purge is completed on the next startup. Git history supplements
+the journal and operational backup; it replaces neither.
+
 ## Backup and restore
 
 Backup schema v3 contains a per-file path, SHA-256, and size manifest; creation
 time; SQLite schema and `integrity_check`; Vault document and projection hashes;
 and database-to-Vault consistency results. Credentials may be present in the
 encrypted/protected backup payload but their values never enter the manifest.
+The local Memory Vault history repository is copied as protected user data and
+its presence is recorded in the manifest.
 
 The writer must be stopped for backup. The script checks the lease before and
 after its staged copy, uses SQLite online backup, validates the copied Vault and
@@ -104,8 +138,10 @@ backup.
 ## Health and observability
 
 `GET /api/v1/memory-vault/health` reports writer mode/fence/expiry, pending
-journal count, last checkpoint and recovery, projection hashes/consistency, and
-backup freshness/verification. `GET /api/v1/memory-vault/recovery` is a smaller
+journal count, last checkpoint and recovery, projection hashes/consistency,
+local-history availability/head/pending status, and backup freshness/verification.
+`GET /api/v1/memory-vault/history` returns bounded checkpoint metadata only.
+`GET /api/v1/memory-vault/recovery` is a smaller
 recovery-focused view. Both return metadata and hashes only: no profile, SOUL,
 scene, memory, provider, credential, or transcript content.
 
@@ -179,6 +215,8 @@ the tool again.
 - Unsynchronized external editor changes are authoritative Vault changes but
   do not receive an app journal operation until a safe sync observes them.
 - Pending journal snapshots duplicate protected user content temporarily.
+- Git objects retain every semantic Vault version until a hard all-data purge;
+  protect the state directory and operational backups accordingly.
 - The deterministic release gate always runs locally. The real-model gate is a
   separate configured evaluation and must report unavailable or failure
   honestly; estimates never masquerade as provider usage.

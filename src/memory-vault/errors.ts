@@ -10,7 +10,9 @@ export class MemoryVaultError extends Error {
       | "MEMORY_VAULT_MIGRATION_FAILED"
       | "MEMORY_VAULT_WRITER_BUSY"
       | "MEMORY_VAULT_STALE_WRITER"
-      | "MEMORY_VAULT_RECOVERY_FAILED",
+      | "MEMORY_VAULT_RECOVERY_FAILED"
+      | "MEMORY_VAULT_HISTORY_UNAVAILABLE"
+      | "MEMORY_VAULT_HISTORY_INVALID_CHECKPOINT",
   ) {
     super(message);
     this.name = "MemoryVaultError";

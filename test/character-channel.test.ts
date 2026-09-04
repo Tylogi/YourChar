@@ -23,6 +23,12 @@ test("character channels persist exchanges, unread state, relationships, and sco
     stateDir,
     seed: "character-channel-persist",
     characterInteractionActor: actor,
+    characterInteractionSceneComposer: async () => ({
+      narrativeText: "雨声落在工作室窗沿。发起角色放下手中的记录，向目标角色问起整理进度；目标角色抬起头，认真给出了回应。",
+      eventSummary: "发起角色询问实验记录的整理进度，目标角色确认已经收到。",
+      sourcePerspectiveSummary: "我向目标角色确认了实验记录的进度，觉得她的回应很认真。",
+      targetPerspectiveSummary: "发起角色来问实验记录，我及时回应，也记住了他在意整理进度。",
+    }),
   });
   let channelId = "";
   try {
@@ -42,14 +48,18 @@ test("character channels persist exchanges, unread state, relationships, and sco
       setup.source.id,
       setup.target.id,
     ]);
+    assert.equal(result.scene?.narrativeText.startsWith("雨声落在工作室窗沿"), true);
+    assert.equal(result.scene?.eventSummary, "发起角色询问实验记录的整理进度，目标角色确认已经收到。");
+    assert.equal(result.reflections.length, 2);
+    assert.notEqual(result.reflections[0].summary, result.reflections[1].summary);
     assert.equal(actorInputs.length, 1);
     assert.equal(actorInputs[0].actorCharacterId, setup.target.id);
     assert.equal(actorInputs[0].peerCharacterId, setup.source.id);
 
     const summary = first.kernel.listCharacterChannels({ worldId: setup.world.id })[0];
     assert.equal(summary.id, channelId);
-    assert.equal(summary.unreadCount, 2);
-    assert.equal(summary.preview, "发起角色，我收到了。");
+    assert.equal(summary.unreadCount, 1);
+    assert.equal(summary.preview, result.scene?.narrativeText);
     assert.deepEqual(summary.characterNames, ["发起角色", "目标角色"]);
     assert.equal(first.kernel.markCharacterChannelRead(channelId).unreadCount, 0);
 
@@ -66,11 +76,20 @@ test("character channels persist exchanges, unread state, relationships, and sco
       setup.world.id,
       10,
     ).length, 1);
-    assert.equal(first.kernel.searchRpMemories({
+    const targetMemory = first.kernel.searchRpMemories({
       characterId: setup.target.id,
       type: "relationship_event",
       confirmedOnly: true,
-    }).some((memory) => memory.key === `character-channel:${result.episode.id}`), true);
+    }).find((memory) => memory.key === `character-channel:${result.episode.id}`);
+    const sourceMemory = first.kernel.searchRpMemories({
+      characterId: setup.source.id,
+      type: "relationship_event",
+      confirmedOnly: true,
+    }).find((memory) => memory.key === `character-channel:${result.episode.id}`);
+    assert.match(sourceMemory?.content ?? "", /觉得她的回应很认真/u);
+    assert.doesNotMatch(sourceMemory?.content ?? "", /及时回应/u);
+    assert.match(targetMemory?.content ?? "", /及时回应/u);
+    assert.doesNotMatch(targetMemory?.content ?? "", /觉得她的回应很认真/u);
   } finally {
     first.dispose();
   }
@@ -83,6 +102,9 @@ test("character channels persist exchanges, unread state, relationships, and sco
   try {
     const snapshot = second.kernel.getCharacterChannel(channelId);
     assert.equal(snapshot.messages.length, 2);
+    assert.equal(snapshot.scenes.length, 1);
+    assert.equal(snapshot.reflections.length, 2);
+    assert.match(snapshot.scenes[0].narrativeText, /雨声落在工作室窗沿/u);
     assert.equal(snapshot.episodes[0].status, "completed");
     assert.equal(snapshot.channel.unreadCount, 0);
   } finally {
@@ -887,16 +909,27 @@ test("each character-channel actor uses its own model without receiving private 
     const body = Buffer.concat(chunks).toString("utf8");
     const model = (JSON.parse(body) as { model?: string }).model ?? "unknown";
     requests.push({ model, body });
+    const composesScene = body.includes("neutral literary narrator");
     writeChatCompletionStream(
       response,
       model,
-      model === "source-model" ? "我先问问她今天过得怎么样。" : "我挺好的，你呢？",
+      composesScene
+        ? JSON.stringify({
+            narrativeText: "工作室的灯光下，两人把话说完，各自留下了不同的印象。",
+            eventSummary: "两名角色完成了一次私下互动。",
+            sourcePerspectiveSummary: "我主动开了口，并留意了对方的反应。",
+            targetPerspectiveSummary: "对方来找我，我按自己的想法作出了回应。",
+          })
+        : model === "source-model"
+          ? "我先问问她今天过得怎么样。"
+          : "我挺好的，你呢？",
     );
   });
   await new Promise<void>((resolve) => modelServer.listen(0, "127.0.0.1", resolve));
 
   const runtime = createTestRuntime({
     seed: "character-channel-model-binding",
+    characterInteractionSceneComposer: false,
     characterCollaborationReporter: async () => "目标角色已经给出协作结果。",
   });
   try {
@@ -939,11 +972,19 @@ test("each character-channel actor uses its own model without receiving private 
     });
     await runtime.kernel.characterInteractionCoordinator.drain();
 
-    assert.deepEqual(requests.map((entry) => entry.model), [
+    const actorRequests = requests.filter((entry) => !entry.body.includes("neutral literary narrator"));
+    const sceneRequests = requests.filter((entry) => entry.body.includes("neutral literary narrator"));
+    assert.deepEqual(actorRequests.map((entry) => entry.model), [
       "target-model",
       "source-model",
       "target-model",
       "target-model",
+    ]);
+    assert.equal(sceneRequests.length, 3);
+    assert.deepEqual(sceneRequests.map((entry) => entry.model), [
+      "source-model",
+      "source-model",
+      "source-model",
     ]);
     const collaborationEpisode = runtime.kernel.characterChannels.repository.getEpisode(
       collaboration.episode.id,
@@ -951,9 +992,15 @@ test("each character-channel actor uses its own model without receiving private 
     assert.equal(collaborationEpisode?.status, "completed");
     assert.equal(collaborationEpisode?.modelCalls, 1);
     assert.equal(collaborationEpisode?.reportModelCalls, 0);
-    assert.match(requests[0].body, /待人温和/);
-    assert.match(requests[1].body, /做事严谨/);
-    assert.match(requests[3].body, /核对公开实验清单/);
+    assert.match(actorRequests[0].body, /待人温和/);
+    assert.match(actorRequests[1].body, /做事严谨/);
+    assert.match(actorRequests[2].body, /actor_private_reflections/u);
+    assert.match(actorRequests[3].body, /核对公开实验清单/);
+    assert.equal(
+      runtime.kernel.characterChannels.repository.getInteractionScene(collaboration.episode.id)
+        ?.narrativeText,
+      "工作室的灯光下，两人把话说完，各自留下了不同的印象。",
+    );
     for (const request of requests) {
       assert.doesNotMatch(request.body, /私人暗号/);
       assert.doesNotMatch(request.body, /这件事我只在这里说/);
@@ -1000,14 +1047,18 @@ test("character-channel HTTP APIs expose exchanges, snapshots, read state, and s
     assert.equal(listResponse.status, 200);
     const listed = await listResponse.json() as { channels: Array<{ id: string; unreadCount: number }> };
     assert.equal(listed.channels[0].id, exchange.channel.id);
-    assert.equal(listed.channels[0].unreadCount, 2);
+    assert.equal(listed.channels[0].unreadCount, 1);
 
     const snapshotResponse = await fetch(
       `${baseUrl}/api/v1/character-channels/${encodeURIComponent(exchange.channel.id)}`,
     );
     assert.equal(snapshotResponse.status, 200);
-    const snapshot = await snapshotResponse.json() as { snapshot: { messages: unknown[] } };
+    const snapshot = await snapshotResponse.json() as {
+      snapshot: { messages: unknown[]; scenes: unknown[]; reflections: unknown[] };
+    };
     assert.equal(snapshot.snapshot.messages.length, 2);
+    assert.equal(snapshot.snapshot.scenes.length, 1);
+    assert.equal(snapshot.snapshot.reflections.length, 2);
     const readResponse = await fetch(
       `${baseUrl}/api/v1/character-channels/${encodeURIComponent(exchange.channel.id)}/read`,
       { method: "POST" },

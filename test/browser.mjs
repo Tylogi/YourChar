@@ -300,9 +300,9 @@ async function runDesktopWorkflow(browser, baseUrl, outputDir) {
   await planningSpaces.selectOption("normal");
   await page.locator("#status").filter({ hasText: "daily-planning 可用空间已更新" }).waitFor();
   assert.equal(await planningModule.locator("select[data-module-spaces]").inputValue(), "normal");
-  assert.equal(await page.locator(".module-row").count(), 14);
+  assert.equal(await page.locator(".module-row").count(), 15);
   await page.locator(".module-row").filter({ hasText: "Tavily Search MCP" }).waitFor();
-  assert.equal(await page.locator(".module-token").count(), 14);
+  assert.equal(await page.locator(".module-token").count(), 15);
   await page.locator(".module-row").filter({ hasText: "Git MCP" }).locator(".module-token").filter({ hasText: "约 620 tokens/轮" }).waitFor();
   await page.locator(".module-row").filter({ hasText: "Memory Coordinator MCP" }).locator(".module-token").filter({ hasText: "约 430 tokens/轮" }).waitFor();
   await page.locator(".module-row").filter({ hasText: "Subagent Delegation MCP" }).locator(".module-token").filter({ hasText: "约 390 tokens/轮" }).waitFor();
@@ -327,6 +327,31 @@ async function runDesktopWorkflow(browser, baseUrl, outputDir) {
   await page.locator("#shellPermissionLabel").filter({ hasText: "已启用" }).waitFor();
   assert.equal(await page.locator("#networkPermissionInput").isDisabled(), false);
   assert.equal(await page.locator("#networkPermissionInput").isChecked(), false);
+  // Simulate a tab surviving a service restart: its process-lifetime HttpOnly
+  // capability is gone, but the loaded settings UI must recover automatically.
+  const staleCapabilityErrorStart = errors.length;
+  await page.context().clearCookies();
+  assert.match(
+    await page.locator("#networkPermissionInput").getAttribute("title"),
+    /可能向外部服务发送当前可见的对话、记忆和 Workspace 内容/,
+  );
+  let networkWarning = "";
+  page.once("dialog", async (dialog) => {
+    networkWarning = dialog.message();
+    await dialog.accept();
+  });
+  await page.locator("#networkPermissionInput").check();
+  await page.locator("#networkPermissionLabel").filter({ hasText: "已启用" }).waitFor();
+  assert.deepEqual(
+    errors.splice(staleCapabilityErrorStart),
+    ["Failed to load resource: the server responded with a status of 403 (Forbidden)"],
+    "the stale capability must cause exactly one rejected mutation before automatic retry",
+  );
+  assert.match(networkWarning, /允许 Agent 联网/);
+  assert.match(networkWarning, /私密模式和已启用的 Skill 不会自动关闭此权限/);
+  assert.equal(await page.locator("#networkPermissionInput").isChecked(), true);
+  await page.locator("#networkPermissionInput").uncheck();
+  await page.locator("#networkPermissionLabel").filter({ hasText: "已关闭" }).waitFor();
   await assertInteractiveBounds(page);
   await page.screenshot({ path: resolve(outputDir, "management-modules.png"), fullPage: false });
 
@@ -940,14 +965,15 @@ async function runDesktopWorkflow(browser, baseUrl, outputDir) {
   const proposedMeetingEvent = page.locator("#messages .message-row.interaction").filter({ hasText: "约定在未来道具研究所见面" });
   await proposedMeetingEvent.waitFor();
   await proposedMeetingEvent.getByRole("button", { name: "我到了", exact: true }).click();
-  await page.locator("#conversationMode").filter({ hasText: "见面中" }).waitFor();
-  await page.locator("#conversationScene").filter({ hasText: "正在一起 · 未来道具研究所" }).waitFor();
-  assert.equal(await page.locator("#textInput").getAttribute("placeholder"), "描述你说的话或正在做的事");
-  assert.equal(await page.getByRole("button", { name: "撤销上次状态切换" }).isVisible(), true);
+  await page.locator("#conversationMode").filter({ hasText: "现场" }).waitFor();
+  await page.locator("#conversationScene").filter({ hasText: "未来道具研究所" }).waitFor();
+  assert.equal(await page.locator("#textInput").getAttribute("placeholder"), "描述你在现场说的话或正在做的事");
+  assert.equal(await page.getByRole("button", { name: "结束现场", exact: true }).isVisible(), true);
+  assert.equal(await page.getByRole("button", { name: "结束现场", exact: true }).isEnabled(), true);
   await assertInteractiveBounds(page);
   await captureValidatedScreenshot(page, resolve(outputDir, "chat-in-person-state.png"));
-  await page.getByRole("button", { name: "结束见面", exact: true }).click();
-  await page.locator("#sessionActionDialog").filter({ hasText: "结束见面" }).waitFor({ state: "visible" });
+  await page.getByRole("button", { name: "结束现场", exact: true }).click();
+  await page.locator("#sessionActionDialog").filter({ hasText: "结束现场" }).waitFor({ state: "visible" });
   await page.locator("#confirmSessionActionBtn").click();
   await page.locator("#sessionActionDialog").waitFor({ state: "hidden" });
   await page.locator("#conversationMode").filter({ hasText: "角色私聊" }).waitFor();
@@ -1102,7 +1128,7 @@ async function runDesktopWorkflow(browser, baseUrl, outputDir) {
   );
   await assertInteractiveBounds(page);
   await captureValidatedScreenshot(page, resolve(outputDir, "character-private-channel.png"));
-  await page.getByRole("button", { name: "关闭角色通信", exact: true }).click();
+  await page.getByRole("button", { name: "关闭角色互动", exact: true }).click();
   await page.locator("#characterChannelDialog").waitFor({ state: "hidden" });
   await page.getByRole("button", { name: "新建对话" }).click();
   await page.locator("#newConversationDialog").waitFor({ state: "visible" });
@@ -1555,9 +1581,41 @@ async function runDesktopWorkflow(browser, baseUrl, outputDir) {
   assert.ok(await page.locator("#featureTestTargetModel").inputValue());
   assert.ok(await page.locator("#featureTestTargetModel option").count() >= 2);
   assert.ok(await page.locator("#featureTestJudgeModel option").count() >= 2);
+  assert.equal(
+    await page.locator("#featureTestJudgeModel").inputValue(),
+    await page.locator("#featureTestTargetModel").inputValue(),
+  );
   await assertPanelInsideMain(page, "#featureTestPanel");
   await assertInteractiveBounds(page);
   await captureValidatedScreenshot(page, resolve(outputDir, "debug-model-adaptation.png"));
+  await page.getByRole("tab", { name: "任务测试台", exact: true }).click();
+  await page.locator("#taskBenchPanel").waitFor({ state: "visible" });
+  assert.equal(await page.locator("#taskBenchTargetMode").inputValue(), "character");
+  assert.ok(await page.locator("#taskBenchCharacter").inputValue());
+  assert.ok(await page.locator("#taskBenchTargetModel").inputValue());
+  assert.ok(await page.locator("#taskBenchJudgeModel option").count() >= 2);
+  assert.equal(
+    await page.locator("#taskBenchJudgeModel").inputValue(),
+    await page.locator("#taskBenchTargetModel").inputValue(),
+  );
+  assert.equal(await page.locator("#taskBenchTimeout").inputValue(), "1800");
+  assert.equal(await page.locator("#taskBenchJudgeTimeout").inputValue(), "600");
+  await page.locator("#taskBenchUploadInput").setInputFiles({
+    name: "browser-evidence.txt",
+    mimeType: "text/plain",
+    buffer: Buffer.from("BROWSER_TASK_BENCH_EVIDENCE", "utf8"),
+  });
+  await page.locator("#taskBenchUploadList .task-bench-upload-item").filter({ hasText: "browser-evidence.txt" }).waitFor();
+  await page.locator("#taskBenchUploadState").filter({ hasText: "1/1 个就绪" }).waitFor();
+  await page.locator("#taskBenchTargetMode").selectOption("model");
+  assert.equal(await page.locator("#taskBenchCharacter").isDisabled(), true);
+  await page.locator("#taskBenchTargetMode").selectOption("character");
+  assert.equal(await page.locator("#taskBenchCharacter").isEnabled(), true);
+  await assertPanelInsideMain(page, "#taskBenchPanel");
+  await assertInteractiveBounds(page);
+  await captureValidatedScreenshot(page, resolve(outputDir, "debug-task-bench.png"));
+  await page.locator("#taskBenchUploadList").getByRole("button", { name: "移除", exact: true }).click();
+  await page.locator("#taskBenchUploadList .task-bench-upload-item").waitFor({ state: "detached" });
   await page.getByRole("button", { name: "聊天", exact: true }).click();
 
   await page.screenshot({ path: resolve(outputDir, "desktop.png"), fullPage: false });
@@ -1763,13 +1821,13 @@ async function runMobileWorkflow(browser, baseUrl, outputDir) {
   const mobileMeetingEvent = page.locator("#messages .message-row.interaction").filter({ hasText: "约定在河岸书店见面" });
   await mobileMeetingEvent.waitFor();
   await mobileMeetingEvent.getByRole("button", { name: "我到了", exact: true }).click();
-  await page.locator("#conversationMode").filter({ hasText: "见面中" }).waitFor();
+  await page.locator("#conversationMode").filter({ hasText: "现场" }).waitFor();
+  assert.equal(await page.getByRole("button", { name: "结束现场", exact: true }).isEnabled(), true);
   await assertElementUnclipped(page, "#interactionToggleBtn");
-  await assertElementUnclipped(page, "#interactionUndoBtn");
   await assertInteractiveBounds(page);
   await assertViewport(page);
   await captureValidatedScreenshot(page, resolve(outputDir, "mobile-in-person-state.png"));
-  await page.getByRole("button", { name: "结束见面", exact: true }).click();
+  await page.getByRole("button", { name: "结束现场", exact: true }).click();
   await page.locator("#confirmSessionActionBtn").click();
   await page.locator("#conversationMode").filter({ hasText: "角色私聊" }).waitFor();
 

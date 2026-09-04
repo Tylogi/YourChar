@@ -66,21 +66,24 @@ user that can read YourChar's state directory can read both spaces. The HTTP
 service therefore binds only to loopback. The configured model provider
 receives the private turn and the private context needed to answer it.
 
-Sandboxed shell network is globally disabled as soon as private data or a
-private-only Agent Skill exists, including for normal conversations, so model
-code cannot use the loopback API as a cross-space path. It cannot be re-enabled
-while that state remains. Tavily, Web Reader, Vision, and the model provider are
-host-side clients with separate configuration and request boundaries; private
-turns may still send necessary content to an enabled external service.
+Sandboxed Shell network follows the user's explicit global permission in both
+normal and private conversations. Creating private data, opening private mode,
+or loading a private-only Skill does not turn it off. With network enabled, a
+private character may use arbitrary network commands and may transmit any
+private conversation, memory, Skill guidance, or private Workspace content it
+can currently see. The filesystem mount remains scoped to that character's
+private Workspace, but private mode is not an outbound confidentiality
+guarantee. Tavily, Web Reader, Vision, and the model provider remain separate
+host-side clients with their own configuration boundaries.
 
-Installing a Skill does not re-enable sandbox network. A secret-space Agent has
-no remote-install tool and cannot choose an arbitrary download URL. Host-side
-private installation through the Management UI remains a separate, reviewed
-control-plane operation. Packages already installed for the same character and
-secret space can still be inspected, enabled, or disabled, and local owned
-workflows can be created or revised when the user has enabled Skill autonomy.
-Normal-space autonomous installation is described separately in the Agent Skill
-documentation and does not weaken this secret-space restriction.
+Skill installation and Shell networking are independent permissions. A
+secret-space Agent has no remote-install tool; host-side private installation
+through the Management UI remains a separate, reviewed control-plane operation.
+Packages already installed for the same character and secret space can still be
+inspected, enabled, or disabled, and local owned workflows can be created or
+revised when the user has enabled Skill autonomy. If Shell network is also
+enabled, those loaded instructions may guide the character's network use under
+the authority the user already accepted.
 
 Operational backups include the database, private transcripts, private Vault
 documents, `workspace-secret`, and host-installed Agent Skill packages.

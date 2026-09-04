@@ -8,7 +8,7 @@ import { backup, DatabaseSync } from "node:sqlite";
 import {
   BACKUP_SCHEMA_VERSION, assertWriterInactive, characterAgentSkillPublishedDirectories,
   payloadFiles, sha256, validateBackupDirectory, validateCharacterAgentSkillPackages,
-  validateDatabase, validateVault,
+  validateDatabase, validateMemoryVaultHistory, validateVault,
 } from "./backup-contract.mjs";
 import { resolveStateDirectory } from "./state-directory.mjs";
 
@@ -44,8 +44,9 @@ try {
   for (const name of [
     "conversations.json", "pi-sessions", "pi-agent", "model-api.json", "tavily.json", "vision.json", "mineru.json",
     "git", "git-worktrees", "git-work-items.json", "git-runtime", "git-repository.json",
-    "user-profile.md", "characters", "memory-vault", "memory-vault-state.json",
-    "memory-vault-migration.json", "memory-vault-journal", "memory-vault-recovery.json", "workspace",
+    "user-profile.md", "characters", "memory-vault", "memory-vault-history.git", "memory-vault-state.json",
+    "memory-vault-migration.json", "memory-vault-journal", "memory-vault-recovery.json",
+    "memory-vault-history-purge.json", "workspace",
     "workspace-secret", "skills", "character-agent-skills", "im-runtime",
     "avatars", "system-prompts", "trace-archive.json", "trace-archive",
   ]) {
@@ -70,6 +71,7 @@ try {
   assertWriterInactive(stateDir);
   const database = validateDatabase(join(staging, "rp-agent.sqlite"));
   const vault = validateVault(staging, database);
+  const memoryVaultHistory = validateMemoryVaultHistory(staging);
   validateCharacterAgentSkillPackages(staging);
   const createdAt = new Date().toISOString();
   const files = payloadFiles(staging);
@@ -99,6 +101,8 @@ try {
     containsImCredentials: existsSync(join(staging, "im-runtime", "credentials.json")),
     containsImRuntime: files.some((file) => file.path.startsWith("im-runtime/")),
     containsMemoryVault: vault.present,
+    containsMemoryVaultHistory: files.some((file) => file.path.startsWith("memory-vault-history.git/")),
+    memoryVaultHistory,
     containsSecretWorkspace: files.some((file) => file.path.startsWith("workspace-secret/")),
     containsInstalledSkills: files.some((file) => file.path.startsWith("skills/")),
     containsCharacterAgentSkills: files.some((file) => file.path.startsWith("character-agent-skills/")),

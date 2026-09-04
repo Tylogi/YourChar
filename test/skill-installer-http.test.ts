@@ -23,7 +23,7 @@ const skillMarkdown = [
   "",
 ].join("\n");
 
-test("protected installer API publishes a secret-only Skill, disables shell network, and survives restart", async () => {
+test("protected installer API publishes a secret-only Skill without overriding shell network", async () => {
   const stateDir = mkdtempSync(join(tmpdir(), "rp-agent-skill-http-"));
   const archive = zipSync({
     "private-helper/SKILL.md": strToU8(skillMarkdown),
@@ -140,7 +140,7 @@ test("protected installer API publishes a secret-only Skill, disables shell netw
       }),
     });
     assert.equal(confirm.status, 201, await confirm.text());
-    assert.equal(kernel.getAgentPermissions().networkEnabled, false);
+    assert.equal(kernel.getAgentPermissions().networkEnabled, true);
     assert.equal(
       readFileSync(join(stateDir, "skills", "private-helper", "SKILL.md"), "utf8"),
       skillMarkdown,
@@ -210,7 +210,7 @@ test("protected installer API publishes a secret-only Skill, disables shell netw
       );
       assert.equal(restarted.getAgentModuleDetail(moduleId, "normal").content, "");
       assert.match(restarted.getAgentModuleDetail(moduleId, "secret").content, new RegExp(privateSentinel));
-      assert.equal(restarted.getAgentPermissions().networkEnabled, false);
+      assert.equal(restarted.getAgentPermissions().networkEnabled, true);
     } finally {
       restarted.dispose();
     }

@@ -42,6 +42,49 @@ test("YourChar UI receives an HttpOnly same-site token without exposing it in HT
   }
 });
 
+test("a stale browser capability is reissued for one safe same-origin retry", async () => {
+  const kernel = new CompanionKernel({ stateDir: false, startScheduler: false });
+  const server = createHttpServer({ kernel });
+  await listen(server);
+  try {
+    const origin = originOf(server);
+    const bootstrap = await fetch(`${origin}/`);
+    const currentCookie = bootstrap.headers.get("set-cookie")?.split(";", 1)[0];
+    await bootstrap.body?.cancel();
+    assert.ok(currentCookie);
+    const cookieName = currentCookie.slice(0, currentCookie.indexOf("="));
+    const mutationHeaders = {
+      "content-type": "application/json",
+      origin,
+      "sec-fetch-mode": "cors",
+      "sec-fetch-site": "same-origin",
+      "sec-fetch-dest": "empty",
+    };
+
+    const rejected = await fetch(`${origin}/api/v1/agent-permissions`, {
+      method: "PATCH",
+      headers: { ...mutationHeaders, cookie: `${cookieName}=stale-process-token` },
+      body: JSON.stringify({ shellEnabled: true }),
+    });
+    assert.equal(rejected.status, 403);
+    const refreshedCookie = rejected.headers.get("set-cookie")?.split(";", 1)[0];
+    assert.equal(await errorCode(rejected), "LOCAL_CONTROL_TOKEN_REJECTED");
+    assert.equal(refreshedCookie, currentCookie);
+
+    const retried = await fetch(`${origin}/api/v1/agent-permissions`, {
+      method: "PATCH",
+      headers: { ...mutationHeaders, cookie: refreshedCookie! },
+      body: JSON.stringify({ shellEnabled: true }),
+    });
+    assert.equal(retried.status, 200);
+    assert.equal(((await retried.json()) as { permissions: { shellEnabled: boolean } })
+      .permissions.shellEnabled, true);
+  } finally {
+    await close(server);
+    kernel.dispose();
+  }
+});
+
 test("local control-plane guard accepts same-origin JSON POST, PATCH, and DELETE", async () => {
   await withProbeServer(async ({ origin, cookie }) => {
     for (const method of ["POST", "PATCH", "DELETE"]) {

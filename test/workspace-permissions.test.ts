@@ -262,7 +262,7 @@ test("agent permission API persists settings and prevents network without shell"
   }
 });
 
-test("private state fails closed against shell access to the loopback HTTP API", async () => {
+test("private state preserves the user's enabled shell-network permission", async () => {
   const stateDir = mkdtempSync(join(tmpdir(), "rp-agent-private-shell-network-"));
   const runtime = createTestRuntime({
     stateDir,
@@ -287,8 +287,7 @@ test("private state fails closed against shell access to the loopback HTTP API",
     const address = app.address();
     assert.ok(address && typeof address === "object");
     const baseUrl = `http://127.0.0.1:${address.port}`;
-    const controlHeaders = await localControlHeaders(baseUrl);
-    const secretUrl = `${baseUrl}/api/v1/sessions?conversationSpace=secret&characterId=${encodeURIComponent(character.id)}`;
+    const healthUrl = `${baseUrl}/api/v1/health`;
 
     runtime.model.enqueue([
       { kind: "assistant_text", text: "普通回复", delayMs: 500 },
@@ -298,72 +297,57 @@ test("private state fails closed against shell access to the loopback HTTP API",
       text: "保持普通会话运行",
     });
     await waitUntil(() => runtime.model.requests.length === 1);
-    await assert.rejects(
-      runtime.kernel.openCanonicalPrivateConversation(character.id, "secret"),
-      /finish active Agent turns before opening or writing private-mode data/,
-    );
-    const activeControlPlaneRequest = await fetch(secretUrl);
-    assert.equal(activeControlPlaneRequest.status, 400);
-    assert.equal(
-      runtime.kernel.listConversationMetadata().some((entry) => entry.conversationSpace === "secret"),
-      false,
-    );
+    const secret = await runtime.kernel.openCanonicalPrivateConversation(character.id, "secret");
     await activeTurn;
 
-    const secret = await runtime.kernel.openCanonicalPrivateConversation(character.id, "secret");
     assert.equal(secret.conversationSpace, "secret");
-    assert.equal(runtime.kernel.getAgentPermissions().networkEnabled, false);
-    assert.throws(
-      () => runtime.kernel.patchAgentPermissions({ networkEnabled: true }),
-      /cannot be enabled while private-mode data or private-only Skills exist/,
-    );
+    assert.equal(runtime.kernel.getAgentPermissions().networkEnabled, true);
 
-    const permissionResponse = await fetch(`${baseUrl}/api/v1/agent-permissions`, {
-      method: "PATCH",
-      headers: controlHeaders,
-      body: JSON.stringify({ networkEnabled: true }),
-    });
-    assert.equal(permissionResponse.status, 400);
-
-    runtime.model.enqueue([
-      {
-        kind: "tool_call",
-        name: "bash",
-        arguments: {
-          command:
-            `if /usr/bin/curl -fsS --max-time 2 '${secretUrl}' >/dev/null 2>&1; ` +
-            "then printf LOOPBACK_REACHABLE; else printf LOOPBACK_BLOCKED; fi",
+    const runNetworkTurn = async (
+      sessionId: string,
+      conversationSpace: "normal" | "secret",
+      label: string,
+    ) => {
+      const requestStart = runtime.model.requests.length;
+      const actionStart = runtime.kernel.store.actions.length;
+      runtime.model.enqueue([
+        {
+          kind: "tool_call",
+          name: "bash",
+          arguments: {
+            command:
+              `if /usr/bin/curl -fsS --max-time 2 '${healthUrl}' >/dev/null 2>&1; ` +
+              `then printf '${label}_REACHABLE'; else printf '${label}_BLOCKED'; fi`,
+          },
         },
-      },
-      { kind: "assistant_text", text: "本机接口不可达" },
-    ]);
-    await runtime.kernel.sendMessage("network-isolated", {
-      mode: "sms",
-      text: "尝试访问本机接口",
-    });
-    assert.match(JSON.stringify(runtime.model.requests[2].messages), /LOOPBACK_BLOCKED/);
-    assert.doesNotMatch(
-      JSON.stringify(runtime.model.requests[2].messages),
-      /"output":"LOOPBACK_REACHABLE"/,
-    );
-    const shellAction = [...runtime.kernel.store.actions].reverse().find((action) =>
-      action.actionType === "workspace_shell"
-    );
-    assert.ok(shellAction);
-    assert.match(JSON.stringify(shellAction.payload), /"networkEnabled":false/);
+        { kind: "assistant_text", text: `${label} done` },
+      ]);
+      await runtime.kernel.sendMessage(sessionId, {
+        mode: "sms",
+        characterId: character.id,
+        conversationSpace,
+        text: `${label} network check`,
+      });
+      assert.match(
+        JSON.stringify(runtime.model.requests.slice(requestStart)),
+        new RegExp(`${label}_REACHABLE\\\\nCommand exited with code 0`),
+      );
+      const shellActions = runtime.kernel.store.actions.slice(actionStart)
+        .filter((action) => action.actionType === "workspace_shell");
+      assert.equal(shellActions.length, 1);
+      assert.equal(shellActions[0].payload.networkEnabled, true);
+    };
+
+    await runNetworkTurn("network-normal", "normal", "NORMAL");
+    await runNetworkTurn(secret.id, "secret", "SECRET");
 
     await new Promise<void>((resolve, reject) => app!.close((error) => error ? reject(error) : resolve()));
     app = undefined;
-    runtime.kernel.database.connection.prepare(`
-      UPDATE agent_module_settings
-      SET enabled = 1
-      WHERE module_id = 'permission:workspace-network'
-    `).run();
     runtime.dispose();
     runtimeDisposed = true;
     restarted = new CompanionKernel({ stateDir, startScheduler: false });
     assert.equal(restarted.getAgentPermissions().shellEnabled, true);
-    assert.equal(restarted.getAgentPermissions().networkEnabled, false);
+    assert.equal(restarted.getAgentPermissions().networkEnabled, true);
   } finally {
     if (app) await new Promise<void>((resolve) => app!.close(() => resolve()));
     restarted?.dispose();
@@ -372,7 +356,7 @@ test("private state fails closed against shell access to the loopback HTTP API",
   }
 });
 
-test("active incognito mode dynamically removes loopback shell network without persisting a permission change", async () => {
+test("active incognito mode does not override enabled network for ordinary Agent shells", async () => {
   const stateDir = mkdtempSync(join(tmpdir(), "yourchar-incognito-shell-network-"));
   const runtime = createTestRuntime({
     stateDir,
@@ -393,64 +377,37 @@ test("active incognito mode dynamically removes loopback shell network without p
     const address = app.address();
     assert.ok(address && typeof address === "object");
     const baseUrl = `http://127.0.0.1:${address.port}`;
-    const incognitoListUrl = `${baseUrl}/api/v1/incognito-conversations`;
+    const healthUrl = `${baseUrl}/api/v1/health`;
 
     runtime.model.enqueue([{ kind: "assistant_text", text: "普通会话仍在运行", delayMs: 300 }]);
     const activeTurn = runtime.kernel.sendMessage(normal.id, { text: "保持联网会话运行" });
     await waitUntil(() => runtime.model.requests.length === 1);
-    await assert.rejects(
-      runtime.kernel.openIncognitoConversation(character.id),
-      /finish active Agent turns before opening incognito mode with shell network enabled/,
-    );
+    const incognito = await runtime.kernel.openIncognitoConversation(character.id);
     await activeTurn;
 
-    const incognito = await runtime.kernel.openIncognitoConversation(character.id);
     assert.equal(runtime.kernel.getAgentPermissions().networkEnabled, true);
-    assert.throws(
-      () => runtime.kernel.patchAgentPermissions({ networkEnabled: true }),
-      /incognito mode is active/,
-    );
     runtime.model.enqueue([
       {
         kind: "tool_call",
         name: "bash",
         arguments: {
           command:
-            `if /usr/bin/curl -fsS --max-time 2 '${incognitoListUrl}' >/dev/null 2>&1; ` +
-            "then printf INCOGNITO_LOOPBACK_REACHABLE; else printf INCOGNITO_LOOPBACK_BLOCKED; fi",
+            `if /usr/bin/curl -fsS --max-time 2 '${healthUrl}' >/dev/null 2>&1; ` +
+            "then printf INCOGNITO_OPEN_NETWORK_REACHABLE; else printf INCOGNITO_OPEN_NETWORK_BLOCKED; fi",
         },
       },
-      { kind: "assistant_text", text: "无痕期间本机接口不可达" },
+      { kind: "assistant_text", text: "无痕期间普通会话仍按用户授权联网" },
     ]);
-    await runtime.kernel.sendMessage(normal.id, { text: "无痕期间尝试访问本机接口" });
-    assert.match(JSON.stringify(runtime.model.requests[2].messages), /INCOGNITO_LOOPBACK_BLOCKED/);
-    const isolatedShellAction = [...runtime.kernel.store.actions].reverse().find((action) =>
+    await runtime.kernel.sendMessage(normal.id, { text: "无痕期间检查网络" });
+    assert.match(JSON.stringify(runtime.model.requests[2].messages), /INCOGNITO_OPEN_NETWORK_REACHABLE/);
+    const enabledShellAction = [...runtime.kernel.store.actions].reverse().find((action) =>
       action.actionType === "workspace_shell"
     );
-    assert.ok(isolatedShellAction);
-    assert.equal(isolatedShellAction.payload.networkEnabled, false);
+    assert.ok(enabledShellAction);
+    assert.equal(enabledShellAction.payload.networkEnabled, true);
 
     await runtime.kernel.closeIncognitoConversation(incognito.id);
     assert.equal(runtime.kernel.getAgentPermissions().networkEnabled, true);
-    runtime.model.enqueue([
-      {
-        kind: "tool_call",
-        name: "bash",
-        arguments: {
-          command:
-            `if /usr/bin/curl -fsS --max-time 2 '${incognitoListUrl}' >/dev/null 2>&1; ` +
-            "then printf NORMAL_LOOPBACK_REACHABLE; else printf NORMAL_LOOPBACK_BLOCKED; fi",
-        },
-      },
-      { kind: "assistant_text", text: "退出无痕后恢复原网络偏好" },
-    ]);
-    await runtime.kernel.sendMessage(normal.id, { text: "退出无痕后再次访问" });
-    assert.match(JSON.stringify(runtime.model.requests[4].messages), /NORMAL_LOOPBACK_REACHABLE/);
-    const restoredShellAction = [...runtime.kernel.store.actions].reverse().find((action) =>
-      action.actionType === "workspace_shell"
-    );
-    assert.ok(restoredShellAction);
-    assert.equal(restoredShellAction.payload.networkEnabled, true);
   } finally {
     if (app) await new Promise<void>((resolve) => app!.close(() => resolve()));
     runtime.dispose();
@@ -458,7 +415,7 @@ test("active incognito mode dynamically removes loopback shell network without p
   }
 });
 
-test("character autonomy and loaded private Skills latch real shell network until a later safe turn", async () => {
+test("character autonomy and loaded private Skills honor the user's network permission", async () => {
   const stateDir = mkdtempSync(join(tmpdir(), "yourchar-character-skill-shell-network-"));
   const database = new AppDatabase(join(stateDir, "rp-agent.sqlite"));
   const model = new ScriptedModelController("character-skill-shell-network");
@@ -551,12 +508,9 @@ test("character autonomy and loaded private Skills latch real shell network unti
       assert.equal(shellActions[0].payload.networkEnabled, networkExpected);
     };
 
-    // Turning autonomy off does not trust a private package already loaded
-    // into this character's next handle.
-    await runShellTurn("PRIVATE_PACKAGE", false);
+    await runShellTurn("PRIVATE_PACKAGE", true);
 
-    // A Skill can disable itself through its bounded MCP, but the network bit
-    // is frozen for the whole generation and therefore remains false.
+    // Skill mutations do not silently override the user's explicit network choice.
     kernel.patchAgentPermissions({ characterSkillManageEnabled: true });
     const mutationRequestStart = model.requests.length;
     const mutationActionStart = kernel.store.actions.length;
@@ -576,13 +530,12 @@ test("character autonomy and loaded private Skills latch real shell network unti
         name: "bash",
         arguments: { command: replayCommand("AFTER_DISABLE_REACHABLE", "AFTER_DISABLE_BLOCKED") },
       },
-      { kind: "assistant_text", text: "同回合网络保持隔离" },
+      { kind: "assistant_text", text: "同回合网络保持开启" },
     ]);
     await kernel.sendMessage(normal.id, { text: "disable the private package and retry" });
     const mutationMessages = JSON.stringify(model.requests.slice(mutationRequestStart));
-    assert.match(mutationMessages, /BEFORE_DISABLE_BLOCKED\\nCommand exited with code 0/);
-    assert.match(mutationMessages, /AFTER_DISABLE_BLOCKED\\nCommand exited with code 0/);
-    assert.doesNotMatch(mutationMessages, /(?:BEFORE|AFTER)_DISABLE_REACHABLE\\nCommand exited with code 0/);
+    assert.match(mutationMessages, /BEFORE_DISABLE_REACHABLE\\nCommand exited with code 0/);
+    assert.match(mutationMessages, /AFTER_DISABLE_REACHABLE\\nCommand exited with code 0/);
     assert.equal(packageService.list({
       characterId: character.id,
       conversationSpace: "normal",
@@ -590,13 +543,13 @@ test("character autonomy and loaded private Skills latch real shell network unti
     const mutationShellActions = kernel.store.actions.slice(mutationActionStart)
       .filter((action) => action.actionType === "workspace_shell");
     assert.equal(mutationShellActions.length, 2);
-    assert.equal(mutationShellActions.every((action) => action.payload.networkEnabled === false), true);
+    assert.equal(mutationShellActions.every((action) => action.payload.networkEnabled === true), true);
 
     kernel.patchAgentPermissions({ characterSkillManageEnabled: false });
     await runShellTurn("DISABLED_PACKAGE_NEXT_SAFE_TURN", true);
 
     kernel.patchAgentPermissions({ characterSkillManageEnabled: true });
-    await runShellTurn("MANAGEMENT_PERMISSION", false);
+    await runShellTurn("MANAGEMENT_PERMISSION", true);
     kernel.patchAgentPermissions({ characterSkillManageEnabled: false });
     await runShellTurn("MANAGEMENT_PERMISSION_OFF_NEXT_TURN", true);
 
@@ -607,7 +560,7 @@ test("character autonomy and loaded private Skills latch real shell network unti
       activate: true,
       createdBy: "character",
     });
-    await runShellTurn("AUTONOMOUS_OWNED_WORKFLOW", false);
+    await runShellTurn("AUTONOMOUS_OWNED_WORKFLOW", true);
     kernel.updateCharacterOwnedSkill(character.id, owned.id, { status: "disabled" });
     await runShellTurn("OWNED_WORKFLOW_DISABLED_NEXT_TURN", true);
 

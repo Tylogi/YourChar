@@ -6,3 +6,4 @@ export * from "./store.js";
 export * from "./projection.js";
 export * from "./service.js";
 export * from "./durability.js";
+export * from "./history.js";

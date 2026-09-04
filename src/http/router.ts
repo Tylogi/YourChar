@@ -116,6 +116,17 @@ import {
   scoreFeatureTestResult,
 } from "../evaluation/model-adaptation.js";
 import {
+  parseTaskBenchRequest,
+  runTaskBench,
+  TaskBenchValidationError,
+} from "../evaluation/task-bench.js";
+import {
+  MAX_TASK_BENCH_UPLOAD_BYTES,
+  TaskBenchUploadError,
+  TaskBenchUploadRegistry,
+} from "../evaluation/task-bench-uploads.js";
+import { TaskBenchReportRepository } from "../evaluation/task-bench-reports.js";
+import {
   MAX_WORKSPACE_UPLOAD_BYTES,
   WorkspaceFileError,
   type WorkspaceFileAsset,
@@ -157,6 +168,8 @@ export type HttpServerOptions = {
   kernel?: CompanionKernel;
   testMode?: boolean;
   testRuns?: TestRunRegistry;
+  taskBenchUploads?: TaskBenchUploadRegistry;
+  taskBenchReports?: TaskBenchReportRepository;
   imGatewaySecret?: string;
 };
 
@@ -174,6 +187,12 @@ export function createHttpServer(options: HttpServerOptions = {}) {
   });
   const ownsTestRuns = !options.testRuns && testMode;
   const testRuns = options.testRuns ?? (testMode ? new TestRunRegistry() : undefined);
+  const ownsTaskBenchUploads = !options.taskBenchUploads;
+  const taskBenchUploads = options.taskBenchUploads ?? new TaskBenchUploadRegistry();
+  const taskBenchReports = options.taskBenchReports ?? new TaskBenchReportRepository(
+    kernel.database,
+    { stateDir: kernel.store.stateDir },
+  );
   const configuredImGatewaySecret = options.imGatewaySecret ??
     process.env.YOURCHAR_IM_GATEWAY_INGRESS_TOKEN?.trim() ??
     process.env.YOURCHAR_IM_GATEWAY_TOKEN?.trim() ??
@@ -184,7 +203,15 @@ export function createHttpServer(options: HttpServerOptions = {}) {
     : undefined;
   const server = createServer(async (request, response) => {
     try {
-      await route({ kernel, testRuns, request, response, imGatewaySecret });
+      await route({
+        kernel,
+        testRuns,
+        taskBenchUploads,
+        taskBenchReports,
+        request,
+        response,
+        imGatewaySecret,
+      });
     } catch (error) {
       if (response.headersSent || response.writableEnded) {
         console.error("YourChar HTTP request failed after the response started", error);
@@ -192,6 +219,12 @@ export function createHttpServer(options: HttpServerOptions = {}) {
         return;
       }
       if (error instanceof LocalControlPlaneRequestError) {
+        if (error.code === "LOCAL_CONTROL_TOKEN_REJECTED") {
+          // A browser tab may outlive the server process that issued its
+          // HttpOnly capability. Refresh only an otherwise-valid same-origin
+          // request so the UI can safely retry the rejected mutation once.
+          attachLocalControlPlaneCookie(request, response);
+        }
         sendJson(response, error.status, { code: error.code, error: error.message });
       } else if (error instanceof ControlPlaneBusyError) {
         sendJson(response, 409, { code: error.code, error: error.message });
@@ -204,6 +237,10 @@ export function createHttpServer(options: HttpServerOptions = {}) {
         sendJson(response, error.httpStatus, { code: error.code, error: error.message });
       } else if (error instanceof RequestBodyTooLargeError) {
         sendJson(response, 413, { code: "BODY_TOO_LARGE", error: error.message });
+      } else if (error instanceof TaskBenchValidationError) {
+        sendJson(response, 400, { code: error.code, error: error.message });
+      } else if (error instanceof TaskBenchUploadError) {
+        sendJson(response, error.httpStatus, { code: error.code, error: error.message });
       } else if (error instanceof SyntaxError) {
         sendJson(response, 400, { code: "INVALID_JSON", error: error.message });
       } else if (error instanceof SessionModeMismatchError) {
@@ -357,6 +394,11 @@ export function createHttpServer(options: HttpServerOptions = {}) {
       resourceDisposalError = asError(error);
     }
     try {
+      if (ownsTaskBenchUploads) taskBenchUploads.dispose();
+    } catch (error) {
+      resourceDisposalError ??= asError(error);
+    }
+    try {
       if (ownsKernel) kernel.dispose();
     } catch (error) {
       resourceDisposalError ??= asError(error);
@@ -380,6 +422,8 @@ function asError(error: unknown): Error {
 async function route(input: {
   kernel: CompanionKernel;
   testRuns?: TestRunRegistry;
+  taskBenchUploads: TaskBenchUploadRegistry;
+  taskBenchReports: TaskBenchReportRepository;
   request: IncomingMessage;
   response: ServerResponse;
   imGatewaySecret?: string;
@@ -407,10 +451,6 @@ async function route(input: {
   if (!kernel) {
     return;
   }
-  if (url.searchParams.get("conversationSpace") === "secret") {
-    kernel.enterPrivateControlPlane();
-  }
-
   if (
     method === "GET" &&
     (pathname === "/health" || pathname === "/api/health" || pathname === "/api/v1/health")
@@ -426,6 +466,55 @@ async function route(input: {
 
   if (method === "GET" && pathname === "/api/v1/feature-tests") {
     sendJson(input.response, 200, { cases: listFeatureTestCases() });
+    return;
+  }
+
+  if (method === "GET" && pathname === "/api/v1/task-bench/reports") {
+    const limit = optionalPositiveInteger(url.searchParams.get("limit")) ?? 20;
+    sendJson(input.response, 200, { reports: input.taskBenchReports.list(limit) });
+    return;
+  }
+
+  const taskBenchReportMatch = pathname.match(/^\/api\/v1\/task-bench\/reports\/([^/]+)$/);
+  if (taskBenchReportMatch && method === "GET") {
+    const id = decodeURIComponent(taskBenchReportMatch[1]);
+    const result = input.taskBenchReports.get(id);
+    if (!result) {
+      sendJson(input.response, 404, {
+        code: "TASK_BENCH_REPORT_NOT_FOUND",
+        error: `task-bench report not found: ${id}`,
+      });
+      return;
+    }
+    sendJson(input.response, 200, result);
+    return;
+  }
+
+  if (method === "POST" && pathname === "/api/v1/task-bench/uploads") {
+    const name = requiredString(url.searchParams.get("name"), "name");
+    const rawContentType = input.request.headers["content-type"];
+    const contentType = Array.isArray(rawContentType) ? rawContentType[0] : rawContentType;
+    const bytes = await readBinary(input.request, MAX_TASK_BENCH_UPLOAD_BYTES);
+    sendJson(input.response, 201, {
+      upload: input.taskBenchUploads.add({ name, contentType, bytes }),
+    });
+    return;
+  }
+
+  const taskBenchUploadMatch = pathname.match(/^\/api\/v1\/task-bench\/uploads\/([^/]+)$/);
+  if (taskBenchUploadMatch && method === "DELETE") {
+    const id = decodeURIComponent(taskBenchUploadMatch[1]);
+    const removed = input.taskBenchUploads.remove(id);
+    sendJson(input.response, removed ? 200 : 404, { removed });
+    return;
+  }
+
+  if (method === "POST" && pathname === "/api/v1/task-bench/run") {
+    const request = parseTaskBenchRequest(await readJson(input.request));
+    const uploadedFixtures = input.taskBenchUploads.snapshot(request.uploadIds);
+    const result = await runTaskBench(kernel, request, uploadedFixtures);
+    input.taskBenchReports.save(result);
+    sendJson(input.response, 200, result);
     return;
   }
 
@@ -473,6 +562,8 @@ async function route(input: {
       debugContextLogs: "GET /api/debug/context-logs",
       debugModelTraces: "GET /api/debug/model-traces",
       debugContextEconomics: "GET /api/debug/context-economics",
+      taskBench: "POST /api/v1/task-bench/run; GET /api/v1/task-bench/reports[/{id}]",
+      taskBenchUploads: "POST/DELETE /api/v1/task-bench/uploads[/{id}]",
       agentModules: "GET /api/v1/agent-modules",
       subagentSettings: "GET/PATCH /api/v1/subagent-settings",
       agentPermissions: "GET/PATCH /api/v1/agent-permissions",
@@ -1845,6 +1936,30 @@ async function route(input: {
         vaultHash: health.vaultHash,
         projectionHash: health.projectionHash,
       },
+    });
+    return;
+  }
+
+  if (pathname === "/api/v1/memory-vault/history" && method === "GET") {
+    const requestedLimit = url.searchParams.get("limit");
+    const limit = requestedLimit === null ? 30 : Number(requestedLimit);
+    sendJson(input.response, 200, {
+      checkpoints: kernel.listMemoryVaultHistory(limit),
+      history: kernel.getMemoryVaultHealth().history,
+    });
+    return;
+  }
+
+  if (pathname === "/api/v1/memory-vault/history/restore" && method === "POST") {
+    assertLocalControlPlaneMutation(input.request);
+    const body = asRecord(await readJson(input.request));
+    if (body.confirm !== "RESTORE_MEMORY_VAULT") {
+      sendJson(input.response, 400, { error: "confirm must equal RESTORE_MEMORY_VAULT" });
+      return;
+    }
+    sendJson(input.response, 200, {
+      result: kernel.restoreMemoryVaultHistory(requiredString(body.commitId, "commitId")),
+      vault: kernel.getMemoryVaultStatus(),
     });
     return;
   }
