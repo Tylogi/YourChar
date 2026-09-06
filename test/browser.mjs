@@ -8,6 +8,7 @@ import { strToU8, zipSync } from "fflate";
 import { fauxAssistantMessage } from "@earendil-works/pi-ai";
 import { createHttpServer } from "../dist/src/http/router.js";
 import { createTestRuntime } from "../dist/src/testing/index.js";
+import { runSocialThemeComponentChecks } from "./ui-social-theme.browser.mjs";
 
 const artifactsDir = resolve("browser-artifacts");
 mkdirSync(artifactsDir, { recursive: true });
@@ -209,6 +210,7 @@ const baseUrl = `http://127.0.0.1:${address.port}`;
 const browser = await launch({ headless: true });
 
 try {
+  await runSocialThemeComponentChecks(browser, artifactsDir);
   await runDesktopWorkflow(browser, baseUrl, artifactsDir);
   await runCompactDesktopWorkflow(browser, baseUrl, artifactsDir);
   await runMobileWorkflow(browser, baseUrl, artifactsDir);
@@ -231,6 +233,7 @@ async function runDesktopWorkflow(browser, baseUrl, outputDir) {
     }
   });
   await page.goto(baseUrl, { waitUntil: "domcontentloaded" });
+  await assertSocialTheme(page);
   await assertViewport(page);
   await assertInteractiveBounds(page);
   await page.locator(".conversation-sidebar").waitFor({ state: "visible" });
@@ -344,7 +347,7 @@ async function runDesktopWorkflow(browser, baseUrl, outputDir) {
   await page.locator("#networkPermissionLabel").filter({ hasText: "已启用" }).waitFor();
   assert.deepEqual(
     errors.splice(staleCapabilityErrorStart),
-    ["Failed to load resource: the server responded with a status of 403 (Forbidden)"],
+    ["Failed to load resource: the server responded with a status of 403 (Forbidden) (/api/v1/agent-permissions)"],
     "the stale capability must cause exactly one rejected mutation before automatic retry",
   );
   assert.match(networkWarning, /允许 Agent 联网/);
@@ -440,6 +443,7 @@ async function runDesktopWorkflow(browser, baseUrl, outputDir) {
   await page.locator("#schedulePage").waitFor({ state: "visible" });
   await page.locator("#scheduleCalendar .calendar-day").filter({ has: page.locator(".calendar-day-number") }).first().waitFor();
   assert.equal(await page.locator("#scheduleCalendar .calendar-day").count(), 42);
+  await assertCalendarNavigation(page);
   await page.locator("#scheduleCreateBtn").click();
   await page.locator("#scheduleEditorDialog").waitFor({ state: "visible" });
   await captureValidatedScreenshot(page, resolve(outputDir, "schedule-editor-user.png"));
@@ -1619,6 +1623,7 @@ async function runDesktopWorkflow(browser, baseUrl, outputDir) {
   await page.getByRole("button", { name: "聊天", exact: true }).click();
 
   await page.screenshot({ path: resolve(outputDir, "desktop.png"), fullPage: false });
+  await assertSocialTheme(page);
   assert.deepEqual(sessionConflicts, [], `session mismatch responses: ${sessionConflicts.join(" | ")}`);
   assert.deepEqual(errors, [], `desktop console errors: ${errors.join(" | ")}`);
   await page.close();
@@ -1687,6 +1692,7 @@ async function runMobileWorkflow(browser, baseUrl, outputDir) {
   await activeConversation.locator(".conversation-copy").click();
   await page.waitForFunction(() => !document.querySelector("#chatWorkspace")?.classList.contains("list-open"));
   const mobileProgress = page.locator("#messages .message-row.assistant").last().locator(".message-progress");
+  await assertSocialTheme(page);
   await mobileProgress.filter({ hasText: "已完成" }).waitFor();
   await mobileProgress.locator(":scope > summary").click();
   await mobileProgress.locator(".progress-tool-result > summary").click();
@@ -1822,6 +1828,7 @@ async function runMobileWorkflow(browser, baseUrl, outputDir) {
   await mobileMeetingEvent.waitFor();
   await mobileMeetingEvent.getByRole("button", { name: "我到了", exact: true }).click();
   await page.locator("#conversationMode").filter({ hasText: "现场" }).waitFor();
+  await page.waitForFunction(() => document.querySelector("#interactionToggleBtn")?.disabled === false);
   assert.equal(await page.getByRole("button", { name: "结束现场", exact: true }).isEnabled(), true);
   await assertElementUnclipped(page, "#interactionToggleBtn");
   await assertInteractiveBounds(page);
@@ -1921,6 +1928,7 @@ async function runMobileWorkflow(browser, baseUrl, outputDir) {
   await assertInteractiveBounds(page);
   await assertViewport(page);
   await page.screenshot({ path: resolve(outputDir, "mobile-schedule-calendar.png"), fullPage: false });
+  await assertCalendarNavigation(page);
   await page.getByRole("tab", { name: "角色日程", exact: true }).click();
   await page.locator("#scheduleCharacterSelect").selectOption({ label: "林澈" });
   await page.locator("#scheduleCalendarViewBtn").click();
@@ -2080,10 +2088,55 @@ async function runCompactDesktopWorkflow(browser, baseUrl, outputDir) {
   await page.close();
 }
 
+async function assertSocialTheme(page) {
+  const style = await page.evaluate(() => ({
+    loaded: Boolean(document.querySelector("#yourchar-social-theme")),
+    font: getComputedStyle(document.body).fontFamily,
+    background: getComputedStyle(document.body).backgroundColor,
+    rail: getComputedStyle(document.querySelector(".header-left")).backgroundColor,
+    send: getComputedStyle(document.querySelector("#sendBtn")).backgroundColor,
+    sendDisabled: document.querySelector("#sendBtn").disabled,
+    inputSize: getComputedStyle(document.querySelector("#textInput")).fontSize,
+    messageSizes: [...document.querySelectorAll(".bubble.assistant, .bubble.user")].map(element => getComputedStyle(element).fontSize),
+    avatars: [...document.querySelectorAll(".message-avatar")].map(element => getComputedStyle(element).width),
+  }));
+  assert.equal(style.loaded, true);
+  assert.match(style.font, /^system-ui,/);
+  assert.equal(style.background, "rgb(245, 245, 245)");
+  assert.equal(style.rail, page.viewportSize().width > 900 ? "rgb(237, 237, 237)" : "rgb(255, 255, 255)");
+  assert.equal(style.inputSize, "16px");
+  for (const size of style.messageSizes) assert.equal(size, "16px");
+  for (const width of style.avatars) assert.ok(parseFloat(width) >= 36, width);
+  assert.equal(style.send, style.sendDisabled ? "rgb(230, 230, 230)" : "rgb(26, 26, 26)");
+}
+
+async function assertCalendarNavigation(page) {
+  const month = await page.locator("#scheduleMonthLabel").textContent();
+  await page.locator("#scheduleNextMonthBtn").click();
+  assert.notEqual(await page.locator("#scheduleMonthLabel").textContent(), month);
+  await page.locator("#schedulePreviousMonthBtn").click();
+  assert.equal(await page.locator("#scheduleMonthLabel").textContent(), month);
+  assert.equal(await page.locator("#scheduleCalendar .calendar-day").count(), 42);
+  const day = page.locator("#scheduleCalendar .calendar-day:not(.outside):not(.selected)").first();
+  const date = await day.getAttribute("data-date");
+  await day.click();
+  assert.equal(await page.locator('#scheduleCalendar [aria-pressed="true"]').getAttribute("data-date"), date);
+  if (page.viewportSize().width <= 900) {
+    assert.equal(await page.locator("#schedulePage").getAttribute("data-mobile-view"), "agenda");
+    await page.locator("#scheduleCalendarViewBtn").click();
+  }
+  await page.locator("#scheduleTodayBtn").click();
+  assert.equal(await page.locator('#scheduleCalendar [aria-current="date"]').getAttribute("aria-pressed"), "true");
+}
+
 function collectErrors(page) {
   const errors = [];
   page.on("console", (message) => {
-    if (message.type() === "error") errors.push(message.text());
+    if (message.type() === "error") {
+      const url = message.location().url;
+      const path = url && /^https?:/.test(url) ? new URL(url).pathname : "";
+      errors.push(message.text() + (path ? ` (${path})` : ""));
+    }
   });
   page.on("pageerror", (error) => errors.push(error.message));
   return errors;

@@ -1,0 +1,504 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,interactive-widget=resizes-content">
+<title>YourChar · 在这里，接着聊</title>
+<style>
+*{box-sizing:border-box}
+body{
+--rail:#ededed;--list:#f7f7f7;--chat:#f5f5f5;--panel:#fff;
+--text:#1a1a1a;--sub:#616161;--muted:#707070;--line:#e3e3e3;
+--selected:#e6e6e6;--hover:#ebebeb;--green:#07c160;--green-ink:#087b36;
+--green-hover:#06ae56;--sent:#95ec69;--sent-ink:#142510;--action-ink:#063d1d;
+--unread:#c84040;--shadow:none;
+margin:0;font:14px/1.5 system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI Variable","Segoe UI","PingFang SC","Hiragino Sans GB","Microsoft YaHei UI","Microsoft YaHei","Noto Sans CJK SC",sans-serif;
+color:var(--text);background:var(--chat);-webkit-font-smoothing:antialiased;
+text-rendering:optimizeLegibility;color-scheme:light;overflow:hidden}
+
+body.dark{
+--rail:#111;--list:#1e1e1e;--chat:#191919;--panel:#2c2c2c;
+--text:#ededed;--sub:#b5b5b5;--muted:#a0a0a0;--line:#353535;
+--selected:#343434;--hover:#303030;--green:#07c160;--green-ink:#62d89a;
+--green-hover:#20c770;--sent:#3eb575;--sent-ink:#082719;--action-ink:#063d1d;
+color-scheme:dark}
+
+button,input,textarea{font:inherit;color:inherit}
+button{border:0;background:transparent;cursor:pointer}
+button:hover{background-color:var(--hover)}
+button:focus-visible,input:focus-visible,textarea:focus-visible,summary:focus-visible{outline:2px solid var(--green-ink);outline-offset:3px}
+[hidden]{display:none!important}
+.icon{width:21px;height:21px;stroke:currentColor;fill:none;stroke-width:1.75;stroke-linecap:round;stroke-linejoin:round;flex-shrink:0}
+.icon-btn{width:32px;height:32px;display:grid;place-items:center;border-radius:6px;color:var(--sub);padding:0}
+.icon-btn .icon{width:18px;height:18px}
+
+.app{height:100dvh;display:grid;grid-template-columns:72px 298px minmax(0,1fr);min-height:0}
+.rail{background:var(--rail);border-right:1px solid var(--line);display:flex;flex-direction:column;align-items:center;padding:27px 10px 20px;gap:25px}
+.self{width:39px;height:39px;border-radius:8px;box-shadow:none}
+.avatar{background-image:url('ui-social-assets/avatars.png');background-size:200% 200%;background-position:0 0;background-color:var(--hover);width:46px;height:46px;border-radius:8px;flex-shrink:0;display:block;overflow:hidden;position:relative;box-shadow:none}
+.avatar.su{background-position:100% 0;background-color:var(--hover)}
+.avatar.alex{background-position:0 100%;background-color:var(--hover)}
+.avatar.you{background-position:100% 100%;background-color:var(--hover)}
+.avatar.world{background-image:none;background:var(--selected);display:grid;grid-template-columns:1fr 1fr;gap:2px;padding:4px;border-radius:8px}
+.avatar.world .avatar{width:100%;height:100%;border-radius:3px}
+.avatar.world .world-tile{background:var(--panel);display:grid;place-items:center;border-radius:3px}
+.world-tile .icon{width:13px;height:13px;color:var(--sub)}
+
+.rail .avatar{width:39px;height:39px;border-radius:8px}
+.rail nav{width:100%;display:grid;gap:16px}
+.nav-button{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:6px;height:53px;width:100%;color:var(--sub);font-size:11px;border-radius:8px;position:relative}
+.nav-button.active{color:var(--green-ink);background:var(--panel);box-shadow:none}
+.nav-button .icon{width:22px;height:22px}
+.rail-bottom{margin-top:auto;display:grid;gap:15px}
+.rail-bottom .icon-btn{color:var(--sub)}
+
+.contacts{background:var(--list);border-right:1px solid var(--line);display:flex;flex-direction:column;min-height:0}
+.contacts-header{height:81px;min-height:81px;padding:0 22px;display:flex;align-items:center;justify-content:space-between}
+.contacts-header h1{font-size:22px;font-weight:600;letter-spacing:normal;margin:0}
+.contacts-header .actions{display:flex;gap:3px}
+.search{background:var(--hover);border-radius:6px;padding:9px 11px;margin:0 18px 18px;display:flex;align-items:center;gap:7px;color:var(--muted)}
+.search .icon{width:14px;height:14px}
+.search input{font-size:13px;background:transparent;border:0;outline:none;min-width:0;width:100%}
+.search input::placeholder{color:var(--muted)}
+.contact-scroll{min-height:0;overflow:auto;flex:1;scrollbar-width:thin;padding:0 11px}
+.group-label{font-size:12px;color:var(--muted);padding:10px 10px 11px;display:flex;align-items:center;justify-content:space-between}
+.group-label button{padding:0;color:var(--muted);display:flex;align-items:center;gap:5px;font-size:11px}
+.group-label .icon{width:10px;height:10px}
+.session{width:100%;padding:15px 11px;display:flex;align-items:center;gap:12px;text-align:left;border-radius:7px;position:relative;min-width:0;margin-bottom:3px}
+.session.active{background:var(--selected)}
+.session-copy{min-width:0;flex:1}
+.session-title{display:flex;align-items:center;justify-content:space-between;gap:7px;margin-bottom:8px}
+.session-title strong{font-size:16px;font-weight:500;overflow:hidden;white-space:nowrap;text-overflow:ellipsis}
+.session-title time{font-size:11px;color:var(--muted);font-weight:400;font-variant-numeric:tabular-nums}
+.session-preview{font-size:13px;color:var(--sub);white-space:nowrap;text-overflow:ellipsis;overflow:hidden;padding-right:6px;line-height:1.5;display:block}
+.badge{position:absolute;left:48px;top:10px;background:var(--unread);color:white;border:2px solid var(--list);height:20px;min-width:20px;border-radius:10px;font-size:11px;line-height:16px;text-align:center;padding:0 2px;font-weight:500}
+.session.active .badge{border-color:var(--selected)}
+.world-note{margin:0 0 15px 35px;border-left:1px solid var(--line);padding:9px 11px 9px 16px;display:flex;gap:7px;align-items:center;color:var(--sub);font-size:12px;width:calc(100% - 35px);border-radius:0 7px 7px 0;text-align:left}
+.world-note .icon{width:13px;height:13px;color:var(--muted)}
+.contact-footer{padding:18px 21px;color:var(--muted);font-size:11px;display:flex;align-items:center;gap:6px;border-top:1px solid var(--line)}
+.contact-footer .icon{width:12px;height:12px}
+
+.thread{min-width:0;min-height:0;display:flex;flex-direction:column;position:relative;background:var(--chat)}
+.thread-header{height:81px;min-height:81px;border-bottom:1px solid var(--line);padding:0 33px;display:flex;align-items:center;gap:12px;background:var(--chat);backdrop-filter:none;z-index:2}
+.thread-header .avatar{height:39px;width:39px;border-radius:8px}
+.thread-heading{min-width:0}
+.thread-heading h2{font-size:17px;font-weight:600;letter-spacing:normal;margin:0 0 6px}
+.thread-heading p{font-size:12px;color:var(--muted);margin:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.thread-tools{margin-left:auto;display:flex;align-items:center;gap:10px}
+.meet-button{font-size:13px;color:var(--sub);display:flex;gap:6px;align-items:center;padding:8px 10px;border:1px solid var(--line);border-radius:6px}
+.meet-button .icon{width:13px;height:13px}
+.thread-header .back{display:none;color:var(--text)}
+.thread-body{display:flex;flex:1;min-height:0;position:relative}
+.chat-column{display:flex;flex-direction:column;min-width:0;min-height:0;flex:1}
+.messages{overflow:auto;flex:1;min-height:0;padding:25px clamp(26px,3.3vw,55px) 14px;scrollbar-width:thin;scroll-behavior:smooth}
+.messages-inner{max-width:1000px;margin:0 auto}
+.time-label{text-align:center;font-size:11px;color:var(--muted);margin:0 0 28px;letter-spacing:normal}
+.message{display:flex;align-items:start;gap:12px;margin:0 0 22px}
+.message .avatar{width:37px;height:37px;border-radius:8px;margin-top:1px}
+.message .avatar:hover{filter:none}
+.message-content{min-width:0;max-width:70%}
+.sender{font-size:12px;color:var(--muted);margin:0 0 8px 1px}
+.bubble{font-size:16px;line-height:1.65;background:var(--panel);border-radius:4px 8px 8px 8px;padding:10px 14px;box-shadow:var(--shadow);position:relative;overflow-wrap:anywhere;width:fit-content;border:0}
+.bubble+.bubble{margin-top:9px}
+.bubble p{margin:0 0 6px}
+.bubble p:last-child{margin-bottom:0}
+.message.outgoing{flex-direction:row-reverse;margin-top:25px}
+.message.outgoing .sender{display:none}
+.message.outgoing .bubble{background:var(--sent);border-radius:8px 4px 8px 8px;border-color:#00000001;box-shadow:none;color:var(--sent-ink)}
+.message.outgoing .message-content{display:flex;flex-direction:column;align-items:end}
+.message.outgoing .message-state{font-size:11px;color:var(--muted);margin:7px 2px 0}
+.message-state .icon{width:10px;height:10px;vertical-align:-1px;margin-right:3px}
+.place-card{background:var(--panel);border-radius:8px;width:310px;max-width:100%;padding:14px 15px;box-shadow:var(--shadow);margin-top:10px;border:1px solid var(--line)}
+.place-card .place-heading{display:flex;gap:10px;align-items:center;margin-bottom:11px}
+.place-symbol{width:35px;height:35px;border-radius:6px;background:var(--hover);color:var(--sub);display:grid;place-items:center;flex-shrink:0}
+.place-symbol .icon{width:17px;height:17px}
+.place-card h3{font-size:14px;font-weight:500;margin:0 0 5px}
+.place-card p{font-size:12px;color:var(--muted);margin:0;line-height:1.6}
+.place-card .place-bottom{border-top:1px solid var(--line);padding-top:10px;display:flex;align-items:center;justify-content:space-between;font-size:11px;color:var(--muted)}
+.place-bottom button{font-size:12px;color:var(--green-ink);padding:0}
+.inline-task{font-size:12px;color:var(--sub);margin:11px 1px 0}
+.inline-task summary{display:flex;align-items:center;gap:5px;cursor:pointer;list-style:none;width:fit-content}
+.inline-task summary::-webkit-details-marker{display:none}
+.inline-task summary .icon{width:12px;height:12px;color:var(--green-ink)}
+.inline-task summary .chevron{width:9px;height:9px;color:var(--muted)}
+.inline-task[open] .chevron{transform:rotate(90deg)}
+.task-body{margin:9px 0 0 5px;border-left:1px solid var(--line);padding-left:11px;font-size:12px;line-height:2.1;color:var(--muted)}
+.narrative{max-width:590px;margin:4px auto 28px;font-size:14px;color:var(--sub);line-height:1.9;text-align:left}
+.scene-strip{max-width:680px;margin:0 auto 27px;padding:12px 16px;border:1px solid var(--line);border-radius:6px;display:flex;align-items:center;gap:10px;font-size:13px;color:var(--sub);background:var(--panel)}
+.scene-strip .icon{width:15px;height:15px;color:var(--muted)}
+.scene-strip small{margin-left:auto;font-size:11px;color:var(--muted)}
+.system-note{display:flex;align-items:center;justify-content:center;gap:6px;color:var(--muted);font-size:11px;margin:25px 0}
+.system-note .icon{width:12px;height:12px}
+
+.composer-area{border-top:1px solid var(--line);background:var(--panel);padding:12px 28px 17px;flex-shrink:0}
+.composer{max-width:1040px;margin:0 auto}
+.composer-tools{display:flex;gap:11px;align-items:center;height:28px;margin-bottom:11px}
+.composer-tools .icon-btn{width:26px;height:26px;border-radius:6px}
+.composer-tools .icon-btn .icon{width:18px;height:18px}
+.composer-tools .last{margin-left:auto}
+.composer textarea{height:48px;max-height:140px;resize:none;width:100%;background:transparent;border:0;outline:none;font-size:16px;line-height:1.6;padding:1px 3px}
+.composer textarea::placeholder{color:var(--muted)}
+.composer-bottom{display:flex;align-items:center;justify-content:space-between;margin-top:7px}
+.composer-bottom small{font-size:11px;color:var(--muted);margin-left:3px}
+.send{font-size:14px;color:var(--action-ink);background:var(--green);padding:7px 18px;border-radius:6px;display:flex;align-items:center;gap:8px;font-weight:500}
+.send:hover{background:var(--green-hover);filter:none}
+.dark .send{color:var(--action-ink)}
+.send .icon{width:13px;height:13px}
+.attachments{display:flex;gap:7px;flex-wrap:wrap;margin:7px 0 10px}
+.attachments:empty{display:none}
+.attachment{display:flex;gap:7px;align-items:center;font-size:12px;color:var(--sub);padding:6px 9px;border:1px solid var(--line);background:var(--panel);border-radius:6px;max-width:100%}
+.attachment span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.attachment button{padding:0;font-size:14px;color:var(--muted)}
+.emoji-pop{position:absolute;bottom:145px;left:28px;z-index:5;border:1px solid var(--line);padding:10px;background:var(--panel);border-radius:11px;box-shadow:0 8px 30px #0001;display:flex;gap:5px}
+.emoji-pop button{font-size:22px;padding:6px;border-radius:7px}
+
+.drawer{width:290px;flex-shrink:0;border-left:1px solid var(--line);background:var(--panel);overflow:auto;padding:22px 24px}
+.drawer-head{display:flex;justify-content:space-between;align-items:center;font-size:13px;color:var(--sub);margin-bottom:26px}
+.profile-identity{display:flex;gap:15px;align-items:center;margin-bottom:21px}
+.profile-identity .avatar{height:73px;width:73px;border-radius:12px}
+.profile-identity h2{font-size:20px;font-weight:600;letter-spacing:normal;margin:0 0 7px}
+.profile-identity p{font-size:11px;color:var(--muted);margin:0}
+.profile-bio{font-size:14px;color:var(--sub);line-height:1.9;margin:0 0 21px}
+.profile-actions{display:flex;gap:9px;margin-bottom:25px}
+.profile-actions button{display:flex;gap:6px;align-items:center;padding:8px 12px;border:1px solid var(--line);border-radius:7px;font-size:13px;color:var(--text)}
+.profile-actions .icon{width:13px;height:13px}
+.detail-section{border-top:1px solid var(--line);padding-top:18px;margin-top:23px}
+.detail-section h3{font-size:14px;font-weight:500;margin:0 0 14px;display:flex;justify-content:space-between}
+.detail-section h3 button{padding:0;font-size:12px;color:var(--green-ink)}
+.detail-section p{font-size:13px;line-height:1.9;color:var(--sub);margin:0 0 13px}
+.member{display:flex;align-items:center;gap:9px;padding:8px 0;font-size:13px}
+.member .avatar{width:29px;height:29px;border-radius:8px}
+.member small{margin-left:auto;color:var(--muted);font-size:11px}
+.profile-caption{font-size:11px;color:var(--muted);margin-top:28px;line-height:1.8}
+
+.page{grid-column:2/-1;min-height:0;overflow:auto;padding:35px 44px;background:var(--panel)}
+.page-header{display:flex;align-items:center;justify-content:space-between;gap:15px;margin-bottom:27px}
+.page h1{font-size:24px;font-weight:600;letter-spacing:normal;margin:0 0 10px}
+.page-header p{font-size:14px;color:var(--muted);margin:0;line-height:1.8}
+.tabs{display:flex;gap:20px;border-bottom:1px solid var(--line);margin-bottom:14px}
+.tabs button{font-size:14px;color:var(--muted);padding:10px 0 13px;border-bottom:2px solid transparent}
+.tabs button.active{color:var(--text);border-bottom-color:var(--green-ink)}
+.people-list{max-width:940px}
+.person-row{display:flex;align-items:center;gap:15px;width:100%;padding:21px 3px;border-bottom:1px solid var(--line);text-align:left}
+.person-row .avatar{width:55px;height:55px;border-radius:8px}
+.person-row h2{font-size:16px;font-weight:500;margin:0 0 7px}
+.person-row p{font-size:13px;color:var(--sub);margin:0;line-height:1.8}
+.person-row small{font-size:12px;color:var(--muted);margin-left:auto}
+.person-row small .icon{width:13px;height:13px}
+.plain-row{display:flex;align-items:center;padding:19px 2px;border-bottom:1px solid var(--line);gap:15px}
+.plain-row>.icon{color:var(--sub);width:19px}
+.plain-row h3{font-size:15px;font-weight:500;margin:0 0 7px}
+.plain-row p{font-size:13px;color:var(--sub);margin:0;line-height:1.8}
+.plain-row time{font-size:13px;color:var(--muted);min-width:45px}
+.plain-row small{margin-left:auto;font-size:12px;color:var(--muted)}
+.plain-row button{margin-left:auto;border:1px solid var(--line);font-size:12px;border-radius:6px;padding:7px 10px;color:var(--sub)}
+.page .setting-note{font-size:12px;color:var(--muted);line-height:1.9;margin-top:25px}
+.empty{font-size:14px;color:var(--muted);padding:35px 15px;line-height:1.8;text-align:center}
+
+.menu{position:absolute;right:24px;top:66px;background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:6px;box-shadow:0 12px 40px #0001;min-width:190px;z-index:8}
+.menu button{width:100%;text-align:left;display:flex;align-items:center;gap:9px;font-size:14px;color:var(--text);padding:11px;border-radius:6px}
+.menu .icon{width:15px;height:15px}
+.menu hr{border:0;border-top:1px solid var(--line);margin:5px 3px}
+.notice{padding:9px 20px;font-size:12px;line-height:1.8;color:var(--sub);background:var(--selected);border-bottom:1px solid var(--line);text-align:center}
+.dialog{width:min(460px,90vw);background:var(--panel);color:var(--text);border:1px solid var(--line);padding:27px;border-radius:10px;box-shadow:0 20px 70px #0002}
+.dialog::backdrop{background:#0006;backdrop-filter:none}
+.dialog h2{font-size:22px;font-weight:600;letter-spacing:normal;margin:0 0 17px}
+.dialog p{font-size:14px;line-height:1.9;color:var(--sub)}
+.dialog input{width:100%;background:var(--chat);border:1px solid var(--line);border-radius:7px;padding:11px;margin:10px 0 16px;font-size:14px}
+.dialog form[method=dialog]{margin-top:20px}
+.primary{background:var(--text);color:var(--panel);font-size:14px;padding:10px 16px;border-radius:6px}
+.primary:hover{background:var(--text);filter:brightness(.92)}
+.toast{position:fixed;bottom:24px;left:50%;transform:translateX(-50%);background:var(--panel);border:1px solid var(--line);border-radius:9px;box-shadow:0 5px 30px #0001;padding:13px 18px;font-size:13px;color:var(--sub);z-index:20;max-width:90vw;line-height:1.8}
+
+.nav-button.active .icon{stroke-width:2.1}
+
+button:active{transform:translateY(.5px)}
+
+.avatar:active{transform:none}
+
+.session.active .session-title strong{font-weight:600}
+.session.active .session-title time{color:var(--sub)}
+.search,.search input::placeholder{color:var(--sub)}
+
+@media(min-width:1650px){.app{grid-template-columns:76px 320px minmax(0,1fr)}
+.session{padding:17px 12px;border-radius:7px}
+.session .avatar{width:49px;height:49px;border-radius:8px}
+.messages{padding-top:34px}
+.bubble{font-size:16px;padding:10px 14px;line-height:1.65;border-radius:4px 8px 8px 8px;border:0}
+.message{margin-bottom:27px}
+.composer textarea{height:58px;font-size:16px;line-height:1.6}
+}
+
+@media(max-width:1200px){.app{grid-template-columns:66px 270px minmax(0,1fr)}
+.contacts-header{padding:0 19px}
+.session{gap:11px;padding:14px 10px;border-radius:7px}
+.session .avatar{width:43px;height:43px;border-radius:8px}
+.session-title strong{font-size:16px;font-weight:500}
+.session-preview{font-size:13px;display:block}
+.thread-header{padding:0 25px;background:var(--chat);backdrop-filter:none}
+.thread-tools{gap:6px}
+.messages{padding:25px 27px 14px}
+.message-content{max-width:77%}
+.bubble{font-size:16px;line-height:1.65;padding:10px 14px;border-radius:4px 8px 8px 8px;border:0}
+.drawer{width:275px}
+.thread-body:has(.drawer:not([hidden])) .drawer{position:absolute;right:0;top:0;bottom:0;z-index:6;box-shadow:-10px 0 40px #00000008}
+.composer-area{padding-left:25px;padding-right:25px;background:var(--panel)}
+.page{padding:32px}
+}
+
+@media(max-width:900px){.app{grid-template-columns:62px 239px minmax(0,1fr)}
+.rail{padding:25px 7px 16px}
+.contacts-header{padding:0 16px}
+.contacts-header h1{font-size:22px;font-weight:600}
+.contacts-header .actions .icon-btn{width:26px}
+.search{margin-left:14px;margin-right:14px;border-radius:6px}
+.contact-scroll{padding:0 8px}
+.session{gap:9px;padding:14px 9px;border-radius:7px}
+.session-title time{font-size:11px;font-variant-numeric:tabular-nums}
+.session .avatar{width:40px;height:40px;border-radius:8px}
+.badge{left:40px;top:9px;background:var(--unread);font-size:11px;font-weight:500;height:20px;min-width:20px;line-height:16px}
+.session-preview{font-size:13px;display:block}
+.thread-header{gap:10px;padding:0 19px;background:var(--chat);backdrop-filter:none}
+.thread-tools .meet-button{border:0;padding:7px}
+.meet-button span{display:none}
+.messages{padding:23px 21px 13px}
+.message{gap:10px}
+.message .avatar{width:34px;height:34px;border-radius:8px}
+.bubble{padding:10px 14px;font-size:16px;line-height:1.65;border-radius:4px 8px 8px 8px;border:0}
+.message-content{max-width:calc(100% - 50px)}
+.place-card{width:270px;padding:12px;border-radius:8px}
+.place-card h3{font-size:14px;font-weight:500}
+.composer-area{padding:11px 20px 15px;background:var(--panel)}
+.composer textarea{font-size:16px;line-height:1.6}
+.thread-heading p{font-size:12px}
+.thread-heading h2{font-size:17px;font-weight:600}
+.nav-button{font-size:11px;border-radius:8px}
+.page{padding:28px}
+.narrative{font-size:14px;line-height:1.9}
+.scene-strip{font-size:13px;padding:11px 13px;background:var(--panel);border-radius:6px}
+.scene-strip small{font-size:11px}
+.person-row p{font-size:13px}
+}
+
+@media(max-width:620px){.app{display:grid;grid-template-columns:minmax(0,1fr);grid-template-rows:minmax(0,1fr) 61px}
+.rail{grid-column:1;grid-row:2;padding:5px 14px max(5px,env(safe-area-inset-bottom));border-right:0;border-top:1px solid var(--line);background:var(--panel);z-index:9;gap:0}
+.rail>.avatar,.rail-bottom{display:none}
+.rail nav{display:flex;justify-content:space-around;gap:8px}
+.nav-button{height:48px;flex:1;gap:5px;font-size:11px;border-radius:8px}
+.nav-button.active{box-shadow:none;background:transparent;color:var(--green-ink)}
+.nav-button .icon{width:22px;height:22px}
+.contacts{grid-column:1;grid-row:1;border:0;z-index:5;display:none}
+.app.list-open .contacts{display:flex}
+.thread{grid-column:1;grid-row:1;min-height:0}
+.app.list-open .thread{display:none}
+.contacts-header{height:76px;min-height:76px;padding:0 23px}
+.contacts-header h1{font-size:22px;letter-spacing:normal;font-weight:600}
+.contacts-header .actions{gap:12px}
+.contacts-header .actions .icon-btn{width:29px}
+.search{margin:0 20px 18px;padding:10px 12px;border-radius:6px}
+.search input{font-size:13px}
+.contact-scroll{padding:0 12px}
+.group-label{font-size:12px;padding:10px 10px 12px}
+.group-label button{font-size:11px}
+.session{padding:16px 12px;gap:13px;margin-bottom:4px;border-radius:7px}
+.session .avatar{width:51px;height:51px;border-radius:8px}
+.session-title strong{font-size:16px;font-weight:500}
+.session-title time{font-size:11px;font-variant-numeric:tabular-nums}
+.session-preview{font-size:13px;display:block}
+.session-title{margin-bottom:8px}
+.badge{left:53px;top:10px;height:20px;min-width:20px;font-size:11px;line-height:16px;background:var(--unread);font-weight:500}
+.world-note{font-size:12px;padding:12px 11px 12px 19px;margin-left:38px;width:calc(100% - 38px)}
+.world-note .icon{width:14px;height:14px}
+.contact-footer{font-size:11px;padding:18px 22px}
+.thread-header{height:67px;min-height:67px;padding:0 12px;gap:9px;background:var(--chat);backdrop-filter:none}
+.thread-header .back{display:grid;width:23px;color:var(--text)}
+.thread-header .avatar{height:36px;width:36px;border-radius:8px}
+.thread-heading h2{font-size:17px;margin-bottom:5px;font-weight:600}
+.thread-heading p{font-size:12px;max-width:160px}
+.thread-tools{gap:4px}
+.thread-tools .icon-btn{width:27px}
+.thread-tools .meet-button{display:none}
+.messages{padding:23px 15px 12px}
+.message{gap:10px;margin-bottom:23px}
+.message .avatar{height:36px;width:36px;border-radius:8px}
+.sender{font-size:12px;margin-bottom:7px}
+.message-content{max-width:calc(100% - 57px)}
+.bubble{font-size:16px;line-height:1.65;padding:10px 14px;border-radius:4px 8px 8px 8px;border:0}
+.message.outgoing{margin-top:25px}
+.time-label{font-size:11px;margin-bottom:24px}
+.place-card{width:270px;max-width:100%;padding:12px 13px;border-radius:8px}
+.place-card h3{font-size:14px;font-weight:500}
+.place-card p{font-size:12px}
+.place-symbol{width:31px;height:31px;border-radius:6px}
+.place-card .place-bottom{font-size:11px}
+.place-bottom button{font-size:12px;color:var(--green-ink)}
+.inline-task{font-size:12px}
+.inline-task summary{gap:4px}
+.task-body{font-size:12px}
+.system-note{font-size:11px;margin:23px 0}
+.composer-area{padding:10px 13px 12px;background:var(--panel)}
+.composer-tools{gap:13px;margin-bottom:8px;height:26px}
+.composer-tools .icon-btn{width:24px;height:24px}
+.composer-tools .icon-btn .icon{width:19px;height:19px}
+.composer textarea{height:35px;font-size:16px;line-height:1.6}
+.composer-bottom{margin-top:5px}
+.composer-bottom small{font-size:11px}
+.send{font-size:14px;padding:7px 18px;gap:6px;font-weight:500;color:var(--action-ink);border-radius:6px}
+.drawer{width:min(310px,92vw);padding:24px}
+.thread-body:has(.drawer:not([hidden])) .drawer{z-index:10;box-shadow:-35px 0 100px #0002}
+.page{grid-column:1;grid-row:1;padding:27px 22px}
+.page h1{font-size:24px}
+.person-row{gap:13px;padding:19px 0}
+.person-row .avatar{width:56px;height:56px;border-radius:8px}
+.person-row h2{font-size:16px}
+.person-row p{font-size:13px;max-width:210px}
+.person-row small{font-size:11px}
+.page-header p{font-size:13px}
+.plain-row{gap:12px}
+.plain-row p{font-size:13px}
+.plain-row small{font-size:11px}
+.narrative{font-size:14px;padding:0 8px;line-height:1.9}
+.scene-strip{gap:8px;font-size:13px;flex-wrap:wrap;background:var(--panel);border-radius:6px}
+.scene-strip small{font-size:11px}
+.menu{top:57px;right:12px}
+.toast{bottom:80px}
+.emoji-pop{left:13px;bottom:139px}
+.notice{font-size:11px;padding:8px 13px}
+.profile-identity .avatar{width:78px;height:78px;border-radius:12px}
+.profile-identity h2{font-size:20px}
+}
+
+@media(max-width:620px){
+.search input{font-size:16px}
+
+.thread-heading p{font-size:11px}
+
+.composer-bottom small{font-size:10px}
+
+.session-title strong{font-size:17px}
+
+.contacts-header h1{font-size:24px}
+
+.nav-button{font-size:11px}
+
+.thread-heading{flex:1;min-width:0}
+
+.thread-tools{flex-shrink:0}
+
+.profile-identity p{font-size:11px}
+
+}
+
+@media(prefers-reduced-motion:reduce){*{scroll-behavior:auto!important;transition:none!important}
+}
+</style>
+</head>
+<body>
+<div class="app" id="app">
+<aside class="rail"><button class="avatar you" data-action="self" aria-label="我的资料"></button><nav aria-label="功能导航"></nav><div class="rail-bottom"><button class="icon-btn" data-action="theme" aria-label="切换深浅外观"><span data-icon="moon"></span></button><button class="icon-btn" data-page="settings" aria-label="设置"><span data-icon="settings"></span></button></div></aside>
+<aside class="contacts"><header class="contacts-header"><h1>聊天</h1><div class="actions"><button class="icon-btn" data-action="archive" aria-label="归档会话"><span data-icon="archive"></span></button><button class="icon-btn" data-page="people" aria-label="发起聊天"><span data-icon="new"></span></button></div></header><label class="search"><span data-icon="search"></span><input id="search" aria-label="搜索联系人与世界" placeholder="搜索"></label><div class="contact-scroll" id="contact-list"></div><div class="contact-footer"><span data-icon="lock"></span>在这里，接着聊。</div></aside>
+<section class="thread"><header class="thread-header"><button class="icon-btn back" id="back" aria-label="返回聊天列表"><span data-icon="left"></span></button><button id="header-avatar" class="avatar lin" aria-label="查看联系人资料"></button><div class="thread-heading"><h2 id="header-name">林澈</h2><p id="header-sub">在街角书店，等一场雨停。</p></div><div class="thread-tools"><button class="meet-button" data-action="meet"><span data-icon="pin"></span><span>发起见面</span></button><button class="icon-btn" id="profile-toggle" aria-label="查看资料" aria-expanded="false"><span data-icon="person"></span></button><button class="icon-btn" id="more" aria-label="聊天设置" aria-expanded="false"><span data-icon="more"></span></button></div></header><div class="menu" id="menu" hidden><button data-action="meet"><span data-icon="pin"></span>发起见面</button><button data-action="scene"><span data-icon="world"></span>当前场景</button><hr><button data-action="context"><span data-icon="gauge"></span>会话运行信息</button><button data-action="privacy"><span data-icon="eye"></span>无痕模式 · 样式演示</button><button data-action="rename"><span data-icon="edit"></span>修改显示名称</button><button data-action="archive"><span data-icon="archive"></span>归档会话</button></div><div class="notice" id="notice" hidden>无痕模式样式演示；此 HTML 不实现隐私隔离或无痕存储。</div><div class="thread-body"><div class="chat-column"><div class="messages" id="messages"><div class="messages-inner" id="message-list"></div></div><div class="composer-area"><form class="composer" id="composer"><div class="composer-tools"><button class="icon-btn" id="emoji" type="button" aria-label="选择表情"><span data-icon="smile"></span></button><button class="icon-btn" id="attach" type="button" aria-label="添加附件"><span data-icon="attach"></span></button><button class="icon-btn" type="button" data-action="memory" aria-label="共同记忆"><span data-icon="memory"></span></button><button class="icon-btn last" type="button" data-action="history" aria-label="聊天记录"><span data-icon="history"></span></button></div><div class="attachments" id="attachments"></div><textarea id="input" rows="2" placeholder="发消息…" aria-label="输入消息"></textarea><div class="composer-bottom"><small id="input-note">Enter 发送，Shift + Enter 换行</small><button class="send" type="submit">发送<span data-icon="up"></span></button></div></form></div><div class="emoji-pop" id="emoji-pop" hidden></div><input type="file" id="files" multiple hidden></div><aside class="drawer" id="drawer" hidden></aside></div></section>
+<section class="page" id="page" hidden></section>
+</div>
+<dialog class="dialog" id="dialog"><div id="dialog-content"></div><form method="dialog"><button class="primary">关闭</button></form></dialog><div class="toast" id="toast" role="status" hidden></div>
+<script>
+/*
+Inline icons: Lucide, from the project's existing lucide dependency.
+ISC License
+
+Copyright (c) 2026 Lucide Icons and Contributors
+
+Permission to use, copy, modify, and/or distribute this software for any
+purpose with or without fee is hereby granted, provided that the above
+copyright notice and this permission notice appear in all copies.
+
+THE SOFTWARE IS PROVIDED "AS IS" AND THE AUTHOR DISCLAIMS ALL WARRANTIES
+WITH REGARD TO THIS SOFTWARE INCLUDING ALL IMPLIED WARRANTIES OF
+MERCHANTABILITY AND FITNESS. IN NO EVENT SHALL THE AUTHOR BE LIABLE FOR
+ANY SPECIAL, DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES OR ANY DAMAGES
+WHATSOEVER RESULTING FROM LOSS OF USE, DATA OR PROFITS, WHETHER IN AN
+ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF
+OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
+
+---
+
+The following Lucide icons are derived from the Feather project:
+
+airplay, alert-circle, alert-octagon, alert-triangle, aperture, arrow-down-circle, arrow-down-left, arrow-down-right, arrow-down, arrow-left-circle, arrow-left, arrow-right-circle, arrow-right, arrow-up-circle, arrow-up-left, arrow-up-right, arrow-up, at-sign, calendar, cast, check, chevron-down, chevron-left, chevron-right, chevron-up, chevrons-down, chevrons-left, chevrons-right, chevrons-up, circle, clipboard, clock, code, columns, command, compass, corner-down-left, corner-down-right, corner-left-down, corner-left-up, corner-right-down, corner-right-up, corner-up-left, corner-up-right, crosshair, database, divide-circle, divide-square, dollar-sign, download, external-link, feather, frown, hash, headphones, help-circle, info, italic, key, layout, life-buoy, link-2, link, loader, lock, log-in, log-out, maximize, meh, minimize, minimize-2, minus-circle, minus-square, minus, monitor, moon, more-horizontal, more-vertical, move, music, navigation-2, navigation, octagon, pause-circle, percent, plus-circle, plus-square, plus, power, radio, rss, search, server, share, shopping-bag, sidebar, smartphone, smile, square, table-2, tablet, target, terminal, trash-2, trash, triangle, tv, type, upload, x-circle, x-octagon, x-square, x, zoom-in, zoom-out
+
+The MIT License (MIT) (for the icons listed above)
+
+Copyright (c) 2013-present Cole Bemis
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+*/
+const iconNodes = {
+  "chat":[["path",{"d":"M22 17a2 2 0 0 1-2 2H6.828a2 2 0 0 0-1.414.586l-2.202 2.202A.71.71 0 0 1 2 21.286V5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2z"}]],
+  "people":[["path",{"d":"M18 21a8 8 0 0 0-16 0"}],["circle",{"cx":"10","cy":"8","r":"5"}],["path",{"d":"M22 20c0-3.37-2-6.5-4-8a5 5 0 0 0-.45-8.3"}]],
+  "person":[["circle",{"cx":"12","cy":"8","r":"5"}],["path",{"d":"M20 21a8 8 0 0 0-16 0"}]],
+  "calendar":[["path",{"d":"M8 2v4"}],["path",{"d":"M16 2v4"}],["rect",{"width":"18","height":"18","x":"3","y":"4","rx":"2"}],["path",{"d":"M3 10h18"}],["path",{"d":"M8 14h.01"}],["path",{"d":"M12 14h.01"}],["path",{"d":"M16 14h.01"}],["path",{"d":"M8 18h.01"}],["path",{"d":"M12 18h.01"}],["path",{"d":"M16 18h.01"}]],
+  "blocks":[["rect",{"width":"7","height":"7","x":"3","y":"3","rx":"1"}],["rect",{"width":"7","height":"7","x":"14","y":"3","rx":"1"}],["rect",{"width":"7","height":"7","x":"14","y":"14","rx":"1"}],["rect",{"width":"7","height":"7","x":"3","y":"14","rx":"1"}]],
+  "settings":[["path",{"d":"M9.671 4.136a2.34 2.34 0 0 1 4.659 0 2.34 2.34 0 0 0 3.319 1.915 2.34 2.34 0 0 1 2.33 4.033 2.34 2.34 0 0 0 0 3.831 2.34 2.34 0 0 1-2.33 4.033 2.34 2.34 0 0 0-3.319 1.915 2.34 2.34 0 0 1-4.659 0 2.34 2.34 0 0 0-3.32-1.915 2.34 2.34 0 0 1-2.33-4.033 2.34 2.34 0 0 0 0-3.831A2.34 2.34 0 0 1 6.35 6.051a2.34 2.34 0 0 0 3.319-1.915"}],["circle",{"cx":"12","cy":"12","r":"3"}]],
+  "moon":[["path",{"d":"M20.985 12.486a9 9 0 1 1-9.473-9.472c.405-.022.617.46.402.803a6 6 0 0 0 8.268 8.268c.344-.215.825-.004.803.401"}]],
+  "archive":[["rect",{"width":"20","height":"5","x":"2","y":"3","rx":"1"}],["path",{"d":"M4 8v11a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8"}],["path",{"d":"M10 12h4"}]],
+  "new":[["path",{"d":"M12 3H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"}],["path",{"d":"M18.375 2.625a1 1 0 0 1 3 3l-9.013 9.014a2 2 0 0 1-.853.505l-2.873.84a.5.5 0 0 1-.62-.62l.84-2.873a2 2 0 0 1 .506-.852z"}]],
+  "search":[["path",{"d":"m21 21-4.34-4.34"}],["circle",{"cx":"11","cy":"11","r":"8"}]],
+  "lock":[["circle",{"cx":"12","cy":"16","r":"1"}],["rect",{"x":"3","y":"10","width":"18","height":"12","rx":"2"}],["path",{"d":"M7 10V7a5 5 0 0 1 10 0v3"}]],
+  "world":[["circle",{"cx":"12","cy":"12","r":"10"}],["path",{"d":"M12 2a14.5 14.5 0 0 0 0 20 14.5 14.5 0 0 0 0-20"}],["path",{"d":"M2 12h20"}]],
+  "pin":[["path",{"d":"M20 10c0 4.993-5.539 10.193-7.399 11.799a1 1 0 0 1-1.202 0C9.539 20.193 4 14.993 4 10a8 8 0 0 1 16 0"}],["circle",{"cx":"12","cy":"10","r":"3"}]],
+  "left":[["path",{"d":"m15 18-6-6 6-6"}]],
+  "right":[["path",{"d":"m9 18 6-6-6-6"}]],
+  "down":[["path",{"d":"m6 9 6 6 6-6"}]],
+  "more":[["circle",{"cx":"12","cy":"12","r":"1"}],["circle",{"cx":"19","cy":"12","r":"1"}],["circle",{"cx":"5","cy":"12","r":"1"}]],
+  "smile":[["circle",{"cx":"12","cy":"12","r":"10"}],["path",{"d":"M8 14s1.5 2 4 2 4-2 4-2"}],["line",{"x1":"9","x2":"9.01","y1":"9","y2":"9"}],["line",{"x1":"15","x2":"15.01","y1":"9","y2":"9"}]],
+  "attach":[["path",{"d":"m16 6-8.414 8.586a2 2 0 0 0 2.829 2.829l8.414-8.586a4 4 0 1 0-5.657-5.657l-8.379 8.551a6 6 0 1 0 8.485 8.485l8.379-8.551"}]],
+  "memory":[["path",{"d":"M12 7v14"}],["path",{"d":"M3 18a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1h5a4 4 0 0 1 4 4 4 4 0 0 1 4-4h5a1 1 0 0 1 1 1v13a1 1 0 0 1-1 1h-6a3 3 0 0 0-3 3 3 3 0 0 0-3-3z"}]],
+  "history":[["path",{"d":"M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"}],["path",{"d":"M3 3v5h5"}],["path",{"d":"M12 7v5l4 2"}]],
+  "up":[["path",{"d":"m5 12 7-7 7 7"}],["path",{"d":"M12 19V5"}]],
+  "gauge":[["path",{"d":"m12 14 4-4"}],["path",{"d":"M3.34 19a10 10 0 1 1 17.32 0"}]],
+  "eye":[["path",{"d":"M10.733 5.076a10.744 10.744 0 0 1 11.205 6.575 1 1 0 0 1 0 .696 10.747 10.747 0 0 1-1.444 2.49"}],["path",{"d":"M14.084 14.158a3 3 0 0 1-4.242-4.242"}],["path",{"d":"M17.479 17.499a10.75 10.75 0 0 1-15.417-5.151 1 1 0 0 1 0-.696 10.75 10.75 0 0 1 4.446-5.143"}],["path",{"d":"m2 2 20 20"}]],
+  "edit":[["path",{"d":"M21.174 6.812a1 1 0 0 0-3.986-3.987L3.842 16.174a2 2 0 0 0-.5.83l-1.321 4.352a.5.5 0 0 0 .623.622l4.353-1.32a2 2 0 0 0 .83-.497z"}],["path",{"d":"m15 5 4 4"}]],
+  "check":[["path",{"d":"M20 6 9 17l-5-5"}]],
+  "close":[["path",{"d":"M18 6 6 18"}],["path",{"d":"m6 6 12 12"}]],
+  "info":[["circle",{"cx":"12","cy":"12","r":"10"}],["path",{"d":"M12 16v-4"}],["path",{"d":"M12 8h.01"}]]
+};
+const icon=(k,extra='')=>`<svg class="icon ${extra}" viewBox="0 0 24 24" aria-hidden="true">${(iconNodes[k]||iconNodes.chat).map(([tag,attrs])=>`<${tag} ${Object.entries(attrs).map(([name,value])=>`${name}="${value}"`).join(' ')}/>`).join('')}</svg>`;const esc=s=>String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));function icons(root=document){root.querySelectorAll('[data-icon]').forEach(el=>el.innerHTML=icon(el.dataset.icon))}
+const people=[{id:'lin',name:'林澈',en:'LIN CHE',preview:'那就四点见，雨停了我们慢慢走。',time:'14:28',unread:0,status:'在街角书店，等一场雨停。',bio:'有时认真，有时慢半拍。喜欢旧书店，也喜欢听你讲那些看似不重要的小事。'}, {id:'su',name:'苏晚',en:'SU WAN',preview:'这段话好像很适合今天。',time:'13:46',unread:2,status:'正在读一本还不错的书。',bio:'喜欢文字和窗边的位置。偶尔分享一段句子，也会惦记你上次没说完的话。'}, {id:'alex',name:'Alex',en:'ALEX',preview:'下次一起试试，你的想法挺有意思。',time:'昨天',unread:0,status:'刚整理好桌上的笔记。',bio:'喜欢把想法聊清楚，也乐意一起尝试新东西。工作之外，什么都可以聊。'}];const world={id:'world',name:'青岚市',en:'QINGLAN',preview:'苏晚：我找到那本书了。',time:'14:10',unread:1,status:'街角书店 · 林澈、苏晚在场',bio:'一座可以慢慢生活的城市。有熟悉的街道、常去的书店，以及正在发生的故事。'};const all=[...people,world];let current=people[0],page='chat',query='',history={},drafts={},attached=[],hiddenGroups=new Set(),privacy=false;
+const navs=[['chat','chat','聊天'],['people','people','联系人'],['calendar','calendar','日程'],['management','blocks','管理']];document.querySelector('.rail nav').innerHTML=navs.map(([id,k,n])=>`<button class="nav-button ${id==='chat'?'active':''}" data-page="${id}" aria-current="${id==='chat'?'page':'false'}">${icon(k)}<span>${n}</span></button>`).join('');
+function avatar(id,button=true){const w=id==='world';const html=w?'<span class="avatar lin"></span><span class="avatar su"></span><span class="world-tile">'+icon('world')+'</span><span class="world-tile"></span>':'';return button?`<button class="avatar ${id}" data-profile="${id}" aria-label="查看${esc(all.find(p=>p.id===id)?.name||'我的')}资料">${html}</button>`:`<span class="avatar ${id}" role="img" aria-label="${esc(all.find(p=>p.id===id)?.name||'我')}的头像">${html}</span>`}
+function renderContacts(){let html='';for(const [id,label,items] of [['people','最近聊天',people],['world','共同世界',[world]]]){const matched=items.filter(p=>`${p.name} ${p.preview}`.toLowerCase().includes(query.toLowerCase()));if(!matched.length)continue;html+=`<div class="group-label"><span>${label}</span><button data-group="${id}" aria-expanded="${!hiddenGroups.has(id)}">${id==='world'?'1 个世界':''}${icon(hiddenGroups.has(id)?'right':'down')}</button></div><div ${hiddenGroups.has(id)?'hidden':''}>${matched.map(p=>`<button class="session ${current.id===p.id?'active':''}" data-contact="${p.id}" aria-current="${current.id===p.id?'true':'false'}">${avatar(p.id,false)}${p.unread?`<span class="badge">${p.unread}</span>`:''}<span class="session-copy"><span class="session-title"><strong>${esc(p.name)}</strong><time>${p.time}</time></span><span class="session-preview">${esc(p.preview)}</span></span></button>`).join('')}${id==='world'?`<button class="world-note" data-contact="world">${icon('people')}林澈与苏晚正在书店聊天</button>`:''}</div>`}document.querySelector('#contact-list').innerHTML=html||'<div class="empty">没有找到相关联系人。</div>'}
+function message(id,bubbles,extra='',out=false){const p=all.find(p=>p.id===id)||current;return `<article class="message ${out?'outgoing':''}">${out?avatar('you',false):avatar(id)}<div class="message-content">${out?'':`<div class="sender">${esc(p.name)}</div>`}${bubbles.map(text=>`<div class="bubble">${text}</div>`).join('')}${extra}${out?`<div class="message-state">${icon('check')}已发送</div>`:''}</div></article>`}
+function initialMessages(){if(current.id==='world')return `<div class="time-label">今天 14:10</div><div class="scene-strip">${icon('pin')}街角书店<small>小雨 · 林澈、苏晚在场</small></div><div class="narrative">玻璃门上的风铃响了一声。林澈收起伞，苏晚从靠窗的书架前转过身，手里拿着一本浅灰色封面的书。</div>${message('su',['我找到那本书了。','就是上次想和你们说的，开头有句话特别好。'])}<div class="narrative">她翻到折了角的那一页，把书转向你。窗外的雨声恰好在这时轻了一点。</div>${message('lin',['那就坐下来慢慢看。','今天应该不着急回去吧？'])}<div class="system-note">${icon('world')}青岚市 · 故事正在继续</div>`;if(current.id==='lin')return `<div class="time-label">今天 14:23</div>${message('lin',['刚路过那家书店，还开着。','你之前说想找的那本书，我好像看到了。'])}${message('you',['真的？那下午一起去吧，最近正想出去走走。'],'',true)}${message('lin',['好啊。我先在这边坐会儿，窗边的位置还空着。'],`<div class="place-card"><div class="place-heading"><span class="place-symbol">${icon('pin')}</span><div><h3>街角书店</h3><p>青岚市 · 梧桐路 17 号</p></div></div><div class="place-bottom"><span>我们的共同世界</span><button data-enter-world>一起去看看 ↗</button></div></div>`)}${message('you',['那就四点见。到时候提醒我一下，我怕一忙又忘了。'],'',true)}${message('lin',['记下了，四点提醒你。','雨应该快停了，我们到时候慢慢走。'],`<details class="inline-task"><summary>${icon('check')}已记下 16:00 的约定${icon('right','chevron')}</summary><div class="task-body">已读取当前时间<br>提醒创建完成 · 状态演示<br>此原型未设置真实提醒。</div></details>`)}`;if(current.id==='su')return `<div class="time-label">今天 13:46</div>${message('su',['刚读到一句话，觉得你会喜欢。','“那些没有被安排的时间，也可能正好属于自己。”'])}${message('you',['最近确实有点想慢下来。'],'',true)}${message('su',['那就慢一点嘛。','下次一起去书店吧，不用找什么，随便翻翻。'])}`;return `<div class="time-label">昨天 18:42</div>${message('alex',['今天那个想法，我回去又想了一下。','其实可以先做个很小的版本，看看有没有意思。'])}${message('you',['我也是这么想的，下次一起试试？'],'',true)}${message('alex',['当然。你把最想实现的一点告诉我就好。','不过先把饭吃了，事情可以慢慢聊。'])}`}
+function selectContact(id){drafts[current.id]=document.querySelector('#input').value;current=all.find(p=>p.id===id)||people[0];current.unread=0;setPage('chat');document.querySelector('#app').classList.remove('list-open');document.querySelector('#header-name').textContent=current.name;document.querySelector('#header-sub').textContent=current.status;document.querySelector('#header-avatar').className=`avatar ${current.id}`;document.querySelector('#header-avatar').innerHTML=current.id==='world'?'<span class="avatar lin"></span><span class="avatar su"></span><span class="world-tile">'+icon('world')+'</span><span class="world-tile"></span>':'';document.querySelector('#input').placeholder=current.id==='world'?'接着说，故事还在继续…':'发消息…';document.querySelector('#input').value=drafts[current.id]||'';document.querySelector('#message-list').innerHTML=initialMessages();for(const m of history[current.id]||[])append(m.role,m.text,false);attached=[];renderAttachments();document.querySelector('#notice').hidden=true;privacy=false;hidePopups();renderContacts();renderProfile(current.id);document.querySelector('#messages').scrollTop=0}
+function append(role,text,save=true){const host=document.createElement('div');host.innerHTML=message(role==='user'?'you':current.id==='world'?'lin':current.id,[esc(text).replace(/\n/g,'<br>')],'',role==='user');document.querySelector('#message-list').append(host.firstElementChild);if(save)(history[current.id]??=[]).push({role,text})}
+function send(){const text=document.querySelector('#input').value.trim();if(!text&&!attached.length)return;const messageText=(text||'分享附件')+(attached.length?'\n附件：'+attached.map(f=>f.name).join('、'):'');append('user',messageText);append('assistant',current.id==='world'?'大家收到了你的话。这是世界会话的交互示例，正式版本会继续演绎。':'收到啦。这是消息交互示例，正式版本会由角色接着回复。');document.querySelector('#input').value='';drafts[current.id]='';attached=[];renderAttachments();current.preview=text||'分享了附件';current.time='刚刚';renderContacts();document.querySelector('#messages').scrollTop=document.querySelector('#messages').scrollHeight}
+function renderAttachments(){document.querySelector('#attachments').innerHTML=attached.map((f,i)=>`<div class="attachment"><span>${esc(f.name)}</span><button data-remove="${i}" type="button" aria-label="移除附件">×</button></div>`).join('')}
+function renderProfile(id){const p=all.find(x=>x.id===id)||current;document.querySelector('#drawer').innerHTML=`<div class="drawer-head">${p.id==='world'?'世界资料':'联系人资料'}<button class="icon-btn" id="close-drawer" aria-label="关闭资料">${icon('close')}</button></div><div class="profile-identity">${avatar(p.id,false)}<div><h2>${esc(p.name)}</h2><p>${p.en}</p></div></div><p class="profile-bio">${p.bio}</p><div class="profile-actions"><button data-contact="${p.id}">${icon('chat')}发消息</button><button data-action="meet">${icon('pin')}见面</button></div><section class="detail-section"><h3>${p.id==='world'?'这里的人':'共同的记忆'}<button data-page="management">查看</button></h3>${p.id==='world'?people.slice(0,2).map(x=>`<button class="member" data-profile="${x.id}" style="width:100%">${avatar(x.id,false)}${x.name}<small>在场</small></button>`).join(''):'<p>你想找一本很久以前读过的书，我们约好一起去旧书店看看。</p><p>忙碌的时候，你希望有人记得提醒自己休息。</p>'}</section><section class="detail-section"><h3>${p.id==='world'?'此刻的场景':'共同世界'}</h3>${p.id==='world'?'<p>街角书店 · 午后小雨<br>书页、咖啡，和还没有说完的话。</p>':`<button class="member" data-contact="world" style="width:100%">${avatar('world',false)}青岚市<small>去看看 ↗</small></button>`}</section><p class="profile-caption">角色与资料均为虚构示例。</p>`;document.querySelector('#close-drawer').onclick=()=>showProfile(false)}
+function showProfile(open){const d=document.querySelector('#drawer'),show=typeof open==='boolean'?open:d.hidden;d.hidden=!show;document.querySelector('#profile-toggle').setAttribute('aria-expanded',String(show))}
+function setPage(id){page=id;document.querySelectorAll('.nav-button').forEach(b=>{b.classList.toggle('active',b.dataset.page===id);b.setAttribute('aria-current',b.dataset.page===id?'page':'false')});document.querySelector('.contacts').hidden=id!=='chat';document.querySelector('.thread').hidden=id!=='chat';document.querySelector('#page').hidden=id==='chat';document.querySelector('#app').classList.remove('list-open');if(id==='chat')return;const titles={people:['联系人','在这里的人，和我们共同的世界。'],calendar:['日程','那些说好了的事，慢慢记下来。'],management:['管理','查看记忆、角色能力与工作空间。'],settings:['设置','外观与会话偏好。']};const [title,sub]=titles[id];let html=`<header class="page-header"><div><h1>${title}</h1><p>${sub}</p></div></header>`;if(id==='people')html+='<nav class="tabs"><button class="active" data-people-tab="people">联系人</button><button data-people-tab="world">世界</button></nav><div class="people-list" id="people-list"></div>';else if(id==='calendar')html+='<nav class="tabs"><button class="active" data-calendar="user">我的日程</button><button data-calendar="character">角色日常</button></nav><div id="agenda"></div>';else if(id==='management')html+=[['memory','共同记忆','找一本旧书、一次散步和那些说过的小事。','示例'],['blocks','MCP 与 Skills','在交流中按需使用的能力与工具。','管理入口'],['archive','工作空间','共享文档、附件与项目。','未连接']].map(([k,n,s,label])=>`<div class="plain-row">${icon(k)}<div><h3>${n}</h3><p>${s}</p></div><small>${label}</small></div>`).join('');else html+=`<div class="plain-row">${icon('moon')}<div><h3>界面外观</h3><p>浅色与深色，保持熟悉的聊天结构。</p></div><button data-action="theme">切换</button></div><div class="plain-row">${icon('person')}<div><h3>角色与模型</h3><p>保留现有应用的角色设定与模型路由。</p></div><small>配置入口</small></div><div class="plain-row">${icon('info')}<div><h3>关于此预览</h3><p>头像、联系人和消息是界面的中心。</p></div><button data-action="about">查看</button></div><p class="setting-note">此文件为独立 UI 原型。没有连接真实模型、联系人或提醒服务。</p>`;document.querySelector('#page').innerHTML=html;if(id==='people')renderPeople('people');if(id==='calendar')renderAgenda('user')}
+function renderPeople(type){document.querySelector('#people-list').innerHTML=(type==='people'?people:[world]).map(p=>`<button class="person-row" data-contact="${p.id}">${avatar(p.id,false)}<div><h2>${esc(p.name)}</h2><p>${p.status}</p></div><small>${icon('right')}</small></button>`).join('')}
+function renderAgenda(type){document.querySelector('#agenda').innerHTML=(type==='user'?[['16:00','和林澈去街角书店','今天 · 约定样式示例'],['21:00','给今天留一句话','可选安排 · 示例']]:[['14:10','苏晚 · 去街角书店','世界日常 · 示例'],['16:00','林澈 · 和你一起散步','角色日程 · 示例']]).map(([time,n,s])=>`<div class="plain-row"><time>${time}</time>${icon('calendar')}<div><h3>${n}</h3><p>${s}</p></div></div>`).join('')}
+function dialog(title,html){document.querySelector('#dialog-content').innerHTML=`<h2>${title}</h2>${html}`;document.querySelector('#dialog').showModal()}
+function hidePopups(){document.querySelector('#menu').hidden=true;document.querySelector('#more').setAttribute('aria-expanded','false');document.querySelector('#emoji-pop').hidden=true}
+function action(name){hidePopups();if(name==='theme'){document.body.classList.toggle('dark');try{localStorage.setItem('yourchar-social-theme',document.body.classList.contains('dark')?'dark':'light')}catch{}return}if(name==='self'){dialog('我的资料','<p>这是你的个人头像。正式应用中可以在这里修改个人资料与头像。</p>');return}if(name==='context'){dialog('会话运行信息','<p>上下文使用：24%（示例）<br>长期记忆：已启用（示例）<br>日程能力：已启用（示例）</p><p>技术状态放在这里按需查看，聊天正文保留交流本身。</p>');return}if(name==='archive'){dialog('归档会话','<p>暂无归档的示例会话。这个入口用于查看和恢复归档聊天。</p>');return}if(name==='privacy'){privacy=!privacy;document.querySelector('#notice').hidden=!privacy;return}if(name==='memory'){renderProfile(current.id);showProfile(true);return}if(name==='history'){dialog('聊天记录',`<label class="search" style="margin:0">${icon('search')}<input id="history-query" placeholder="搜索本次聊天内容" aria-label="搜索聊天记录"></label><div id="history-results"></div>`);const records=[...document.querySelectorAll('#message-list .bubble')].map(e=>e.innerText);const update=()=>{const q=document.querySelector('#history-query').value;const matches=records.filter(t=>t.includes(q));document.querySelector('#history-results').innerHTML=matches.length?matches.map(t=>`<p>${esc(t)}</p>`).join(''):'<p>没有找到相关消息。</p>'};document.querySelector('#history-query').oninput=update;update();return}if(name==='rename'){dialog('修改显示名称','<p>只影响当前原型中的名称。</p><form id="rename-form"><input id="rename-input" aria-label="显示名称" maxlength="30"><button class="primary">保存</button></form>');document.querySelector('#rename-input').value=current.name;document.querySelector('#rename-form').onsubmit=e=>{e.preventDefault();const n=document.querySelector('#rename-input').value.trim();if(n){current.name=n;document.querySelector('#dialog').close();selectContact(current.id)}};return}if(name==='about'){dialog('像熟悉的聊天软件一样','<p>联系人使用清晰的人物头像。私聊保留左右消息气泡，世界保留多人互动与场景叙事。</p><p>用中性黑白灰、明确的绿色发送气泡和系统无衬线字体建立层次。工具、记忆和运行状态按需展开。</p><p>人物头像保留自然色彩，功能图标统一使用 Lucide 单色线条。头像由内置 imagegen 生成，均为虚构人物；此页面仅用于设计选择。</p>');return}if(name==='meet'){dialog('一起去哪里？',`<button class="person-row" data-enter-world>${avatar('world',false)}<div><h2>青岚市 · 街角书店</h2><p>林澈和苏晚在这里。</p></div><small>进入 ↗</small></button>`);return}dialog('街角书店','<p>青岚市 · 梧桐路 17 号<br>午后小雨，林澈与苏晚在场。</p><p>书店的位置、时间和在场人物都是世界演绎的一部分。</p>')}
+function toast(text){const e=document.querySelector('#toast');e.textContent=text;e.hidden=false;clearTimeout(window.toastTimer);window.toastTimer=setTimeout(()=>e.hidden=true,2500)}
+document.addEventListener('click',e=>{const contact=e.target.closest('[data-contact]');if(contact){selectContact(contact.dataset.contact);return}const profile=e.target.closest('[data-profile]');if(profile){renderProfile(profile.dataset.profile);showProfile(true);return}const nav=e.target.closest('[data-page]');if(nav){if(nav.dataset.page==='chat'&&page==='chat'&&matchMedia('(max-width:620px)').matches)document.querySelector('#app').classList.toggle('list-open');else{setPage(nav.dataset.page);if(nav.dataset.page==='chat'&&matchMedia('(max-width:620px)').matches)document.querySelector('#app').classList.add('list-open')}return}const a=e.target.closest('[data-action]');if(a){action(a.dataset.action);return}const group=e.target.closest('[data-group]');if(group){hiddenGroups.has(group.dataset.group)?hiddenGroups.delete(group.dataset.group):hiddenGroups.add(group.dataset.group);renderContacts();return}const tab=e.target.closest('[data-people-tab],[data-calendar]');if(tab){tab.parentElement.querySelectorAll('button').forEach(b=>b.classList.toggle('active',b===tab));if(tab.dataset.peopleTab)renderPeople(tab.dataset.peopleTab);else renderAgenda(tab.dataset.calendar);return}if(e.target.closest('[data-enter-world]')){document.querySelector('#dialog').close();selectContact('world');return}const emoji=e.target.closest('[data-emoji]');if(emoji){document.querySelector('#input').value+=emoji.dataset.emoji;document.querySelector('#input').focus();document.querySelector('#emoji-pop').hidden=true;return}const remove=e.target.closest('[data-remove]');if(remove){attached.splice(Number(remove.dataset.remove),1);renderAttachments();return}if(!e.target.closest('#more,#menu,#emoji,#emoji-pop'))hidePopups()});
+document.querySelector('#search').oninput=e=>{query=e.target.value;renderContacts()};document.querySelector('#header-avatar').onclick=()=>{renderProfile(current.id);showProfile(true)};document.querySelector('#profile-toggle').onclick=()=>{renderProfile(current.id);showProfile()};document.querySelector('#more').onclick=()=>{const m=document.querySelector('#menu');m.hidden=!m.hidden;document.querySelector('#more').setAttribute('aria-expanded',String(!m.hidden))};document.querySelector('#back').onclick=()=>document.querySelector('#app').classList.add('list-open');document.querySelector('#composer').onsubmit=e=>{e.preventDefault();send()};document.querySelector('#input').onkeydown=e=>{if(e.key==='Enter'&&!e.shiftKey&&!e.isComposing){e.preventDefault();send()}};document.querySelector('#attach').onclick=()=>document.querySelector('#files').click();document.querySelector('#files').onchange=e=>{attached.push(...e.target.files);renderAttachments();e.target.value=''};document.querySelector('#emoji-pop').innerHTML=['🙂','😊','🌿','☕','👍'].map(s=>`<button data-emoji="${s}" aria-label="插入 ${s}">${s}</button>`).join('');document.querySelector('#emoji').onclick=()=>{const e=document.querySelector('#emoji-pop');e.hidden=!e.hidden};document.addEventListener('keydown',e=>{if(e.key==='Escape'){hidePopups();showProfile(false)}});try{if(localStorage.getItem('yourchar-social-theme')==='dark')document.body.classList.add('dark')}catch{}icons();selectContact('lin');if(matchMedia('(max-width:620px)').matches)document.querySelector('#app').classList.add('list-open');
+</script>
+</body>
+</html>

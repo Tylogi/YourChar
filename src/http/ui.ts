@@ -1,10 +1,12 @@
+import { socialThemeCss } from "./ui-social-theme.js";
+
 export function renderAppHtml(): string {
   return `<!doctype html>
 <html lang="zh-CN">
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-content" />
-  <meta name="theme-color" content="#07c160" />
+  <meta name="theme-color" content="#f5f5f5" />
   <meta name="apple-mobile-web-app-capable" content="yes" />
   <meta name="apple-mobile-web-app-status-bar-style" content="default" />
   <meta name="apple-mobile-web-app-title" content="YourChar" />
@@ -5016,6 +5018,7 @@ export function renderAppHtml(): string {
       .world-event-actions { width: 100%; margin-right: 0; }
     }
   </style>
+  <style id="yourchar-social-theme">${socialThemeCss}</style>
 </head>
 <body>
   <div class="app">
@@ -5025,7 +5028,7 @@ export function renderAppHtml(): string {
         <div class="segmented nav-segmented" aria-label="UI mode">
           <button id="normalBtn" class="active" type="button"><i data-lucide="message-circle" aria-hidden="true"></i><span>聊天</span></button>
           <button id="scheduleBtn" type="button"><i data-lucide="calendar-days" aria-hidden="true"></i><span>日程</span></button>
-          <button id="charactersBtn" type="button"><i data-lucide="drama" aria-hidden="true"></i><span>角色</span></button>
+          <button id="charactersBtn" type="button"><i data-lucide="users-round" aria-hidden="true"></i><span>角色</span></button>
           <button id="managementBtn" type="button"><i data-lucide="blocks" aria-hidden="true"></i><span>管理</span></button>
           <button id="settingsBtn" type="button"><i data-lucide="settings" aria-hidden="true"></i><span>设置</span></button>
           <button id="debugBtn" type="button"><i data-lucide="activity" aria-hidden="true"></i><span>Debug</span></button>
@@ -5125,7 +5128,7 @@ export function renderAppHtml(): string {
               <button id="scheduleTodayBtn" class="secondary" type="button">今天</button>
               <div class="schedule-month-nav" aria-label="月份切换">
                 <button id="schedulePreviousMonthBtn" class="secondary icon-button" type="button" title="上个月" aria-label="上个月"><i data-lucide="chevron-left" aria-hidden="true"></i></button>
-                <span id="scheduleMonthLabel" class="schedule-month-label"></span>
+                <span id="scheduleMonthLabel" class="schedule-month-label" aria-live="polite"></span>
                 <button id="scheduleNextMonthBtn" class="secondary icon-button" type="button" title="下个月" aria-label="下个月"><i data-lucide="chevron-right" aria-hidden="true"></i></button>
               </div>
               <button id="scheduleCreateBtn" class="primary" type="button"><i data-lucide="plus" aria-hidden="true"></i><span>新建</span></button>
@@ -9222,7 +9225,8 @@ export function renderAppHtml(): string {
           key === state.selectedScheduleDate ? "selected" : ""
         ].filter(Boolean).join(" ");
         cells.push('<button class="' + classes + '" type="button" data-date="' + key + '" aria-label="' +
-          escapeHtml(date.toLocaleDateString("zh-CN")) + '"><span class="calendar-day-number">' + date.getDate() + '</span>' +
+          escapeHtml(date.toLocaleDateString("zh-CN") + (items.length ? "，" + items.length + " 项日程" : "，无日程")) + '" aria-pressed="' + String(key === state.selectedScheduleDate) + '"' +
+          (key === today ? ' aria-current="date"' : '') + '><span class="calendar-day-number">' + date.getDate() + '</span>' +
           '<span class="calendar-events">' + labels + more + '</span></button>');
       }
       nodes.scheduleCalendar.innerHTML = cells.join("");

@@ -1463,7 +1463,7 @@ test("server serves chat UI and debug model traces", async () => {
     assert.match(html, /renderTwemoji\(template\.content\)/);
     assert.match(html, /rel="manifest" href="\/manifest\.webmanifest"/);
     assert.match(html, /rel="apple-touch-icon" sizes="180x180"/);
-    assert.match(html, /name="theme-color" content="#07c160"/);
+    assert.match(html, /name="theme-color" content="#f5f5f5"/);
     assert.match(html, /renderMarkdown/);
     assert.match(html, /markdown-body/);
     assert.match(html, /function assistantBubbleSegments/);
@@ -1738,10 +1738,12 @@ test("server serves chat UI and debug model traces", async () => {
     const manifest = await manifestResponse.json() as {
       name: string;
       theme_color: string;
+      background_color: string;
       icons: Array<{ src: string; sizes: string }>;
     };
     assert.equal(manifest.name, "YourChar");
-    assert.equal(manifest.theme_color, "#07c160");
+    assert.equal(manifest.theme_color, "#f5f5f5");
+    assert.equal(manifest.background_color, "#f5f5f5");
     assert.equal(manifest.icons.some((icon) => icon.sizes === "192x192"), true);
     assert.equal(manifest.icons.some((icon) => icon.sizes === "512x512"), true);
 
