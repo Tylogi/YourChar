@@ -68,6 +68,7 @@ import { RP_MEMORY_REALM, RP_MEMORY_SCOPE } from "../rp/index.js";
 import type { InteractionScope } from "../interaction/index.js";
 import { TestRunRegistry, type ScriptedModelResponse } from "../testing/index.js";
 import { renderAppHtml } from "./ui.js";
+import { DiaryValidationError } from "../diary/service.js";
 import {
   assertLocalControlPlaneMutation,
   attachLocalControlPlaneCookie,
@@ -281,6 +282,8 @@ export function createHttpServer(options: HttpServerOptions = {}) {
         sendJson(response, 404, { code: "WORLD_NOT_FOUND", error: error.message });
       } else if (error instanceof WorldValidationError) {
         sendJson(response, 400, { code: error.code, error: error.message });
+      } else if (error instanceof DiaryValidationError) {
+        sendJson(response, 400, { error: error.message });
       } else if (error instanceof WorldConversationValidationError) {
         sendJson(response, 409, { code: error.code, error: error.message });
       } else if (error instanceof CharacterInteractionExecutionError) {
@@ -3382,6 +3385,35 @@ async function route(input: {
     return;
   }
 
+  const diaryMatch = pathname.match(/^\/api\/v1\/characters\/([^/]+)\/diary(?:\/(settings)|\/([^/]+)\/(retry))?$/);
+  if (diaryMatch) {
+    const characterId = decodeURIComponent(diaryMatch[1]);
+    if (method === "GET" && !diaryMatch[2] && !diaryMatch[3]) {
+      sendJson(input.response, 200, kernel.getCharacterDiary(characterId));
+      return;
+    }
+    if (method === "PATCH" && diaryMatch[2]) {
+      assertLocalControlPlaneMutation(input.request);
+      const body = asRecord(await readJson(input.request));
+      if (body.presetMode !== undefined && body.presetMode !== "inherit" && body.presetMode !== "custom" && body.presetMode !== "none") throw new DiaryValidationError("无效的创作预设选择");
+      sendJson(input.response, 200, { settings: kernel.characterDiaries.updateSettings(characterId, {
+        narrativeEnabled: requiredBoolean(body.narrativeEnabled, "narrativeEnabled"),
+        preset: optionalDocumentString(body.preset, "preset") ?? "",
+        ...(body.presetMode === undefined ? {} : { presetMode: body.presetMode as "inherit" | "custom" | "none" }),
+        ...(body.presetId === undefined ? {} : { presetId: optionalNullableString(body.presetId, "presetId") }),
+      }) });
+      return;
+    }
+    if (method === "POST" && diaryMatch[4]) {
+      assertLocalControlPlaneMutation(input.request);
+      const body = asRecord(await readJson(input.request));
+      if (body.kind !== "memory" && body.kind !== "narrative") throw new DiaryValidationError("无效的日记任务类型");
+      kernel.characterDiaries.retry(characterId, decodeURIComponent(diaryMatch[3]), body.kind);
+      void kernel.characterDiaries.drain().catch(() => undefined);
+      sendJson(input.response, 202, { queued: true });
+      return;
+    }
+  }
   const characterMatch = pathname.match(/^\/api\/v1\/characters\/([^/]+)$/);
   if (characterMatch) {
     const id = decodeURIComponent(characterMatch[1]);

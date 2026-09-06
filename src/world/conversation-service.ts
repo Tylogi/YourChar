@@ -11,6 +11,7 @@ import type {
   WorldStoryTransition,
 } from "./types.js";
 import { WorldConversationRepository } from "./conversation-repository.js";
+import type { DiarySource, RomanceDecision } from "../diary/types.js";
 
 export class WorldConversationValidationError extends Error {
   readonly code = "WORLD_CONVERSATION_INVALID";
@@ -369,11 +370,83 @@ export class WorldConversationService {
       trust: boundedScore((current?.trust ?? 40) + boundedDelta(input.trustDelta)),
       tension: boundedScore((current?.tension ?? 0) + boundedDelta(input.tensionDelta)),
       intimacy: boundedScore((current?.intimacy ?? 15) + boundedDelta(input.intimacyDelta)),
+      romanceStatus: current?.romanceStatus ?? "none",
       summary: cleanText(input.summary, current?.summary ?? "", 600),
       revision: (current?.revision ?? 0) + 1,
       updatedAt: now,
     };
     return this.repository.upsertCharacterRelationship(next);
+  }
+
+  applyRomanceDecision(source: DiarySource, decision: RomanceDecision): boolean {
+    if (source.kind !== "interaction" || decision.subjectCharacterId !== source.characterId ||
+      decision.objectCharacterId === source.characterId || !Number.isFinite(decision.confidence) || decision.confidence < 0.85 || decision.confidence > 1) return false;
+    const subject = decision.subjectCharacterId;
+    const object = decision.objectCharacterId;
+    for (const id of [subject, object]) {
+      if (this.worldService.repository.getMembership(id)?.worldId !== source.worldId) return false;
+    }
+    const evidenced = (id: string, quote: unknown) => typeof quote === "string" && quote.trim().length >= 2 && quote.length <= 500 &&
+      source.statements.some(statement => statement.characterId === id && statement.text.includes(quote));
+    if (!evidenced(subject, decision.subjectEvidence)) return false;
+    if (["confirm", "commit", "reconcile"].includes(decision.event) &&
+      (!evidenced(object, decision.objectEvidence) || decision.subjectEvidence === decision.objectEvidence)) return false;
+    const database = this.repository.database;
+    // A delayed diary must not resurrect an older relationship after a newer breakup/refusal.
+    const latest = database.connection.prepare(`SELECT max(occurred_at) AS occurred_at FROM world_character_romance_events
+      WHERE world_id=? AND ((subject_character_id=? AND object_character_id=?) OR (subject_character_id=? AND object_character_id=?))`)
+      .get(source.worldId, subject, object, object, subject) as { occurred_at?: string };
+    if (!Number.isFinite(Date.parse(source.occurredAt)) || (latest.occurred_at && source.occurredAt < latest.occurred_at)) return false;
+    if (database.connection.prepare(`SELECT id FROM world_character_romance_events WHERE world_id=? AND source_id=? AND subject_character_id=? AND object_character_id=? AND event_type=?`)
+      .get(source.worldId, source.id, subject, object, decision.event)) return false;
+    const blank = (a: string, b: string): WorldCharacterRelationship => ({ worldId: source.worldId, subjectCharacterId: a, objectCharacterId: b,
+      affinity: 50, trust: 40, tension: 0, intimacy: 15, romanceStatus: "none", summary: "", revision: 0, updatedAt: this.clock.now().toISOString() });
+    const before = [this.repository.getCharacterRelationship(source.worldId, subject, object) ?? blank(subject, object),
+      this.repository.getCharacterRelationship(source.worldId, object, subject) ?? blank(object, subject)];
+    const next = before.map(value => ({ ...value }));
+    const partnered = (status: WorldCharacterRelationship["romanceStatus"]) => status === "dating" || status === "committed";
+    switch (decision.event) {
+      case "interest":
+        if (next[0]!.romanceStatus !== "none") return false;
+        next[0]!.romanceStatus = "interested";
+        break;
+      case "confirm":
+        if (next.some(value => partnered(value.romanceStatus) || value.romanceStatus === "former_partners")) return false;
+        next.forEach(value => { value.romanceStatus = "dating"; });
+        break;
+      case "commit":
+        if (next.some(value => value.romanceStatus !== "dating")) return false;
+        next.forEach(value => { value.romanceStatus = "committed"; });
+        break;
+      case "decline":
+        if (next[1]!.romanceStatus !== "interested" || partnered(next[0]!.romanceStatus)) return false;
+        next[1]!.romanceStatus = "none";
+        break;
+      case "breakup":
+        if (!next.some(value => partnered(value.romanceStatus))) return false;
+        next.forEach(value => { value.romanceStatus = "former_partners"; });
+        break;
+      case "reconcile":
+        if (next.some(value => value.romanceStatus !== "former_partners")) return false;
+        next.forEach(value => { value.romanceStatus = "dating"; });
+        break;
+      default: return false;
+    }
+    const now = this.clock.now().toISOString();
+    database.transaction(() => {
+      next.forEach((value, index) => {
+        if (value.romanceStatus !== before[index]!.romanceStatus) {
+          value.revision += 1;
+          value.updatedAt = now;
+          this.repository.upsertCharacterRelationship(value);
+        }
+      });
+      database.connection.prepare(`INSERT INTO world_character_romance_events
+        (id,world_id,subject_character_id,object_character_id,source_id,occurred_at,event_type,evidence_json,before_json,after_json,created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?)`)
+        .run(this.idGenerator.next("romance-event"), source.worldId, subject, object, source.id, source.occurredAt, decision.event,
+          JSON.stringify({ subject: decision.subjectEvidence, object: decision.objectEvidence, confidence: decision.confidence }), JSON.stringify(before), JSON.stringify(next), now);
+    });
+    return true;
   }
 
   characterContext(worldId: string, characterId: string): string {
@@ -392,7 +465,7 @@ export class WorldConversationService {
       ...observations.map((entry) => `- [${entry.knowledge}] ${entry.summary}`),
       relationships.length ? "Character-to-character relationship state (express subtly):" : "",
       ...relationships.map((entry) =>
-        `- ${entry.subjectCharacterId} -> ${entry.objectCharacterId}: affinity=${band(entry.affinity)}, trust=${band(entry.trust)}, tension=${band(entry.tension)}, intimacy=${band(entry.intimacy)}${entry.summary ? `; ${entry.summary}` : ""}`),
+        `- ${entry.subjectCharacterId} -> ${entry.objectCharacterId}: affinity=${band(entry.affinity)}, trust=${band(entry.trust)}, tension=${band(entry.tension)}, intimacy=${band(entry.intimacy)}, explicitRomance=${entry.romanceStatus ?? "none"}${entry.summary ? `; ${entry.summary}` : ""}`),
     ].filter(Boolean);
     return lines.join("\n").slice(0, 4_000);
   }

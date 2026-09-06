@@ -484,6 +484,7 @@ export type WorldCharacterRelationship = {
   trust: number;
   tension: number;
   intimacy: number;
+  romanceStatus?: "none" | "interested" | "dating" | "committed" | "former_partners";
   summary: string;
   revision: number;
   updatedAt: string;

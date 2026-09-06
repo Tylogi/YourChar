@@ -65,6 +65,11 @@ export class DataManagementRepository {
         DELETE FROM reminder_occurrences;
         DELETE FROM proactive_messages;
         DELETE FROM proactive_topic_policies;
+        DELETE FROM character_diary_generations;
+        DELETE FROM character_diary_jobs;
+        DELETE FROM character_diary_entries;
+        DELETE FROM character_diary_settings;
+        DELETE FROM world_character_romance_events;
         DELETE FROM character_interaction_reflections;
         DELETE FROM character_interaction_scenes;
         DELETE FROM character_channel_messages;

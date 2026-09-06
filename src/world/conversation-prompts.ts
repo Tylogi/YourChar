@@ -46,6 +46,7 @@ export type WorldNarrativeRelationshipSnapshot = {
   trust: number;
   tension: number;
   intimacy: number;
+  romanceStatus?: string;
   summary: string;
 };
 
@@ -152,6 +153,8 @@ export function worldTurnContextMessage(input: {
     expectedUntil?: string;
   }>;
   castAdditions?: WorldNarrativeCharacterSnapshot[];
+  participantPerspectives?: Array<{ characterId: string; context: string }>;
+  relationships?: WorldNarrativeRelationshipSnapshot[];
   userText: string;
   attachments: WorldConversationAttachment[];
 }): string {
@@ -163,6 +166,8 @@ export function worldTurnContextMessage(input: {
       worldAttributes: input.worldAttributes ?? [],
       participantRuntime: input.participantRuntime,
       castAdditions: input.castAdditions ?? [],
+      participantPerspectives: input.participantPerspectives ?? [],
+      relationships: input.relationships ?? [],
       userAttachments: input.attachments,
     }),
     "[/TRUSTED_WORLD_TURN_DATA_V1]",

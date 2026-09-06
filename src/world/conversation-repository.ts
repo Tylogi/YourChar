@@ -486,8 +486,8 @@ export class WorldConversationRepository {
     this.database.connection.prepare(`
       INSERT INTO world_character_relationships(
         world_id, subject_character_id, object_character_id,
-        affinity, trust, tension, intimacy, summary, revision, updated_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        affinity, trust, tension, intimacy, summary, revision, updated_at, romance_status
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT(world_id, subject_character_id, object_character_id) DO UPDATE SET
         affinity = excluded.affinity,
         trust = excluded.trust,
@@ -495,7 +495,8 @@ export class WorldConversationRepository {
         intimacy = excluded.intimacy,
         summary = excluded.summary,
         revision = excluded.revision,
-        updated_at = excluded.updated_at
+        updated_at = excluded.updated_at,
+        romance_status = excluded.romance_status
     `).run(
       relationship.worldId,
       relationship.subjectCharacterId,
@@ -507,6 +508,7 @@ export class WorldConversationRepository {
       relationship.summary,
       relationship.revision,
       relationship.updatedAt,
+      relationship.romanceStatus ?? "none",
     );
     return this.getCharacterRelationship(
       relationship.worldId,
@@ -668,6 +670,7 @@ function mapCharacterRelationship(row: Row): WorldCharacterRelationship {
     trust: Number(row.trust),
     tension: Number(row.tension),
     intimacy: Number(row.intimacy),
+    romanceStatus: String(row.romance_status ?? "none") as WorldCharacterRelationship["romanceStatus"],
     summary: String(row.summary),
     revision: Number(row.revision),
     updatedAt: String(row.updated_at),

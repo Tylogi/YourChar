@@ -139,15 +139,47 @@ export const socialThemeCss = `
     .interaction-event-actions button.primary { color: var(--green-ink); border-color: var(--line); background: var(--panel); }
     .character-collaboration-card { background: var(--panel); border-color: var(--line); color: var(--text); border-radius: 8px; box-shadow: none; }
     .character-collaboration-objective { font-size: 12px; color: var(--sub); }
-    .world-scene-turn { border-color: var(--line); }
-    .world-scene-head-copy strong { color: var(--sub); font-weight: 500; }
-    .world-scene-head-copy span { color: var(--muted); font-size: 11px; }
+    /* World narration has its own renderer: reset the global header chrome here. */
+    .world-scene-turn { width: min(100%, 1000px); padding: 18px 20px 22px; gap: 18px; background: var(--panel); border: 0; border-radius: 10px; box-shadow: none; }
+    .world-scene-head { display: flex; flex-direction: row; flex-wrap: wrap; align-items: center; padding: 0; gap: 12px; border: 0; background: transparent; }
+    .world-scene-head-copy { flex: 1 1 120px; gap: 4px; }
+    .world-scene-head-copy strong { color: var(--text); font-size: 14px; font-weight: 600; }
+    .world-scene-head-copy span { color: var(--muted); font-size: 12px; font-variant-numeric: tabular-nums; }
+    .world-scene-participants { max-width: 100%; flex-wrap: wrap; gap: 6px; }
+    .world-scene-participants .world-scene-mini-avatar + .world-scene-mini-avatar { margin-left: 0; }
+    .world-scene-mini-avatar { width: 32px; height: 32px; border: 0; border-radius: 8px; background: var(--selected); color: var(--sub); font-size: 12px; font-weight: 500; }
+    .world-scene-copy { padding: 0; }
+    .world-scene-fragment { gap: 10px; }
+    .world-scene-fragment + .world-scene-fragment { margin-top: 22px; }
+    .world-scene-identity { min-width: 0; display: flex; align-items: center; gap: 10px; }
+    .world-scene-identity .message-avatar { flex-basis: 32px; width: 32px; height: 32px; }
     .world-scene-speaker { color: var(--text); font-size: 13px; font-weight: 500; }
-    .world-scene-text { color: var(--text); font-size: 16px; line-height: 1.85; }
-    .world-scene-fragment.director .world-scene-text { color: var(--sub); }
-    .world-scene-fragment.director .world-scene-speaker { color: var(--sub); }
-    .world-scene-mini-avatar { border-color: var(--bg); background: var(--selected); color: var(--sub); }
+    .world-scene-text { color: var(--text); font-family: var(--font-ui); font-size: 16px; line-height: 1.85; overflow-wrap: anywhere; }
+    .world-scene-fragment.director .world-scene-speaker { color: var(--muted); font-size: 12px; }
     .message-row.world-narration .bubble.assistant { background: var(--list); color: var(--sub); }
+
+    /* Character-to-character scenes use the same paper and type as world turns. */
+    .character-channel-dialog { border-color: var(--line); border-radius: 10px; box-shadow: 0 16px 48px #00000024; }
+    .character-channel-participants { background: var(--panel); border-color: var(--line); }
+    .character-channel-participants strong { font-size: 14px; font-weight: 500; }
+    .character-channel-participants span:last-child { font-size: 12px; }
+    .character-channel-messages { background: var(--bg); }
+    .character-channel-episode.focused { background: var(--hover); box-shadow: 0 0 0 2px var(--line); }
+    .character-channel-episode-head { width: min(100%, 590px); padding: 0 0 12px; gap: 8px; border: 0; border-radius: 0; background: transparent; color: var(--text); }
+    .character-channel-episode-head strong { font-size: 14px; font-weight: 500; }
+    .character-channel-episode-kind { background: var(--selected); color: var(--sub); font-size: 11px; font-weight: 500; }
+    .character-channel-episode-status, .character-channel-episode-objective { color: var(--sub); font-size: 12px; line-height: 1.6; }
+    .character-interaction-scene { padding: 20px; border: 0; border-radius: 10px; background: var(--panel); box-shadow: none; }
+    .character-interaction-prose { color: var(--text); font-family: var(--font-ui); font-size: 16px; line-height: 1.85; letter-spacing: normal; overflow-wrap: anywhere; }
+    .character-interaction-prose p { text-indent: 0; }
+    .character-interaction-notes, .character-interaction-audit { border-color: var(--line); background: var(--panel); border-radius: 8px; }
+    .character-interaction-notes > summary, .character-interaction-audit > summary { color: var(--sub); font-size: 13px; font-weight: 500; padding: 12px; }
+    .character-interaction-reflection { border-left-color: var(--line); background: var(--list); color: var(--sub); font-size: 13px; }
+    .character-interaction-reflection strong { color: var(--text); }
+    .character-channel-message-avatar { border-radius: 8px; background: var(--selected); color: var(--sub); font-size: 13px; font-weight: 500; }
+    .character-channel-message-meta { color: var(--muted); font-size: 12px; }
+    .character-channel-message-bubble { background: var(--panel); border-radius: 4px 8px 8px 8px; font-size: 15px; line-height: 1.65; }
+    .character-channel-system { background: var(--hover); color: var(--sub); font-size: 12px; }
     .character-collaboration-status { background: var(--list); color: var(--green-ink); font-size: 12px; font-weight: 500; border-radius: 5px; }
     .character-collaboration-status.queued, .character-collaboration-status.running,
     .character-collaboration-status.declined, .character-collaboration-status.cancelled { background: var(--hover); color: var(--sub); }
@@ -180,6 +212,28 @@ export const socialThemeCss = `
     .character-profile-avatar { border-radius: 12px; box-shadow: none; }
     .character-profile-name h3 { font-size: 22px; font-weight: 600; }
     .character-profile-soul .markdown-body { color: var(--text); font-size: 15px; line-height: 1.8; }
+    .character-profile-tabs { margin: 16px 22px 0; grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    .character-diary-panel { min-width: 0; padding: 20px 22px 28px; }
+    .character-diary-panel[hidden] { display: none; }
+    .character-diary-heading { display: flex; align-items: center; gap: 12px; justify-content: space-between; margin-bottom: 16px; }
+    .character-diary-heading .muted, #characterDiaryStatus, .diary-settings p { font-size: 12px; line-height: 1.6; }
+    .diary-settings { padding: 12px; background: var(--list); border: 1px solid var(--line); border-radius: 8px; }
+    .diary-settings summary, .diary-memory summary { cursor: pointer; color: var(--sub); font-size: 13px; }
+    .diary-settings[open] summary { margin-bottom: 14px; }
+    .diary-settings .settings-field { margin-top: 14px; }
+    .diary-settings textarea { width: 100%; min-width: 0; font-family: var(--font-ui); font-size: 14px; }
+    .diary-settings select { width: 100%; min-width: 0; max-width: 100%; font-family: var(--font-ui); }
+    .diary-relationship { padding: 12px 0; display: flex; flex-wrap: wrap; gap: 6px 12px; align-items: center; border-bottom: 1px solid var(--line); }
+    .diary-relationship span, .diary-relationship small { color: var(--sub); font-size: 12px; }
+    .diary-entry { padding: 22px 0; border-bottom: 1px solid var(--line); overflow-wrap: anywhere; }
+    .diary-entry header { display: grid; gap: 6px; }
+    .diary-entry header strong { font-size: 16px; }
+    .diary-entry header small { color: var(--muted); font-size: 12px; }
+    .diary-prose { font-size: 15px; line-height: 1.9; margin: 18px 0; }
+    .diary-memory { background: var(--list); padding: 12px; border-radius: 8px; font-size: 13px; }
+    .diary-memory li { margin-block: 8px; }
+    .diary-memory li > span { color: var(--sub); font-size: 12px; }
+    .diary-entry-actions { margin-top: 14px; display: flex; justify-content: flex-end; }
     .character-profile-dialog, .schedule-editor-dialog, .new-conversation-dialog, .archived-dialog, .session-action-dialog { border-color: var(--line); border-radius: 10px; box-shadow: 0 16px 48px #00000024; }
     .settings-field > label, .schedule-form label, .avatar-hint { font-size: 13px; color: var(--sub); }
     .settings-field > .muted, .settings-actions > .muted { font-size: 12px; }
@@ -299,8 +353,14 @@ export const socialThemeCss = `
       .message-avatar { flex-basis: 36px; width: 36px; height: 36px; }
       .message-stack { max-width: calc(100% - 46px); }
       .bubble { font-size: 16px; padding: 10px 13px; }
+      .world-scene-turn { padding: 16px 14px 18px; }
+      .world-scene-copy { padding: 0; }
       .world-scene-text { font-size: 16px; }
+      .character-interaction-scene { padding: 18px 16px; }
       .composer textarea { font-size: 16px; }
+      .character-profile-tabs { margin-inline: 18px; }
+      .character-diary-panel { padding-inline: 18px; }
+      .diary-settings textarea { font-size: 16px; }
       .meeting-preset-prompt-editor textarea, .system-prompt-editor, .meeting-preset-parameters { font-size: 16px; }
       .schedule-title-group h2 { font-size: 24px; }
       .schedule-view-tabs { margin-bottom: 14px; }
@@ -311,6 +371,8 @@ export const socialThemeCss = `
       .schedule-owner-head { padding-bottom: 14px; }
     }
     @media (max-width: 600px) {
+      .character-channel-episode-head { grid-template-columns: auto minmax(0, 1fr); }
+      .character-channel-episode-status { grid-column: 1 / -1; }
       .settings-tabs { grid-template-columns: repeat(4, minmax(0, 1fr)); }
       .settings-tabs button { white-space: nowrap; }
     }

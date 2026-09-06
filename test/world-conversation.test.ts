@@ -617,8 +617,7 @@ test("world observations remain provisional until the event closes and then sett
     });
     assert.equal(aliceMemories.length, 1);
     assert.match(aliceMemories[0].content, /亲耳听见/);
-    assert.equal(bobMemories.length, 1);
-    assert.match(bobMemories[0].content, /天台夜谈/);
+    assert.equal(bobMemories.length, 0, "an unobserved outcome must not become Bob's knowledge");
     assert.doesNotMatch(runtime.kernel.worldConversationService.characterContext(world.id, alice.id), /亲耳听见/);
     assert.match(runtime.kernel.worldConversationService.chronicleContext(world.id), /误会已经解释清楚/);
   } finally {

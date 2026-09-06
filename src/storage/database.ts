@@ -2881,6 +2881,79 @@ const migrations: Migration[] = [
         WHERE meeting_session_id IS NOT NULL;
     `,
   },
+  {
+    version: 52,
+    sql: `
+      CREATE TABLE character_diary_settings (
+        character_id TEXT PRIMARY KEY REFERENCES characters(id) ON DELETE CASCADE,
+        narrative_enabled INTEGER NOT NULL DEFAULT 1 CHECK (narrative_enabled IN (0,1)),
+        preset TEXT NOT NULL DEFAULT '',
+        updated_at TEXT NOT NULL
+      );
+      CREATE TABLE character_diary_entries (
+        id TEXT PRIMARY KEY,
+        character_id TEXT NOT NULL REFERENCES characters(id) ON DELETE CASCADE,
+        world_id TEXT NOT NULL REFERENCES role_worlds(id) ON DELETE CASCADE,
+        source_kind TEXT NOT NULL CHECK (source_kind IN ('activity','interaction','world_event')),
+        source_id TEXT NOT NULL,
+        title TEXT NOT NULL,
+        occurred_at TEXT NOT NULL,
+        source_json TEXT NOT NULL,
+        memory_json TEXT,
+        narrative_text TEXT,
+        created_at TEXT NOT NULL,
+        invalidated_at TEXT
+      );
+      CREATE UNIQUE INDEX character_diary_source_idx ON character_diary_entries(character_id,source_kind,source_id) WHERE invalidated_at IS NULL;
+      CREATE INDEX character_diary_entries_owner_idx
+        ON character_diary_entries(character_id, occurred_at DESC, id DESC);
+      CREATE TABLE character_diary_jobs (
+        entry_id TEXT NOT NULL REFERENCES character_diary_entries(id) ON DELETE CASCADE,
+        kind TEXT NOT NULL CHECK (kind IN ('memory','narrative')),
+        status TEXT NOT NULL CHECK (status IN ('pending','running','ready','failed','paused')),
+        attempts INTEGER NOT NULL DEFAULT 0,
+        available_at TEXT NOT NULL,
+        lease_id TEXT,
+        lease_until TEXT,
+        error TEXT,
+        updated_at TEXT NOT NULL,
+        PRIMARY KEY(entry_id, kind)
+      );
+      ALTER TABLE world_character_relationships ADD COLUMN romance_status TEXT NOT NULL DEFAULT 'none'
+        CHECK (romance_status IN ('none','interested','dating','committed','former_partners'));
+      CREATE TABLE character_diary_generations (
+        id TEXT PRIMARY KEY,
+        entry_id TEXT NOT NULL REFERENCES character_diary_entries(id) ON DELETE CASCADE,
+        kind TEXT NOT NULL CHECK (kind IN ('memory','narrative')),
+        started_at TEXT NOT NULL
+      );
+      CREATE TABLE world_character_romance_events (
+        id TEXT PRIMARY KEY,
+        world_id TEXT NOT NULL REFERENCES role_worlds(id) ON DELETE CASCADE,
+        subject_character_id TEXT NOT NULL REFERENCES characters(id) ON DELETE CASCADE,
+        object_character_id TEXT NOT NULL REFERENCES characters(id) ON DELETE CASCADE,
+        source_id TEXT NOT NULL,
+        occurred_at TEXT NOT NULL,
+        event_type TEXT NOT NULL,
+        evidence_json TEXT NOT NULL,
+        before_json TEXT NOT NULL,
+        after_json TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        UNIQUE(world_id, source_id, subject_character_id, object_character_id, event_type)
+      );
+    `,
+  },
+  {
+    version: 53,
+    sql: `
+      ALTER TABLE character_diary_settings ADD COLUMN preset_mode TEXT NOT NULL DEFAULT 'inherit'
+        CHECK (preset_mode IN ('inherit','custom','none'));
+      ALTER TABLE character_diary_settings ADD COLUMN preset_id TEXT
+        REFERENCES meeting_presets(id) ON DELETE SET NULL;
+      -- Preserve existing custom writing instructions without silently adding a second preset.
+      UPDATE character_diary_settings SET preset_mode='none' WHERE length(trim(preset)) > 0;
+    `,
+  },
 ];
 
 export class AppDatabase {

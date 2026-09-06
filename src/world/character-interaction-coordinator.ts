@@ -30,6 +30,7 @@ const ACTOR_TEXT_LIMIT = 4_000;
 export type CharacterInteractionCoordinatorOptions = {
   actor: CharacterInteractionActor;
   sceneComposer: CharacterInteractionSceneComposer;
+  onSettledExperience?: (episode: CharacterChannelEpisode) => void;
   onCollaborationSettled?: (
     result: CharacterInteractionResult,
     signal: AbortSignal,
@@ -1231,6 +1232,7 @@ export class CharacterInteractionCoordinator {
   private settleEpisodeSafely(episode: CharacterChannelEpisode): void {
     try {
       this.settleEpisode(episode);
+      this.options.onSettledExperience?.(episode);
     } catch (error) {
       this.options.onAction?.("character_channel_settlement", "failed", {
         episodeId: episode.id,

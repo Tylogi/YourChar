@@ -43,6 +43,7 @@ export type WorldAutonomyCoordinatorOptions = {
   canProjectRuntime?: (characterId: string) => boolean;
   storySnapshot?: (worldId: string) => { activeEvent?: WorldStoryEvent };
   socialTick?: (characterId?: string) => Promise<{ created: number; failed: number }>;
+  onSettledExperience?: (event: WorldEvent) => void;
   intervalMs?: number;
 };
 
@@ -577,6 +578,7 @@ export class WorldAutonomyCoordinator {
       settledAt: now,
     });
     this.enqueueProactive(characterId, event);
+    this.options.onSettledExperience?.(event);
     return event;
   }
 

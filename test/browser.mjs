@@ -9,6 +9,8 @@ import { fauxAssistantMessage } from "@earendil-works/pi-ai";
 import { createHttpServer } from "../dist/src/http/router.js";
 import { createTestRuntime } from "../dist/src/testing/index.js";
 import { runSocialThemeComponentChecks } from "./ui-social-theme.browser.mjs";
+import { runDiaryBrowserChecks } from "./character-diaries.browser.mjs";
+import { runWorldSocialThemeChecks } from "./world-social-theme.browser.mjs";
 
 const artifactsDir = resolve("browser-artifacts");
 mkdirSync(artifactsDir, { recursive: true });
@@ -211,6 +213,8 @@ const browser = await launch({ headless: true });
 
 try {
   await runSocialThemeComponentChecks(browser, artifactsDir);
+  await runDiaryBrowserChecks(browser, artifactsDir);
+  await runWorldSocialThemeChecks(browser, artifactsDir);
   await runDesktopWorkflow(browser, baseUrl, artifactsDir);
   await runCompactDesktopWorkflow(browser, baseUrl, artifactsDir);
   await runMobileWorkflow(browser, baseUrl, artifactsDir);
@@ -973,6 +977,8 @@ async function runDesktopWorkflow(browser, baseUrl, outputDir) {
   await page.locator("#conversationScene").filter({ hasText: "未来道具研究所" }).waitFor();
   assert.equal(await page.locator("#textInput").getAttribute("placeholder"), "描述你在现场说的话或正在做的事");
   assert.equal(await page.getByRole("button", { name: "结束现场", exact: true }).isVisible(), true);
+  // Rendering the new interaction state precedes the async transition's finally cleanup.
+  await page.waitForFunction(() => !document.getElementById("interactionToggleBtn").disabled);
   assert.equal(await page.getByRole("button", { name: "结束现场", exact: true }).isEnabled(), true);
   await assertInteractiveBounds(page);
   await captureValidatedScreenshot(page, resolve(outputDir, "chat-in-person-state.png"));
@@ -1350,7 +1356,7 @@ async function runDesktopWorkflow(browser, baseUrl, outputDir) {
   await page.locator("#characterProfileDialog").waitFor({ state: "visible" });
   await page.locator("#characterProfileName").filter({ hasText: "林澈" }).waitFor();
   await page.locator("#characterProfileSoul").filter({ hasText: "长期信任" }).waitFor();
-  assert.equal(await page.locator("#characterProfileDialog input, #characterProfileDialog textarea, #characterProfileDialog select").count(), 0);
+  assert.equal(await page.locator("#characterProfileAbout input, #characterProfileAbout textarea, #characterProfileAbout select").count(), 0);
   await captureValidatedScreenshot(page, resolve(outputDir, "character-profile-readonly.png"));
   await page.getByRole("button", { name: "关闭角色资料" }).click();
   const storedToolResult = storedProgress.locator(".progress-tool-result").filter({ hasText: "read · completed" });
@@ -1717,7 +1723,7 @@ async function runMobileWorkflow(browser, baseUrl, outputDir) {
   await page.locator("#messages .message-row.assistant .character-profile-trigger").last().click();
   await page.locator("#characterProfileDialog").waitFor({ state: "visible" });
   await page.locator("#characterProfileName").filter({ hasText: "林澈" }).waitFor();
-  assert.equal(await page.locator("#characterProfileDialog input, #characterProfileDialog textarea, #characterProfileDialog select").count(), 0);
+  assert.equal(await page.locator("#characterProfileAbout input, #characterProfileAbout textarea, #characterProfileAbout select").count(), 0);
   await assertElementUnclipped(page, "#characterProfileDialog");
   await assertInteractiveBounds(page);
   await assertViewport(page);

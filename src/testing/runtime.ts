@@ -39,6 +39,7 @@ import type { PrivateInboxCoordinatorOptions } from "../inbox/index.js";
 import type { PostTurnAnalyzer } from "../post-turn/index.js";
 import type { CharacterSkillReflector } from "../organization/index.js";
 import type { ImGateway } from "../im/index.js";
+import type { DiaryGenerator } from "../diary/types.js";
 
 export type ScriptedModelResponse = (
   | {
@@ -78,6 +79,7 @@ export type CreateTestRuntimeOptions = {
   relationshipExtractor?: RelationshipExtractor;
   postTurnAnalyzer?: PostTurnAnalyzer;
   worldPlanner?: WorldPlanner;
+  diaryGenerator?: DiaryGenerator;
   worldMessenger?: ProactiveMessenger;
   characterInteractionActor?: CharacterInteractionActor;
   characterInteractionSceneComposer?: CharacterInteractionSceneComposer | false;
@@ -256,6 +258,7 @@ export class TestRuntime {
         ? undefined
         : options.relationshipExtractor ?? (async () => ({ significant: false, confidence: 0 })),
       worldPlanner: options.worldPlanner,
+      diaryGenerator: options.diaryGenerator,
       worldMessenger: options.worldMessenger,
       characterInteractionActor: options.characterInteractionActor,
       ...(options.characterInteractionSceneComposer === false

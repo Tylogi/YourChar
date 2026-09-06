@@ -5,6 +5,7 @@ import type { InteractionService } from "../interaction/service.js";
 import type { UserProfileService } from "../profile/service.js";
 import type { RpService } from "../rp/service.js";
 import type { MeetingPresetRepository } from "./repository.js";
+import type { DiarySettings, DiarySource } from "../diary/types.js";
 import {
   type ImportMeetingPresetInput,
   type MeetingPreset,
@@ -173,6 +174,30 @@ export class MeetingPresetService {
     return { ...active.parameters };
   }
 
+  presetForDiary(characterId: string, settings: Pick<DiarySettings, "presetMode" | "presetId">): MeetingPreset | undefined {
+    const id = settings.presetMode === "inherit" ? this.rpService.getCharacter(characterId).meetingPresetId
+      : settings.presetMode === "custom" ? settings.presetId : undefined;
+    return id ? this.repository.get(id) : undefined;
+  }
+
+  /** Same preset engine, but diary slots never load private conversations or user profiles. */
+  orchestrateDiaryPayload(input: { preset: MeetingPreset; source: DiarySource; payload: Record<string, unknown> }): Record<string, unknown> {
+    const { source, preset } = input;
+    const experience = JSON.stringify({ title: source.title, occurredAt: source.occurredAt, observations: source.observations, statements: source.statements });
+    const macroContext: MacroContext = {
+      charName: source.characterName, userName: "读者", lastUserMessage: experience,
+      lastCharMessage: source.statements.filter(statement => statement.characterId === source.characterId).at(-1)?.text ?? "",
+      timezone: source.timezone, now: new Date(source.occurredAt), variables: new Map(),
+      random: seededRandom(`${preset.id}\u0000${preset.updatedAt}\u0000diary\u0000${source.characterId}\u0000${source.id}`),
+    };
+    const markerContent = new Map<string, string>([
+      ["charDescription", source.soul], ["charPersonality", ""], ["dialogueExamples", ""],
+      ["personaDescription", ""], ["scenario", experience],
+      ["worldInfoBefore", JSON.stringify({ name: source.worldName, timezone: source.timezone })], ["worldInfoAfter", ""],
+    ]);
+    return arrangePresetPayload({ preset, payload: input.payload, macroContext, markerContent, currentUserText: experience });
+  }
+
   worldScenePresetSignatureForSession(sessionId: string): string | undefined {
     const preset = this.activePreset(sessionId, "sms");
     if (!preset) return undefined;
@@ -256,49 +281,7 @@ export class MeetingPresetService {
       ["worldInfoAfter", ""],
       ["worldInfoBefore", ""],
     ]);
-    const leadingSystem: ProviderMessage[] = [];
-    let historyStart = 0;
-    while (messages[historyStart]?.role === "system") {
-      leadingSystem.push(messages[historyStart]);
-      historyStart += 1;
-    }
-    const rawHistory = messages.slice(historyStart);
-    const activePrompts = preset.prompts.filter((prompt) =>
-      prompt.enabled && promptMatchesTurn(prompt, input.currentUserText)
-    );
-    const renderedPrompts = new Map<string, string>();
-    for (const prompt of activePrompts) {
-      if (prompt.marker) continue;
-      renderedPrompts.set(prompt.id, renderPromptContent(prompt.content, macroContext));
-    }
-    const inChat = activePrompts.filter((prompt) =>
-      prompt.position === "in_chat" && !prompt.marker
-    );
-    const history = injectInChatPrompts(rawHistory, inChat, renderedPrompts);
-    const relative = activePrompts.filter((prompt) =>
-      prompt.position === "relative"
-    );
-    const arranged: ProviderMessage[] = [];
-    let historyInserted = false;
-    for (const prompt of relative) {
-      if (prompt.marker && prompt.identifier === "chatHistory") {
-        if (!historyInserted) arranged.push(...history);
-        historyInserted = true;
-        continue;
-      }
-      const content = prompt.marker
-        ? markerContent.get(prompt.identifier) ?? prompt.content
-        : renderedPrompts.get(prompt.id) ?? "";
-      if (!content.trim()) continue;
-      arranged.push({ role: prompt.role, content });
-    }
-    // The current user turn is a non-negotiable part of a YourChar request.
-    // A malformed preset may disable or omit the marker, but cannot erase it.
-    if (!historyInserted) arranged.push(...history);
-    return {
-      ...input.payload,
-      messages: [...leadingSystem, ...arranged],
-    };
+    return arrangePresetPayload({ preset, payload: input.payload, macroContext, markerContent, currentUserText: input.currentUserText });
   }
 
   worldScenePromptForSession(input: {
@@ -358,6 +341,41 @@ export class MeetingPresetService {
     if (!presetId) return undefined;
     return this.repository.get(presetId);
   }
+}
+
+function arrangePresetPayload(input: {
+  preset: MeetingPreset;
+  payload: Record<string, unknown>;
+  macroContext: MacroContext;
+  markerContent: Map<string, string>;
+  currentUserText: string;
+}): Record<string, unknown> {
+  if (!Array.isArray(input.payload.messages)) return input.payload;
+  const messages = input.payload.messages.filter(isProviderMessage);
+  if (!messages.length) return input.payload;
+  const leadingSystem: ProviderMessage[] = [];
+  let historyStart = 0;
+  while (messages[historyStart]?.role === "system") leadingSystem.push(messages[historyStart++]);
+  const activePrompts = input.preset.prompts.filter(prompt => prompt.enabled && promptMatchesTurn(prompt, input.currentUserText));
+  const renderedPrompts = new Map<string, string>();
+  for (const prompt of activePrompts) {
+    if (!prompt.marker) renderedPrompts.set(prompt.id, renderPromptContent(prompt.content, input.macroContext));
+  }
+  const history = injectInChatPrompts(messages.slice(historyStart), activePrompts.filter(prompt => prompt.position === "in_chat" && !prompt.marker), renderedPrompts);
+  const arranged: ProviderMessage[] = [];
+  let historyInserted = false;
+  for (const prompt of activePrompts.filter(prompt => prompt.position === "relative")) {
+    if (prompt.marker && prompt.identifier === "chatHistory") {
+      if (!historyInserted) arranged.push(...history);
+      historyInserted = true;
+      continue;
+    }
+    const content = prompt.marker ? input.markerContent.get(prompt.identifier) ?? prompt.content : renderedPrompts.get(prompt.id) ?? "";
+    if (content.trim()) arranged.push({ role: prompt.role, content });
+  }
+  // Presets cannot erase the real request, confirmed experience, or mandatory base contract.
+  if (!historyInserted) arranged.push(...history);
+  return { ...input.payload, messages: [...leadingSystem, ...arranged] };
 }
 
 function normalizeSillyTavernPreset(

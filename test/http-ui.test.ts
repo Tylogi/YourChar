@@ -1059,7 +1059,10 @@ test("server serves chat UI and debug model traces", async () => {
     assert.match(html, /id="systemPromptCustom"/);
     assert.match(html, /id="systemPromptSettingsViewBtn"/);
     assert.match(html, /id="meetingPresetSettingsViewBtn"/);
-    assert.match(html, /远程私聊与约见等待继续使用 SMS 默认编排/);
+    assert.match(html, /远程私聊与约见等待仍使用 SMS 默认编排/);
+    assert.match(html, /创作预设 · 见面与日记共用/);
+    assert.match(html, /id="characterDiaryPresetSelect"/);
+    assert.match(html, /id="manageCharacterDiaryPresetsBtn"/);
     assert.match(html, /普通空间会作为当前 World 现场的文学风格层/);
     assert.match(html, /id="meetingPresetImportInput"[^>]+accept="\.json,application\/json"/);
     assert.match(html, /id="meetingPresetImportOrder"/);
@@ -1103,8 +1106,12 @@ test("server serves chat UI and debug model traces", async () => {
     assert.match(html, /data-character-profile-id/);
     assert.match(html, /function openCharacterProfile/);
     const characterProfileDialog = html.match(/<dialog id="characterProfileDialog"[\s\S]*?<\/dialog>/)?.[0] ?? "";
-    assert.doesNotMatch(characterProfileDialog, /<(?:input|textarea|select|form)\b/);
-    assert.doesNotMatch(characterProfileDialog, /保存|编辑/);
+    const characterProfileAbout = characterProfileDialog.match(/<section id="characterProfileAbout"[\s\S]*?<\/section>/)?.[0] ?? "";
+    assert.ok(characterProfileAbout);
+    assert.doesNotMatch(characterProfileAbout, /<(?:input|textarea|select|form)\b/);
+    assert.doesNotMatch(characterProfileAbout, /保存|编辑/);
+    assert.match(characterProfileDialog, /id="characterProfileDiaryBtn"/);
+    assert.match(characterProfileDialog, /id="characterDiaryPreset"/);
     assert.match(html, /data-message-image/);
     assert.match(html, /workspaceImagePath/);
     assert.match(html, /compositionEndedAt/);

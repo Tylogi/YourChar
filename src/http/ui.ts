@@ -6021,7 +6021,7 @@ export function renderAppHtml(): string {
 	          <section id="promptSettingsPanel" class="management-panel settings-panel" hidden>
 	            <div class="segmented prompt-settings-view-tabs" role="tablist" aria-label="提示词设置视图">
 	              <button id="systemPromptSettingsViewBtn" class="active" type="button" role="tab" aria-selected="true" aria-controls="systemPromptSettingsView">系统提示词</button>
-	              <button id="meetingPresetSettingsViewBtn" type="button" role="tab" aria-selected="false" aria-controls="meetingPresetSettingsView">见面模式预设</button>
+	              <button id="meetingPresetSettingsViewBtn" type="button" role="tab" aria-selected="false" aria-controls="meetingPresetSettingsView">创作预设</button>
 	            </div>
 	            <div id="systemPromptSettingsView" role="tabpanel">
 	              <div class="schedule-head">
@@ -6051,15 +6051,16 @@ export function renderAppHtml(): string {
 	            <div id="meetingPresetSettingsView" class="meeting-preset-panel" role="tabpanel" hidden>
 	              <div class="meeting-preset-heading">
 	                <div>
-	                  <h3>见面模式预设</h3>
-	                  <p>导入 SillyTavern / 酒馆 JSON 预设。普通空间见面会将启用项作为当前 World 现场的文学风格层，私密兼容见面仍按启用顺序编排；远程私聊与约见等待继续使用 SMS 默认编排。预设中的扩展脚本不会执行。</p>
+	                  <h3>创作预设 · 见面与日记共用</h3>
+	                  <p>统一导入、编辑 SillyTavern / 酒馆 JSON 预设。普通空间见面将启用项作为 World 现场的文学风格层；日记与私密兼容见面按启用顺序编排。远程私聊与约见等待仍使用 SMS 默认编排。修改共享预设会影响所有使用它的见面和后续日记创作，已生成的正文与记忆不变。扩展脚本不会执行。</p>
+	                  <p>日记的动态插槽只填入该角色的经历，时间使用经历发生时间，user 宏表示读者；不会加载私聊历史、用户画像或其他角色的私有记忆。启用的模型参数也会应用到阅读版，输出上限为 6000 tokens；记忆摘要始终不使用创作预设。</p>
 	                </div>
 	              </div>
 	              <input id="meetingPresetImportInput" type="file" accept=".json,application/json" hidden />
 	              <div class="meeting-preset-picker">
-	                <select id="meetingPresetSelect" aria-label="见面模式预设"><option value="">尚未导入预设</option></select>
+	                <select id="meetingPresetSelect" aria-label="共享创作预设"><option value="">尚未导入预设</option></select>
 	                <button id="selectMeetingPresetImportBtn" class="secondary" type="button"><i data-lucide="upload" aria-hidden="true"></i><span>导入 JSON</span></button>
-	                <button id="deleteMeetingPresetBtn" class="secondary icon-button" type="button" title="删除预设" aria-label="删除见面模式预设" disabled><i data-lucide="trash-2" aria-hidden="true"></i></button>
+	                <button id="deleteMeetingPresetBtn" class="secondary icon-button" type="button" title="删除预设" aria-label="删除创作预设" disabled><i data-lucide="trash-2" aria-hidden="true"></i></button>
 	              </div>
 	              <div id="meetingPresetImportPanel" class="meeting-preset-import" hidden>
 	                <div class="meeting-preset-import-summary">
@@ -6441,9 +6442,28 @@ export function renderAppHtml(): string {
           <span id="characterProfileAvatar" class="character-profile-avatar">角</span>
           <div class="character-profile-name"><h3 id="characterProfileName">角色</h3><span id="characterProfileMeta"></span></div>
         </div>
-        <section class="character-profile-soul" aria-labelledby="characterProfileSoulTitle">
+        <div class="segmented character-profile-tabs" role="tablist" aria-label="角色资料视图">
+          <button id="characterProfileAboutBtn" class="active" type="button" role="tab" aria-selected="true" aria-controls="characterProfileAbout">资料</button>
+          <button id="characterProfileDiaryBtn" type="button" role="tab" aria-selected="false" aria-controls="characterProfileDiary">日记与关系</button>
+        </div>
+        <section id="characterProfileAbout" class="character-profile-soul" role="tabpanel" aria-labelledby="characterProfileAboutBtn">
           <h3 id="characterProfileSoulTitle">角色设定</h3>
           <div id="characterProfileSoul" class="markdown-body"></div>
+        </section>
+        <section id="characterProfileDiary" class="character-diary-panel" role="tabpanel" aria-labelledby="characterProfileDiaryBtn" hidden>
+          <div class="character-diary-heading"><span class="muted">旁观阅读 · 不代表你在故事中知道这些秘密</span><button id="refreshCharacterDiaryBtn" class="secondary" type="button">刷新</button></div>
+          <details class="diary-settings"><summary>日记创作预设</summary>
+            <label class="toggle"><span>自动创作阅读版日记</span><input id="characterDiaryEnabled" type="checkbox" /></label>
+            <label class="settings-field"><span>创作预设</span><select id="characterDiaryPresetSelect"><option value="inherit">沿用角色的见面预设</option><option value="none">不使用预设 · 默认文风</option></select></label>
+            <p id="characterDiaryPresetHint" class="muted"></p>
+            <button id="manageCharacterDiaryPresetsBtn" class="secondary" type="button">管理共享预设</button>
+            <label class="settings-field"><span>日记补充要求（可选，仅影响此角色的日记）</span><textarea id="characterDiaryPreset" maxlength="6000" rows="3" placeholder="例如：第一人称，细腻克制，围绕一次重要经历展开。"></textarea></label>
+            <p class="muted">只影响阅读版，不改变记忆摘要。每段已确认经历分别整理，每个角色每 24 小时最多调用 3 次长文模型（含重试和重写），超出后顺延。</p>
+            <button id="saveCharacterDiarySettingsBtn" class="primary" type="button">保存日记设置</button>
+          </details>
+          <p id="characterDiaryStatus" class="muted" role="status" aria-live="polite"></p>
+          <div id="characterDiaryRelationships" class="diary-relationships"></div>
+          <div id="characterDiaryEntries" class="diary-entries"></div>
         </section>
       </div>
     </dialog>
@@ -7571,6 +7591,13 @@ export function renderAppHtml(): string {
     nodes.closeCharacterProfileBtn.addEventListener("click", closeCharacterProfile);
     nodes.characterProfileDialog.addEventListener("cancel", (event) => { event.preventDefault(); closeCharacterProfile(); });
     nodes.characterProfileDialog.addEventListener("click", (event) => { if (event.target === nodes.characterProfileDialog) closeCharacterProfile(); });
+    document.getElementById("characterProfileAboutBtn").addEventListener("click", () => setCharacterProfileTab(false));
+    document.getElementById("characterProfileDiaryBtn").addEventListener("click", () => { setCharacterProfileTab(true); void loadCharacterDiary(); });
+    document.getElementById("refreshCharacterDiaryBtn").addEventListener("click", () => void loadCharacterDiary());
+    document.getElementById("saveCharacterDiarySettingsBtn").addEventListener("click", () => void saveCharacterDiarySettings());
+    document.getElementById("characterDiaryEntries").addEventListener("click", (event) => void retryCharacterDiary(event));
+    document.getElementById("characterDiaryPresetSelect").addEventListener("change", renderCharacterDiaryPresetHint);
+    document.getElementById("manageCharacterDiaryPresetsBtn").addEventListener("click", manageCharacterDiaryPresets);
     nodes.closeCharacterChannelBtn.addEventListener("click", closeCharacterChannel);
     nodes.characterChannelDialog.addEventListener("cancel", (event) => { event.preventDefault(); closeCharacterChannel(); });
     nodes.characterChannelDialog.addEventListener("click", (event) => { if (event.target === nodes.characterChannelDialog) closeCharacterChannel(); });
@@ -8238,7 +8265,7 @@ export function renderAppHtml(): string {
 	            ? " · 源文件 " + Number(info.sourcePromptCount) + " 项"
 	            : "") +
 	        '</span>',
-	        '<span>导入预设不会自动绑定角色；请在角色设定中手动启用。</span>'
+	        '<span>导入不会自动绑定角色。见面预设在角色设定中选择，日记在头像 → 日记与关系中沿用或单独选择。</span>'
 	      ];
 	      if (Array.isArray(info.ignoredExtensionKeys) && info.ignoredExtensionKeys.length) {
 	        rows.push('<span class="warn"><strong>未执行扩展：</strong>' +
@@ -8392,7 +8419,7 @@ export function renderAppHtml(): string {
 	    async function deleteMeetingPreset() {
 	      const presetId = state.selectedMeetingPresetId;
 	      const preset = state.meetingPresets.find((entry) => entry.id === presetId);
-	      if (!preset || !window.confirm("删除见面模式预设“" + preset.name + "”？绑定该预设的角色将不再启用它。")) return;
+	      if (!preset || !window.confirm("删除共享创作预设“" + preset.name + "”？使用它的见面将停用该预设，日记将回到默认文风，已有正文和记忆保留。")) return;
 	      nodes.deleteMeetingPresetBtn.disabled = true;
 	      try {
 	        const response = await fetch("/api/v1/meeting-presets/" + encodeURIComponent(presetId), {
@@ -18709,7 +18736,7 @@ export function renderAppHtml(): string {
       const title = event?.title || conversation?.world?.name || "世界演绎";
       const fragments = entries.map(({ message, index }) => {
         const character = state.characters.find((entry) => entry.id === message.senderId);
-        const label = message.worldNarration ? conversation?.world?.name || "世界演绎" : character?.name || "角色";
+        const label = message.worldNarration ? "旁白" : character?.name || "角色";
         const speaker = character
           ? '<button class="world-scene-speaker character-profile-trigger" type="button" data-character-profile-id="' +
               escapeHtml(character.id) + '">' + escapeHtml(label) + '</button>'
@@ -18720,10 +18747,10 @@ export function renderAppHtml(): string {
           ? '<div class="world-scene-text markdown-body">' + renderMarkdown(message.text, true) + '</div>'
           : "";
         return '<section class="world-scene-fragment' + (message.worldNarration ? ' director' : '') + '">' +
-          speaker + progress + media + prose + '</section>';
+          '<div class="world-scene-identity">' + (character && !message.worldNarration ? renderMessageAvatar(message) : '') + speaker + '</div>' + progress + media + prose + '</section>';
       }).join("");
       return '<article class="world-scene-turn"><header class="world-scene-head"><div class="world-scene-head-copy"><strong>' +
-        escapeHtml(title) + '</strong><span>世界回合' + (firstTime ? ' · ' + escapeHtml(firstTime) : '') +
+        escapeHtml(title) + '</strong><span>现场叙事' + (firstTime ? ' · ' + escapeHtml(firstTime) : '') +
         '</span></div><div class="world-scene-participants">' + participants + '</div></header>' +
         '<div class="world-scene-copy">' + fragments + '</div></article>';
     }
@@ -19261,6 +19288,10 @@ export function renderAppHtml(): string {
       const cached = state.characters.find((entry) => entry.id === characterId);
       if (!cached) return;
       nodes.characterProfileDialog.dataset.characterId = characterId;
+      characterDiaryRequest++;
+      setCharacterProfileTab(false);
+      document.getElementById("characterDiaryEntries").replaceChildren();
+      document.getElementById("characterDiaryRelationships").replaceChildren();
       renderCharacterProfile(cached);
       if (!nodes.characterProfileDialog.open) nodes.characterProfileDialog.showModal();
       refreshIcons();
@@ -19279,6 +19310,129 @@ export function renderAppHtml(): string {
       }
     }
 
+    function setCharacterProfileTab(diary) {
+      document.getElementById("characterProfileAbout").hidden = diary;
+      document.getElementById("characterProfileDiary").hidden = !diary;
+      for (const [id, selected] of [["characterProfileAboutBtn", !diary], ["characterProfileDiaryBtn", diary]]) {
+        document.getElementById(id).classList.toggle("active", selected);
+        document.getElementById(id).setAttribute("aria-selected", String(selected));
+      }
+    }
+
+    let characterDiaryRequest = 0;
+    async function loadCharacterDiary() {
+      const characterId = nodes.characterProfileDialog.dataset.characterId;
+      if (!characterId) return;
+      const request = ++characterDiaryRequest;
+      const status = document.getElementById("characterDiaryStatus");
+      status.textContent = "正在读取日记…";
+      document.querySelectorAll(".diary-settings input, .diary-settings textarea, .diary-settings select, .diary-settings button").forEach(control => { control.disabled = true; });
+      try {
+        const response = await fetch("/api/v1/characters/" + encodeURIComponent(characterId) + "/diary");
+        const body = await response.json();
+        if (!response.ok) throw new Error(body.error || "读取日记失败");
+        if (request !== characterDiaryRequest || nodes.characterProfileDialog.dataset.characterId !== characterId || !nodes.characterProfileDialog.open) return;
+        document.getElementById("characterDiaryEnabled").checked = body.settings.narrativeEnabled;
+        document.getElementById("characterDiaryPreset").value = body.settings.preset;
+        const presetSelect = document.getElementById("characterDiaryPresetSelect");
+        presetSelect.dataset.inheritedPresetId = body.inheritedPreset?.id || "";
+        presetSelect.innerHTML = '<option value="inherit">' + escapeHtml('沿用见面预设 · ' + (body.inheritedPreset?.name || '未绑定时使用默认文风')) + '</option><option value="none">不使用预设 · 默认文风</option>' +
+          (body.presets?.length ? '<optgroup label="共享创作预设">' + body.presets.map(preset => '<option value="preset:' + escapeHtml(preset.id) + '">' + escapeHtml(preset.name) + '</option>').join('') + '</optgroup>' : '');
+        presetSelect.value = body.settings.presetMode === "custom" && body.settings.presetId ? 'preset:' + body.settings.presetId : body.settings.presetMode === "inherit" ? "inherit" : "none";
+        if (!presetSelect.value) presetSelect.value = "none";
+        renderCharacterDiaryPresetHint();
+        document.getElementById("characterProfileDiary").dataset.settingsSnapshot = JSON.stringify(characterDiarySettingsFromForm());
+        document.querySelectorAll(".diary-settings input, .diary-settings textarea, .diary-settings select, .diary-settings button").forEach(control => { control.disabled = false; });
+        const romanceLabels = { none: "尚无恋爱关系", interested: "表达了好感", dating: "交往中", committed: "已作出承诺", former_partners: "曾经交往" };
+        document.getElementById("characterDiaryRelationships").innerHTML = (body.relationships || []).map(relation =>
+          '<div class="diary-relationship"><strong>' + escapeHtml(relation.peerName) + '</strong><span>' +
+          escapeHtml(romanceLabels[relation.romanceStatus] || romanceLabels.none) + '</span><small>对方：' +
+          escapeHtml(romanceLabels[relation.peerRomanceStatus] || romanceLabels.none) + '</small></div>').join("");
+        const jobLabels = { pending: "待整理", running: "整理中", ready: "已保存", failed: "未完成，可重试", paused: "创作已暂停" };
+        const memoryLabels = { fact: "经历", interpretation: "个人理解", open_thread: "未完事项" };
+        document.getElementById("characterDiaryEntries").innerHTML = (body.entries || []).map(entry => {
+          const narrativeJob = entry.jobs.find(job => job.kind === "narrative");
+          const memoryJob = entry.jobs.find(job => job.kind === "memory");
+          const date = new Date(entry.occurredAt).toLocaleString("zh-CN", { timeZone: entry.source.timezone });
+          const memory = memoryJob?.status === "ready" ? (entry.memory || []) : [];
+          return '<article class="diary-entry"><header><strong>' + escapeHtml(entry.title) + '</strong><small>' + escapeHtml(date + ' · ' + entry.source.worldName + (entry.invalidated ? ' · 经历已撤销，不再进入角色记忆' : '')) + '</small></header>' +
+            '<div class="diary-prose markdown-body">' + (entry.narrative ? renderMarkdown(entry.narrative) : '<p class="muted">阅读版：' + escapeHtml(jobLabels[narrativeJob?.status] || "待整理") + '</p>') + '</div>' +
+            '<details class="diary-memory"><summary>角色记忆摘要 · ' + escapeHtml(jobLabels[memoryJob?.status] || "待整理") + '</summary>' +
+            (memory.length ? '<ul>' + memory.map(point => '<li><span>' + escapeHtml(memoryLabels[point.kind] || "记忆") + '</span> ' + escapeHtml(point.text) + '</li>').join("") + '</ul>' : '<p class="muted">摘要只依据角色知道的经历，与阅读版分别生成。</p>') +
+            (memoryJob?.status === "failed" ? '<button class="secondary" type="button" data-diary-retry="memory" data-diary-id="' + escapeHtml(entry.id) + '">重试摘要</button>' : '') + '</details>' +
+            '<div class="diary-entry-actions"><button class="secondary" type="button" data-diary-retry="narrative" data-diary-id="' + escapeHtml(entry.id) + '"' + (entry.invalidated || !body.settings.narrativeEnabled || narrativeJob?.status === "running" ? ' disabled' : '') + '>' + (entry.narrative ? '重写阅读版' : '生成阅读版') + '</button></div></article>';
+        }).join("") || '<p class="character-profile-empty">还没有日记。自主活动、角色交流或现场事件结束后，会留下各自的经历。</p>';
+        status.textContent = "长文与记忆独立生成；后台整理完成后可刷新查看。";
+      } catch (error) {
+        if (request === characterDiaryRequest && nodes.characterProfileDialog.dataset.characterId === characterId) status.textContent = error.message || String(error);
+      }
+    }
+
+    async function saveCharacterDiarySettings() {
+      const characterId = nodes.characterProfileDialog.dataset.characterId;
+      if (!characterId) return;
+      const button = document.getElementById("saveCharacterDiarySettingsBtn");
+      button.disabled = true;
+      try {
+        const submitted = characterDiarySettingsFromForm();
+        const response = await fetch("/api/v1/characters/" + encodeURIComponent(characterId) + "/diary/settings", {
+          method: "PATCH", headers: { "content-type": "application/json" },
+          body: JSON.stringify(submitted)
+        });
+        const body = await response.json();
+        if (!response.ok) throw new Error(body.error || "保存失败");
+        if (nodes.characterProfileDialog.dataset.characterId === characterId) {
+          document.getElementById("characterDiaryStatus").textContent = "日记设置已保存，不影响已有记忆。";
+          document.getElementById("characterProfileDiary").dataset.settingsSnapshot = JSON.stringify(submitted);
+        }
+      } catch (error) {
+        if (nodes.characterProfileDialog.dataset.characterId === characterId) document.getElementById("characterDiaryStatus").textContent = error.message || String(error);
+      } finally { if (nodes.characterProfileDialog.dataset.characterId === characterId) button.disabled = false; }
+    }
+
+    async function retryCharacterDiary(event) {
+      const button = event.target.closest("[data-diary-retry]");
+      const characterId = nodes.characterProfileDialog.dataset.characterId;
+      if (!button || !characterId) return;
+      button.disabled = true;
+      try {
+        const response = await fetch("/api/v1/characters/" + encodeURIComponent(characterId) + "/diary/" + encodeURIComponent(button.dataset.diaryId) + "/retry", {
+          method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ kind: button.dataset.diaryRetry })
+        });
+        const body = await response.json();
+        if (!response.ok) throw new Error(body.error || "重试失败");
+        if (nodes.characterProfileDialog.dataset.characterId === characterId) await loadCharacterDiary();
+      } catch (error) {
+        if (nodes.characterProfileDialog.dataset.characterId === characterId) document.getElementById("characterDiaryStatus").textContent = error.message || String(error);
+      } finally { button.disabled = false; }
+    }
+
+    function renderCharacterDiaryPresetHint() {
+      const selection = document.getElementById("characterDiaryPresetSelect").value;
+      document.getElementById("characterDiaryPresetHint").textContent = (selection === "inherit"
+        ? "随角色的见面预设同步；没有绑定时使用默认日记文风。"
+        : selection === "none" ? "不加载共享预设，使用默认日记文风与下方补充要求。"
+        : "仅改变日记的预设选择，不改变该角色的见面预设。") + " 提示词分项、编排与已启用的模型参数共用同一套设计，记忆摘要不受影响。";
+    }
+
+    function manageCharacterDiaryPresets() {
+      const select = document.getElementById("characterDiaryPresetSelect");
+      // The editor is shared, not a copy. Save diary binding/notes explicitly before navigating away.
+      const dirty = document.getElementById("characterProfileDiary").dataset.settingsSnapshot !== JSON.stringify(characterDiarySettingsFromForm());
+      if (dirty && !window.confirm("日记设置还未保存。继续打开共享预设编辑器并放弃未保存的修改？")) return;
+      state.selectedMeetingPresetId = select.value.startsWith("preset:") ? select.value.slice(7) : select.value === "inherit" ? select.dataset.inheritedPresetId || "" : "";
+      state.settingsTab = "prompt";
+      state.promptSettingsView = "preset";
+      closeCharacterProfile();
+      setUiMode("settings");
+    }
+
+    function characterDiarySettingsFromForm() {
+      const selection = document.getElementById("characterDiaryPresetSelect").value;
+      return { narrativeEnabled: document.getElementById("characterDiaryEnabled").checked, preset: document.getElementById("characterDiaryPreset").value,
+        presetMode: selection.startsWith("preset:") ? "custom" : selection, presetId: selection.startsWith("preset:") ? selection.slice(7) : null };
+    }
+
     function renderCharacterProfile(character) {
       nodes.characterProfileAvatar.style.setProperty("--avatar-hue", avatarHue(character.name || "角色"));
       nodes.characterProfileAvatar.innerHTML = avatarImageOrInitial(character.avatarUrl, character.name, "角");
@@ -19291,6 +19445,7 @@ export function renderAppHtml(): string {
     }
 
     function closeCharacterProfile() {
+      characterDiaryRequest++;
       if (nodes.characterProfileDialog.open) nodes.characterProfileDialog.close();
       delete nodes.characterProfileDialog.dataset.characterId;
     }

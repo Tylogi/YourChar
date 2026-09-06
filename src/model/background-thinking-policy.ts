@@ -14,7 +14,9 @@ export type BackgroundThinkingScenario =
   | "character_function_inference"
   | "character_skill_reflection"
   | "quality_judge"
-  | "world_analysis";
+  | "world_analysis"
+  | "diary_memory"
+  | "diary_narrative";
 
 export type BackgroundThinkingPolicy = {
   requested: "off";
@@ -55,6 +57,8 @@ const budgets: Record<BackgroundThinkingScenario, { thinkingOff: number; fallbac
   character_skill_reflection: { thinkingOff: 900, fallback: 1_600 },
   quality_judge: { thinkingOff: 1_200, fallback: 2_800 },
   world_analysis: { thinkingOff: 1_400, fallback: 2_800 },
+  diary_memory: { thinkingOff: 2_400, fallback: 2_400 },
+  diary_narrative: { thinkingOff: 6_000, fallback: 6_000 },
 };
 
 export function backgroundThinkingPolicy(
