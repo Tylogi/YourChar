@@ -29,6 +29,8 @@ export class PostTurnCoordinator {
   private readonly ownerId = randomUUID();
   private scheduled = false;
   private processing?: Promise<void>;
+
+  get isBusy(): boolean { return Boolean(this.processing); }
   private disposed = false;
   private readonly enabled: boolean;
 

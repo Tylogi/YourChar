@@ -51,7 +51,10 @@ export class WorldAutonomyCoordinator {
   private timer?: NodeJS.Timeout;
   private running?: Promise<WorldAutonomyTickResult>;
   private nudgeQueue: Promise<void> = Promise.resolve();
+  private pendingNudges = 0;
   private readonly intervalMs: number;
+
+  get isBusy(): boolean { return Boolean(this.running || this.pendingNudges); }
 
   constructor(
     readonly worldService: WorldService,
@@ -85,11 +88,12 @@ export class WorldAutonomyCoordinator {
   }
 
   nudge(characterId: string): Promise<WorldAutonomyTickResult> {
+    this.pendingNudges++;
     const operation = this.nudgeQueue.then(async () => {
       const active = this.running;
       if (active) await active;
       return this.tick(characterId);
-    });
+    }).finally(() => { this.pendingNudges--; });
     this.nudgeQueue = operation.then(() => undefined, () => undefined);
     return operation;
   }

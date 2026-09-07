@@ -196,6 +196,13 @@ export class CharacterAgentSkillPackageService {
     input: CharacterAgentSkillStageInput,
     signal?: AbortSignal,
   ): Promise<AgentSkillStageResult> {
+    return this.withInstallLock(this.scope(input), () => this.stageUnlocked(input, signal));
+  }
+
+  private async stageUnlocked(
+    input: CharacterAgentSkillStageInput,
+    signal?: AbortSignal,
+  ): Promise<AgentSkillStageResult> {
     const scope = this.scope(input);
     this.assertCharacterExists(scope.characterId);
     this.assertBelowPackageLimit(scope);
@@ -662,6 +669,34 @@ export class CharacterAgentSkillPackageService {
     } finally {
       if (descriptor !== undefined) closeSync(descriptor);
     }
+  }
+
+  isCharacterBusy(characterId: string): boolean {
+    return (["normal", "secret"] as const).some(conversationSpace =>
+      this.installTails.has(scopeKey({ characterId, conversationSpace })));
+  }
+
+  assertCharacterDeletable(characterId: string): void {
+    this.assertAvailable();
+    this.assertCharacterExists(characterId);
+    if (this.isCharacterBusy(characterId)) throw new Error("角色 Skill 正在安装，请稍后再删除角色");
+    assertOwnedPackageRoot(this.stateDir, this.packageRoot);
+    const ownerPath = join(this.packageRoot, createHash("sha256").update(characterId).digest("hex"));
+    if (pathEntryExists(ownerPath) && !realDirectoryAtExactPath(ownerPath)) {
+      throw new AgentSkillInstallerError("角色 Skill 目录不安全，无法删除", "UNSAFE_STATE_DIRECTORY");
+    }
+  }
+
+  deleteCharacter(characterId: string): void {
+    this.assertCharacterDeletable(characterId);
+    const ownerPath = join(this.packageRoot, createHash("sha256").update(characterId).digest("hex"));
+    for (const [key, entry] of this.installers) {
+      if (entry.characterId !== characterId) continue;
+      entry.installer.dispose();
+      this.installers.delete(key);
+    }
+    rmSync(ownerPath, { recursive: true, force: true });
+    this.database.connection.prepare("DELETE FROM character_agent_skill_packages WHERE character_id = ?").run(characterId);
   }
 
   clearAll(): void {

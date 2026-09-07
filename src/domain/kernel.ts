@@ -449,6 +449,14 @@ export class ControlPlaneBusyError extends Error {
   }
 }
 
+export class CharacterDeletionConfirmationError extends Error {
+  readonly code = "CHARACTER_DELETE_CONFIRMATION_REQUIRED";
+  constructor() {
+    super("请输入完整的角色名称确认删除，名称不匹配，未删除。");
+    this.name = "CharacterDeletionConfirmationError";
+  }
+}
+
 export type CompanionKernelOptions = CompanionStoreOptions & {
   store?: CompanionStore;
   clock?: Clock;
@@ -1781,6 +1789,49 @@ export class CompanionKernel {
     return character;
   }
 
+  deleteCharacter(id: string, confirmation: string): { deletedCharacterId: string; deletedSessionIds: string[] } {
+    const character = this.getCharacter(id);
+    if (confirmation !== character.name) throw new CharacterDeletionConfirmationError();
+    if (this.incognitoSessions?.hasSnapshot) {
+      throw new ControlPlaneBusyError("请先退出无痕会话，再删除角色。");
+    }
+    if (
+      this.deleteAllUserDataOperation || this.executionQueue.isBusy || this.worldCoordinator.isBusy ||
+      this.characterInteractionCoordinator.isBusy || this.characterDiaries.isBusy || this.scheduler.isBusy ||
+      this.memoryCoordinator.isBusy || this.postTurnCoordinator.isBusy || this.imIntegrations.isBusy ||
+      this.characterCapabilities.isBusy || this.conversationWakeRuns.size || this.characterSkillPackages?.isCharacterBusy(id)
+    ) throw new ControlPlaneBusyError("仍有回复或后台任务正在执行，请结束后再删除角色。");
+    this.assertControlPlaneIdle();
+    for (const provider of ["wechat", "feishu"] as const) {
+      if (this.imIntegrations.getCharacterRoute(provider)?.characterId === id) {
+        throw new ControlPlaneBusyError("此角色仍关联微信或飞书，请先在 IM 设置中移除角色关联，再删除角色。");
+      }
+    }
+    const sessions = this.listConversationMetadata().filter(entry => entry.characterId === id);
+    const sessionIds = [...new Set([
+      ...sessions.map(entry => entry.id),
+      ...this.rpService.listRoleSessions().filter(entry => entry.characterId === id).map(entry => entry.appSessionId),
+    ])];
+    for (const sessionId of sessionIds) this.assertPrivateInboxIdle(sessionId);
+    this.characterSkillPackages?.assertCharacterDeletable(id);
+
+    // All preflight checks and destructive work stay in one synchronous turn.
+    // Current Vault documents must go before their SQLite foreign-key owners.
+    this.memoryVault.deleteCharacter(id);
+    this.characterSkillPackages?.deleteCharacter(id);
+    this.avatarService.deleteCharacter(id);
+    this.rpService.soulService.delete(id);
+    this.sessionRuntime.deleteCharacterConversations(id);
+    this.dataManagement.deleteCharacter(id, sessionIds, this.clock.now().toISOString());
+    for (const sessionId of sessionIds) {
+      const timer = this.conversationWakeTimers.get(sessionId);
+      if (timer) clearTimeout(timer);
+      this.conversationWakeTimers.delete(sessionId);
+      this.store.deleteSessionRuntimeData(sessionId);
+    }
+    return { deletedCharacterId: id, deletedSessionIds: sessionIds };
+  }
+
   listMeetingPresets() {
     return this.meetingPresetService.list();
   }
@@ -1988,6 +2039,32 @@ export class CompanionKernel {
 
   listWorlds(includeArchived = false) {
     return this.worldService.listWorlds(includeArchived);
+  }
+
+  listWorldMapSnapshots(includeArchived = false) {
+    return this.worldService.listWorlds(includeArchived).map((world) => {
+      const memberships = this.worldService.repository.listMemberships(world.id);
+      const runtimes = new Map(
+        this.worldService.repository.listRuntimes(world.id).map((runtime) => [runtime.characterId, runtime]),
+      );
+      return {
+        worldId: world.id,
+        places: this.worldService.listPlaces(world.id),
+        characters: memberships.map((membership) => {
+          const runtime = runtimes.get(membership.characterId);
+          return {
+            characterId: membership.characterId,
+            placeId: runtime ? runtime.placeId ?? null : membership.homePlaceId ?? null,
+            activity: runtime?.activity ?? "自由活动",
+            availability: runtime?.availability ?? "free",
+            energy: runtime?.energy ?? 70,
+            stateSince: runtime?.stateSince ?? membership.updatedAt,
+            expectedUntil: runtime?.expectedUntil ?? null,
+            updatedAt: runtime?.updatedAt ?? membership.updatedAt,
+          };
+        }),
+      };
+    });
   }
 
   getWorld(id: string) {

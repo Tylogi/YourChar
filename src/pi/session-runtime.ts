@@ -1508,6 +1508,28 @@ export class PiSessionRuntime {
     this.loading.clear();
   }
 
+  /** Synchronous after an idle preflight: no new turn can start midway through deletion. */
+  deleteCharacterConversations(characterId: string): string[] {
+    this.assertCapabilitiesIdle();
+    const sessions = [...this.metadata.values()].filter(entry => entry.characterId === characterId);
+    for (const metadata of sessions) {
+      const sessionFile = this.currentPiSessionFile(metadata);
+      if (sessionFile) rmSync(sessionFile, { force: true });
+      const handle = this.handles.get(metadata.id);
+      if (handle) {
+        handle.session.dispose();
+        for (const bridge of handle.mcpBridges) void bridge.close().catch(() => undefined);
+      }
+      this.handles.delete(metadata.id);
+      this.detachedMessages.delete(metadata.id);
+      this.pendingCapabilityRefreshes.delete(metadata.id);
+      this.pendingCacheBreakReasons.delete(metadata.id);
+      this.metadata.delete(metadata.id);
+    }
+    this.persistConversationIndex();
+    return sessions.map(entry => entry.id);
+  }
+
   deleteAllConversations(): void {
     this.dispose();
     this.metadata.clear();

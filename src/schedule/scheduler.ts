@@ -20,6 +20,8 @@ export class ScheduleScheduler {
   private timer?: NodeJS.Timeout;
   private running?: Promise<SchedulerTickResult>;
 
+  get isBusy(): boolean { return Boolean(this.running); }
+
   constructor(
     private readonly repository: ScheduleRepository,
     private readonly service: ScheduleService,

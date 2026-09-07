@@ -13,6 +13,8 @@ import { runDiaryBrowserChecks } from "./character-diaries.browser.mjs";
 import { runWorldSocialThemeChecks } from "./world-social-theme.browser.mjs";
 import { runHistoryPaginationChecks } from "./history-pagination.browser.mjs";
 import { runAppearanceChecks } from "./appearance.browser.mjs";
+import { runWorldMapChecks } from "./world-map.browser.mjs";
+import { runCharacterDeletionChecks } from "./character-deletion.browser.mjs";
 
 const artifactsDir = resolve("browser-artifacts");
 mkdirSync(artifactsDir, { recursive: true });
@@ -219,6 +221,8 @@ try {
   await runWorldSocialThemeChecks(browser, artifactsDir);
   await runHistoryPaginationChecks(browser, artifactsDir);
   await runAppearanceChecks(browser, artifactsDir);
+  await runWorldMapChecks(browser, artifactsDir);
+  await runCharacterDeletionChecks(browser, artifactsDir);
   await runDesktopWorkflow(browser, baseUrl, artifactsDir);
   await runCompactDesktopWorkflow(browser, baseUrl, artifactsDir);
   await runMobileWorkflow(browser, baseUrl, artifactsDir);

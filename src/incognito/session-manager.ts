@@ -191,6 +191,8 @@ export class IncognitoSessionManager {
   private openingTask?: Promise<IncognitoConversationMetadata>;
   private openingRootDir?: string;
 
+  get hasSnapshot(): boolean { return Boolean(this.openingTask || this.entries.size); }
+
   constructor(private readonly options: IncognitoSessionManagerOptions) {
     this.tmpRoot = resolve(options.tmpRoot ?? DEFAULT_TMP_ROOT);
     this.now = options.now ?? (() => new Date());

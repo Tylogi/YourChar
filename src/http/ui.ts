@@ -5200,7 +5200,7 @@ export function renderAppHtml(): string {
           </section>
           <section class="entity-library-section" aria-labelledby="worldLibraryTitle">
             <div class="entity-library-head">
-              <div><h3 id="worldLibraryTitle">世界卡</h3><p>规则、地点、事件与演绎模型</p></div>
+              <div><h3 id="worldLibraryTitle">世界卡</h3><p>地点、角色位置与当前事件</p></div>
               <button id="newWorldCardBtn" class="primary" type="button"><i data-lucide="map-plus" aria-hidden="true"></i><span>新建世界</span></button>
             </div>
             <div id="worldCardGrid" class="character-card-grid world-card-grid" aria-label="世界列表"></div>
@@ -5247,6 +5247,7 @@ export function renderAppHtml(): string {
                 </div>
                 <div class="settings-actions character-save-actions">
                   <button id="saveCharacterBtn" class="primary" type="submit">创建角色</button>
+                  <button id="deleteCharacterBtn" class="danger-button" type="button" hidden><i data-lucide="trash-2" aria-hidden="true"></i><span>删除角色</span></button>
                 </div>
               </form>
             </div>
@@ -6562,6 +6563,8 @@ export function renderAppHtml(): string {
       characterSkillPackageRequestId: 0,
       relationship: null,
       worlds: [],
+      worldMaps: [],
+      worldMapSelections: new Map(),
       characterLife: null,
       worldEditorId: "",
       placeEditorId: "",
@@ -7229,6 +7232,7 @@ export function renderAppHtml(): string {
       characterSoulMarkdown: document.getElementById("characterSoulMarkdown"),
       characterSoulCount: document.getElementById("characterSoulCount"),
       saveCharacterBtn: document.getElementById("saveCharacterBtn"),
+      deleteCharacterBtn: document.getElementById("deleteCharacterBtn"),
       characterState: document.getElementById("characterState"),
       sceneForm: document.getElementById("sceneForm"),
       sceneLocation: document.getElementById("sceneLocation"),
@@ -7706,6 +7710,7 @@ export function renderAppHtml(): string {
     nodes.cancelPlaceEditBtn.addEventListener("click", resetPlaceEditor);
     nodes.worldPlaceList.addEventListener("click", handleWorldPlaceAction);
     nodes.characterForm.addEventListener("submit", saveCharacter);
+    nodes.deleteCharacterBtn.addEventListener("click", deleteWorkspaceCharacter);
     nodes.characterFunctionForm.addEventListener("submit", saveCharacterFunction);
     nodes.newCharacterOwnedSkillBtn.addEventListener("click", () => openCharacterOwnedSkillDialog());
     nodes.characterOwnedSkillList.addEventListener("click", selectCharacterOwnedSkill);
@@ -11706,11 +11711,15 @@ export function renderAppHtml(): string {
         return;
       }
       nodes.confirmSessionActionBtn.disabled = true;
+      dialogState.submitting = true;
+      nodes.cancelSessionActionBtn.disabled = true;
       nodes.sessionActionError.textContent = "";
       try {
         await dialogState.onConfirm?.(value);
         finishSessionActionDialog(true);
       } catch (error) {
+        dialogState.submitting = false;
+        nodes.cancelSessionActionBtn.disabled = false;
         nodes.confirmSessionActionBtn.disabled = false;
         showSessionActionError(error.message || String(error));
       }
@@ -11728,13 +11737,16 @@ export function renderAppHtml(): string {
 
     function cancelSessionActionDialog(event) {
       event.preventDefault();
+      if (actionDialogState?.submitting) return;
       finishSessionActionDialog(false);
     }
 
     function finishSessionActionDialog(result) {
       const dialogState = actionDialogState;
       if (!dialogState) return;
+      if (!result && dialogState.submitting) return;
       actionDialogState = null;
+      nodes.cancelSessionActionBtn.disabled = false;
       nodes.sessionActionDialog.close();
       dialogState.resolve(result);
       requestAnimationFrame(() => {
@@ -12501,7 +12513,10 @@ export function renderAppHtml(): string {
 
     async function loadCharacters() {
       try {
-        const response = await fetch("/api/v1/characters");
+        const [response] = await Promise.all([
+          fetch("/api/v1/characters"),
+          loadWorlds()
+        ]);
         const body = await response.json();
         if (!response.ok) throw new Error(body.error || "角色加载失败");
         state.characters = Array.isArray(body.characters) ? body.characters : [];
@@ -12512,6 +12527,7 @@ export function renderAppHtml(): string {
           state.workspaceCharacterId = "";
         }
         renderCharacterOptions();
+        renderWorldCards();
         if (state.workspaceCharacterId) await loadCharacterWorkspace();
         else hideCharacterDetail();
       } catch (error) {
@@ -12577,32 +12593,164 @@ export function renderAppHtml(): string {
       refreshIcons();
     }
 
+    function renderWorldMapPerson(entry, eventParticipantIds, placeMap, detail = false) {
+      const character = state.characters.find((item) => item.id === entry.characterId);
+      const name = character?.name || "未知角色";
+      const availabilityLabels = { free: "空闲", busy: "忙碌", resting: "休息中", traveling: "在路上" };
+      const availability = availabilityLabels[entry.availability] || "状态未知";
+      const lastPlace = entry.availability === "traveling" && entry.placeId
+        ? placeMap.get(entry.placeId)?.name
+        : "";
+      const details = [entry.activity || "自由活动", lastPlace ? "最近位置：" + lastPlace : "", availability].filter(Boolean).join(" · ");
+      const participant = eventParticipantIds.has(entry.characterId);
+      return '<button type="button" class="world-map-person' + (detail ? ' detail' : '') + ' availability-' + escapeHtml(entry.availability || "free") +
+        (participant ? ' event-participant' : '') + '" data-world-map-character-id="' + escapeHtml(entry.characterId) +
+        '" aria-label="' + escapeHtml("查看" + name + "的资料 · " + details) + '" title="' + escapeHtml(name + " · " + details) + '">' +
+        '<span class="world-map-person-avatar">' + avatarImageOrInitial(character?.avatarUrl, name) +
+          '<span class="world-map-status-dot" aria-hidden="true"></span></span>' +
+        '<span class="world-map-person-copy"><strong>' + escapeHtml(name) + '</strong><small>' +
+          escapeHtml(details) + '</small></span>' +
+      '</button>';
+    }
+
+    function worldMapPlaceIcon(place) {
+      const icons = { study: "book-open", create: "palette", work: "building-2", eat: "utensils", shop: "store",
+        exercise: "trees", travel: "train-front", rest: "house", socialize: "coffee", observe: "binoculars", communicate: "messages-square" };
+      return icons[(place.capabilityIds || [])[0]] || "map-pin";
+    }
+
+    function renderWorldMap(conversation, snapshot) {
+      const places = Array.isArray(snapshot?.places) ? snapshot.places : [];
+      const placeMap = new Map(places.map((place) => [place.id, place]));
+      const snapshotCharacters = Array.isArray(snapshot?.characters) ? snapshot.characters : [];
+      const positions = snapshot
+        ? snapshotCharacters
+        : conversation.characterIds.map((characterId) => ({
+            characterId,
+            placeId: null,
+            activity: "位置同步中",
+            availability: "free"
+          }));
+      const atPlace = new Map(places.map((place) => [place.id, []]));
+      const traveling = [];
+      const unknown = [];
+      positions.forEach((entry) => {
+        if (entry.availability === "traveling") {
+          traveling.push(entry);
+        } else if (entry.placeId && atPlace.has(entry.placeId)) {
+          atPlace.get(entry.placeId).push(entry);
+        } else {
+          unknown.push(entry);
+        }
+      });
+      const event = conversation?.activeEvent;
+      const eventParticipantIds = new Set(event?.participantIds || []);
+      const selected = state.worldMapSelections.get(snapshot?.worldId);
+      const placeNodes = places.map((place) => {
+        const residents = atPlace.get(place.id) || [];
+        const eventHere = event?.placeId === place.id;
+        const eventTone = event?.status === "planned" ? " planned" : " active";
+        return '<div class="world-map-place' + (eventHere ? ' has-event' + eventTone : '') +
+          (residents.length ? ' occupied' : ' vacant') + (selected === place.id ? ' selected' : '') +
+          '" data-world-map-place-id="' + escapeHtml(place.id) + '">' +
+          '<div class="world-map-residents">' + (residents.length
+            ? residents.map((entry) => renderWorldMapPerson(entry, eventParticipantIds, placeMap)).join("")
+            : '<span class="world-map-landmark" aria-hidden="true"><i data-lucide="' + worldMapPlaceIcon(place) + '"></i></span>') + '</div>' +
+          '<button type="button" class="world-map-place-trigger" data-world-map-select="' + escapeHtml(place.id) +
+            '" aria-expanded="' + String(selected === place.id) + '" aria-controls="world-map-detail-' + escapeHtml(snapshot.worldId) + '">' +
+            '<span class="world-map-place-head"><i data-lucide="' + worldMapPlaceIcon(place) + '" aria-hidden="true"></i>' +
+              '<strong>' + escapeHtml(place.name) + '</strong></span>' +
+            '<span class="world-map-place-caption">' + (eventHere
+              ? '<span class="world-map-event-dot" aria-hidden="true"></span>' + (event?.status === "planned" ? "待发生" : "事件中") + ' · '
+              : '') + (residents.length ? residents.length + ' 人在这里' : '暂无角色') + '</span>' +
+          '</button><span class="world-map-anchor" aria-hidden="true"></span>' +
+        '</div>';
+      }).join("");
+      const transitNode = traveling.length
+        ? '<div class="world-map-offsite" data-world-map-transit>' +
+            '<span class="world-map-offsite-label"><i data-lucide="navigation" aria-hidden="true"></i>在路上</span>' +
+            '<div class="world-map-offsite-people">' + traveling.map((entry) =>
+              renderWorldMapPerson(entry, eventParticipantIds, placeMap, true)).join("") + '</div></div>'
+        : '';
+      const unknownNode = unknown.length
+        ? '<div class="world-map-offsite" data-world-map-unknown>' +
+            '<span class="world-map-offsite-label"><i data-lucide="map-pin-off" aria-hidden="true"></i>位置未定</span>' +
+            '<div class="world-map-offsite-people">' + unknown.map((entry) =>
+              renderWorldMapPerson(entry, eventParticipantIds, placeMap, true)).join("") + '</div></div>'
+        : '';
+      const selectedPlace = placeMap.get(selected);
+      const detail = selectedPlace
+        ? '<section class="world-map-detail" id="world-map-detail-' + escapeHtml(snapshot.worldId) + '">' +
+            '<div class="world-map-detail-head"><strong>' + escapeHtml(selectedPlace.name) + '</strong>' +
+              '<button class="secondary icon-button" type="button" data-world-map-select="' + escapeHtml(selected) + '" aria-label="收起地点详情"><i data-lucide="x" aria-hidden="true"></i></button></div>' +
+            (selectedPlace.description ? '<p>' + escapeHtml(selectedPlace.description) + '</p>' : '') +
+            '<div class="world-map-detail-people">' + ((atPlace.get(selected) || []).map((entry) =>
+              renderWorldMapPerson(entry, eventParticipantIds, placeMap, true)).join("") || '<p>这里暂时没有角色。</p>') + '</div></section>'
+        : '<div id="world-map-detail-' + escapeHtml(snapshot?.worldId || '') + '" hidden></div>';
+      return '<div class="world-map-stage' + (places.length === 1 ? ' single-place' : '') +
+        '" data-world-map-stage><span class="world-map-caption"><i data-lucide="map" aria-hidden="true"></i>位置示意</span>' +
+        '<svg class="world-map-terrain" viewBox="0 0 900 400" preserveAspectRatio="none" aria-hidden="true">' +
+          '<path d="M-60 300 Q160 220 285 275 T520 270 T960 170"/><path d="M110 -40 Q250 85 195 170 T340 450"/>' +
+          '<path d="M550 -50 Q455 70 605 160 T715 440"/><ellipse cx="420" cy="150" rx="270" ry="185"/>' +
+        '</svg><div class="world-map-locations">' + (placeNodes || '<div class="world-map-empty"><i data-lucide="map-pin-plus" aria-hidden="true"></i><strong>' +
+          (snapshot ? '世界还没有地点' : '正在读取位置…') + '</strong><small>' + (snapshot ? '在管理世界中添加第一个地点' : '角色近况马上就来') + '</small></div>') + '</div></div>' +
+        detail + (transitNode || unknownNode ? '<div class="world-map-offsite-list">' + transitNode + unknownNode + '</div>' : '');
+    }
+
     function renderWorldCards() {
       const cards = state.worlds.map((world) => {
         const conversation = state.worldConversations.find((entry) => entry.worldId === world.id);
-        const memberCount = conversation?.characterIds?.length || 0;
+        const snapshot = state.worldMaps.find((entry) => entry.worldId === world.id);
+        const memberCount = snapshot?.characters?.length ?? conversation?.characterIds?.length ?? 0;
         const event = conversation?.activeEvent;
         const director = state.modelProfiles.find((profile) => profile.id === world.directorModelProfileId);
         const modelLabel = director?.name || "默认模型";
         const eventLabel = event
-          ? '<span class="world-card-event ' + escapeHtml(event.status) + '">' +
+          ? '<span class="world-card-event ' + escapeHtml(event.status) + '"><i data-lucide="' +
+              (event.status === "planned" ? "calendar-clock" : "sparkles") + '" aria-hidden="true"></i>' +
               escapeHtml((event.status === "planned" ? "待开始" : "进行中") + " · " + event.title) + '</span>'
-          : '<span>当前无进行中的事件</span>';
-        return '<button class="character-card world-card" type="button" data-world-card-id="' + escapeHtml(world.id) + '">' +
-          '<span class="character-card-avatar">' + worldAvatarCluster(conversation) + '</span>' +
-          '<span class="character-card-copy"><strong>' + escapeHtml(world.name) + '</strong>' +
-            '<span>' + memberCount + ' 位角色 · ' + escapeHtml(modelLabel) + '</span>' + eventLabel + '</span>' +
-        '</button>';
+          : '<span class="world-card-event quiet"><i data-lucide="circle" aria-hidden="true"></i>当前无进行中的事件</span>';
+        return '<article class="world-card world-map-card" data-world-card-id="' + escapeHtml(world.id) +
+          '" aria-label="' + escapeHtml(world.name + '的位置地图') + '">' +
+          '<span class="world-map-card-head"><span class="world-map-title"><span class="world-map-kicker">' +
+            '<i data-lucide="orbit" aria-hidden="true"></i>共享世界</span><strong>' + escapeHtml(world.name) + '</strong>' +
+            '<span>' + (snapshot?.places?.length || 0) + ' 个地点 · ' + memberCount + ' 位角色 · ' + escapeHtml(modelLabel) + '</span></span>' +
+            '<span class="world-map-card-actions"><span class="character-card-avatar world-map-avatar">' +
+              worldAvatarCluster(snapshot ? { characterIds: snapshot.characters.map((entry) => entry.characterId) } : conversation) + '</span>' +
+              '<button class="secondary world-map-manage" type="button" data-world-map-manage="' + escapeHtml(world.id) + '"><i data-lucide="sliders-horizontal" aria-hidden="true"></i><span>管理世界</span></button></span></span>' +
+          renderWorldMap(conversation, snapshot) +
+          '<span class="world-map-card-foot">' + eventLabel +
+            '<span class="world-map-hint">点击地点看近况 · 点击头像看角色</span></span>' +
+        '</article>';
       }).join("");
+      const active = document.activeElement;
+      const focusKey = nodes.worldCardGrid.contains(active)
+        ? ["worldMapSelect", "worldMapCharacterId", "worldMapManage"].find((key) => active.dataset[key]) : null;
+      const focusedWorld = active.closest("[data-world-card-id]")?.dataset.worldCardId;
+      const focusValue = focusKey ? active.dataset[focusKey] : null;
       nodes.worldCardGrid.innerHTML = cards;
       nodes.worldListEmpty.hidden = state.worlds.length > 0;
       refreshIcons();
+      if (focusKey) [...nodes.worldCardGrid.querySelectorAll("button")].find((button) =>
+        button.dataset[focusKey] === focusValue && button.closest("[data-world-card-id]")?.dataset.worldCardId === focusedWorld
+      )?.focus({ preventScroll: true });
     }
 
     function selectWorldCard(event) {
-      const card = event.target.closest("button[data-world-card-id]");
+      const card = event.target.closest("[data-world-card-id]");
       if (!card) return;
-      void openWorldManager(card.dataset.worldCardId || "");
+      const character = event.target.closest("[data-world-map-character-id]");
+      if (character) { void openCharacterProfile(character.dataset.worldMapCharacterId); return; }
+      const place = event.target.closest("[data-world-map-select]");
+      if (place) {
+        const worldId = card.dataset.worldCardId;
+        const placeId = place.dataset.worldMapSelect;
+        if (state.worldMapSelections.get(worldId) === placeId) state.worldMapSelections.delete(worldId);
+        else state.worldMapSelections.set(worldId, placeId);
+        renderWorldCards();
+        return;
+      }
+      if (event.target.closest("[data-world-map-manage]")) void openWorldManager(card.dataset.worldCardId || "");
     }
 
     function revealCharacterDetailWhenNeeded() {
@@ -12654,6 +12802,7 @@ export function renderAppHtml(): string {
       renderCharacterAvatarPreview();
       updateCharacterSoulCount();
       nodes.saveCharacterBtn.textContent = "保存角色";
+      nodes.deleteCharacterBtn.hidden = false;
       nodes.characterFunctionTabBtn.disabled = false;
       nodes.characterMemoryTabBtn.disabled = false;
       nodes.characterRelationshipTabBtn.disabled = false;
@@ -12693,6 +12842,7 @@ export function renderAppHtml(): string {
       nodes.characterDetail.hidden = false;
       nodes.characterDetailTitle.textContent = "新角色";
       nodes.saveCharacterBtn.textContent = "创建角色";
+      nodes.deleteCharacterBtn.hidden = true;
       nodes.characterState.textContent = "";
       nodes.memoryState.textContent = "";
       nodes.characterFunctionState.textContent = "";
@@ -12706,6 +12856,60 @@ export function renderAppHtml(): string {
       setCharacterTab("settings");
       revealCharacterDetailWhenNeeded();
       nodes.characterName.focus({ preventScroll: true });
+    }
+
+    async function deleteWorkspaceCharacter() {
+      const character = state.characters.find(entry => entry.id === state.workspaceCharacterId);
+      if (!character) return;
+      await openActionDialog({
+        title: "删除角色 · " + character.name,
+        description: "将从当前数据中删除该角色的设定、头像、普通及私密会话、专属记忆、日记、关系、日程和角色 Skill，并移出世界与群聊。其他角色、共享聊天记录、用户事实、工作区文件、已有备份与记忆版本历史会保留。此操作不能在角色页撤销。请输入角色名称“" + character.name + "”确认。",
+        fieldLabel: "输入角色名称确认",
+        value: "",
+        confirmLabel: "确认删除角色",
+        validate: value => value === character.name ? "" : "角色名称不匹配，未删除。",
+        onConfirm: async value => {
+          const response = await controlPlaneFetch("/api/v1/characters/" + encodeURIComponent(character.id), {
+            method: "DELETE",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify({ confirmation: value })
+          });
+          const body = await response.json();
+          if (!response.ok) throw new Error(body.error || "删除角色失败");
+          const activeDeleted = (body.deletedSessionIds || []).includes(state.activeSessionId) ||
+            (state.activeConversationKind === "direct" && state.selectedCharacterId === character.id);
+          // Invalidate pending reads before clearing the removed owner's private view.
+          if (activeDeleted) {
+            ++state.conversationSpaceEpoch;
+            clearConversationSpaceTransientState();
+            state.conversationSpace = "normal";
+          }
+          if (state.selectedCharacterId === character.id) state.selectedCharacterId = "";
+          state.characters = state.characters.filter(entry => entry.id !== character.id);
+          state.sessions = state.sessions.filter(entry => entry.characterId !== character.id);
+          state.archivedSessions = state.archivedSessions.filter(entry => entry.characterId !== character.id);
+          state.workspaceCharacterId = "";
+          characterDiaryRequest++;
+          nodes.characterProfileDialog.close();
+          nodes.characterProfileDialog.dataset.characterId = "";
+          resetCharacterForm();
+          hideCharacterDetail();
+          updatePrivateModeChrome();
+          updateWorkspaceManagerAvailability();
+          renderCharacterOptions();
+          try {
+            await loadCharacters();
+            await refreshGroupChatList();
+            if (activeDeleted) await loadSessions();
+            else await refreshConversationMetadata();
+            await loadScheduleItems();
+            renderWorldCards();
+            setStatus("角色“" + character.name + "”已删除");
+          } catch {
+            setStatus("角色已删除，部分列表刷新失败，请刷新页面", true);
+          }
+        }
+      });
     }
 
     function hideCharacterDetail() {
@@ -13589,10 +13793,11 @@ export function renderAppHtml(): string {
     }
 
     async function loadWorlds() {
-      const response = await fetch("/api/v1/worlds");
+      const response = await fetch("/api/v1/worlds?includeMap=1");
       const body = await response.json();
       if (!response.ok) throw new Error(body.error || "世界加载失败");
       state.worlds = Array.isArray(body.worlds) ? body.worlds : [];
+      state.worldMaps = Array.isArray(body.maps) ? body.maps : [];
       renderWorldOptions();
       return state.worlds;
     }
@@ -13787,6 +13992,7 @@ export function renderAppHtml(): string {
         const body = await response.json();
         if (!response.ok) throw new Error(body.error || "世界归属保存失败");
         state.characterLife = body.life;
+        await loadWorlds();
         nodes.characterLifeState.textContent = nodes.characterWorldSelect.value ? "已加入世界" : "已离开世界";
         renderCharacterLife();
       } catch (error) {
@@ -13821,6 +14027,7 @@ export function renderAppHtml(): string {
         const body = await response.json();
         if (!response.ok) throw new Error(body.error || "生活设置保存失败");
         state.characterLife = body.life;
+        await loadWorlds();
         nodes.characterLifeState.textContent = "已保存";
         renderCharacterLife();
       } catch (error) {
@@ -14065,6 +14272,7 @@ export function renderAppHtml(): string {
         if (!response.ok) throw new Error(body.error || "世界保存失败");
         state.worldEditorId = body.world.id;
         await refreshWorldConversationList();
+        await loadWorlds();
         await loadWorldEditor(body.world.id);
         nodes.worldManagerState.textContent = editing ? "已保存" : "已创建";
       } catch (error) {
@@ -14285,6 +14493,7 @@ export function renderAppHtml(): string {
         const body = await response.json();
         if (!response.ok) throw new Error(body.error || "地点保存失败");
         await loadWorldEditor(state.worldEditorId);
+        await loadWorlds();
         nodes.worldManagerState.textContent = editing ? "地点已更新" : "地点已添加";
       } catch (error) {
         nodes.worldManagerState.textContent = error.message || String(error);
@@ -14323,7 +14532,10 @@ export function renderAppHtml(): string {
           if (!response.ok) throw new Error(body.error || "地点删除失败");
         }
       });
-      if (deleted) await loadWorldEditor(state.worldEditorId);
+      if (deleted) {
+        await loadWorldEditor(state.worldEditorId);
+        await loadWorlds();
+      }
     }
 
     async function loadRelationship() {

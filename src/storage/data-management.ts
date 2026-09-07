@@ -40,6 +40,40 @@ export class DataManagementRepository {
     });
   }
 
+  deleteCharacter(characterId: string, sessionIds: string[], now: string): void {
+    for (const sessionId of sessionIds) this.deleteSessionObservability(sessionId);
+    this.database.transaction(() => {
+      const connection = this.database.connection;
+      for (const sessionId of sessionIds) {
+        connection.prepare("DELETE FROM pending_real_mutations WHERE session_id = ?").run(sessionId);
+      }
+      connection.prepare(`UPDATE world_narrative_contexts
+        SET status = 'closed', close_reason = 'character_deleted', closed_at = ?, updated_at = ?
+        WHERE status = 'active' AND EXISTS (
+          SELECT 1 FROM json_each(participant_ids_json) WHERE value = ?
+        )`).run(now, now, characterId);
+      connection.prepare(`UPDATE world_story_events SET revision = revision + 1,
+        status = CASE WHEN status IN ('planned', 'active') AND (
+          meeting_session_id IN (SELECT app_session_id FROM role_sessions WHERE character_id = ?)
+          OR NOT EXISTS (SELECT 1 FROM world_story_event_participants p WHERE p.event_id = world_story_events.id AND p.character_id <> ?)
+          ) THEN 'cancelled' ELSE status END,
+        updated_at = ?
+        WHERE id IN (
+          SELECT event_id FROM world_story_event_participants WHERE character_id = ?
+        )`).run(characterId, characterId, now, characterId);
+      connection.prepare(`UPDATE world_story_events SET ended_at = COALESCE(ended_at, ?)
+        WHERE status = 'cancelled' AND id IN (
+          SELECT event_id FROM world_story_event_participants WHERE character_id = ?
+        )`).run(now, characterId);
+      // Most character-owned rows cascade. Membership intentionally uses RESTRICT;
+      // removing only this membership keeps the group and its shared messages intact.
+      connection.prepare("DELETE FROM group_chat_members WHERE character_id = ?").run(characterId);
+      connection.prepare("DELETE FROM memory_extraction_jobs WHERE character_id = ?").run(characterId);
+      connection.prepare("DELETE FROM im_inbound_events WHERE character_id = ?").run(characterId);
+      connection.prepare("DELETE FROM characters WHERE id = ?").run(characterId);
+    });
+  }
+
   deleteAllUserData(): void {
     this.database.transaction(() => {
       this.database.connection.exec(`

@@ -37,6 +37,8 @@ export class ImIntegrationService {
   private readonly inFlightIngress = new Set<Promise<unknown>>();
   private ingressPaused = false;
 
+  get isBusy(): boolean { return this.inFlightIngress.size > 0 || this.providerOperations.size > 0; }
+
   constructor(
     readonly repository: ImRepository,
     readonly gateway: ImGateway,

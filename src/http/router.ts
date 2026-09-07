@@ -29,6 +29,7 @@ import {
   InteractionValidationError,
   PrivateInboxMutationError,
   ControlPlaneBusyError,
+  CharacterDeletionConfirmationError,
   ModelApiConfigValidationError,
   IncognitoConversationNotFoundError,
   IncognitoOperationUnsupportedError,
@@ -230,6 +231,8 @@ export function createHttpServer(options: HttpServerOptions = {}) {
         sendJson(response, error.status, { code: error.code, error: error.message });
       } else if (error instanceof ControlPlaneBusyError) {
         sendJson(response, 409, { code: error.code, error: error.message });
+      } else if (error instanceof CharacterDeletionConfirmationError) {
+        sendJson(response, 400, { code: error.code, error: error.message });
       } else if (error instanceof AgentSkillInstallerError) {
         sendJson(response, agentSkillInstallerHttpStatus(error.code), {
           code: error.code,
@@ -2219,8 +2222,12 @@ async function route(input: {
 
   if (pathname === "/api/v1/worlds") {
     if (method === "GET") {
+      const includeArchived = url.searchParams.get("includeArchived") === "1";
       sendJson(input.response, 200, {
-        worlds: kernel.listWorlds(url.searchParams.get("includeArchived") === "1"),
+        worlds: kernel.listWorlds(includeArchived),
+        ...(url.searchParams.get("includeMap") === "1"
+          ? { maps: kernel.listWorldMapSnapshots(includeArchived) }
+          : {}),
       });
       return;
     }
@@ -3447,6 +3454,12 @@ async function route(input: {
   const characterMatch = pathname.match(/^\/api\/v1\/characters\/([^/]+)$/);
   if (characterMatch) {
     const id = decodeURIComponent(characterMatch[1]);
+    if (method === "DELETE") {
+      assertLocalControlPlaneMutation(input.request);
+      const body = asRecord(await readJson(input.request));
+      sendJson(input.response, 200, kernel.deleteCharacter(id, requiredString(body.confirmation, "confirmation")));
+      return;
+    }
     if (method === "GET") {
       sendJson(input.response, 200, { character: withCharacterAvatar(kernel, kernel.getCharacter(id)) });
       return;

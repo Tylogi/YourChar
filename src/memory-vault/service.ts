@@ -471,6 +471,33 @@ export class MemoryVaultService {
     });
   }
 
+  /** Remove current character-owned documents; shared user facts and version history remain. */
+  deleteCharacter(characterId: string): number {
+    this.syncIfChanged();
+    const documents = this.store.list();
+    const removed = new Set(documents.filter(document =>
+      document.metadata.characterId === characterId || document.metadata.secretOwnerCharacterId === characterId
+    ).map(document => document.metadata.id));
+    return this.atomicMutation("character_delete", `character:${characterId}:delete:${this.now()}`, () => {
+      for (const id of removed) this.store.remove(id);
+      for (const document of documents) {
+        if (removed.has(document.metadata.id)) continue;
+        const metadata = document.metadata;
+        if (!metadata.visibleToCharacterIds.includes(characterId) && !removed.has(metadata.supersedes ?? "")) continue;
+        this.store.write({
+          body: document.body,
+          metadata: {
+            ...stripGenerated(metadata),
+            visibleToCharacterIds: metadata.visibleToCharacterIds.filter(id => id !== characterId),
+            supersedes: removed.has(metadata.supersedes ?? "") ? null : metadata.supersedes,
+          },
+        }, this.casForWrite(document, metadata));
+      }
+      this.rebuildDocuments(this.store.list());
+      return removed.size;
+    });
+  }
+
   clearSouls(): void {
     const ids = this.store.getByKind("character_soul").map((document) => document.metadata.id);
     if (!ids.length) return;

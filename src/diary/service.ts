@@ -17,6 +17,8 @@ export class CharacterDiaryService {
   private disposed = false;
   private stopped = false;
 
+  get isBusy(): boolean { return Boolean(this.running); }
+
   constructor(
     private readonly database: AppDatabase,
     private readonly clock: Clock,

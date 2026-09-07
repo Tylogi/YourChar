@@ -237,6 +237,116 @@ export const socialThemeCss = `
     .character-card-avatar { border-radius: 8px; }
     .character-card-copy strong { font-size: 16px; font-weight: 500; }
     .character-card-copy span { font-size: 13px; color: var(--sub); line-height: 1.5; }
+    .world-card-grid { grid-template-columns: minmax(0, 1fr); gap: 22px; }
+    #deleteCharacterBtn { margin-left: auto; background: transparent; border-color: var(--line); color: var(--danger); }
+    #deleteCharacterBtn:hover:not(:disabled) { background: var(--danger-surface); }
+    .world-map-card {
+      container-type: inline-size; width: 100%; min-width: 0; padding: 22px; display: flex; flex-direction: column;
+      align-items: stretch; gap: 18px; border: 1px solid var(--line); border-radius: 14px;
+      background: var(--panel); color: var(--text); text-align: left;
+    }
+    .world-map-card-head { min-width: 0; display: flex; align-items: center; justify-content: space-between; gap: 14px; }
+    .world-map-title { min-width: 0; display: grid; gap: 5px; }
+    .world-map-title > strong { overflow-wrap: anywhere; color: var(--text); font-size: 21px; font-weight: 600; }
+    .world-map-title > span:last-child { color: var(--muted); font-size: 12px; }
+    .world-map-kicker { display: flex; align-items: center; gap: 6px; color: var(--muted); font-size: 11px; }
+    .world-map-kicker svg { width: 13px; height: 13px; }
+    .world-map-card-actions { display: flex; flex: 0 0 auto; align-items: center; gap: 14px; }
+    .world-card .world-map-avatar { width: 36px; height: 36px; flex: 0 0 36px; padding: 0; border-radius: 8px; }
+    .world-map-stage {
+      position: relative; isolation: isolate; min-width: 0; overflow: hidden; border-radius: 12px;
+      background-color: var(--list); background-image: radial-gradient(var(--line) .75px, transparent .75px); background-size: 18px 18px;
+    }
+    .world-map-caption { position: absolute; top: 16px; left: 18px; display: flex; align-items: center; gap: 6px; color: var(--muted); font-size: 11px; }
+    .world-map-caption svg { width: 13px; height: 13px; }
+    .world-map-terrain { position: absolute; inset: 0; width: 100%; height: 100%; z-index: -1; pointer-events: none; }
+    .world-map-terrain path { fill: none; stroke: var(--panel); stroke-width: 15; }
+    .world-map-terrain ellipse { fill: none; stroke: var(--line); stroke-width: 1; stroke-dasharray: 3 7; opacity: .65; }
+    .world-map-locations { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); align-items: start; gap: 18px 24px; padding: 48px 30px 38px; }
+    .single-place .world-map-locations { grid-template-columns: minmax(0, 1fr); }
+    .world-map-place {
+      min-width: 0; min-height: 218px; padding-top: 20px; display: flex; flex-direction: column;
+      align-items: center; gap: 12px; color: var(--text);
+    }
+    .world-map-place:nth-child(3n + 2) { padding-top: 70px; }
+    .world-map-place:nth-child(3n) { padding-top: 36px; }
+    .world-map-place-trigger {
+      max-width: 100%; padding: 9px 13px; display: grid; gap: 5px; border: 1px solid var(--line); border-radius: 10px;
+      background: var(--panel); color: var(--text); cursor: pointer; box-shadow: 0 2px 5px #00000006;
+    }
+    .world-map-place-trigger:hover { border-color: var(--sub); }
+    .world-map-place.selected .world-map-place-trigger { border-color: var(--green-ink); box-shadow: 0 0 0 1px var(--green-ink); }
+    .world-map-place-head { min-width: 0; display: flex; align-items: center; justify-content: center; gap: 6px; }
+    .world-map-place-head > strong { min-width: 0; overflow-wrap: anywhere; font-size: 13px; font-weight: 500; }
+    .world-map-place-head > svg { width: 15px; height: 15px; flex: 0 0 auto; color: var(--sub); }
+    .world-map-place-caption { display: flex; justify-content: center; align-items: center; flex-wrap: wrap; gap: 4px; color: var(--muted); font-size: 11px; }
+    .world-map-place.has-event.active .world-map-place-caption { color: var(--status-ok); }
+    .world-map-place.has-event.planned .world-map-place-caption { color: var(--warning); }
+    .world-map-event-dot { width: 5px; height: 5px; border-radius: 50%; background: currentColor; }
+    .world-map-landmark { width: 64px; height: 69px; display: grid; place-items: center; color: var(--muted); }
+    .world-map-landmark svg { width: 32px; height: 32px; stroke-width: 1.1; }
+    .world-map-anchor { position: relative; width: 8px; height: 8px; border: 2px solid var(--panel); border-radius: 50%; background: var(--muted); box-shadow: 0 0 0 1px var(--line); }
+    .world-map-anchor::before { content: ""; position: absolute; left: 1px; bottom: 8px; height: 8px; border-left: 1px solid var(--line); }
+    .world-map-place.has-event.active .world-map-anchor { background: var(--status-ok); }
+    .world-map-residents { min-width: 0; width: 100%; display: flex; justify-content: center; flex-wrap: wrap; gap: 8px; }
+    .world-map-person {
+      min-width: 0; width: 58px; padding: 3px 2px; display: flex; flex-direction: column; align-items: center;
+      gap: 6px; border: 0; border-radius: 10px; background: transparent; color: var(--text); cursor: pointer;
+    }
+    .world-map-person:hover { background: var(--hover); }
+    .world-map-person-avatar {
+      position: relative; flex: 0 0 auto; width: 44px; height: 44px; display: grid; place-items: center;
+      border: 3px solid var(--panel); border-radius: 13px; background: var(--selected); color: var(--sub);
+      font-size: 16px; font-weight: 500; box-shadow: 0 3px 8px #00000012;
+    }
+    .world-map-person-avatar img { width: 100%; height: 100%; object-fit: cover; border-radius: 9px; }
+    .world-map-person-copy { min-width: 0; max-width: 100%; display: grid; gap: 3px; }
+    .world-map-person-copy > strong,
+    .world-map-person-copy > small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .world-map-person-copy > strong { color: var(--text); font-size: 12px; font-weight: 500; }
+    .world-map-person-copy > small { display: none; color: var(--muted); font-size: 12px; }
+    .world-map-status-dot { position: absolute; right: -4px; bottom: -3px; width: 10px; height: 10px; border: 2px solid var(--panel); border-radius: 50%; background: var(--status-ok); }
+    .world-map-person.availability-busy .world-map-status-dot { background: var(--text); }
+    .world-map-person.availability-resting .world-map-status-dot { background: var(--muted); }
+    .world-map-person.availability-traveling .world-map-status-dot { background: var(--warning); }
+    .world-map-offsite-list { display: grid; gap: 12px; }
+    .world-map-offsite { min-width: 0; display: flex; align-items: center; gap: 18px; }
+    .world-map-offsite-label { display: flex; flex: 0 0 80px; align-items: center; gap: 6px; color: var(--muted); font-size: 12px; }
+    .world-map-offsite-label svg { width: 14px; height: 14px; }
+    .world-map-offsite-people, .world-map-detail-people { min-width: 0; flex: 1; display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: 8px; }
+    .world-map-person.detail { width: 100%; flex-direction: row; padding: 6px; gap: 10px; text-align: left; }
+    .world-map-person.detail .world-map-person-avatar { width: 36px; height: 36px; border-width: 0; border-radius: 9px; box-shadow: none; }
+    .world-map-person.detail .world-map-person-copy > small { display: block; white-space: normal; overflow-wrap: anywhere; }
+    .world-map-detail { padding: 16px; border: 1px solid var(--line); border-radius: 10px; background: var(--list); }
+    .world-map-detail-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+    .world-map-detail-head > strong { overflow-wrap: anywhere; font-size: 14px; }
+    .world-map-detail p { margin: 8px 0 12px; color: var(--sub); font-size: 13px; line-height: 1.7; overflow-wrap: anywhere; }
+    .world-map-empty {
+      grid-column: 1 / -1; min-height: 170px; display: grid; place-content: center;
+      justify-items: center; gap: 8px; color: var(--muted); text-align: center;
+    }
+    .world-map-empty svg { width: 32px; height: 32px; margin-bottom: 4px; stroke-width: 1.25; }
+    .world-map-empty strong { color: var(--sub); font-size: 14px; font-weight: 500; }
+    .world-map-empty small { font-size: 12px; }
+    .world-map-card-foot { min-width: 0; display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px 16px; padding-top: 14px; border-top: 1px solid var(--line); }
+    .world-card-event { min-width: 0; display: flex; align-items: center; gap: 6px; color: var(--status-ok) !important; font-size: 12px; overflow-wrap: anywhere; }
+    .world-card-event.planned { color: var(--warning) !important; }
+    .world-card-event.quiet { color: var(--muted) !important; }
+    .world-card-event svg { width: 12px; height: 12px; flex: 0 0 auto; }
+    .world-map-hint { color: var(--muted); font-size: 11px; }
+    @container (max-width: 680px) {
+      .world-map-locations { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px 10px; padding: 44px 10px 26px; }
+      .world-map-place { min-height: 185px; }
+      .world-map-place:nth-child(n) { padding-top: 15px; }
+      .world-map-place:nth-child(2n) { padding-top: 45px; }
+      .world-map-card-actions .world-map-avatar { display: none; }
+      .world-map-person { width: 50px; }
+      .world-map-residents { gap: 3px; }
+      .world-map-place-trigger { padding: 8px; }
+      .world-map-offsite { gap: 10px; }
+      .world-map-offsite-label { flex-basis: 74px; }
+      .world-map-offsite-people { grid-template-columns: minmax(0, 1fr); }
+    }
     .character-profile-identity { background: var(--list); }
     .character-profile-avatar { border-radius: 12px; box-shadow: none; }
     .character-profile-name h3 { font-size: 22px; font-weight: 600; }
@@ -400,6 +510,10 @@ export const socialThemeCss = `
       .schedule-owner-head { padding-bottom: 14px; }
     }
     @media (max-width: 600px) {
+      .world-card-grid { grid-template-columns: minmax(0, 1fr); }
+      .world-map-card { padding: 14px; gap: 14px; }
+      .world-map-title > strong { font-size: 19px; }
+      .world-map-manage { padding-inline: 8px; }
       .character-channel-episode-head { grid-template-columns: auto minmax(0, 1fr); }
       .character-channel-episode-status { grid-column: 1 / -1; }
       .settings-tabs { grid-template-columns: repeat(4, minmax(0, 1fr)); }

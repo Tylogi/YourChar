@@ -57,6 +57,10 @@ export class CharacterInteractionCoordinator {
   private executionProcessing?: Promise<void>;
   private reportProcessing?: Promise<void>;
 
+  get isBusy(): boolean {
+    return Boolean(this.executionProcessing || this.reportProcessing || this.channelQueues.size || this.activeControllers.size);
+  }
+
   constructor(
     readonly channels: CharacterChannelService,
     readonly capabilities: CharacterCapabilityService,

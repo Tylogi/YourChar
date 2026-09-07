@@ -74,6 +74,8 @@ export class CharacterTaskRoutingError extends Error {
 export class CharacterCapabilityService {
   private readonly ownedSkillJobs = new Map<string, Promise<CharacterOwnedSkillProposal | CharacterOwnedSkillPackage | undefined>>();
   private readonly controllers = new Set<AbortController>();
+
+  get isBusy(): boolean { return this.ownedSkillJobs.size > 0 || this.controllers.size > 0; }
   private skillTail: Promise<unknown> = Promise.resolve();
   private disposed = false;
 

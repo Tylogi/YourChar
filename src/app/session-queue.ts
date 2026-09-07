@@ -1,6 +1,8 @@
 export class SessionExecutionQueue {
   private readonly tails = new Map<string, Promise<void>>();
 
+  get isBusy(): boolean { return this.tails.size > 0; }
+
   async run<T>(sessionId: string, task: () => Promise<T>): Promise<T> {
     const previous = this.tails.get(sessionId) ?? Promise.resolve();
     const result = previous.catch(() => undefined).then(task);
