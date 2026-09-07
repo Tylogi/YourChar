@@ -1,3 +1,4 @@
+import { historyQuery, historyText, historyMessagePayload, pageEntries, searchQuery, snippet, type HistoryQuery, type HistoryPage, type HistorySearch } from "../history/pagination.js";
 import {
   chmodSync,
   closeSync,
@@ -1055,6 +1056,42 @@ export class PiSessionRuntime {
         latestUser: entry.id === latestUserId,
       } as unknown as ConversationTranscriptMessage;
     });
+  }
+
+  async getMessageHistory(sessionId: string, input: HistoryQuery, search?: string): Promise<HistoryPage<ConversationTranscriptMessage> | HistorySearch> {
+    const query = historyQuery(input);
+    const q = search === undefined ? undefined : searchQuery(search);
+    const id = normalizeSessionId(sessionId);
+    const metadata = this.metadata.get(id);
+    if (!metadata) return q === undefined ? pageEntries([], () => "", query) : { results: [], next: null };
+    const handle = await this.getOrCreate(id, metadata.mode, metadata.characterId);
+    const entries = handle.sessionManager.getBranch().filter(entry => entry.type === "message");
+    const visible = entries.filter(entry => !(entry.message.role === "custom" && entry.message.display === false));
+    if (q !== undefined) {
+      if (query.before) pageEntries(visible, entry => entry.id, { before: query.before, limit: 1 });
+      const end = query.before ? visible.findIndex(entry => entry.id === query.before) : visible.length;
+      const results = [];
+      for (let index = end - 1; index >= 0 && results.length <= query.limit; index--) {
+        const entry = visible[index];
+        if (!["user", "assistant", "custom"].includes(entry.message.role)) continue;
+        const text = historyText(entry.message);
+        if (!text.toLowerCase().includes(q.toLowerCase())) continue;
+        results.push({ id: entry.id, role: entry.message.role, snippet: snippet(text, q), timestamp: entry.message.timestamp });
+      }
+      return { results: results.slice(0, query.limit), next: results.length > query.limit ? results[query.limit - 1].id : null };
+    }
+    const selected = pageEntries(visible, entry => entry.id, query);
+    const selectedIds = new Set(selected.messages.map(entry => entry.id));
+    // Inspect lightweight markers, but only resolve attachments belonging to this page.
+    const attachments = workspaceAttachmentsByTarget(entries.filter(entry => selectedIds.has(entry.id) ||
+      selectedIds.has(workspaceAttachmentMarkerDetails(entry.message)?.targetAssistantEntryId ?? ""))
+      .map(entry => ({ entryId: entry.id, message: entry.message })), paths => this.resolveWorkspaceAttachments(handle.workspace.files, paths));
+    const latestUserId = [...visible].reverse().find(entry => entry.message.role === "user")?.id;
+    return { page: selected.page, messages: selected.messages.map(entry => ({ ...historyMessagePayload(entry.message),
+      // Images are served through scoped attachment URLs, never repeated base64/model thinking blobs.
+      ...(attachments.has(entry.id) ? { attachments: attachments.get(entry.id) } : {}),
+      entryId: entry.id, latestUser: entry.id === latestUserId,
+    } as ConversationTranscriptMessage)) };
   }
 
   async branchBeforeLatestUser(sessionId: string, entryId: string): Promise<PiSessionHandle> {

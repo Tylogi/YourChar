@@ -15,16 +15,20 @@ export const socialThemeCss = `
       --sub: #616161;
       --hover: #ebebeb;
       --selected: #e6e6e6;
-      --primary: #07c160;
-      --primary-strong: #06ae56;
-      --primary-ink: #063d1d;
-      --green-ink: #087b36;
-      --user: #95ec69;
-      --user-ink: #142510;
+      --primary: #1a1a1a;
+      --primary-strong: #333333;
+      --primary-ink: #ffffff;
+      --green-ink: #262626;
+      --user: #242424;
+      --user-ink: #f7f7f7;
       --assistant: #ffffff;
       --tool: #f7f7f7;
       --event: #ffffff;
       --danger: #c84040;
+      --warning: #8b6416;
+      --status-ok: #26834c;
+      --danger-surface: #fff1f0;
+      --warning-surface: #fff8e8;
       --shadow: none;
       --font-ui: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI Variable", "Segoe UI", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei UI", "Microsoft YaHei", "Noto Sans CJK SC", sans-serif, "Apple Color Emoji", "Segoe UI Emoji", "Noto Color Emoji", "Noto Emoji";
     }
@@ -57,17 +61,21 @@ export const socialThemeCss = `
     .header-right { background: var(--bg); border-color: var(--line); }
     .conversation-title-line strong { color: var(--text); font-size: 17px; font-weight: 600; }
     .conversation-mode-badge, .conversation-heading .conversation-scene { color: var(--sub); font-size: 12px; }
-    .conversation-mode-badge::before { background: var(--green-ink); }
+    .conversation-mode-badge::before { background: var(--status-ok); }
     .conversation-header-avatar { flex-basis: 40px; width: 40px; height: 40px; border-radius: 8px; background: var(--selected); color: var(--sub); border: 0; }
     button.conversation-header-avatar:not(:disabled):hover { box-shadow: none; }
     .conversation-header-actions > .icon-button, .mobile-session-actions > .icon-button { background: transparent; border-color: transparent; color: var(--sub); }
-    .conversation-header-actions > .context-budget-button { font-family: var(--font-ui); font-size: 12px; }
-    .context-budget-button:not([data-level="warning"]):not([data-level="critical"]) svg { color: var(--sub); }
+    .context-budget-button .context-budget-ring { display: block; width: 18px; height: 18px; flex: 0 0 auto; transform: rotate(-90deg); }
+    .context-budget-ring-track { stroke: var(--line); }
+    .context-budget-ring-value { stroke: var(--sub); transition: stroke-dasharray 180ms ease, stroke 180ms ease; }
+    .context-budget-button[data-level="warning"] .context-budget-ring-value { stroke: var(--warning); }
+    .context-budget-button[data-level="critical"] .context-budget-ring-value { stroke: var(--danger); }
+    @media (prefers-reduced-motion: reduce) { .context-budget-ring-value { transition: none; } }
     footer { background: var(--list) !important; border-top-color: var(--line) !important; }
     footer .status { color: var(--sub); }
 
-    .primary { background: var(--text); color: var(--panel); border-color: transparent; font-size: 14px; font-weight: 500; box-shadow: none; }
-    .primary:hover:not(:disabled) { background: #333333; }
+    .primary { background: var(--primary); color: var(--primary-ink); border-color: transparent; font-size: 14px; font-weight: 500; box-shadow: none; }
+    .primary:hover:not(:disabled) { background: var(--primary-strong); }
     .primary:disabled { background: var(--selected); color: var(--sub); opacity: 1; }
     .secondary { background: var(--panel); border-color: var(--line); color: var(--sub); font-size: 13px; box-shadow: none; }
     .secondary:hover:not(:disabled) { background: var(--hover); border-color: #cccccc; color: var(--text); }
@@ -193,12 +201,33 @@ export const socialThemeCss = `
     .composer textarea { font-size: 16px; line-height: 1.6; color: var(--text); }
     .composer .secondary { background: transparent; border-color: transparent; color: var(--sub); }
     .composer .secondary:hover:not(:disabled) { background: var(--hover); }
-    .composer .primary { background: var(--text); color: var(--panel); font-size: 14px; font-weight: 500; }
-    .composer .primary:hover:not(:disabled) { background: #333333; }
+    .composer .primary { background: var(--primary); color: var(--primary-ink); font-size: 14px; font-weight: 500; }
+    .composer .primary:hover:not(:disabled) { background: var(--primary-strong); }
     .composer .primary:disabled { background: var(--selected); color: var(--sub); opacity: 1; }
     .emoji-category-button.active { background: var(--selected); color: var(--green-ink); }
 
     /* Apply the same material language to supporting workspaces and profiles. */
+    .history-load-row { display: flex; justify-content: center; padding: 4px 0; }
+    .history-load-row button { font-size: 12px; min-height: 32px; }
+    .history-position-bar { grid-column: 1 / -1; display: flex; align-items: center; justify-content: space-between; gap: 12px; font-size: 12px; color: var(--sub); }
+    .history-position-bar[hidden] { display: none; }
+    .history-position-bar button { font-size: 13px; padding: 4px 0; }
+    .history-focus { outline: 2px solid var(--green-ink); outline-offset: 5px; border-radius: 8px; scroll-margin-block: 30px; }
+    .history-search-dialog { width: min(600px, calc(100vw - 28px)); max-height: min(760px, calc(100dvh - 28px)); border-color: var(--line); border-radius: 10px; }
+    .history-search-dialog[open] { display: flex; flex-direction: column; }
+    .history-search-dialog .schedule-editor-head { flex: 0 0 auto; min-width: 0; }
+    .history-search-dialog h3 { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .history-search-form { display: flex; gap: 10px; padding: 16px 18px 0; }
+    .history-search-form input { flex: 1; width: 0; min-width: 0; font-family: var(--font-ui); font-size: 16px; }
+    .history-search-form button { flex: 0 0 auto; width: auto; }
+    #historySearchStatus { margin: 12px 18px; font-size: 12px; }
+    .history-search-results { min-height: 0; overflow: auto; padding: 0 12px; overscroll-behavior: contain; }
+    .history-search-result { display: block; width: 100%; padding: 14px 8px; border: 0; border-bottom: 1px solid var(--line); background: transparent; text-align: left; color: var(--text); }
+    .history-search-result:hover { background: var(--list); }
+    .history-search-result > span { color: var(--muted); font-size: 12px; }
+    .history-search-result p { margin: 8px 0 0; font-size: 14px; line-height: 1.6; overflow-wrap: anywhere; }
+    .history-search-result mark { background: var(--selected); color: var(--text); border-radius: 2px; }
+    #historySearchMoreBtn { flex: 0 0 auto; margin: 12px 18px 16px; }
     .settings-page { background: var(--bg); }
     .settings-shell, .management-panel, .calendar-panel, .schedule-agenda, .task-panel { border-color: var(--line); border-radius: 8px; box-shadow: none; }
     .schedule-title-group h2, .character-head h2, .management-head h2, .settings-shell h2 { font-size: 22px; font-weight: 600; }
@@ -306,7 +335,7 @@ export const socialThemeCss = `
     .calendar-day { min-height: 100px; border-color: var(--line); background: var(--panel); }
     .calendar-day.outside { background: var(--list); color: var(--muted); }
     .calendar-day:hover { background: var(--list); }
-    .calendar-day.selected { background: #f0f0f0; box-shadow: inset 0 0 0 2px var(--green-ink); }
+    .calendar-day.selected { background: var(--selected); box-shadow: inset 0 0 0 2px var(--green-ink); }
     .calendar-day:focus-visible { outline: 2px solid var(--green-ink); outline-offset: -3px; z-index: 1; }
     .calendar-day-number { width: 26px; height: 26px; font-size: 13px; font-variant-numeric: tabular-nums; }
     .calendar-day.today .calendar-day-number { background: var(--primary); color: var(--primary-ink); font-weight: 600; }

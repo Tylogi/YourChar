@@ -95,6 +95,15 @@ test("incognito inherits a stable transcript, supports meetings, and leaves pare
       jsonValue(await runtime.kernel.getConversationTranscript(incognito.id)),
       jsonValue(baseline),
     );
+    const inheritedHistory = await runtime.kernel.getMessageHistory(incognito.id, { limit: 1 });
+    assert.ok("messages" in inheritedHistory);
+    assert.equal(inheritedHistory.messages.length, 1);
+    const inheritedSearch = await runtime.kernel.getMessageHistory(incognito.id, {}, "持久基线");
+    assert.ok("results" in inheritedSearch);
+    assert.ok(inheritedSearch.results.length > 0);
+    const memorySearch = await runtime.kernel.getMessageHistory(incognito.id, {}, "MEMORY_INHERITANCE_SENTINEL");
+    assert.ok("results" in memorySearch);
+    assert.equal(memorySearch.results.length, 0, "chat search must not expose internal character memory");
     assert.equal(runtime.kernel.getConversationInteraction(incognito.id).state.presence, "co_present");
     assert.equal(
       runtime.kernel.getConversationInteraction(incognito.id).state.location,

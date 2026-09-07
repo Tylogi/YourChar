@@ -12,6 +12,7 @@ import {
 import type { Clock } from "../app/clock.js";
 import { SystemClock } from "../app/clock.js";
 import { CharacterDiaryService } from "../diary/service.js";
+import { sqlHistory, type HistoryQuery } from "../history/pagination.js";
 import { diaryMemoryText, diarySystemPrompt } from "../diary/prompts.js";
 import type { DiaryGenerator, DiarySource } from "../diary/types.js";
 import { SessionExecutionQueue } from "../app/session-queue.js";
@@ -1357,6 +1358,18 @@ export class CompanionKernel {
     }
     await this.executionQueue.whenIdle(sessionId);
     return this.sessionRuntime.getConversationTranscript(sessionId);
+  }
+
+  async getMessageHistory(sessionId: string, query: HistoryQuery, search?: string) {
+    this.assertKnownIncognitoSessionId(sessionId);
+    if (this.incognitoSessions?.has(sessionId)) return this.incognitoSessions.getMessageHistory(sessionId, query, search);
+    return this.sessionRuntime.getMessageHistory(sessionId, query, search);
+  }
+
+  getSharedMessageHistory(kind: "world" | "group", id: string, query: HistoryQuery, search?: string) {
+    if (kind === "world") this.worldService.getWorld(id);
+    else this.groupChatService.get(id);
+    return sqlHistory(this.database.connection, kind, id, query, search);
   }
 
   async editLatestUserMessage(sessionId: string, entryId: string, text: string): Promise<MessageResponse> {

@@ -1,5 +1,6 @@
 import type { AgentSessionEvent } from "@earendil-works/pi-coding-agent";
 import { createHash, randomUUID } from "node:crypto";
+import type { HistoryQuery, HistoryPage, HistorySearch } from "../history/pagination.js";
 import {
   chmodSync,
   copyFileSync,
@@ -96,6 +97,7 @@ type IncognitoChildKernel = {
   listConversationMetadata: () => ConversationMetadata[];
   getSession: (sessionId: string) => Promise<SessionRecord>;
   getConversationTranscript: (sessionId: string) => Promise<ConversationTranscriptMessage[]>;
+  getMessageHistory: (sessionId: string, query: HistoryQuery, search?: string) => Promise<HistoryPage<ConversationTranscriptMessage> | HistorySearch>;
   sendMessage: (sessionId: string, request: MessageRequest) => Promise<MessageResponse>;
   streamMessage: (
     sessionId: string,
@@ -340,6 +342,13 @@ export class IncognitoSessionManager {
     return this.trackOperation(entry, async () => remapSessionReferences(
       await entry.child.getConversationTranscript(entry.childSessionId),
       entry,
+    ));
+  }
+
+  async getMessageHistory(sessionId: string, query: HistoryQuery, search?: string) {
+    const entry = this.requireEntry(sessionId);
+    return this.trackOperation(entry, async () => remapSessionReferences(
+      await entry.child.getMessageHistory(entry.childSessionId, query, search), entry,
     ));
   }
 

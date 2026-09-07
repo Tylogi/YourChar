@@ -1,4 +1,7 @@
 import { socialThemeCss } from "./ui-social-theme.js";
+import { historyScript } from "./ui-history.js";
+import { appearanceBootstrap, appearanceScript } from "./ui-appearance.js";
+import { appearanceCss } from "./ui-appearance-theme.js";
 
 export function renderAppHtml(): string {
   return `<!doctype html>
@@ -7,6 +10,7 @@ export function renderAppHtml(): string {
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-content" />
   <meta name="theme-color" content="#f5f5f5" />
+  <script>${appearanceBootstrap}</script>
   <meta name="apple-mobile-web-app-capable" content="yes" />
   <meta name="apple-mobile-web-app-status-bar-style" content="default" />
   <meta name="apple-mobile-web-app-title" content="YourChar" />
@@ -4879,23 +4883,11 @@ export function renderAppHtml(): string {
     .conversation-header-actions > .icon-button,
     .mobile-session-actions > .icon-button { width: 34px; height: 34px; }
     .conversation-header-actions > .context-budget-button {
-      width: auto;
+      width: 34px;
       min-width: 34px;
-      padding: 0 9px;
-      gap: 6px;
-      color: #52615a;
-      font-size: 11px;
-      font-family: Arial, sans-serif;
-      font-variant-numeric: normal;
-      letter-spacing: 0;
-      white-space: nowrap;
+      padding: 0;
+      gap: 0;
     }
-    .context-budget-button svg { color: #239b61; }
-    .context-budget-button[data-level="warning"] { color: #8a5b08; background: #fff8e6; border-color: #ead6a4; }
-    .context-budget-button[data-level="warning"] svg { color: #b87800; }
-    .context-budget-button[data-level="critical"] { color: #a33838; background: #fff1f0; border-color: #eac2bf; }
-    .context-budget-button[data-level="critical"] svg { color: #c54848; }
-    .context-budget-percent { display: none; }
     .mobile-session-actions { position: relative; display: block; }
     .session-actions-desktop { display: none; }
     .conversation-list-head-actions { display: flex; align-items: center; gap: 5px; }
@@ -4980,9 +4972,6 @@ export function renderAppHtml(): string {
       .conversation-header-actions > .icon-button,
       .mobile-session-actions > .icon-button { width: 32px; height: 32px; }
       .conversation-header-actions > .context-budget-button { width: 32px; min-width: 32px; padding: 0; gap: 0; }
-      .context-budget-button svg,
-      .context-budget-tokens { display: none; }
-      .context-budget-percent { display: inline; font-family: Arial, sans-serif; font-size: 9px; font-variant-numeric: normal; letter-spacing: 0; }
       .context-budget-body { padding: 14px 16px; gap: 12px; }
       .context-budget-summary strong { font-size: 23px; }
       .world-scene-turn { padding-bottom: 16px; gap: 11px; }
@@ -5019,6 +5008,7 @@ export function renderAppHtml(): string {
     }
   </style>
   <style id="yourchar-social-theme">${socialThemeCss}</style>
+  <style id="yourchar-appearance-theme">${appearanceCss}</style>
 </head>
 <body>
   <div class="app">
@@ -5044,7 +5034,8 @@ export function renderAppHtml(): string {
           </span>
         </div>
         <div class="conversation-header-actions">
-          <button id="contextBudgetBtn" class="secondary icon-button context-budget-button" type="button" title="上下文余量" aria-label="查看上下文余量" hidden><i data-lucide="gauge" aria-hidden="true"></i><span id="contextBudgetTokens" class="context-budget-tokens">--</span><span id="contextBudgetPercent" class="context-budget-percent">--</span></button>
+          <button id="historySearchBtn" class="secondary icon-button" type="button" title="搜索聊天记录" aria-label="搜索聊天记录" disabled><i data-lucide="search" aria-hidden="true"></i></button>
+          <button id="contextBudgetBtn" class="secondary icon-button context-budget-button" type="button" title="上下文余量" aria-label="查看上下文余量" aria-haspopup="dialog" aria-controls="contextBudgetDialog" hidden><svg class="context-budget-ring" viewBox="0 0 24 24" fill="none" aria-hidden="true" focusable="false"><circle class="context-budget-ring-track" cx="12" cy="12" r="9" stroke-width="2" /><circle id="contextBudgetRing" class="context-budget-ring-value" cx="12" cy="12" r="9" pathLength="100" stroke-width="2" stroke-linecap="round" stroke-dasharray="0 100" opacity="0" /></svg></button>
           <button id="interactionToggleBtn" class="secondary icon-button" type="button" title="发起见面" aria-label="发起见面" hidden><i data-lucide="map-pin" aria-hidden="true"></i></button>
           <button id="interactionUndoBtn" class="secondary icon-button" type="button" title="撤销上次状态切换" aria-label="撤销上次状态切换" hidden><i data-lucide="undo-2" aria-hidden="true"></i></button>
           <button id="sceneInfoBtn" class="secondary icon-button" type="button" title="场景信息" aria-label="场景信息" hidden><i data-lucide="map-pin" aria-hidden="true"></i></button>
@@ -5089,6 +5080,7 @@ export function renderAppHtml(): string {
             <div id="incognitoNotice" class="incognito-notice" role="status" hidden><i data-lucide="eye-off" aria-hidden="true"></i><span>无痕会话仅保存在 YourChar 内存盘；退出或重启后丢弃。模型提供商仍可能保留请求。</span></div>
             <div id="messages" class="messages" aria-live="polite"></div>
             <form id="composer" class="composer">
+              <div id="historyPositionBar" class="history-position-bar" hidden><span>正在查看历史记录</span><button id="historyLatestBtn" class="text-button" type="button">回到最新</button></div>
               <div id="attachmentQueue" class="attachment-queue" hidden></div>
               <textarea id="textInput" placeholder="输入消息，例如：5分钟后提醒我喝水"></textarea>
               <div id="emojiPicker" class="emoji-picker" role="dialog" aria-label="选择表情" hidden>
@@ -5794,8 +5786,19 @@ export function renderAppHtml(): string {
               <button id="searchSettingsTabBtn" type="button">搜索</button>
               <button id="promptSettingsTabBtn" type="button">提示词</button>
               <button id="dataSettingsTabBtn" type="button">数据</button>
+              <button id="appearanceSettingsTabBtn" type="button">外观</button>
             </div>
           </div>
+          <section id="appearanceSettingsPanel" class="management-panel settings-panel" hidden>
+            <h3>外观</h3>
+            <p class="muted">选择适合当前环境的明暗外观。聊天、日程和设置会同步切换。</p>
+            <div id="appearanceChoices" class="appearance-choices" role="group" aria-label="界面外观">
+              <button class="appearance-choice" type="button" data-theme-choice="system" aria-pressed="true"><span class="appearance-swatch system" aria-hidden="true"><i data-lucide="monitor"></i></span><strong>跟随系统</strong><small>随设备自动切换</small></button>
+              <button class="appearance-choice" type="button" data-theme-choice="light" aria-pressed="false"><span class="appearance-swatch light" aria-hidden="true"><i data-lucide="sun"></i></span><strong>浅色</strong><small>清晰、轻盈</small></button>
+              <button class="appearance-choice" type="button" data-theme-choice="dark" aria-pressed="false"><span class="appearance-swatch dark" aria-hidden="true"><i data-lucide="moon"></i></span><strong>深色</strong><small>柔和的夜间外观</small></button>
+            </div>
+            <p id="appearanceStatus" class="muted" role="status"></p>
+          </section>
           <section id="imSettingsPanel" class="management-panel settings-panel" hidden>
             <div class="schedule-head">
               <div>
@@ -6467,6 +6470,13 @@ export function renderAppHtml(): string {
         </section>
       </div>
     </dialog>
+    <dialog id="historySearchDialog" class="module-detail-dialog history-search-dialog" aria-labelledby="historySearchTitle">
+      <div class="schedule-editor-head"><h3 id="historySearchTitle">搜索聊天记录</h3><button id="closeHistorySearchBtn" class="secondary icon-button" type="button" aria-label="关闭记录搜索"><i data-lucide="x" aria-hidden="true"></i></button></div>
+      <form id="historySearchForm" class="history-search-form"><input id="historySearchInput" type="search" maxlength="200" placeholder="搜索当前会话中的文字" aria-label="聊天记录关键词" autocomplete="off" /><button class="primary" type="submit">搜索</button></form>
+      <p id="historySearchStatus" class="muted" role="status" aria-live="polite">仅搜索当前会话，点击结果跳到原消息。</p>
+      <div id="historySearchResults" class="history-search-results"></div>
+      <button id="historySearchMoreBtn" class="secondary" type="button" hidden>查看更多结果</button>
+    </dialog>
     <dialog id="characterChannelDialog" class="module-detail-dialog character-channel-dialog" aria-labelledby="characterChannelTitle">
       <div class="archived-dialog-head">
         <h2 id="characterChannelTitle">角色互动</h2>
@@ -6916,8 +6926,7 @@ export function renderAppHtml(): string {
       incognitoModeToggle: document.getElementById("incognitoModeToggle"),
       incognitoNotice: document.getElementById("incognitoNotice"),
       contextBudgetBtn: document.getElementById("contextBudgetBtn"),
-      contextBudgetTokens: document.getElementById("contextBudgetTokens"),
-      contextBudgetPercent: document.getElementById("contextBudgetPercent"),
+      contextBudgetRing: document.getElementById("contextBudgetRing"),
       sceneInfoBtn: document.getElementById("sceneInfoBtn"),
       interactionToggleBtn: document.getElementById("interactionToggleBtn"),
       interactionUndoBtn: document.getElementById("interactionUndoBtn"),
@@ -7265,6 +7274,8 @@ export function renderAppHtml(): string {
       clearApiKeyBtn: document.getElementById("clearApiKeyBtn"),
       apiSettingsState: document.getElementById("apiSettingsState"),
       modelSettingsTabBtn: document.getElementById("modelSettingsTabBtn"),
+      appearanceSettingsTabBtn: document.getElementById("appearanceSettingsTabBtn"),
+      appearanceSettingsPanel: document.getElementById("appearanceSettingsPanel"),
       imSettingsTabBtn: document.getElementById("imSettingsTabBtn"),
       visionSettingsTabBtn: document.getElementById("visionSettingsTabBtn"),
       documentSettingsTabBtn: document.getElementById("documentSettingsTabBtn"),
@@ -7744,6 +7755,8 @@ export function renderAppHtml(): string {
       event.preventDefault();
       await sendMessage();
     });
+    ${historyScript}
+    ${appearanceScript}
     nodes.messages.addEventListener("toggle", rememberMessageDisclosure, true);
     nodes.messages.addEventListener("click", handleSystemEventAction);
     nodes.messages.addEventListener("click", handleMessageAction);
@@ -7780,6 +7793,7 @@ export function renderAppHtml(): string {
       closeEmojiPicker(true);
     });
     nodes.modelSettingsTabBtn.addEventListener("click", () => setSettingsTab("model"));
+    nodes.appearanceSettingsTabBtn.addEventListener("click", () => setSettingsTab("appearance"));
     nodes.imSettingsTabBtn.addEventListener("click", () => setSettingsTab("im"));
     nodes.visionSettingsTabBtn.addEventListener("click", () => setSettingsTab("vision"));
     nodes.documentSettingsTabBtn.addEventListener("click", () => setSettingsTab("document"));
@@ -8030,6 +8044,8 @@ export function renderAppHtml(): string {
       if (tab !== "git" && state.settingsTab === "git") deactivateGitSettingsView();
       state.settingsTab = tab;
       nodes.modelSettingsTabBtn.classList.toggle("active", tab === "model");
+      nodes.appearanceSettingsTabBtn.classList.toggle("active", tab === "appearance");
+      nodes.appearanceSettingsPanel.hidden = tab !== "appearance";
       nodes.imSettingsTabBtn.classList.toggle("active", tab === "im");
       nodes.visionSettingsTabBtn.classList.toggle("active", tab === "vision");
       nodes.documentSettingsTabBtn.classList.toggle("active", tab === "document");
@@ -10698,6 +10714,7 @@ export function renderAppHtml(): string {
       state.activeSessionId = kind === "direct" ? id : "";
       state.activeWorldId = kind === "world" ? id : "";
       state.activeGroupId = kind === "group" ? id : "";
+      resetMessageHistory();
       state.messages = [];
       state.privateInboxMessages = [];
       state.privateInboxRunning = false;
@@ -10865,10 +10882,11 @@ export function renderAppHtml(): string {
       if (state.activeConversationKind !== "world" || !state.activeWorldId) return;
       const requestedWorldId = state.activeWorldId;
       if (!conversationViewIsCurrent("world", requestedWorldId, expectedViewEpoch)) return;
+      const historyRevision = ensureMessageHistory().revision;
       if (!silent) setStatus("加载世界时间线...");
       try {
         const [messageResponse, conversationResponse] = await Promise.all([
-          fetch("/api/v1/worlds/" + encodeURIComponent(requestedWorldId) + "/conversation/messages"),
+          fetch("/api/v1/worlds/" + encodeURIComponent(requestedWorldId) + "/conversation/messages?paged=1&limit=40"),
           fetch("/api/v1/worlds/" + encodeURIComponent(requestedWorldId) + "/conversation")
         ]);
         const [messageBody, conversationBody] = await Promise.all([
@@ -10878,14 +10896,15 @@ export function renderAppHtml(): string {
         if (!messageResponse.ok) throw new Error(messageBody.error || "世界时间线加载失败");
         if (!conversationResponse.ok) throw new Error(conversationBody.error || "世界状态加载失败");
         if (!conversationViewIsCurrent("world", requestedWorldId, expectedViewEpoch)) return;
+        if (historyRevision !== ensureMessageHistory().revision) return;
         const detail = conversationBody.conversation;
         const index = state.worldConversations.findIndex((entry) => entry.worldId === requestedWorldId);
         if (detail && index >= 0) state.worldConversations[index] = { ...state.worldConversations[index], ...detail };
         state.activeMeetingScene = detail?.meetingScene || null;
-        state.messages = (messageBody.messages || []).map(normalizeWorldMessage).filter(Boolean);
+        state.messages = normalizeHistoryMessages(acceptHistoryPage(messageBody));
         finishConversationViewLoading("world", requestedWorldId, expectedViewEpoch);
         updateChatIdentity();
-        renderMessages();
+        renderMessages({ preserveScroll: Boolean(silent) });
         if (!silent) setStatus("就绪");
       } catch (error) {
         if (!conversationViewIsCurrent("world", requestedWorldId, expectedViewEpoch)) return;
@@ -10937,21 +10956,17 @@ export function renderAppHtml(): string {
       if (state.activeConversationKind !== "group" || !state.activeGroupId) return;
       const requestedGroupId = state.activeGroupId;
       if (!conversationViewIsCurrent("group", requestedGroupId, expectedViewEpoch)) return;
+      const historyRevision = ensureMessageHistory().revision;
       if (!silent) setStatus("加载群聊...");
       try {
-        const response = await fetch("/api/v1/group-chats/" + encodeURIComponent(requestedGroupId) + "/messages");
+        const response = await fetch("/api/v1/group-chats/" + encodeURIComponent(requestedGroupId) + "/messages?paged=1&limit=40");
         const body = await response.json();
         if (!response.ok) throw new Error(body.error || "群聊消息加载失败");
         if (!conversationViewIsCurrent("group", requestedGroupId, expectedViewEpoch)) return;
-        state.messages = (body.messages || []).map((message) => ({
-          role: message.senderType === "user" ? "user" : message.senderType === "character" ? "assistant" : "system",
-          text: message.content || "",
-          senderId: message.senderId || "",
-          groupMessageId: message.id,
-          at: message.createdAt ? new Date(message.createdAt).toLocaleTimeString() : ""
-        }));
+        if (historyRevision !== ensureMessageHistory().revision) return;
+        state.messages = normalizeHistoryMessages(acceptHistoryPage(body));
         finishConversationViewLoading("group", requestedGroupId, expectedViewEpoch);
-        renderMessages();
+        renderMessages({ preserveScroll: Boolean(silent) });
         if (!silent) setStatus("就绪");
       } catch (error) {
         if (!conversationViewIsCurrent("group", requestedGroupId, expectedViewEpoch)) return;
@@ -10959,6 +10974,13 @@ export function renderAppHtml(): string {
         if (wasLoading) renderMessages();
         if (!silent) setStatus(error.message || String(error), true);
       }
+    }
+
+    function normalizeGroupMessage(message) {
+      return { role: message.senderType === "user" ? "user" : message.senderType === "character" ? "assistant" : "system",
+        text: message.content || "", senderId: message.senderId || "", groupMessageId: message.id,
+        timestampMs: message.createdAt ? new Date(message.createdAt).getTime() : 0,
+        at: message.createdAt ? new Date(message.createdAt).toLocaleTimeString() : "" };
     }
 
     function renderSessionOptions() {
@@ -11855,12 +11877,13 @@ export function renderAppHtml(): string {
       nodes.contextBudgetBtn.hidden = !available;
       if (!available) return;
       const percent = Math.max(0, Math.min(100, Math.round(Number(budget.remainingRatio || 0) * 100)));
-      nodes.contextBudgetTokens.textContent = "余 " + formatCompactTokenCount(budget.remainingTokens) + " · " + percent + "%";
-      nodes.contextBudgetPercent.textContent = percent + "%";
+      const ratio = Number(budget.utilizationRatio ?? (1 - Number(budget.remainingRatio || 0)));
+      const usedPercent = Number.isFinite(ratio) ? Math.max(0, Math.min(100, ratio * 100)) : 0;
+      nodes.contextBudgetRing.setAttribute("stroke-dasharray", usedPercent.toFixed(2) + " 100");
+      nodes.contextBudgetRing.setAttribute("opacity", usedPercent > 0 ? "1" : "0");
       nodes.contextBudgetBtn.dataset.level = budget.level || "healthy";
-      nodes.contextBudgetBtn.title = "上下文余量 " + formatTokenCount(budget.remainingTokens) + "（" + percent +
-        "%）；已用 " + formatTokenCount(budget.usedInputTokens);
-      nodes.contextBudgetBtn.setAttribute("aria-label", nodes.contextBudgetBtn.title);
+      nodes.contextBudgetBtn.title = "上下文已用 " + Math.round(usedPercent) + "% · 余 " + formatTokenCount(budget.remainingTokens) + " tokens（" + percent + "%）；点击查看详情";
+      nodes.contextBudgetBtn.setAttribute("aria-label", "查看上下文余量：" + nodes.contextBudgetBtn.title);
       nodes.contextBudgetBtn.disabled = state.contextCompacting;
     }
 
@@ -16771,6 +16794,7 @@ export function renderAppHtml(): string {
       const requestedSpace = scope.conversationSpace;
       const requestedSessionId = scope.sessionId;
       const previousInteractionPresence = state.interactionState?.presence;
+      const historyRevision = ensureMessageHistory().revision;
       const sharedStateEnabled = requestedSpace === "normal" && !scope.incognito;
       if (sharedStateEnabled) ensureCharacterCollaborationSession(requestedSessionId);
       else resetCharacterCollaborationState();
@@ -16786,7 +16810,7 @@ export function renderAppHtml(): string {
           collaborationResponse
         ] = await Promise.all([
           fetch(withConversationSpace(
-            "/api/v1/sessions/" + sessionId + "/messages",
+            "/api/v1/sessions/" + sessionId + "/messages?paged=1&limit=40",
             requestedSpace,
             scope.characterId
           )),
@@ -16871,19 +16895,18 @@ export function renderAppHtml(): string {
           state.characterCollaborationRefreshFailures = 0;
         }
         prunePendingCharacterCollaborations();
-        const storedMessages = Array.isArray(body)
-          ? mergeToolResultsIntoMessages(dedupeSystemEvents(body.map(normalizeStoredMessage).filter(Boolean)))
-          : [];
+        if (historyRevision !== ensureMessageHistory().revision) return;
+        const storedMessages = normalizeHistoryMessages(acceptHistoryPage(body));
         if (scope.incognito) {
           for (const message of storedMessages) message.attachments = [];
         }
-        const withInbox = mergePrivateInboxMessages(storedMessages, state.privateInboxMessages);
+        const withInbox = mergePrivateInboxMessages(storedMessages, historyScopedEvents(state.privateInboxMessages));
         const messages = annotateProactiveMessages(mergeCharacterCollaborations(
           mergeInteractionEvents(
-            preserveActiveBurstMessages(withInbox, state.privateInboxMessages),
-            state.interactionEvents
+            preserveActiveBurstMessages(withInbox, historyScopedEvents(state.privateInboxMessages)),
+            historyScopedEvents(state.interactionEvents)
           ),
-          visibleCharacterCollaborations()
+          historyScopedEvents(visibleCharacterCollaborations())
         ), state.activeProactiveMessages);
         const latestOutcome = [...messages].reverse().find((message) => message.status);
         if (latestOutcome) {
@@ -17484,6 +17507,9 @@ export function renderAppHtml(): string {
     async function sendMessage() {
       const rawText = nodes.textInput.value.trim();
       if (state.incognitoTransitioning || state.privateModeTransitioning) return;
+      if ((rawText || state.pendingAttachments.length) && ensureMessageHistory().page.hasLater && !state.busy) {
+        if (!await loadHistoryPage("latest")) return;
+      }
       if (state.activeConversationKind === "world") {
         if (state.meetingReturnSessionId && !state.activeMeetingScene) {
           const draft = nodes.textInput.value;
@@ -18470,7 +18496,10 @@ export function renderAppHtml(): string {
     }
 
     function renderMessages(options) {
-      const preserveScroll = Boolean(options?.preserveScroll);
+      ensureMessageHistory();
+      updateHistoryChrome();
+      const preserveScroll = options?.preserveScroll !== false;
+      const anchor = options?.anchor || captureHistoryAnchor();
       const previousScrollTop = nodes.messages.scrollTop;
       const wasNearBottom =
         nodes.messages.scrollHeight - nodes.messages.scrollTop - nodes.messages.clientHeight < 72;
@@ -18485,6 +18514,10 @@ export function renderAppHtml(): string {
         return;
       }
       if (!state.messages.length) {
+        if (messageHistory.page.hasEarlier || messageHistory.page.hasLater) {
+          patchHistoryMessages(historyControls("before") + '<p class="muted">这一段没有可显示的消息，可继续加载记录。</p>' + historyControls("after"));
+          return;
+        }
         if (state.activeConversationKind === "world") {
           const conversation = state.worldConversations.find((entry) => entry.worldId === state.activeWorldId);
           nodes.messages.innerHTML = '<div class="chat-empty"><span class="brand-mark group-empty-avatar">' + worldAvatarCluster(conversation) + '</span><strong>' + escapeHtml(conversation?.world?.name || "共享世界") + '</strong></div>';
@@ -18503,11 +18536,9 @@ export function renderAppHtml(): string {
         refreshIcons();
         return;
       }
-      if (state.activeConversationKind === "world") {
-        renderWorldTimeline();
-        return;
-      }
-      nodes.messages.innerHTML = state.messages.map(renderStandardMessage).join("");
+      const scopedMessages = new Set(historyScopedEvents(state.messages));
+      patchHistoryMessages(historyControls("before") + (state.activeConversationKind === "world"
+        ? renderWorldTimeline() : state.messages.map((message, index) => scopedMessages.has(message) ? historyMessageHtml(message, index) : "").join("")) + historyControls("after"));
       for (const messageId of openProactiveFeedbackIds) {
         const button = Array.from(nodes.messages.querySelectorAll("[data-proactive-message-id]"))
           .find((entry) => entry.dataset.proactiveMessageId === messageId);
@@ -18515,12 +18546,13 @@ export function renderAppHtml(): string {
         if (details) details.open = true;
       }
       refreshIcons();
-      if (preserveScroll && !wasNearBottom) {
+      if (preserveScroll && (!wasNearBottom || options?.forceAnchor || messageHistory.page.hasLater)) {
         const maximum = Math.max(0, nodes.messages.scrollHeight - nodes.messages.clientHeight);
-        nodes.messages.scrollTop = Math.min(previousScrollTop, maximum);
+        if (!restoreHistoryAnchor(anchor)) nodes.messages.scrollTop = Math.min(previousScrollTop, maximum);
       } else {
         nodes.messages.scrollTop = nodes.messages.scrollHeight;
       }
+      observeHistoryImages();
     }
 
     function renderStandardMessage(message, index) {
@@ -18710,12 +18742,10 @@ export function renderAppHtml(): string {
           return;
         }
         flushScene();
-        blocks.push(renderStandardMessage(message, index));
+        blocks.push(historyMessageHtml(message, index));
       });
       flushScene();
-      nodes.messages.innerHTML = blocks.join("");
-      refreshIcons();
-      nodes.messages.scrollTop = nodes.messages.scrollHeight;
+      return blocks.join("");
     }
 
     function renderWorldSceneTurn(entries) {
@@ -18746,10 +18776,10 @@ export function renderAppHtml(): string {
         const prose = message.text
           ? '<div class="world-scene-text markdown-body">' + renderMarkdown(message.text, true) + '</div>'
           : "";
-        return '<section class="world-scene-fragment' + (message.worldNarration ? ' director' : '') + '">' +
+        return '<section' + historyMessageAttribute(message) + ' class="world-scene-fragment' + (message.worldNarration ? ' director' : '') + '">' +
           '<div class="world-scene-identity">' + (character && !message.worldNarration ? renderMessageAvatar(message) : '') + speaker + '</div>' + progress + media + prose + '</section>';
       }).join("");
-      return '<article class="world-scene-turn"><header class="world-scene-head"><div class="world-scene-head-copy"><strong>' +
+      return '<article class="world-scene-turn" data-history-block="' + escapeHtml(entries[0]?.message.worldTurnId || historyMessageId(entries[0]?.message || {}) || "scene") + '"><header class="world-scene-head"><div class="world-scene-head-copy"><strong>' +
         escapeHtml(title) + '</strong><span>现场叙事' + (firstTime ? ' · ' + escapeHtml(firstTime) : '') +
         '</span></div><div class="world-scene-participants">' + participants + '</div></header>' +
         '<div class="world-scene-copy">' + fragments + '</div></article>';
@@ -18795,7 +18825,7 @@ export function renderAppHtml(): string {
         ? '<div class="message-image-grid' + (images.length > 1 ? ' multiple' : '') + '">' + images.map((entry) => {
             const name = entry.name || entry.path.split("/").pop() || "图片";
             return '<button class="message-image-thumb" type="button" data-message-image="true" data-image-path="' + escapeHtml(entry.path) + '" data-image-name="' + escapeHtml(name) + '" aria-label="查看图片 ' + escapeHtml(name) + '">' +
-              '<img src="' + escapeHtml(workspaceFileContentUrl(entry.path, "inline", true)) + '" alt="' + escapeHtml(name) + '" loading="lazy" /></button>';
+              '<img data-history-src="' + escapeHtml(workspaceFileContentUrl(entry.path, "inline", true)) + '" alt="' + escapeHtml(name) + '" loading="lazy" decoding="async" /></button>';
           }).join("") + '</div>'
         : "";
       const fileList = files.map((entry) => {
@@ -19549,6 +19579,8 @@ export function renderAppHtml(): string {
           : null;
         (parentLink || image).replaceWith(button);
         button.append(image);
+        image.setAttribute("data-history-src", imageSource);
+        image.removeAttribute("src");
       });
       template.content.querySelectorAll("input").forEach((input) => {
         if (input.getAttribute("type") === "checkbox") input.setAttribute("disabled", "");

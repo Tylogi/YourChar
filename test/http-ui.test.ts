@@ -193,6 +193,7 @@ test("server serves chat UI and debug model traces", async () => {
       state: navigationState,
       window: { clearTimeout() {} },
       closePrivateInboxEvents() {},
+      resetMessageHistory() {},
       clearInteractionState() {},
       clearConversationScene() { clearedConversationScenes += 1; },
       closeMessageEditDialog() {},

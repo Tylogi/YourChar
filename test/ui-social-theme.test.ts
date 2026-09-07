@@ -11,8 +11,8 @@ test("the production UI loads the approved social theme after the existing compo
   assert.ok(html.indexOf('id="yourchar-social-theme"') > html.indexOf("</style>"));
   for (const token of [
     "--bg: #f5f5f5", "--rail: #ededed", "--list: #f7f7f7",
-    "--text: #1a1a1a", "--primary: #07c160", "--user: #95ec69",
-    "--green-ink: #087b36", "--danger: #c84040", "--shadow: none",
+    "--text: #1a1a1a", "--primary: #1a1a1a", "--user: #242424",
+    "--green-ink: #262626", "--danger: #c84040", "--shadow: none",
   ]) assert.ok(socialThemeCss.includes(token), token);
   assert.match(socialThemeCss, /--font-ui: system-ui, -apple-system/);
   assert.match(socialThemeCss, /\.bubble \{ font-size: 16px;/);
@@ -30,8 +30,8 @@ test("the production UI loads the approved social theme after the existing compo
 });
 
 test("meeting and settings details use neutral surfaces and readable labels", () => {
-  assert.match(socialThemeCss, /\.composer \.primary \{ background: var\(--text\); color: var\(--panel\)/);
-  assert.match(socialThemeCss, /\.composer \.primary:hover:not\(:disabled\) \{ background: #333333/);
+  assert.match(socialThemeCss, /\.composer \.primary \{ background: var\(--primary\); color: var\(--primary-ink\)/);
+  assert.match(socialThemeCss, /\.composer \.primary:hover:not\(:disabled\) \{ background: var\(--primary-strong\)/);
   assert.match(socialThemeCss, /\.composer \.primary:disabled \{ background: var\(--selected\); color: var\(--sub\)/);
   assert.match(socialThemeCss, /\.scene-info-row \{[^}]*font-size: 14px/);
   assert.match(socialThemeCss, /\.meeting-preset-prompt-role, \.meeting-preset-prompt-kind \{[^}]*background: var\(--list\)[^}]*font-size: 12px/);

@@ -60,10 +60,10 @@ export async function runSocialThemeComponentChecks(browser, outputDir) {
       await expectStyle(page, ".meeting-preset-compatibility .warn", { color: "rgb(139, 100, 22)" });
       await expectStyle(page, ".meeting-preset-prompt-kind", { backgroundColor: "rgb(247, 247, 247)", fontSize: "12px" });
       await expectStyle(page, ".meeting-preset-prompt-editor label", { fontSize: "13px" });
-      await expectStyle(page, ".meeting-preset-prompt-row input[type=checkbox]", { accentColor: "rgb(8, 123, 54)" });
+      await expectStyle(page, ".meeting-preset-prompt-row input[type=checkbox]", { accentColor: "rgb(38, 38, 38)" });
       await expectStyle(page, "#meetingPresetParametersEnabled", { backgroundColor: "rgb(227, 227, 227)" });
       await page.locator("#meetingPresetParametersEnabled").check();
-      await expectStyle(page, "#meetingPresetParametersEnabled", { backgroundColor: "rgb(8, 123, 54)" });
+      await expectStyle(page, "#meetingPresetParametersEnabled", { backgroundColor: "rgb(38, 38, 38)" });
       await page.locator("#meetingPresetParametersEnabled").uncheck();
       const promptFont = await page.locator(".meeting-preset-prompt-editor textarea").evaluate(el => getComputedStyle(el).fontFamily);
       assert.match(promptFont, /^system-ui,/);

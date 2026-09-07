@@ -11,6 +11,8 @@ import { createTestRuntime } from "../dist/src/testing/index.js";
 import { runSocialThemeComponentChecks } from "./ui-social-theme.browser.mjs";
 import { runDiaryBrowserChecks } from "./character-diaries.browser.mjs";
 import { runWorldSocialThemeChecks } from "./world-social-theme.browser.mjs";
+import { runHistoryPaginationChecks } from "./history-pagination.browser.mjs";
+import { runAppearanceChecks } from "./appearance.browser.mjs";
 
 const artifactsDir = resolve("browser-artifacts");
 mkdirSync(artifactsDir, { recursive: true });
@@ -215,6 +217,8 @@ try {
   await runSocialThemeComponentChecks(browser, artifactsDir);
   await runDiaryBrowserChecks(browser, artifactsDir);
   await runWorldSocialThemeChecks(browser, artifactsDir);
+  await runHistoryPaginationChecks(browser, artifactsDir);
+  await runAppearanceChecks(browser, artifactsDir);
   await runDesktopWorkflow(browser, baseUrl, artifactsDir);
   await runCompactDesktopWorkflow(browser, baseUrl, artifactsDir);
   await runMobileWorkflow(browser, baseUrl, artifactsDir);
@@ -821,7 +825,9 @@ async function runDesktopWorkflow(browser, baseUrl, outputDir) {
   assert.ok(smsSessionId);
   const contextBudgetButton = page.locator("#contextBudgetBtn");
   await contextBudgetButton.waitFor({ state: "visible" });
-  assert.match(await contextBudgetButton.textContent(), /%/);
+  assert.equal((await contextBudgetButton.textContent()).trim(), "");
+  assert.match(await contextBudgetButton.getAttribute("title"), /上下文已用.*%/);
+  assert.equal(await contextBudgetButton.locator(".context-budget-ring").isVisible(), true);
   await contextBudgetButton.click();
   await page.locator("#contextBudgetDialog").waitFor({ state: "visible" });
   await page.locator("#contextBudgetMetrics")
@@ -1664,7 +1670,9 @@ async function runMobileWorkflow(browser, baseUrl, outputDir) {
   await page.locator("#conversationMode").filter({ hasText: "角色私聊" }).waitFor();
   const mobileContextBudgetButton = page.locator("#contextBudgetBtn");
   await mobileContextBudgetButton.waitFor({ state: "visible" });
-  assert.match(await mobileContextBudgetButton.textContent(), /%/);
+  assert.equal((await mobileContextBudgetButton.textContent()).trim(), "");
+  assert.equal(await mobileContextBudgetButton.locator(".context-budget-ring").isVisible(), true);
+  assert.match(await mobileContextBudgetButton.getAttribute("title"), /上下文已用.*%/);
   await mobileContextBudgetButton.click();
   await page.locator("#contextBudgetDialog").waitFor({ state: "visible" });
   await assertElementUnclipped(page, "#contextBudgetDialog");

@@ -69,6 +69,7 @@ import type { InteractionScope } from "../interaction/index.js";
 import { TestRunRegistry, type ScriptedModelResponse } from "../testing/index.js";
 import { renderAppHtml } from "./ui.js";
 import { DiaryValidationError } from "../diary/service.js";
+import { HistoryQueryError, historyQuery } from "../history/pagination.js";
 import {
   assertLocalControlPlaneMutation,
   attachLocalControlPlaneCookie,
@@ -282,6 +283,8 @@ export function createHttpServer(options: HttpServerOptions = {}) {
         sendJson(response, 404, { code: "WORLD_NOT_FOUND", error: error.message });
       } else if (error instanceof WorldValidationError) {
         sendJson(response, 400, { code: error.code, error: error.message });
+      } else if (error instanceof HistoryQueryError) {
+        sendJson(response, error.status, { code: "HISTORY_QUERY_INVALID", error: error.message });
       } else if (error instanceof DiaryValidationError) {
         sendJson(response, 400, { error: error.message });
       } else if (error instanceof WorldConversationValidationError) {
@@ -1182,8 +1185,27 @@ async function route(input: {
     return;
   }
 
+  const historySearchMatch = pathname.match(/^\/api\/v1\/(sessions|group-chats|worlds)\/([^/]+)\/(?:conversation\/)?messages\/search$/);
+  if (historySearchMatch && method === "GET") {
+    const id = decodeURIComponent(historySearchMatch[2]);
+    const query = messageHistoryQuery(url, 20);
+    if (query.after || query.around) throw new HistoryQueryError("搜索结果仅支持向前翻页");
+    const text = url.searchParams.get("q") ?? "";
+    if (historySearchMatch[1] === "sessions") {
+      assertRequestedSessionConversationSpace(kernel, id, url);
+      sendJson(input.response, 200, await kernel.getMessageHistory(id, query, text));
+    } else {
+      sendJson(input.response, 200, kernel.getSharedMessageHistory(historySearchMatch[1] === "worlds" ? "world" : "group", id, query, text));
+    }
+    return;
+  }
+
   const groupMessagesMatch = pathname.match(/^\/api\/v1\/group-chats\/([^/]+)\/messages$/);
   if (groupMessagesMatch && method === "GET") {
+    if (url.searchParams.get("paged") === "1") {
+      sendJson(input.response, 200, kernel.getSharedMessageHistory("group", decodeURIComponent(groupMessagesMatch[1]), messageHistoryQuery(url)));
+      return;
+    }
     const limit = Number(url.searchParams.get("limit") ?? "200");
     sendJson(input.response, 200, {
       messages: kernel.listGroupChatMessages(decodeURIComponent(groupMessagesMatch[1]), limit),
@@ -1365,6 +1387,10 @@ async function route(input: {
   if (messageMatch && method === "GET") {
     const sessionId = decodeURIComponent(messageMatch[1]);
     assertRequestedSessionConversationSpace(kernel, sessionId, url);
+    if (url.searchParams.get("paged") === "1") {
+      sendJson(input.response, 200, await kernel.getMessageHistory(sessionId, messageHistoryQuery(url)));
+      return;
+    }
     const messages = await kernel.getConversationTranscript(sessionId);
     sendJson(input.response, 200, visibleConversationMessages(messages));
     return;
@@ -2317,6 +2343,10 @@ async function route(input: {
     /^\/api\/v1\/worlds\/([^/]+)\/conversation\/messages$/,
   );
   if (worldConversationMessagesMatch && method === "GET") {
+    if (url.searchParams.get("paged") === "1") {
+      sendJson(input.response, 200, kernel.getSharedMessageHistory("world", decodeURIComponent(worldConversationMessagesMatch[1]), messageHistoryQuery(url)));
+      return;
+    }
     const limit = Number(url.searchParams.get("limit") ?? "200");
     sendJson(input.response, 200, {
       messages: kernel.listWorldConversationMessages(
@@ -4853,6 +4883,14 @@ function assertImmutableMemoryRealm(body: Record<string, unknown>): void {
       "RP memory realm, scope, and characterId are immutable; create a new character-bound memory instead",
     );
   }
+}
+
+function messageHistoryQuery(url: URL, defaultLimit = 40) {
+  return historyQuery({ limit: url.searchParams.has("limit") ? Number(url.searchParams.get("limit")) : defaultLimit,
+    ...(url.searchParams.has("before") ? { before: url.searchParams.get("before")! } : {}),
+    ...(url.searchParams.has("after") ? { after: url.searchParams.get("after")! } : {}),
+    ...(url.searchParams.has("around") ? { around: url.searchParams.get("around")! } : {}),
+  });
 }
 
 function visibleConversationMessages(messages: readonly AgentMessage[]): AgentMessage[] {
