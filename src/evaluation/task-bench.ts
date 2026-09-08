@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
-import { completeSimple, type AssistantMessage } from "@earendil-works/pi-ai/compat";
+import type { AssistantMessage } from "@earendil-works/pi-ai";
 import { z } from "zod";
 import { CompanionKernel } from "../domain/kernel.js";
 import type {
@@ -22,7 +22,10 @@ import {
   applyBackgroundThinkingPolicy,
   backgroundThinkingPolicy,
 } from "../model/background-thinking-policy.js";
-import { createOpenAiCompatibleModel } from "../model/openai-compatible.js";
+import {
+  completeOpenAiCompatible,
+  createOpenAiCompatibleModel,
+} from "../model/openai-compatible.js";
 import type { TaskBenchUploadFixture } from "./task-bench-uploads.js";
 
 const maximumTaskCharacters = 30_000;
@@ -767,7 +770,7 @@ async function judgeIteration(
     }
     try {
       modelRequests += 1;
-      const message = await completeSimple(createOpenAiCompatibleModel(raw), {
+      const message = await completeOpenAiCompatible(createOpenAiCompatibleModel(raw), {
         systemPrompt: taskBenchJudgeSystemPrompt,
         messages: [{
           role: "user",

@@ -46,6 +46,7 @@ export class CharacterInteractionCoordinator {
   private readonly ownerId = randomUUID();
   private readonly channelQueues = new Map<string, Promise<unknown>>();
   private readonly activeControllers = new Set<AbortController>();
+  private readonly collaborationControllers = new Map<string, AbortController>();
   private started = false;
   private disposed = false;
   private executionScheduled = false;
@@ -59,6 +60,22 @@ export class CharacterInteractionCoordinator {
 
   get isBusy(): boolean {
     return Boolean(this.executionProcessing || this.reportProcessing || this.channelQueues.size || this.activeControllers.size);
+  }
+
+  cancelCollaboration(episodeId: string, characterId: string): void {
+    const episode = this.channels.repository.getEpisode(episodeId);
+    const job = this.channels.repository.getCollaborationJob(episodeId);
+    if (!episode || !job || episode.initiatorCharacterId !== characterId || !["queued", "running"].includes(episode.status)) {
+      throw new WorldValidationError("此协作不属于当前发起角色，或已经结束");
+    }
+    const now = this.now();
+    this.channels.repository.transaction(() => {
+      this.channels.repository.database.connection.prepare(`UPDATE character_collaboration_jobs SET status='cancelled',owner_id=NULL,claim_token=NULL,
+        lease_expires_at=NULL,last_error='用户已停止',completed_at=?,updated_at=? WHERE episode_id=? AND status IN ('queued','running')`).run(now, now, episodeId);
+      this.channels.repository.database.connection.prepare(`UPDATE character_channel_episodes SET status='cancelled',failure_reason='用户已停止；已有消息保留',
+        report_status='skipped',report_owner_id=NULL,report_claim_token=NULL,report_lease_expires_at=NULL,completed_at=?,updated_at=? WHERE id=? AND status IN ('queued','running')`).run(now, now, episodeId);
+    });
+    this.collaborationControllers.get(episodeId)?.abort();
   }
 
   constructor(
@@ -439,6 +456,7 @@ export class CharacterInteractionCoordinator {
     if (!claimed) return;
     const claim = { ownerId: this.ownerId, claimToken };
     const controller = new AbortController();
+    this.collaborationControllers.set(claimed.episodeId, controller);
     this.activeControllers.add(controller);
     let claimLost = false;
     const renew = (): boolean => {
@@ -523,6 +541,7 @@ export class CharacterInteractionCoordinator {
     } finally {
       clearInterval(heartbeat);
       this.activeControllers.delete(controller);
+      this.collaborationControllers.delete(claimed.episodeId);
       if (!controller.signal.aborted) controller.abort();
     }
   }

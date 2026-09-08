@@ -14,7 +14,7 @@ and adds the RP companion domain on top:
 - Pi-owned persistent session state with application metadata;
 - SQLite schedule, occurrence, and notification-outbox persistence;
 - strict time resolution, recurrence, snooze, quiet hours, and delivery retry;
-- due reminders that resume the source Pi context and send Agent-authored messages;
+- early background reminder drafts, deadline fallbacks, and independent UI/owner-IM delivery with shared acknowledgement;
 - deterministic virtual-clock and scripted-model interfaces for test agents;
 - per-character SOUL.md files, scenes, typed long-term memory, and FTS5 retrieval;
 - runtime MCP/Skill discovery and persisted capability toggles;
@@ -86,6 +86,9 @@ side-effect capabilities, and model-provider caveats are documented in
 Single-owner WeChat and Feishu/Lark setup, normal-only routing, attachment,
 credential, and backup boundaries are documented in
 [`docs/im-channels.md`](docs/im-channels.md).
+Reminder timing, advance preparation, owner-only multi-channel delivery, acknowledgement,
+retry, and migration behavior are documented in
+[`docs/reminder-delivery.md`](docs/reminder-delivery.md).
 Tavily module enablement, Key handling, tool limits, and test contracts are
 documented in [`docs/tavily-search-mcp.md`](docs/tavily-search-mcp.md).
 Read-only URL extraction, network boundaries, TUN behavior, and test contracts
@@ -99,6 +102,12 @@ commit/push safeguards, and normal-only module gating are documented in
 [`docs/git-repository-mcp.md`](docs/git-repository-mcp.md).
 Private-chat delegation, child isolation, budgets, and test contracts are
 documented in [`docs/subagent-delegation.md`](docs/subagent-delegation.md).
+Persistent personal requests, world wishes, background activity controls, and
+departures that preserve other characters' memories are documented in
+[`docs/character-life.md`](docs/character-life.md).
+The isolated creator assistant, reviewed character/world drafts, execution limits,
+and first-stage permission boundary are documented in
+[`docs/creator-assistant.md`](docs/creator-assistant.md).
 Per-character trust/bond state, tension and affect decay, trusted update policy, MCP
 boundaries, and test contracts are documented in
 [`docs/relationship-affect.md`](docs/relationship-affect.md).

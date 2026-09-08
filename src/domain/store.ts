@@ -51,6 +51,12 @@ const defaultModelApiConfig: StoredModelApiConfig = {
 };
 
 const defaultModelProfileId = "default";
+const thinkingTokenBudgetFields = new Set([
+  "thinking_token_budget",
+  "thinking_budget",
+  "thinking_budget_tokens",
+]);
+const maximumThinkingBudgetTokens = 1_000_000;
 
 export class ModelApiConfigValidationError extends Error {
   readonly code = "MODEL_API_CONFIG_INVALID";
@@ -460,6 +466,12 @@ function normalizeStoredModelApiConfig(value: unknown): StoredModelApiConfig {
   if (isModelReasoningEffort(input.reasoningEffort)) {
     config.reasoningEffort = input.reasoningEffort;
   }
+  if (isThinkingTokenBudgetField(input.thinkingTokenBudgetField)) {
+    config.thinkingTokenBudgetField = input.thinkingTokenBudgetField;
+  }
+  if (isValidThinkingBudgetTokens(input.thinkingBudgetTokens)) {
+    config.thinkingBudgetTokens = Math.floor(input.thinkingBudgetTokens);
+  }
   return config;
 }
 
@@ -518,6 +530,24 @@ function applyModelProfilePatch(
       "reasoningEffort must be none, minimal, low, medium, high, xhigh, max, ultra, or null",
     );
   }
+  if (
+    patch.thinkingTokenBudgetField !== undefined &&
+    patch.thinkingTokenBudgetField !== null &&
+    !isThinkingTokenBudgetField(patch.thinkingTokenBudgetField)
+  ) {
+    throw new ModelApiConfigValidationError(
+      "thinkingTokenBudgetField must be thinking_token_budget, thinking_budget, thinking_budget_tokens, or null",
+    );
+  }
+  if (
+    patch.thinkingBudgetTokens !== undefined &&
+    patch.thinkingBudgetTokens !== null &&
+    !isValidThinkingBudgetTokens(patch.thinkingBudgetTokens)
+  ) {
+    throw new ModelApiConfigValidationError(
+      `thinkingBudgetTokens must be an integer from 1 to ${maximumThinkingBudgetTokens}, or null`,
+    );
+  }
   if (patch.name !== undefined) profile.name = requiredProfileName(patch.name);
   if (typeof patch.enabled === "boolean") profile.enabled = patch.enabled;
   if (typeof patch.baseUrl === "string") profile.baseUrl = patch.baseUrl.trim();
@@ -552,11 +582,30 @@ function applyModelProfilePatch(
   else if (isModelReasoningEffort(patch.reasoningEffort)) {
     profile.reasoningEffort = patch.reasoningEffort;
   }
+  if (patch.thinkingTokenBudgetField === null) delete profile.thinkingTokenBudgetField;
+  else if (isThinkingTokenBudgetField(patch.thinkingTokenBudgetField)) {
+    profile.thinkingTokenBudgetField = patch.thinkingTokenBudgetField;
+  }
+  if (patch.thinkingBudgetTokens === null) delete profile.thinkingBudgetTokens;
+  else if (isValidThinkingBudgetTokens(patch.thinkingBudgetTokens)) {
+    profile.thinkingBudgetTokens = Math.floor(patch.thinkingBudgetTokens);
+  }
   profile.updatedAt = updatedAt;
 }
 
 function boundedContextWindow(value: number): number {
   return Math.max(8_192, Math.min(2_000_000, Math.floor(value)));
+}
+
+function isThinkingTokenBudgetField(value: unknown): value is NonNullable<ModelApiConfig["thinkingTokenBudgetField"]> {
+  return typeof value === "string" && thinkingTokenBudgetFields.has(value);
+}
+
+function isValidThinkingBudgetTokens(value: unknown): value is number {
+  return typeof value === "number" &&
+    Number.isInteger(value) &&
+    value >= 1 &&
+    value <= maximumThinkingBudgetTokens;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

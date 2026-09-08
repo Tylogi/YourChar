@@ -7,6 +7,10 @@ export type { ModelReasoningEffort } from "../model/reasoning-effort.js";
 export type Mode = "sms" | "rp";
 export type ConversationSpace = "normal" | "secret";
 export type TurnStatus = "completed" | "failed" | "cancelled" | "blocked";
+export type ThinkingTokenBudgetField =
+  | "thinking_token_budget"
+  | "thinking_budget"
+  | "thinking_budget_tokens";
 export type SystemEventType =
   | "model_unavailable"
   | "module_disabled"
@@ -69,6 +73,8 @@ export type ModelApiConfig = {
   maxTokens?: number;
   contextWindowTokens?: number;
   reasoningEffort?: ModelReasoningEffort;
+  thinkingTokenBudgetField?: ThinkingTokenBudgetField;
+  thinkingBudgetTokens?: number;
   updatedAt?: string;
 };
 
@@ -83,6 +89,8 @@ export type ModelApiConfigPatch = {
   maxTokens?: number | null;
   contextWindowTokens?: number | null;
   reasoningEffort?: ModelReasoningEffort | null;
+  thinkingTokenBudgetField?: ThinkingTokenBudgetField | null;
+  thinkingBudgetTokens?: number | null;
 };
 
 export type ModelApiProfile = ModelApiConfig & {

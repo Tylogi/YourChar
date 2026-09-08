@@ -71,7 +71,7 @@ test("an offline delivery stays in one frozen outbox entry and retries without d
     assert.equal(pending.length, 1);
     assert.equal(pending[0].status, "pending");
     assert.equal(pending[0].attempts, 1);
-    assert.equal(pending[0].deliveryBody, "提醒时间到了：离线提醒");
+    assert.match(pending[0].deliveryBody!, /离线提醒[\s\S]*18:01/);
 
     sink.online = true;
     clock.advance(60_000);
@@ -110,16 +110,17 @@ test("an archived character source is restored as the canonical private thread f
     runtime.clock.advance(60_000);
 
     assert.deepEqual(await runtime.schedulerTick(), { claimed: 1, delivered: 1, failed: 0 });
-    assert.equal(runtime.model.requests.length, 2);
-    assert.equal(runtime.notifications[0].body, "到时间了，先停一下手头的事。");
-    assert.equal(runtime.notifications[0].agentGenerated, true);
+    assert.equal(runtime.model.requests.length, 1, "delivery must not wait for another model call");
+    assert.match(runtime.notifications[0].body, /归档来源提醒/);
+    assert.equal(runtime.notifications[0].agentGenerated, false);
     assert.equal(runtime.notifications[0].sourceSessionId, "archived-source");
+    await new Promise(resolve => setTimeout(resolve,20));
     const after = await runtime.kernel.getSession("archived-source");
     assert.ok(after.messages.length > before.messages.length);
     const metadata = runtime.kernel.listConversationMetadata().find((entry) => entry.id === "archived-source");
     assert.equal(metadata?.archivedAt, undefined);
     assert.equal(metadata?.canonicalDirect, true);
-    assert.equal(runtime.kernel.store.allActions().some((action) => action.actionType === "compose_reminder_message"), true);
+    assert.equal(runtime.kernel.store.allActions().some((action) => action.actionType === "compose_reminder_message"), false);
   } finally {
     runtime.dispose();
   }
@@ -150,7 +151,7 @@ test("a deleted source session leaves its real reminder but never restores delet
 
     assert.deepEqual(await runtime.schedulerTick(), { claimed: 1, delivered: 1, failed: 0 });
     assert.equal(runtime.model.requests.length, 1);
-    assert.equal(runtime.notifications[0].body, "提醒时间到了：删除来源提醒");
+    assert.match(runtime.notifications[0].body, /删除来源提醒[\s\S]*20:01/);
     assert.equal(runtime.notifications[0].agentGenerated, false);
     assert.equal(runtime.kernel.listConversationMetadata().some((entry) => entry.id === "deleted-source"), false);
     assert.equal((await runtime.kernel.getSession("deleted-source")).messages.length, 0);

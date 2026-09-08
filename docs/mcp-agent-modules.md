@@ -100,33 +100,29 @@ the invariant-validation boundary.
 ## 5. Proactive reminder flow
 
 ```text
+notification time minus preparation lead
+    |
+optional isolated character-style draft (no tools, transcript, or foreground turn)
+    |
 due occurrence
     |
-scheduler claims unique outbox row
+scheduler creates a unique row per occurrence/channel
     |
-sourceSessionId resolves original Pi session
+ready draft or deterministic title/time fallback
     |
-custom `rp-agent/reminder_due` message triggers Agent turn
+UI + configured owner-only IM channels deliver independently
     |
-Agent sees transcript + RP context + trusted due-event payload
+frozen payloads, durable send receipts, channel-local retries
     |
-assistant reply is persisted in the same transcript
-    |
-title/body are frozen in outbox
-    |
-notification sink delivers; retries reuse frozen payload
+shared acknowledgement stops outstanding delivery
 ```
 
-The custom due event is hidden from normal chat rendering and converted to
-model context as a system-originated event. Mutating tools are blocked during
-this turn. The event payload is treated as data to prevent reminder titles or
-notes from injecting instructions.
-
-If the source conversation or model configuration is unavailable, the composer
-falls back to a deterministic static body. A sink failure retries the persisted
-body and never generates a second Agent turn. Open browser clients poll the
-active transcript every three seconds so proactive assistant messages appear
-without a manual refresh.
+The scheduler never awaits draft generation. The event payload is treated as data,
+not instructions. Drafting cannot call tools or append chat/context messages, and
+late results are discarded. A delivered UI reminder may be mirrored to its normal
+source conversation as a system event. The notification center polls independently
+of the open conversation. Existing reminder times and external-channel choices
+are preserved during migration; see [Reminder delivery](reminder-delivery.md).
 
 ## 6. Adding another MCP module
 

@@ -1045,6 +1045,8 @@ test("server serves chat UI and debug model traces", async () => {
     assert.match(html, /id="apiModel"/);
     assert.match(html, /id="apiContextWindowTokens"/);
     assert.match(html, /id="apiReasoningEffort"/);
+    assert.match(html, /id="apiThinkingTokenBudgetField"/);
+    assert.match(html, /id="apiThinkingBudgetTokens"/);
     assert.match(html, /<option value="">自动（推荐）<\/option>/);
     assert.match(html, /<option value="none">关闭<\/option>/);
     assert.match(html, /<option value="minimal">最低<\/option>/);
@@ -1057,6 +1059,10 @@ test("server serves chat UI and debug model traces", async () => {
     assert.match(html, /仅支持 reasoning_effort 的兼容 API 生效；不支持时可能返回参数错误/);
     assert.match(html, /nodes\.apiReasoningEffort\.value = config\.reasoningEffort \|\| ""/);
     assert.match(html, /reasoningEffort: nodes\.apiReasoningEffort\.value \|\| null/);
+    assert.match(html, /nodes\.apiThinkingTokenBudgetField\.value = config\.thinkingTokenBudgetField \|\| ""/);
+    assert.match(html, /nodes\.apiThinkingBudgetTokens\.value = config\.thinkingBudgetTokens \?\? ""/);
+    assert.match(html, /thinkingTokenBudgetField: nodes\.apiThinkingTokenBudgetField\.value \|\| null/);
+    assert.match(html, /thinkingBudgetTokens: optionalInteger\(nodes\.apiThinkingBudgetTokens\.value\)/);
     assert.match(html, /id="systemPromptCustom"/);
     assert.match(html, /id="systemPromptSettingsViewBtn"/);
     assert.match(html, /id="meetingPresetSettingsViewBtn"/);

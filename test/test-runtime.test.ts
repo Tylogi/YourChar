@@ -139,8 +139,9 @@ test("agent resolves reminder intent through the schedule MCP tool", async () =>
   }
 });
 
-test("due reminder resumes its Pi context and sends an agent-authored message", async () => {
-  const runtime = createTestRuntime({ now: "2026-07-11T09:00:00.000Z", seed: "proactive" });
+test("due reminders deliver a prepared message without another foreground model turn", async () => {
+  const runtime = createTestRuntime({ now: "2026-07-11T09:00:00.000Z", seed: "proactive",
+    reminderMessageComposer: { compose: async () => ({ body: "到时间了，先喝几口水吧。", agentGenerated: true }) } });
   try {
     runtime.model.enqueue([
       {
@@ -169,16 +170,17 @@ test("due reminder resumes its Pi context and sends an agent-authored message", 
     assert.equal(runtime.notifications[0].sourceSessionId, "proactive-session");
     assert.equal(runtime.kernel.listNotificationHistory()[0].deliveryBody, "到时间了，先喝几口水吧。");
     assert.equal(runtime.kernel.listNotificationHistory()[0].agentGenerated, true);
-    assert.match(runtime.model.requests[2].systemPrompt, /reminder_due system event/);
-    assert.match(JSON.stringify(runtime.model.requests[2].messages), /好，一分钟后提醒你/);
+    assert.equal(runtime.model.requests.length, 2, "draft delivery does not enter the foreground model queue");
 
+    await new Promise(resolve => setTimeout(resolve,20));
     const session = await runtime.kernel.getSession("proactive-session");
     const assistantTexts = session.messages
       .filter((message) => message.role === "assistant")
       .flatMap((message) => message.content)
       .filter((content) => content.type === "text")
       .map((content) => content.text);
-    assert.deepEqual(assistantTexts, ["好，一分钟后提醒你。", "到时间了，先喝几口水吧。"]);
+    assert.deepEqual(assistantTexts, ["好，一分钟后提醒你。"]);
+    assert.ok(session.messages.some(message => message.role === "custom" && message.content === "到时间了，先喝几口水吧。"));
     assert.deepEqual(await runtime.schedulerTick(), { claimed: 0, delivered: 0, failed: 0 });
   } finally {
     runtime.dispose();

@@ -36,6 +36,9 @@ type ConversationSnapshot = {
 };
 
 export type WorldAutonomyCoordinatorOptions = {
+  runPlanning?: <T>(characterId: string, worldId: string, operation: (signal: AbortSignal) => Promise<T>) => Promise<T>;
+  wishes?: (characterId: string, worldId: string) => Array<{ id: string; title: string; nextStep: string }>;
+  onGoalPlan?: (characterId: string, worldId: string, goalId: string, scheduleItemId: string, title: string) => void;
   planner?: WorldPlanner;
   messenger?: ProactiveMessenger;
   conversationForCharacter?: (characterId: string) => Promise<ConversationSnapshot | undefined>;
@@ -271,97 +274,116 @@ export class WorldAutonomyCoordinator {
         availability: runtime?.availability ?? "free" as const,
       };
     });
-    let proposals: WorldActivityProposal[] = [];
-    let fallbackUsed = false;
-    let plannerOutputValid = false;
-    let proposedCount = 0;
-    if (this.options.planner) {
-      try {
-        const output = await this.options.planner({
-          characterId,
-          characterName: character.name,
-          soulMarkdown: character.soulMarkdown,
-          world: life.world,
-          places: life.places,
-          currentState: life.runtime,
-          ...(life.membership.homePlaceId ? { homePlaceId: life.membership.homePlaceId } : {}),
-          existingSchedule: existingSchedule.map((item) => ({
-            title: item.title,
-            ...(item.startAt ? { startAt: item.startAt } : {}),
-            ...(item.endAt ? { endAt: item.endAt } : {}),
-          })),
-          recentEvents: life.events.slice(0, 8).reverse().map((event) => ({
-            summary: event.summary,
-            startsAt: event.startsAt,
-            ...(event.placeId ? { placeId: event.placeId } : {}),
-            participantIds: [...event.participantIds],
-          })),
-          ...(story?.activeEvent ? { activeStoryEvent: story.activeEvent } : {}),
-          worldCharacters,
-          now: planningNow.toISOString(),
-          localDate,
-          localDateTime: formatWorldLocalDateTime(planningNow, life.world.timezone),
-        });
-        const parsed = parsePlannerOutput(output);
-        plannerOutputValid = parsed.valid;
-        proposedCount = parsed.activities.length;
-        proposals = validateProposals(
-          parsed.activities,
-          life.places,
-          planningNow,
-          existingSchedule,
-          life.runtime,
-          life.world.timezone,
-        );
-      } catch {
-        proposals = [];
+    const run = async (signal?: AbortSignal) => {
+      if (!life.world || !life.membership || !life.runtime) throw new WorldValidationError("角色未加入世界");
+      const wishes = this.options.wishes?.(characterId, life.world.id) ?? [];
+      // Reserve the daily attempt before awaiting a model, including cancellation/failure.
+      this.worldService.repository.upsertPolicy({ ...life.policy, lastPlannedDate: localDate, updatedAt: this.clock.now().toISOString() });
+      let proposals: WorldActivityProposal[] = [];
+      let fallbackUsed = false;
+      let plannerOutputValid = false;
+      let proposedCount = 0;
+      if (this.options.planner) {
+        try {
+          const output = await this.options.planner({
+            characterId,
+            characterName: character.name,
+            soulMarkdown: character.soulMarkdown,
+            world: life.world,
+            places: life.places,
+            currentState: life.runtime,
+            ...(life.membership.homePlaceId ? { homePlaceId: life.membership.homePlaceId } : {}),
+            existingSchedule: existingSchedule.map((item) => ({
+              title: item.title,
+              ...(item.startAt ? { startAt: item.startAt } : {}),
+              ...(item.endAt ? { endAt: item.endAt } : {}),
+            })),
+            recentEvents: life.events.slice(0, 8).reverse().map((event) => ({
+              summary: event.summary,
+              startsAt: event.startsAt,
+              ...(event.placeId ? { placeId: event.placeId } : {}),
+              participantIds: [...event.participantIds],
+            })),
+            ...(story?.activeEvent ? { activeStoryEvent: story.activeEvent } : {}),
+            worldCharacters,
+            now: planningNow.toISOString(),
+            localDate,
+            localDateTime: formatWorldLocalDateTime(planningNow, life.world.timezone),
+            wishes,
+            signal,
+          });
+          const parsed = parsePlannerOutput(output);
+          plannerOutputValid = parsed.valid;
+          proposedCount = parsed.activities.length;
+          proposals = validateProposals(
+            parsed.activities,
+            life.places,
+            planningNow,
+            existingSchedule,
+            life.runtime,
+            life.world.timezone,
+          );
+        } catch {
+          proposals = [];
+        }
       }
-    }
-    fallbackUsed = !plannerOutputValid || (proposedCount > 0 && !proposals.length);
+      fallbackUsed = !plannerOutputValid || (proposedCount > 0 && !proposals.length);
+      signal?.throwIfAborted();
+      const freshLife = this.worldService.getCharacterLife(characterId);
+      if (freshLife.membership?.worldId !== life.world.id || freshLife.membership.createdAt !== life.membership.createdAt || !freshLife.policy.enabled) {
+        throw new WorldValidationError("角色世界或自主生活设置已变化，本次规划已丢弃");
+      }
+      const activeWishes = this.options.wishes?.(characterId, life.world.id) ?? [];
+      proposals = proposals.filter(proposal => !proposal.goalId || activeWishes.some(wish => wish.id === proposal.goalId &&
+        wishes.some(previous => previous.id === wish.id && previous.title === wish.title && previous.nextStep === wish.nextStep)));
 
-    const created: CharacterActivityPlan[] = [];
-    for (const [index, proposal] of proposals.slice(0, 3).entries()) {
-      const idempotencyKey = `world-plan:${life.world.id}:${characterId}:${life.membership.createdAt}:${localDate}:${index}`;
-      const existing = this.worldService.repository.findActivityPlanByIdempotencyKey(idempotencyKey);
-      if (existing) {
-        created.push(existing);
-        continue;
+      const created: CharacterActivityPlan[] = [];
+      for (const [index, proposal] of proposals.slice(0, 3).entries()) {
+        const idempotencyKey = `world-plan:${life.world.id}:${characterId}:${life.membership.createdAt}:${localDate}:${index}`;
+        const existing = this.worldService.repository.findActivityPlanByIdempotencyKey(idempotencyKey);
+        if (existing) {
+          if (proposal.goalId) this.options.onGoalPlan?.(characterId, life.world.id, proposal.goalId, existing.scheduleItemId, proposal.title);
+          created.push(existing);
+          continue;
+        }
+        const schedule = this.scheduleService.create({
+          kind: "event",
+          title: proposal.title,
+          notes: proposal.summary,
+          startAt: proposal.startAt,
+          endAt: proposal.endAt,
+          timezone: life.world.timezone,
+          ownerType: "character",
+          characterId,
+          sourceSessionId: `world:${life.world.id}`,
+          idempotencyKey,
+        }).item;
+        const now = this.clock.now().toISOString();
+        created.push(this.worldService.repository.createActivityPlan({
+          id: this.idGenerator.next("world-plan"),
+          scheduleItemId: schedule.id,
+          worldId: life.world.id,
+          characterId,
+          placeId: proposal.placeId,
+          capabilityId: proposal.capabilityId,
+          summary: proposal.summary,
+          salience: proposal.salience,
+          status: "planned",
+          idempotencyKey,
+          createdAt: now,
+          updatedAt: now,
+        }));
+        if (proposal.goalId) this.options.onGoalPlan?.(characterId, life.world.id, proposal.goalId, schedule.id, proposal.title);
       }
-      const schedule = this.scheduleService.create({
-        kind: "event",
-        title: proposal.title,
-        notes: proposal.summary,
-        startAt: proposal.startAt,
-        endAt: proposal.endAt,
-        timezone: life.world.timezone,
-        ownerType: "character",
-        characterId,
-        sourceSessionId: `world:${life.world.id}`,
-        idempotencyKey,
-      }).item;
-      const now = this.clock.now().toISOString();
-      created.push(this.worldService.repository.createActivityPlan({
-        id: this.idGenerator.next("world-plan"),
-        scheduleItemId: schedule.id,
-        worldId: life.world.id,
-        characterId,
-        placeId: proposal.placeId,
-        capabilityId: proposal.capabilityId,
-        summary: proposal.summary,
-        salience: proposal.salience,
-        status: "planned",
-        idempotencyKey,
-        createdAt: now,
-        updatedAt: now,
-      }));
-    }
-    this.worldService.repository.upsertPolicy({
-      ...life.policy,
-      lastPlannedDate: localDate,
-      updatedAt: this.clock.now().toISOString(),
-    });
-    this.refreshCharacterRuntime(characterId);
-    return { plans: created, fallbackUsed };
+      this.worldService.repository.upsertPolicy({
+        ...freshLife.policy,
+        lastPlannedDate: localDate,
+        updatedAt: this.clock.now().toISOString(),
+      });
+      this.refreshCharacterRuntime(characterId);
+      return { plans: created, fallbackUsed };
+    };
+    return this.options.runPlanning ? this.options.runPlanning(characterId, life.world.id, run) : run();
   }
 
   async performCharacterAction(input: {
@@ -918,6 +940,7 @@ function validateProposals(
       endAt: end.toISOString(),
       summary,
       salience: boundedUnit(item.salience, 0.55),
+      ...(cleanString(item.goalId) ? { goalId: cleanString(item.goalId) } : {}),
     });
   }
   const occupied = existingSchedule.flatMap((item) => {

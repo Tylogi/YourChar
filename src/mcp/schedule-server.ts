@@ -36,6 +36,12 @@ export type ScheduleMcpContext = {
 const scheduleKind = z.enum(["event", "task", "reminder"]);
 const scheduleStatus = z.enum(["scheduled", "completed", "cancelled"]);
 const scheduleCalendar = z.enum(["user", "character"]);
+const reminderOptions = z.object({
+  enabled: z.boolean().optional(), importance: z.enum(["normal", "important"]).optional(),
+  leadMinutes: z.number().int().min(0).max(10080).optional().describe("Minutes BEFORE the event time to notify. Keep 0 for an explicit 'remind me at X'; use e.g. 15 only for advance notice of an event."),
+  prepareMinutes: z.number().int().min(1).max(30).optional().describe("Background drafting lead before NOTIFICATION time; default 10. Does not change delivery time."),
+  channels: z.array(z.enum(["in_app", "wechat", "desktop", "feishu"])).min(1).optional().describe("Important reminders default to in_app + bound-owner WeChat. Never specify recipients or forward private content."),
+}).optional();
 const worldCapability = z.enum([
   "rest",
   "work",
@@ -89,6 +95,7 @@ export function createScheduleMcpServer(context: ScheduleMcpContext): McpServer 
         timezone: z.string().optional(),
         allDay: z.boolean().optional(),
         recurrenceRule: z.string().optional(),
+        reminder: reminderOptions,
         placeId: z.string().optional().describe("Canonical world place ID. Only valid with calendar=character and capabilityId."),
         capabilityId: worldCapability.optional().describe("Fixed world capability. Only valid with calendar=character and placeId."),
       }),
@@ -137,6 +144,7 @@ export function createScheduleMcpServer(context: ScheduleMcpContext): McpServer 
           timezone,
           allDay: input.allDay,
           recurrenceRule: input.recurrenceRule,
+          reminder: input.reminder,
           ...owner,
           sourceSessionId: context.sessionId,
           idempotencyKey: mcpToolCallId(extra),
@@ -222,6 +230,7 @@ export function createScheduleMcpServer(context: ScheduleMcpContext): McpServer 
         timezone: z.string().optional(),
         allDay: z.boolean().optional(),
         recurrenceRule: z.string().optional(),
+        reminder: reminderOptions,
       }),
       annotations: { destructiveHint: false },
     },
@@ -237,6 +246,7 @@ export function createScheduleMcpServer(context: ScheduleMcpContext): McpServer 
         timezone: input.timezone,
         allDay: input.allDay,
         recurrenceRule: input.recurrenceRule,
+        reminder: input.reminder,
       });
       context.actions().push(
         context.store.addAction("update_schedule_item", "completed", {

@@ -108,6 +108,12 @@ export const historyScript = String.raw`
       if (state.activeConversationKind === "world") return raw.map(normalizeWorldMessage).filter(Boolean);
       if (state.activeConversationKind === "group") return raw.map(normalizeGroupMessage).filter(Boolean);
       const stored = mergeToolResultsIntoMessages(dedupeSystemEvents(raw.map(normalizeStoredMessage).filter(Boolean)));
+      // A reply's parent comes from Pi's transcript sequence, never its wall clock.
+      let userEntryId = "";
+      for (const message of stored) {
+        if (message.role === "user") userEntryId = message.entryId || "";
+        else if (userEntryId && (message.role === "assistant" || message.role === "system")) message.replyToEntryId = userEntryId;
+      }
       if (incognitoConversationIsActive()) for (const message of stored) message.attachments = [];
       return stored;
     }
@@ -176,6 +182,7 @@ export const historyScript = String.raw`
       const cursor = mode === "before" ? history.page.first : mode === "after" ? history.page.last : target;
       const anchor = captureHistoryAnchor();
       const key = history.key; const revision = ++history.revision;
+      const liveRevision = history.liveRevision || 0;
       history.loading = true;
       historyScrollArmed = false;
       clearTimeout(historyScrollTimer);
@@ -186,13 +193,17 @@ export const historyScript = String.raw`
         const body = await response.json();
         if (!response.ok) throw new Error(body.error || "加载历史记录失败");
         if (historyScopeKey() !== key || messageHistory !== history || revision !== history.revision) return false;
+        if ((history.liveRevision || 0) !== liveRevision) return false;
         acceptHistoryPage(body, mode);
         history.loading = false; history.focus = mode === "around" ? target : "";
-        state.messages = normalizeHistoryMessages(history.raw);
-        if (state.activeConversationKind === "direct") state.messages = annotateProactiveMessages(mergeCharacterCollaborations(
-          mergeInteractionEvents(mergePrivateInboxMessages(state.messages, historyScopedEvents(state.privateInboxMessages || [])), historyScopedEvents(state.interactionEvents || [])),
+        const normalizedMessages = normalizeHistoryMessages(history.raw);
+        state.messages = state.activeConversationKind === "direct" ? annotateProactiveMessages(mergeCharacterCollaborations(
+          mergeInteractionEvents(preserveActiveBurstMessages(
+            mergePrivateInboxMessages(normalizedMessages, historyScopedEvents(state.privateInboxMessages || [])),
+            historyScopedEvents(state.privateInboxMessages || [])
+          ), historyScopedEvents(state.interactionEvents || [])),
           historyScopedEvents(visibleCharacterCollaborations())
-        ), state.activeProactiveMessages || []);
+        ), state.activeProactiveMessages || []) : normalizedMessages;
         renderMessages({ preserveScroll: mode !== "latest", forceAnchor: mode !== "latest", anchor });
         if (mode === "around") {
           const found = nodes.messages.querySelector('[data-history-id="' + CSS.escape(target) + '"]');

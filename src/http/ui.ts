@@ -2,6 +2,10 @@ import { socialThemeCss } from "./ui-social-theme.js";
 import { historyScript } from "./ui-history.js";
 import { appearanceBootstrap, appearanceScript } from "./ui-appearance.js";
 import { appearanceCss } from "./ui-appearance-theme.js";
+import { lifeCss, lifePanelHtml, lifeScript } from "./ui-life.js";
+import { creatorCss, creatorHtml, creatorScript } from "./ui-creator.js";
+import { reminderCss, reminderPolicyHtml, reminderCenterHtml, reminderScript } from "./ui-reminders.js";
+import { streamingOrderScript } from "./streaming-order.js";
 
 export function renderAppHtml(): string {
   return `<!doctype html>
@@ -5009,6 +5013,9 @@ export function renderAppHtml(): string {
   </style>
   <style id="yourchar-social-theme">${socialThemeCss}</style>
   <style id="yourchar-appearance-theme">${appearanceCss}</style>
+  <style id="yourchar-life-theme">${lifeCss}</style>
+  <style id="yourchar-creator-theme">${creatorCss}</style>
+  <style id="yourchar-reminder-theme">${reminderCss}</style>
 </head>
 <body>
   <div class="app">
@@ -5034,6 +5041,7 @@ export function renderAppHtml(): string {
           </span>
         </div>
         <div class="conversation-header-actions">
+          <button id="reminderInboxBtn" class="secondary icon-button" type="button" title="提醒中心" aria-label="提醒中心"><i data-lucide="bell" aria-hidden="true"></i><span id="reminderInboxBadge" hidden></span></button>
           <button id="historySearchBtn" class="secondary icon-button" type="button" title="搜索聊天记录" aria-label="搜索聊天记录" disabled><i data-lucide="search" aria-hidden="true"></i></button>
           <button id="contextBudgetBtn" class="secondary icon-button context-budget-button" type="button" title="上下文余量" aria-label="查看上下文余量" aria-haspopup="dialog" aria-controls="contextBudgetDialog" hidden><svg class="context-budget-ring" viewBox="0 0 24 24" fill="none" aria-hidden="true" focusable="false"><circle class="context-budget-ring-track" cx="12" cy="12" r="9" stroke-width="2" /><circle id="contextBudgetRing" class="context-budget-ring-value" cx="12" cy="12" r="9" pathLength="100" stroke-width="2" stroke-linecap="round" stroke-dasharray="0 100" opacity="0" /></svg></button>
           <button id="interactionToggleBtn" class="secondary icon-button" type="button" title="发起见面" aria-label="发起见面" hidden><i data-lucide="map-pin" aria-hidden="true"></i></button>
@@ -5173,6 +5181,7 @@ export function renderAppHtml(): string {
               <label class="schedule-start-field">开始时间<input id="scheduleStart" type="datetime-local" /></label>
               <label id="scheduleEndField" class="schedule-end-field">结束时间<input id="scheduleEnd" type="datetime-local" /></label>
               <label class="full">备注<textarea id="scheduleNotes"></textarea></label>
+              ${reminderPolicyHtml}
             </div>
             <div class="settings-actions">
               <button id="saveScheduleBtn" class="primary" type="submit">创建日程</button>
@@ -5249,6 +5258,9 @@ export function renderAppHtml(): string {
                   <button id="saveCharacterBtn" class="primary" type="submit">创建角色</button>
                   <button id="deleteCharacterBtn" class="danger-button" type="button" hidden><i data-lucide="trash-2" aria-hidden="true"></i><span>删除角色</span></button>
                 </div>
+                <label id="characterRemovalChoice" class="character-removal-choice" hidden>移除方式
+                  <select id="characterRemovalMode"><option value="depart">搬家离开 · 保留他人的回忆</option><option value="delete">仅删除角色数据 · 不新增离场回忆</option></select>
+                </label>
               </form>
             </div>
             <div id="characterFunctionPanel" class="character-panel character-function-panel" role="tabpanel" hidden>
@@ -5461,12 +5473,14 @@ export function renderAppHtml(): string {
           <div class="management-head">
             <h2>Agent 管理</h2>
             <div class="segmented management-tabs" aria-label="管理视图">
+              <button id="creatorTabBtn" type="button">创作助手</button>
               <button id="modulesTabBtn" class="active" type="button">能力模块</button>
               <button id="profileTabBtn" type="button">用户画像</button>
               <button id="memoryManagementTabBtn" type="button">记忆</button>
               <button id="workspaceFilesTabBtn" type="button">文件</button>
             </div>
           </div>
+          ${creatorHtml}
           <section id="modulesPanel" class="management-panel">
             <div class="schedule-head">
               <h3>MCP 与 Skills</h3>
@@ -5869,6 +5883,20 @@ export function renderAppHtml(): string {
               <div class="settings-field">
                 <label for="apiMaxTokens">Max Tokens</label>
                 <input id="apiMaxTokens" type="number" min="1" step="1" placeholder="可选" />
+              </div>
+              <div class="settings-field">
+                <label for="apiThinkingTokenBudgetField">原生思考预算协议</label>
+                <select id="apiThinkingTokenBudgetField">
+                  <option value="">关闭（兼容优先）</option>
+                  <option value="thinking_token_budget">vLLM · thinking_token_budget</option>
+                  <option value="thinking_budget">Qwen / SGLang · thinking_budget</option>
+                  <option value="thinking_budget_tokens">llama.cpp · thinking_budget_tokens</option>
+                </select>
+                <span class="muted">仅在服务端明确支持时开启；Pi 会按 CoT 强度限额，并至少为最终答案预留 1024 tokens。</span>
+              </div>
+              <div class="settings-field">
+                <label for="apiThinkingBudgetTokens">思考预算 Tokens</label>
+                <input id="apiThinkingBudgetTokens" type="number" min="1" max="1000000" step="1" placeholder="留空使用 Pi 分档默认值" />
               </div>
               <div class="settings-field">
                 <label for="apiContextWindowTokens">上下文窗口</label>
@@ -6449,11 +6477,13 @@ export function renderAppHtml(): string {
         <div class="segmented character-profile-tabs" role="tablist" aria-label="角色资料视图">
           <button id="characterProfileAboutBtn" class="active" type="button" role="tab" aria-selected="true" aria-controls="characterProfileAbout">资料</button>
           <button id="characterProfileDiaryBtn" type="button" role="tab" aria-selected="false" aria-controls="characterProfileDiary">日记与关系</button>
+          <button id="characterProfileRecentBtn" type="button" role="tab" aria-selected="false" aria-controls="characterProfileRecent">近况</button>
         </div>
         <section id="characterProfileAbout" class="character-profile-soul" role="tabpanel" aria-labelledby="characterProfileAboutBtn">
           <h3 id="characterProfileSoulTitle">角色设定</h3>
           <div id="characterProfileSoul" class="markdown-body"></div>
         </section>
+        ${lifePanelHtml}
         <section id="characterProfileDiary" class="character-diary-panel" role="tabpanel" aria-labelledby="characterProfileDiaryBtn" hidden>
           <div class="character-diary-heading"><span class="muted">旁观阅读 · 不代表你在故事中知道这些秘密</span><button id="refreshCharacterDiaryBtn" class="secondary" type="button">刷新</button></div>
           <details class="diary-settings"><summary>日记创作预设</summary>
@@ -6471,6 +6501,7 @@ export function renderAppHtml(): string {
         </section>
       </div>
     </dialog>
+    ${reminderCenterHtml}
     <dialog id="historySearchDialog" class="module-detail-dialog history-search-dialog" aria-labelledby="historySearchTitle">
       <div class="schedule-editor-head"><h3 id="historySearchTitle">搜索聊天记录</h3><button id="closeHistorySearchBtn" class="secondary icon-button" type="button" aria-label="关闭记录搜索"><i data-lucide="x" aria-hidden="true"></i></button></div>
       <form id="historySearchForm" class="history-search-form"><input id="historySearchInput" type="search" maxlength="200" placeholder="搜索当前会话中的文字" aria-label="聊天记录关键词" autocomplete="off" /><button class="primary" type="submit">搜索</button></form>
@@ -7271,6 +7302,8 @@ export function renderAppHtml(): string {
       apiTemperature: document.getElementById("apiTemperature"),
       apiReasoningEffort: document.getElementById("apiReasoningEffort"),
       apiMaxTokens: document.getElementById("apiMaxTokens"),
+      apiThinkingTokenBudgetField: document.getElementById("apiThinkingTokenBudgetField"),
+      apiThinkingBudgetTokens: document.getElementById("apiThinkingBudgetTokens"),
       apiContextWindowTokens: document.getElementById("apiContextWindowTokens"),
       saveApiSettingsBtn: document.getElementById("saveApiSettingsBtn"),
       testModelBtn: document.getElementById("testModelBtn"),
@@ -7762,6 +7795,10 @@ export function renderAppHtml(): string {
     });
     ${historyScript}
     ${appearanceScript}
+    ${lifeScript}
+    ${creatorScript}
+    ${reminderScript}
+    ${streamingOrderScript}
     nodes.messages.addEventListener("toggle", rememberMessageDisclosure, true);
     nodes.messages.addEventListener("click", handleSystemEventAction);
     nodes.messages.addEventListener("click", handleMessageAction);
@@ -8020,8 +8057,11 @@ export function renderAppHtml(): string {
     }
 
     function setManagementTab(tab) {
+      document.getElementById("creatorTabBtn").classList.toggle("active", tab === "creator");
+      document.getElementById("creatorPanel").hidden = tab !== "creator";
       if (tab !== "modules" && nodes.moduleDetailDialog.open) closeModuleDetail();
       state.managementTab = tab;
+      if (tab === "creator") void loadCreator();
       nodes.modulesTabBtn.classList.toggle("active", tab === "modules");
       nodes.profileTabBtn.classList.toggle("active", tab === "profile");
       nodes.memoryManagementTabBtn.classList.toggle("active", tab === "memory");
@@ -9318,21 +9358,17 @@ export function renderAppHtml(): string {
         const occurrences = Array.isArray(item.occurrences) ? item.occurrences : [];
         const occurrence = occurrences.find((entry) => ["scheduled", "processing"].includes(entry.status));
         const notifications = Array.isArray(item.notifications) ? item.notifications : [];
-        const notification = notifications.at(-1);
         const displayState = scheduleItemDisplayState(item);
         const time = item.startAt ? formatScheduleTime(item.startAt, item.timezone) : "未设置时间";
         const recurrence = item.recurrenceRule ? " · " + recurrenceLabel(item.recurrenceRule) : "";
         const notes = item.notes ? '<div class="schedule-meta">' + escapeHtml(item.notes) + '</div>' : "";
-        const delivery = notification
-          ? '<div class="schedule-meta">通知：' + escapeHtml(notificationStatusLabel(notification.status)) +
-            (notification.lastError ? ' · ' + escapeHtml(notification.lastError) : '') + '</div>'
-          : "";
+        const delivery = notifications.map(entry => '<div class="schedule-meta">' + escapeHtml(reminderChannelLabel(entry.channel)) + '：' +
+          escapeHtml(entry.suppressedAt ? "已停止" : notificationStatusLabel(entry.status)) + (entry.lastError ? ' · ' + escapeHtml(entry.lastError) : '') + '</div>').join("");
         const snooze = item.ownerType === "user" && item.kind === "reminder" && occurrence
           ? '<button class="secondary" type="button" data-action="snooze" data-occurrence-id="' + escapeHtml(occurrence.id) + '">稍后 10 分钟</button>'
           : "";
-        const retry = notification && notification.status === "failed"
-          ? '<button class="secondary" type="button" data-action="retry-notification" data-notification-id="' + escapeHtml(notification.id) + '">重试通知</button>'
-          : "";
+        const retry = notifications.filter(entry => entry.status === "failed" && !entry.suppressedAt).map(entry =>
+          '<button class="secondary" type="button" data-action="retry-notification" data-notification-id="' + escapeHtml(entry.id) + '">重试' + escapeHtml(reminderChannelLabel(entry.channel)) + '</button>').join("");
         const mutable = displayState === "scheduled" || displayState === "failed";
         return '<section class="schedule-row ' + escapeHtml(displayState) + '">' +
           '<div><h3 class="schedule-title">' + escapeHtml(item.title) + '<span class="schedule-status-badge ' + escapeHtml(displayState) + '">' + escapeHtml(scheduleStatusLabel(displayState)) + '</span></h3>' +
@@ -9438,7 +9474,8 @@ export function renderAppHtml(): string {
         endAt: localInputToIso(nodes.scheduleEnd.value, nodes.scheduleAllDay.checked),
         timezone: Intl.DateTimeFormat().resolvedOptions().timeZone || "Asia/Shanghai",
         allDay: nodes.scheduleAllDay.checked,
-        recurrenceRule: nodes.scheduleRecurrence.value || undefined
+        recurrenceRule: nodes.scheduleRecurrence.value || undefined,
+        reminder: readScheduleReminderPolicy()
       };
       if (!state.editingScheduleId) {
         payload.ownerType = state.scheduleOwnerType;
@@ -9538,6 +9575,7 @@ export function renderAppHtml(): string {
       nodes.scheduleEnd.value = isoToLocalInput(item.endAt, item.allDay);
       nodes.scheduleRecurrence.value = item.recurrenceRule || "";
       nodes.scheduleNotes.value = item.notes || "";
+      setScheduleReminderPolicy(item.reminder || { enabled:item.kind === "reminder",importance:"normal",leadMinutes:0,prepareMinutes:10,channels:["in_app"] });
       nodes.saveScheduleBtn.textContent = "保存修改";
       nodes.scheduleEditorTitle.textContent = "编辑日程";
       nodes.scheduleEditorScope.textContent = state.scheduleOwnerType === "character" ? "角色日程 · 不触发现实通知" : "用户日程 · 可触发现实通知";
@@ -9559,6 +9597,7 @@ export function renderAppHtml(): string {
       const reminderOption = nodes.scheduleKind.querySelector('option[value="reminder"]');
       reminderOption.disabled = characterMode;
       nodes.scheduleKind.value = characterMode ? "event" : "reminder";
+      setScheduleReminderPolicy();
       nodes.saveScheduleBtn.textContent = "创建日程";
       nodes.scheduleEditorTitle.textContent = "新建日程";
       const character = state.characters.find((entry) => entry.id === state.scheduleCharacterId);
@@ -9579,6 +9618,7 @@ export function renderAppHtml(): string {
       }
       nodes.scheduleEndField.hidden = nodes.scheduleKind.value !== "event";
       nodes.scheduleForm.classList.toggle("without-end", nodes.scheduleEndField.hidden);
+      updateReminderEditor();
       if (nodes.scheduleEndField.hidden) nodes.scheduleEnd.value = "";
     }
 
@@ -9760,6 +9800,7 @@ export function renderAppHtml(): string {
     function updatePrivateModeChrome() {
       const secret = state.conversationSpace === "secret";
       const incognito = incognitoConversationIsActive();
+      if (secret || incognito) clearReminderUi();
       const directChat = state.uiMode === "normal" && state.activeConversationKind === "direct";
       document.body.dataset.conversationSpace = state.conversationSpace;
       nodes.privateModeToggle.hidden = !directChat;
@@ -12803,6 +12844,8 @@ export function renderAppHtml(): string {
       updateCharacterSoulCount();
       nodes.saveCharacterBtn.textContent = "保存角色";
       nodes.deleteCharacterBtn.hidden = false;
+      document.getElementById("characterRemovalChoice").hidden = false;
+      document.getElementById("characterRemovalMode").value = "depart";
       nodes.characterFunctionTabBtn.disabled = false;
       nodes.characterMemoryTabBtn.disabled = false;
       nodes.characterRelationshipTabBtn.disabled = false;
@@ -12843,6 +12886,7 @@ export function renderAppHtml(): string {
       nodes.characterDetailTitle.textContent = "新角色";
       nodes.saveCharacterBtn.textContent = "创建角色";
       nodes.deleteCharacterBtn.hidden = true;
+      document.getElementById("characterRemovalChoice").hidden = true;
       nodes.characterState.textContent = "";
       nodes.memoryState.textContent = "";
       nodes.characterFunctionState.textContent = "";
@@ -12861,9 +12905,10 @@ export function renderAppHtml(): string {
     async function deleteWorkspaceCharacter() {
       const character = state.characters.find(entry => entry.id === state.workspaceCharacterId);
       if (!character) return;
+      const mode = document.getElementById("characterRemovalMode").value;
       await openActionDialog({
         title: "删除角色 · " + character.name,
-        description: "将从当前数据中删除该角色的设定、头像、普通及私密会话、专属记忆、日记、关系、日程和角色 Skill，并移出世界与群聊。其他角色、共享聊天记录、用户事实、工作区文件、已有备份与记忆版本历史会保留。此操作不能在角色页撤销。请输入角色名称“" + character.name + "”确认。",
+        description: (mode === "depart" ? "角色将以搬家离开的方式退出。有真实交集的角色保留共同经历、离开时的关系和一条离场记忆，不编造目的地或告别。" : "不新增离场记忆或历史身份副本；其他角色已经拥有的记忆及共享历史不会全文清除。") + "将删除该角色的设定、头像、普通及私密会话、专属记忆、日记、日程和角色 Skill，并移出世界与群聊。工作区文件、已有备份与记忆版本历史保留。此操作不能在角色页撤销。请输入角色名称“" + character.name + "”确认。",
         fieldLabel: "输入角色名称确认",
         value: "",
         confirmLabel: "确认删除角色",
@@ -12872,7 +12917,7 @@ export function renderAppHtml(): string {
           const response = await controlPlaneFetch("/api/v1/characters/" + encodeURIComponent(character.id), {
             method: "DELETE",
             headers: { "content-type": "application/json" },
-            body: JSON.stringify({ confirmation: value })
+            body: JSON.stringify({ confirmation: value, mode })
           });
           const body = await response.json();
           if (!response.ok) throw new Error(body.error || "删除角色失败");
@@ -17006,7 +17051,13 @@ export function renderAppHtml(): string {
       const requestedSpace = scope.conversationSpace;
       const requestedSessionId = scope.sessionId;
       const previousInteractionPresence = state.interactionState?.presence;
-      const historyRevision = ensureMessageHistory().revision;
+      const history = ensureMessageHistory();
+      const historyRevision = history.revision;
+      const refreshSerial = history.directRefreshSerial = (history.directRefreshSerial || 0) + 1;
+      const liveRevision = history.liveRevision || 0;
+      const refreshIsCurrent = () => directConversationScopeMatches(scope) &&
+        ensureMessageHistory() === history && history.revision === historyRevision &&
+        history.directRefreshSerial === refreshSerial && (history.liveRevision || 0) === liveRevision;
       const sharedStateEnabled = requestedSpace === "normal" && !scope.incognito;
       if (sharedStateEnabled) ensureCharacterCollaborationSession(requestedSessionId);
       else resetCharacterCollaborationState();
@@ -17076,7 +17127,7 @@ export function renderAppHtml(): string {
         if (!response.ok) {
           throw new Error(body.error || "加载会话失败");
         }
-        if (!directConversationScopeMatches(scope)) return;
+        if (!refreshIsCurrent()) return;
         if (interactionResponse?.ok) {
           state.interactionState = interactionBody.state || null;
           state.interactionEvents = Array.isArray(interactionBody.events) ? interactionBody.events : [];
@@ -17150,7 +17201,7 @@ export function renderAppHtml(): string {
         }
         if (!silent) setStatus("就绪");
       } catch (error) {
-        if (!directConversationScopeMatches(scope)) return;
+        if (!refreshIsCurrent()) return;
         const wasLoading = finishConversationViewLoading(
           "direct",
           requestedSessionId,
@@ -17354,6 +17405,10 @@ export function renderAppHtml(): string {
         expectedEpoch !== state.conversationSpaceEpoch || requestedSpace !== state.conversationSpace ||
         !conversationViewIsCurrent("direct", expectedSessionId, expectedViewEpoch)
       ) return;
+      if (event.type !== "agent_event") {
+        const history = ensureMessageHistory();
+        history.liveRevision = (history.liveRevision || 0) + 1;
+      }
       if (event.type === "snapshot") {
         const inbox = event.inbox || {};
         state.privateInboxMessages = Array.isArray(inbox.messages) ? inbox.messages : [];
@@ -17365,8 +17420,9 @@ export function renderAppHtml(): string {
             ensurePrivateBurstMessage(message.burstId, message.createdAt);
           }
         }
-        const recoveredMissedCompletion = discardStalePrivateBurstPlaceholders(activeBurstIds);
-        renderMessages();
+        const recoveredMissedCompletion = hasStalePrivateBurstPlaceholders(activeBurstIds);
+        // Keep the visible reply until history can replace it in the same render.
+        if (!recoveredMissedCompletion) renderMessages();
         updateDirectGenerationControls();
         if (recoveredMissedCompletion) {
           await refreshSessionMessages(true, expectedEpoch, expectedViewEpoch);
@@ -17583,15 +17639,11 @@ export function renderAppHtml(): string {
       ));
     }
 
-    function discardStalePrivateBurstPlaceholders(activeBurstIds) {
-      let discarded = false;
-      state.messages = state.messages.filter((message) => {
+    function hasStalePrivateBurstPlaceholders(activeBurstIds) {
+      return state.messages.some((message) => {
         const burstId = privateBurstId(message);
-        const stale = Boolean(burstId && message.working && !activeBurstIds.has(burstId));
-        if (stale) discarded = true;
-        return !stale;
+        return Boolean(burstId && message.working && !activeBurstIds.has(burstId));
       });
-      return discarded;
     }
 
     function privateBurstIndex(burstId) {
@@ -17880,6 +17932,7 @@ export function renderAppHtml(): string {
         localId: "incognito-user:" + clientMessageId,
         rawText: text,
         clientMessageId,
+        inboxBurstId: burstId,
         latestUser: true,
         timestampMs: Date.now()
       });
@@ -18398,6 +18451,7 @@ export function renderAppHtml(): string {
         timestampMs: Number.isFinite(timestampMs) ? timestampMs : Date.now(),
         localId: "inbox:" + String(message?.id || message?.clientMessageId || generateClientMessageId()),
         inboxMessageId: String(message?.id || ""),
+        inboxBurstId: String(message?.burstId || ""),
         clientMessageId: String(message?.clientMessageId || ""),
         queueStatus: message?.status || "queued",
         queueError: message?.lastError || "",
@@ -18454,6 +18508,7 @@ export function renderAppHtml(): string {
           consumedTranscriptIndexes.add(transcriptIndex);
           Object.assign(merged[transcriptIndex], {
             inboxMessageId: normalized.inboxMessageId,
+            inboxBurstId: normalized.inboxBurstId,
             clientMessageId: normalized.clientMessageId,
             queueStatus: normalized.queueStatus
           });
@@ -18464,34 +18519,58 @@ export function renderAppHtml(): string {
           merged.push(normalized);
         }
       }
-      return merged
+      return anchorStreamingReplies(merged
         .map((message, index) => ({ message, index }))
         .sort((left, right) =>
           (left.message.timestampMs || 0) - (right.message.timestampMs || 0) || left.index - right.index
         )
-        .map((entry) => entry.message);
+        .map((entry) => entry.message));
     }
 
     function preserveActiveBurstMessages(messages, inboxMessages) {
-      const output = [...messages];
       const burstStarts = new Map();
       for (const message of Array.isArray(inboxMessages) ? inboxMessages : []) {
         if (message.status === "processing" && message.burstId && !burstStarts.has(message.burstId)) {
           burstStarts.set(message.burstId, message.createdAt);
         }
       }
+      const activeInputIds = new Set(messages.filter((message) =>
+        message.role === "user" && message.entryId && burstStarts.has(message.inboxBurstId)
+      ).map((message) => message.entryId));
+      // Pi may have persisted a reply while the inbox still says processing.
+      // The SSE row owns that turn until completion: never show both versions.
+      const output = messages.filter((message) => !activeInputIds.has(message.replyToEntryId));
       for (const [burstId, createdAt] of burstStarts) {
         const localId = "private-burst:" + burstId;
         if (output.some((message) => message.localId === localId)) continue;
         const existing = state.messages.find((message) => message.localId === localId);
-        output.push(existing || privateBurstPlaceholder(burstId, createdAt));
+        const placeholder = existing || privateBurstPlaceholder(burstId, createdAt);
+        if (!existing) {
+          const inputIds = new Set(messages.filter((message) => message.inboxBurstId === burstId).map((message) => message.entryId).filter(Boolean));
+          placeholder.text = messages.filter((message) => message.role === "assistant" && inputIds.has(message.replyToEntryId))
+            .map((message) => message.text || "").join("\\n\\n");
+        }
+        output.push(placeholder);
       }
-      return output
+      // /messages and /inbox are separate reads. If completion falls between
+      // them, keep the old row until a snapshot actually contains its replacement.
+      for (const previous of state.messages) {
+        if (!previous.burstId || burstStarts.has(previous.burstId) || !previous.localId?.startsWith("private-burst:")) continue;
+        const input = [...state.messages].reverse().find((message) =>
+          message.role === "user" && message.inboxBurstId === previous.burstId && message.entryId
+        );
+        if (!input) continue;
+        const currentInput = output.find((message) => message.role === "user" && message.entryId === input.entryId);
+        if (!currentInput || output.some((message) => message.replyToEntryId === input.entryId)) continue;
+        currentInput.inboxBurstId = previous.burstId;
+        output.push(previous);
+      }
+      return anchorStreamingReplies(output
         .map((message, index) => ({ message, index }))
         .sort((left, right) =>
           (left.message.timestampMs || 0) - (right.message.timestampMs || 0) || left.index - right.index
         )
-        .map((entry) => entry.message);
+        .map((entry) => entry.message));
     }
 
     function mergeInteractionEvents(messages, events) {
@@ -18511,12 +18590,12 @@ export function renderAppHtml(): string {
           at: timestamp ? new Date(timestamp).toLocaleTimeString() : ""
         };
       });
-      return [...messages, ...transitions]
+      return anchorStreamingReplies([...messages, ...transitions]
         .map((message, index) => ({ message, index }))
         .sort((left, right) =>
           (left.message.timestampMs || 0) - (right.message.timestampMs || 0) || left.index - right.index
         )
-        .map((entry) => entry.message);
+        .map((entry) => entry.message));
     }
 
     function mergeCharacterCollaborations(messages, collaborations) {
@@ -18558,7 +18637,7 @@ export function renderAppHtml(): string {
           at: entry.createdAt ? new Date(entry.createdAt).toLocaleTimeString() : ""
         };
       });
-      return [
+      return anchorStreamingReplies([
         ...messages.filter((message) => message.role !== "collaboration"),
         ...events
       ]
@@ -18572,7 +18651,7 @@ export function renderAppHtml(): string {
           if (roleOrder) return roleOrder;
           return left.index - right.index;
         })
-        .map((entry) => entry.message);
+        .map((entry) => entry.message));
     }
 
     function extractMessagePresentation(value) {
@@ -19553,9 +19632,11 @@ export function renderAppHtml(): string {
     }
 
     function setCharacterProfileTab(diary) {
-      document.getElementById("characterProfileAbout").hidden = diary;
-      document.getElementById("characterProfileDiary").hidden = !diary;
-      for (const [id, selected] of [["characterProfileAboutBtn", !diary], ["characterProfileDiaryBtn", diary]]) {
+      const recent = diary === "recent";
+      document.getElementById("characterProfileAbout").hidden = Boolean(diary);
+      document.getElementById("characterProfileDiary").hidden = diary !== true;
+      document.getElementById("characterProfileRecent").hidden = !recent;
+      for (const [id, selected] of [["characterProfileAboutBtn", !diary], ["characterProfileDiaryBtn", diary === true], ["characterProfileRecentBtn", recent]]) {
         document.getElementById(id).classList.toggle("active", selected);
         document.getElementById(id).setAttribute("aria-selected", String(selected));
       }
@@ -19590,7 +19671,9 @@ export function renderAppHtml(): string {
           '<div class="diary-relationship"><strong>' + escapeHtml(relation.peerName) + '</strong><span>' +
           escapeHtml(romanceLabels[relation.romanceStatus] || romanceLabels.none) + '</span><small>对方：' +
           escapeHtml(romanceLabels[relation.peerRomanceStatus] || romanceLabels.none) + '</small></div>').join("");
-        const jobLabels = { pending: "待整理", running: "整理中", ready: "已保存", failed: "未完成，可重试", paused: "创作已暂停" };
+        document.getElementById("characterDiaryRelationships").innerHTML += (body.departedRelationships || []).map(relation =>
+          '<div class="diary-relationship"><strong>' + escapeHtml(relation.peerName) + '</strong><span>已离开</span><small>' + escapeHtml(relation.relationship?.romanceStatus && romanceLabels[relation.relationship.romanceStatus] ? '离开时：' + romanceLabels[relation.relationship.romanceStatus] : '共同经历仍然保留') + '</small></div>').join('');
+        const jobLabels = { pending: "待整理", running: "整理中", ready: "已保存", failed: "未完成，可重试", paused: "创作已暂停", cancelled: "已停止" };
         const memoryLabels = { fact: "经历", interpretation: "个人理解", open_thread: "未完事项" };
         document.getElementById("characterDiaryEntries").innerHTML = (body.entries || []).map(entry => {
           const narrativeJob = entry.jobs.find(job => job.kind === "narrative");
@@ -20961,6 +21044,8 @@ export function renderAppHtml(): string {
         nodes.apiTemperature.value = config.temperature ?? "";
         nodes.apiReasoningEffort.value = config.reasoningEffort || "";
         nodes.apiMaxTokens.value = config.maxTokens ?? "";
+        nodes.apiThinkingTokenBudgetField.value = config.thinkingTokenBudgetField || "";
+        nodes.apiThinkingBudgetTokens.value = config.thinkingBudgetTokens ?? "";
         nodes.apiContextWindowTokens.value = config.contextWindowTokens ?? "";
         nodes.apiSettingsState.textContent = (config.isDefault ? "系统默认 · " : "") +
           (config.apiKeySet ? "Key: " + config.apiKeyMasked : "Key: 未设置");
@@ -22018,6 +22103,8 @@ export function renderAppHtml(): string {
         }
       });
       if (deleted) {
+        clearCreatorView();
+        clearReminderUi();
         state.messages = [];
         state.scheduleItems = [];
         state.characters = [];
@@ -22042,6 +22129,8 @@ export function renderAppHtml(): string {
         temperature: optionalNumber(nodes.apiTemperature.value),
         reasoningEffort: nodes.apiReasoningEffort.value || null,
         maxTokens: optionalInteger(nodes.apiMaxTokens.value),
+        thinkingTokenBudgetField: nodes.apiThinkingTokenBudgetField.value || null,
+        thinkingBudgetTokens: optionalInteger(nodes.apiThinkingBudgetTokens.value),
         contextWindowTokens: optionalInteger(nodes.apiContextWindowTokens.value)
       };
       if (nodes.apiKey.value) {

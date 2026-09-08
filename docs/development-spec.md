@@ -28,8 +28,10 @@ correction/deletion, and confirmed
 real-world mutation policy. M4 adds SSE streaming, cancellation, guarded retry,
 model diagnostics, export/deletion, persistent bounded audit summaries,
 CloakBrowser regression tests, and managed-service/backup operations.
-M5 routes model-driven schedule operations through an MCP server/client boundary
-and resumes the source Pi conversation to compose proactive due reminders.
+M5 routes model-driven schedule operations through an MCP server/client boundary.
+The current reminder implementation supersedes its original foreground reminder
+turn with isolated advance drafting and deadline-independent delivery; see
+[Reminder delivery](reminder-delivery.md).
 M6 adds runtime MCP/Skill controls and a switchable User Profile MCP backed by
 one user-editable Markdown document of at most 2000 Unicode characters.
 M7 adds a dedicated Agent workspace, path-confined file tools, an OS-isolated
@@ -398,11 +400,14 @@ snooze_reminder
 
 The scheduler claims due occurrences in a SQLite transaction and writes an
 outbox entry. Delivery workers process the outbox with bounded retries. A unique
-constraint on occurrence and channel prevents duplicate notification delivery.
-For Agent-created reminders, the worker resumes `sourceSessionId`, injects a
-hidden `reminder_due` custom event, and persists the Agent's reply in the same
-transcript. The generated body is stored in the outbox before sink delivery, so
-retries and process restarts do not trigger duplicate Agent turns.
+constraint on occurrence and channel prevents duplicate notification queue entries.
+Character-style drafts run ahead of the notification deadline, outside the source
+Pi session and without tools. At the deadline, the worker uses the ready draft or
+a deterministic fallback and freezes the payload for retries. UI and configured
+owner-only IM channels track delivery separately and share acknowledgement. A
+delivered message may be mirrored as a system event in the normal source thread;
+drafting never appends to the transcript. See [Reminder delivery](reminder-delivery.md)
+for timing, migration, privacy, and platform delivery limits.
 
 The first usable release requires:
 
@@ -508,6 +513,8 @@ temporary compatibility adapters until the UI migrates.
 | GET/PATCH/DELETE | `/api/v1/schedule-items/{id}` | Inspect, update, or cancel one item |
 | POST | `/api/v1/schedule-items/{id}/complete` | Complete a task |
 | POST | `/api/v1/reminder-occurrences/{id}/snooze` | Snooze one occurrence |
+| POST | `/api/v1/reminder-occurrences/{id}/acknowledge` | Acknowledge across channels and suppress unsent deliveries |
+| GET | `/api/v1/reminder-inbox` | Recent triggered reminders and per-channel delivery state |
 | GET | `/api/v1/notifications` | Inspect delivery history and failures |
 | GET/PATCH | `/api/v1/user-profile` | Read the full profile or update its user-owned manual section |
 | GET | `/api/v1/user-insights` | Inspect bounded profile observations, policy decisions, and provenance |

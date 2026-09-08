@@ -1,6 +1,14 @@
 export type ScheduleItemKind = "event" | "task" | "reminder";
 export type ScheduleItemStatus = "scheduled" | "completed" | "cancelled";
 export type ScheduleOwnerType = "user" | "character";
+export type ReminderChannel = "in_app" | "wechat" | "desktop" | "feishu";
+export type ReminderPolicy = {
+  enabled: boolean;
+  importance: "normal" | "important";
+  leadMinutes: number;
+  prepareMinutes: number;
+  channels: ReminderChannel[];
+};
 
 export type ScheduleItem = {
   id: string;
@@ -16,6 +24,8 @@ export type ScheduleItem = {
   ownerType: ScheduleOwnerType;
   characterId?: string;
   sourceSessionId?: string;
+  reminder?: ReminderPolicy;
+  revision?: number;
   createdAt: string;
   updatedAt: string;
 };
@@ -32,6 +42,9 @@ export type ReminderOccurrence = {
   id: string;
   scheduleItemId: string;
   dueAt: string;
+  eventAt?: string;
+  acknowledgedAt?: string;
+  acknowledgedVia?: string;
   status: ReminderOccurrenceStatus;
   snoozedFromId?: string;
   createdAt: string;
@@ -52,6 +65,7 @@ export type NotificationOutboxEntry = {
   deliveryBody?: string;
   agentGenerated: boolean;
   composedAt?: string;
+  suppressedAt?: string;
   createdAt: string;
   updatedAt: string;
 };
@@ -79,6 +93,7 @@ export type CreateScheduleItemInput = {
   characterId?: string;
   sourceSessionId?: string;
   idempotencyKey?: string;
+  reminder?: Partial<ReminderPolicy>;
 };
 
 export type UpdateScheduleItemInput = Partial<
@@ -86,7 +101,7 @@ export type UpdateScheduleItemInput = Partial<
     ScheduleItem,
     "title" | "notes" | "startAt" | "endAt" | "timezone" | "allDay" | "recurrenceRule"
   >
->;
+> & { reminder?: Partial<ReminderPolicy> };
 
 export type ScheduleMutationResult = {
   item: ScheduleItem;

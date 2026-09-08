@@ -71,7 +71,7 @@ test("schema 48 adds default Subagent settings to an existing schema 47 database
     const schema = database.connection.prepare(
       "SELECT MAX(version) AS version FROM schema_migrations",
     ).get() as { version?: number } | undefined;
-    assert.equal(Number(schema?.version), 53);
+    assert.equal(Number(schema?.version), 56);
   } finally {
     database?.close();
     rmSync(root, { recursive: true, force: true });

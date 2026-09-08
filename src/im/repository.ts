@@ -455,6 +455,27 @@ export class ImRepository {
     return row ? mapOutbox(row) : undefined;
   }
 
+  enqueueNotification(input: { id: string; provider: ImProvider; notificationId: string; text: string; now: string }): ImOutboxItem {
+    const existing = this.database.connection.prepare("SELECT * FROM im_outbox WHERE notification_outbox_id=?").get(input.notificationId) as Row | undefined;
+    if (existing) return mapOutbox(existing);
+    const target = this.database.connection.prepare(`SELECT b.gateway_connection_id,b.binding_generation,e.external_chat_id
+      FROM im_bindings b JOIN im_inbound_events e ON e.provider=b.provider AND e.gateway_connection_id=b.gateway_connection_id
+        AND e.binding_generation=b.binding_generation AND e.external_user_id=b.owner_id AND e.chat_type='direct'
+      WHERE b.provider=? ORDER BY e.created_at DESC,e.event_id DESC LIMIT 1`).get(input.provider) as Row | undefined;
+    if (!target) throw new Error("请先绑定此通道，并由本人发送一条私聊消息以确认提醒目标");
+    this.database.connection.prepare(`INSERT INTO im_outbox(id,provider,gateway_connection_id,binding_generation,external_chat_id,
+      notification_outbox_id,text,attachments_json,status,available_at,created_at,updated_at) VALUES(?,?,?,?,?,?,?,'[]','pending',?,?,?)`)
+      .run(input.id,input.provider,String(target.gateway_connection_id),String(target.binding_generation),String(target.external_chat_id),input.notificationId,input.text,input.now,input.now,input.now);
+    return this.getOutbox(input.id)!;
+  }
+
+  reminderTargets(provider: ImProvider, connectionId: string, bindingGeneration: string, externalChatId: string): string[] {
+    return (this.database.connection.prepare(`SELECT DISTINCT n.occurrence_id FROM im_outbox m JOIN notification_outbox n ON n.id=m.notification_outbox_id
+      JOIN reminder_occurrences o ON o.id=n.occurrence_id WHERE m.provider=? AND m.gateway_connection_id=? AND m.binding_generation=?
+      AND m.external_chat_id=? AND m.status='delivered' AND o.acknowledged_at IS NULL AND o.status NOT IN ('cancelled','snoozed')
+      ORDER BY o.due_at DESC LIMIT 20`).all(provider,connectionId,bindingGeneration,externalChatId) as Row[]).map(row => String(row.occurrence_id));
+  }
+
   getOutboxByInboundEvent(provider: ImProvider, eventId: string): ImOutboxItem | undefined {
     const row = this.database.connection.prepare(`
       SELECT * FROM im_outbox WHERE provider = ? AND inbound_event_id = ?
@@ -472,6 +493,7 @@ export class ImRepository {
     allowAttachments?: boolean;
   }): ImOutboxItem[] {
     return this.database.transaction(() => {
+      this.invalidateReminderOutbox(input.now);
       this.database.connection.prepare(`
         UPDATE im_outbox
         SET status = 'abandoned', lease_token = NULL, lease_expires_at = NULL,
@@ -486,6 +508,7 @@ export class ImRepository {
       `).run(input.now);
       const clauses = [
         "status IN ('pending', 'failed')",
+        "(notification_outbox_id IS NULL OR attempts < 3)",
         "available_at <= ?",
         "(lease_expires_at IS NULL OR lease_expires_at <= ?)",
         `EXISTS (
@@ -586,6 +609,7 @@ export class ImRepository {
   }
 
   authorizeOutbox(id: string, leaseToken: string): ImOutboxItem | undefined {
+    this.invalidateReminderOutbox();
     const row = this.database.connection.prepare(`
       SELECT im_outbox.* FROM im_outbox
       WHERE id = ? AND lease_token = ? AND status IN ('pending', 'failed')
@@ -597,6 +621,16 @@ export class ImRepository {
         )
     `).get(id, leaseToken) as Row | undefined;
     return row ? mapOutbox(row) : undefined;
+  }
+
+  private invalidateReminderOutbox(now = new Date().toISOString()): void {
+    this.database.connection.prepare(`UPDATE im_outbox SET status='abandoned',lease_token=NULL,lease_expires_at=NULL,
+      updated_at=?,last_error='reminder cancelled, acknowledged, or disabled'
+      WHERE notification_outbox_id IS NOT NULL AND status IN ('pending','failed') AND EXISTS (
+        SELECT 1 FROM notification_outbox n JOIN reminder_occurrences o ON o.id=n.occurrence_id JOIN schedule_items i ON i.id=o.schedule_item_id
+        WHERE n.id=im_outbox.notification_outbox_id AND (n.suppressed_at IS NOT NULL OR o.acknowledged_at IS NOT NULL
+          OR o.status IN ('cancelled','snoozed') OR i.status!='scheduled' OR i.owner_type!='user')
+      )`).run(now);
   }
 
   abandonOutboxForConnection(provider: ImProvider, connectionId: string, now: string): number {
@@ -698,6 +732,7 @@ function mapOutbox(row: Row): ImOutboxItem {
     bindingGeneration: String(row.binding_generation),
     externalChatId: String(row.external_chat_id),
     ...(row.inbound_event_id ? { inboundEventId: String(row.inbound_event_id) } : {}),
+    ...(row.notification_outbox_id ? { notificationOutboxId: String(row.notification_outbox_id) } : {}),
     text: String(row.text),
     attachments: parseAttachments(row.attachments_json),
     status: String(row.status) as ImOutboxItem["status"],

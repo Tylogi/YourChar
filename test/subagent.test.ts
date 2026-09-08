@@ -94,6 +94,14 @@ test("private Pi session delegates to an isolated read-only subagent and resumes
     const childAfterRead = runtime.model.requests[2];
     const parentFinal = runtime.model.requests[3];
     assert.ok(parentInitial.toolNames.includes("delegate_task"));
+    const parentToolDefinitions = parentInitial.providerPayload.tools as Array<{
+      name?: string;
+      constrainedSampling?: unknown;
+    }>;
+    assert.deepEqual(
+      parentToolDefinitions.find((tool) => tool.name === "delegate_task")?.constrainedSampling,
+      { type: "json_schema", strict: "prefer" },
+    );
     assert.match(parentInitial.systemPrompt, /私聊角色秘密/);
     assert.match(childInitial.systemPrompt, /isolated reviewer subagent/);
     assert.doesNotMatch(childInitial.systemPrompt, /私聊角色秘密/);

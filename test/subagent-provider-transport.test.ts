@@ -21,6 +21,7 @@ test("concurrent delegated OpenAI wires bypass transport idle cutoffs without le
   assert.equal(subagentProviderTransportIdleTimeoutMs, 0);
 
   const originalDispatcher = getGlobalDispatcher();
+  const originalFetch = globalThis.fetch;
   const shortDispatcher = new Agent({
     connectTimeout: 0,
     headersTimeout: scaledIdleTimeoutMs,
@@ -128,8 +129,10 @@ test("concurrent delegated OpenAI wires bypass transport idle cutoffs without le
     });
     await childrenStarted;
 
-    // The scoped fetch wrapper is installed by now. A concurrent request made
-    // outside either child must still use the short global dispatcher.
+    // Child providers receive a request-local fetch implementation. A
+    // concurrent request outside either child keeps the short global
+    // dispatcher, and global fetch itself is never replaced.
+    assert.equal(globalThis.fetch, originalFetch);
     await expectUndiciTimeout(
       async () => {
         const response = await fetch(endpoint, {
@@ -154,6 +157,7 @@ test("concurrent delegated OpenAI wires bypass transport idle cutoffs without le
     assert.equal(modelRequestKinds.at(-1), "parent-final");
     assert.deepEqual(probeKinds, ["headers", "body", "headers"]);
     assert.equal(getGlobalDispatcher(), shortDispatcher);
+    assert.equal(globalThis.fetch, originalFetch);
   } finally {
     kernel?.dispose();
     setGlobalDispatcher(originalDispatcher);

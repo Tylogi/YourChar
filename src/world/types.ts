@@ -600,6 +600,7 @@ export type PerformWorldActionInput = {
 };
 
 export type WorldActivityProposal = {
+  goalId?: string;
   title: string;
   placeId: string;
   capabilityId: WorldCapabilityId;
@@ -610,6 +611,8 @@ export type WorldActivityProposal = {
 };
 
 export type WorldPlannerInput = {
+  wishes?: Array<{ id: string; title: string; nextStep: string }>;
+  signal?: AbortSignal;
   characterId: string;
   characterName: string;
   soulMarkdown: string;

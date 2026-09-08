@@ -324,6 +324,39 @@ test("the local gateway delivers an owner direct reply in order and dispose fail
   );
 });
 
+test("the outbound timer delivers a reminder while an inbound model turn is still waiting", { timeout: 6000 }, async (context) => {
+  const root = temporaryDirectory(context, "yourchar-local-im-reminder-timer-");
+  new LocalImCredentialStore(root).set("wechat", { connectionId: "wechat-connection" });
+  const gateway = new LocalImGateway(root, join(root, "workspace"));
+  const releaseModel = deferred(), modelStarted = deferred(), sent = deferred();
+  const keepAlive = setInterval(() => undefined, 1000);
+  context.after(() => clearInterval(keepAlive));
+  context.after(async () => { releaseModel.resolve(); await gateway.dispose(); });
+  // No connector restoration or platform network request is permitted in this test.
+  gateway.wechat.restore = async () => undefined;
+  gateway.feishu.restore = async () => undefined;
+  gateway.wechat.send = async () => { sent.resolve(); };
+  const order: string[] = [];
+  const delivery = { ...leasedOutbox("wechat", "independent-reminder"), notificationOutboxId: "notification" };
+  const core = oneReplyCore(delivery, order);
+  const receive = core.receiveInboundEvent;
+  core.isWechatTypingEnabled = () => false;
+  let waiting = false;
+  core.receiveInboundEvent = async event => {
+    waiting = true; modelStarted.resolve(); await releaseModel.promise; waiting = false;
+    return receive(event);
+  };
+  await gateway.attachCore(core);
+  const internals = gateway as unknown as GatewayInternals;
+  gateway.setInboundEnabled("wechat", true);
+  internals.spool.enqueue(inboundEvent("wechat", "slow-model-turn"));
+  await modelStarted.promise;
+  await sent.promise;
+  assert.equal(waiting, true, "outbound delivery must not await model completion");
+  assert.ok(order.includes("core:authorize"));
+  releaseModel.resolve();
+});
+
 test("local gateway disconnect waits for an already-authorized platform send", async (context) => {
   const root = temporaryDirectory(context, "yourchar-local-im-disconnect-send-");
   const gateway = new LocalImGateway(root, join(root, "workspace"));

@@ -13,18 +13,25 @@ import {
   writeFileSync,
 } from "node:fs";
 import { basename, dirname, isAbsolute, join, resolve } from "node:path";
-import type { AgentMessage } from "@earendil-works/pi-agent-core";
+import type { AgentMessage, ThinkingLevel } from "@earendil-works/pi-agent-core";
 import {
-  AuthStorage,
   createAgentSession,
   DefaultResourceLoader,
-  ModelRegistry,
+  ModelRuntime,
   SessionManager,
   SettingsManager,
   type AgentSession,
   type ExtensionFactory,
+  type ToolDefinition,
 } from "@earendil-works/pi-coding-agent";
-import type { Api, Model } from "@earendil-works/pi-ai/compat";
+import {
+  InMemoryCredentialStore,
+  type Api,
+  type Model,
+  type Provider,
+  type ThinkingBudgets,
+  type ThinkingTokenBudgetField,
+} from "@earendil-works/pi-ai";
 import type { Clock } from "../app/clock.js";
 import { SystemClock } from "../app/clock.js";
 import { EPHEMERAL_STATE_DIRECTORY_NAME } from "../app/state-directory.js";
@@ -129,7 +136,10 @@ import type { ContextBudgetSnapshot, ContextEconomicsPlan, ContextPlan } from ".
 import { createSandboxedShellTool } from "./sandboxed-shell-tool.js";
 import { createDocumentReadTool } from "./document-read-tool.js";
 import { createSkillReadTool } from "./skill-read-tool.js";
-import { createSubagentProviderHttpTransport } from "./subagent-provider-transport.js";
+import {
+  createSubagentProviderHttpTransport,
+  type SubagentProviderHttpTransport,
+} from "./subagent-provider-transport.js";
 import { createWorkspaceTools } from "./workspace-tools.js";
 import {
   createWorkspaceAttachmentMarker,
@@ -164,6 +174,69 @@ const maxCurrentSubagentResultContextCharacters =
 const historicalToolCallArgumentCharacters = 1_200;
 const currentToolCallArgumentCharacters = 8_000;
 const maxPiSessionHeaderBytes = 64 * 1_024;
+
+async function createInMemoryModelRuntime(): Promise<ModelRuntime> {
+  return ModelRuntime.create({
+    credentials: new InMemoryCredentialStore(),
+    modelsPath: null,
+    refreshOnCreate: false,
+  });
+}
+
+function preferStrictJsonSchemaSampling<T extends ToolDefinition>(tool: T): T {
+  if (tool.constrainedSampling !== undefined) return tool;
+  return {
+    ...tool,
+    constrainedSampling: { type: "json_schema", strict: "prefer" },
+  };
+}
+
+function routeProviderThroughSubagentTransport(
+  modelRuntime: ModelRuntime,
+  model: Model<Api>,
+  transport: SubagentProviderHttpTransport,
+): Model<Api> {
+  const provider = modelRuntime.getProvider(model.provider);
+  if (!provider) {
+    throw new Error(`Subagent provider is unavailable: ${model.provider}`);
+  }
+  const routedProvider: Provider = {
+    id: provider.id,
+    name: provider.name,
+    baseUrl: provider.baseUrl,
+    headers: provider.headers,
+    auth: provider.auth,
+    getModels: () => provider.getModels(),
+    refreshModels: provider.refreshModels
+      ? (context) => provider.refreshModels!(context)
+      : undefined,
+    filterModels: provider.filterModels
+      ? (models, credential) => provider.filterModels!(models, credential)
+      : undefined,
+    stream: ((candidate, context, options) => provider.stream(candidate, context, {
+      ...(options ?? {}),
+      fetch: transport.fetch,
+    } as never)) as Provider["stream"],
+    streamSimple: ((candidate, context, options) => provider.streamSimple(candidate, context, {
+      ...(options ?? {}),
+      fetch: transport.fetch,
+    })) as Provider["streamSimple"],
+    fetchDeferred: provider.fetchDeferred
+      ? (candidate, handle, options) => provider.fetchDeferred!(candidate, handle, {
+          ...(options ?? {}),
+          fetch: transport.fetch,
+        })
+      : undefined,
+    cancelDeferred: provider.cancelDeferred
+      ? (candidate, handle, options) => provider.cancelDeferred!(candidate, handle, {
+          ...(options ?? {}),
+          fetch: transport.fetch,
+        })
+      : undefined,
+  };
+  modelRuntime.registerNativeProvider(routedProvider);
+  return modelRuntime.getModel(model.provider, model.id) ?? model;
+}
 
 export type ConversationMetadata = {
   id: string;
@@ -253,8 +326,7 @@ export type ConversationTranscriptMessage = AgentMessage & {
 
 export type PiModelResolverContext = {
   appSessionId: string;
-  authStorage: AuthStorage;
-  modelRegistry: ModelRegistry;
+  modelRuntime: ModelRuntime;
 };
 
 export type PiModelResolver = (
@@ -274,14 +346,41 @@ export type ProviderPayloadOptions = {
   chatTemplateKwargs?: Record<string, string | number | boolean | null>;
   requireThinking?: boolean;
   reasoningEffort?: ModelReasoningEffort;
+  thinkingTokenBudgetField?: ThinkingTokenBudgetField;
+  thinkingBudgetTokens?: number;
   /** Config-only child settings. These intentionally exclude meeting-preset overrides. */
   subagent?: {
     temperature?: number;
     model?: string;
     chatTemplateKwargs?: Record<string, string | number | boolean | null>;
     reasoningEffort?: ModelReasoningEffort;
+    thinkingTokenBudgetField?: ThinkingTokenBudgetField;
+    thinkingBudgetTokens?: number;
   };
 };
+
+const defaultPiThinkingBudgets: ThinkingBudgets = {
+  minimal: 1_024,
+  low: 2_048,
+  medium: 8_192,
+  high: 16_384,
+};
+
+function piThinkingLevel(
+  options: Pick<ProviderPayloadOptions, "reasoningEffort" | "thinkingTokenBudgetField">,
+): ThinkingLevel {
+  if (!options.thinkingTokenBudgetField || options.reasoningEffort === "none") return "off";
+  if (options.reasoningEffort === "ultra") return "max";
+  return options.reasoningEffort ?? "medium";
+}
+
+function piThinkingBudgets(
+  options: Pick<ProviderPayloadOptions, "thinkingBudgetTokens">,
+): ThinkingBudgets {
+  const budget = options.thinkingBudgetTokens;
+  if (budget === undefined) return { ...defaultPiThinkingBudgets };
+  return { minimal: budget, low: budget, medium: budget, high: budget };
+}
 
 type SubagentRunSettingsSnapshot = SubagentSettingsSnapshot & {
   /** Millisecond projection; may use the internal test-only override. */
@@ -346,8 +445,7 @@ export type PiSessionHandle = {
   workspace: ScopedWorkspace;
   session: AgentSession;
   sessionManager: SessionManager;
-  authStorage: AuthStorage;
-  modelRegistry: ModelRegistry;
+  modelRuntime: ModelRuntime;
   toolState: CompanionToolRuntimeState;
   mcpBridges: McpPiBridge[];
   toolNames: string[];
@@ -611,16 +709,18 @@ export class PiSessionRuntime {
   }
 
   async prepareForTurn(handle: PiSessionHandle): Promise<void> {
+    const payloadOptions = this.providerPayloadOptions?.(handle.metadata.id) ?? {};
     const model = await this.modelResolver({
       appSessionId: handle.metadata.id,
-      authStorage: handle.authStorage,
-      modelRegistry: handle.modelRegistry,
+      modelRuntime: handle.modelRuntime,
     });
     const fingerprint = model ? modelFingerprint(model) : undefined;
     if (model && handle.modelFingerprint !== fingerprint) {
       await handle.session.setModel(model);
       handle.modelFingerprint = fingerprint;
     }
+    handle.session.agent.thinkingBudgets = piThinkingBudgets(payloadOptions);
+    handle.session.setThinkingLevel(piThinkingLevel(payloadOptions));
     this.touch(handle.metadata);
   }
 
@@ -896,6 +996,26 @@ export class PiSessionRuntime {
     }
 
     const budget = this.contextBudgetForHandle(handle);
+    const measuredPressure = conversationLifecyclePressure(
+      budget,
+      estimateConversationHistoryTokens(handle.session.messages),
+      this.conversationLifecycleThresholds,
+    );
+    if (
+      metadata.sleepState === "tired" &&
+      !mentionedFatigue &&
+      !decision.userAcceptedSleep &&
+      !decision.hardSleepRequired &&
+      !decision.compactionPending &&
+      !metadata.pendingCompactionAt &&
+      !measuredPressure.tired
+    ) {
+      metadata.sleepState = "awake";
+      delete metadata.tiredAt;
+      delete metadata.sleepSuggestedAt;
+      this.touch(metadata);
+      return { compacted: false, woke: false };
+    }
     // Absolute lifecycle thresholds are retained only for deterministic tests
     // and legacy callers; they must not replace the canonical model budget as
     // an automatic compaction trigger.
@@ -1548,8 +1668,7 @@ export class PiSessionRuntime {
     );
     const workspace = this.workspaceRegistry.resolve(metadata);
     const sessionManager = this.createSessionManager(metadata, workspace.dir);
-    const authStorage = AuthStorage.inMemory();
-    const modelRegistry = ModelRegistry.inMemory(authStorage);
+    const modelRuntime = await createInMemoryModelRuntime();
     const payloadOptions = this.providerPayloadOptions?.(metadata.id) ?? {};
     const capacityBudget = buildContextBudget({
       sessionId: metadata.id,
@@ -1574,6 +1693,7 @@ export class PiSessionRuntime {
         reserveTokens: autoCompactionReserve,
         keepRecentTokens: Math.min(roleplayRecentContextTokens, Math.max(1_024, Math.floor(contextWindow * 0.1))),
       },
+      thinkingBudgets: piThinkingBudgets(payloadOptions),
     });
     const toolState: CompanionToolRuntimeState = {
       store: this.store,
@@ -1891,7 +2011,7 @@ export class PiSessionRuntime {
       ...(documentReadTool ? [documentReadTool] : []),
       ...workspaceTools,
       ...(shellTool ? [shellTool] : []),
-    ];
+    ].map(preferStrictJsonSchemaSampling);
     const resourceLoader = new DefaultResourceLoader({
       cwd: workspace.dir,
       agentDir: this.piAgentDir,
@@ -1909,21 +2029,19 @@ export class PiSessionRuntime {
     await resourceLoader.reload();
     const model = await this.modelResolver({
       appSessionId: metadata.id,
-      authStorage,
-      modelRegistry,
+      modelRuntime,
     });
     let session: AgentSession | undefined;
     try {
       ({ session } = await createAgentSession({
         cwd: workspace.dir,
         agentDir: this.piAgentDir,
-        authStorage,
-        modelRegistry,
+        modelRuntime,
         settingsManager,
         resourceLoader,
         sessionManager,
         model,
-        thinkingLevel: "off",
+        thinkingLevel: piThinkingLevel(payloadOptions),
         noTools: "builtin",
         tools: customTools.map((tool) => tool.name),
         customTools,
@@ -1961,8 +2079,7 @@ export class PiSessionRuntime {
       workspace,
       session,
       sessionManager,
-      authStorage,
-      modelRegistry,
+      modelRuntime,
       toolState,
       mcpBridges,
       toolNames: customTools.map((tool) => tool.name),
@@ -2014,13 +2131,15 @@ export class PiSessionRuntime {
     this.activeSubagentCounts.set(input.parentSessionId, active + 1);
 
     const childSessionId = `subagent:${input.parentSessionId}:${this.store.idGenerator.next("run")}`;
-    const authStorage = AuthStorage.inMemory();
-    const modelRegistry = ModelRegistry.inMemory(authStorage);
+    const payloadOptions = this.providerPayloadOptions?.(input.parentSessionId) ?? {};
+    const childPayloadOptions = payloadOptions.subagent ?? {};
+    const modelRuntime = await createInMemoryModelRuntime();
     const settingsManager = SettingsManager.inMemory({
       compaction: { enabled: false },
       // The frozen Subagent wall-clock deadline owns cancellation. Pi maps 0
       // to an effectively unbounded SDK request timeout instead of 300000 ms.
       httpIdleTimeoutMs: subagentHttpIdleTimeoutMs,
+      thinkingBudgets: piThinkingBudgets(childPayloadOptions),
     });
     const sessionManager = SessionManager.inMemory(input.workspace.dir);
     let providerTransport: ReturnType<typeof createSubagentProviderHttpTransport> | undefined;
@@ -2121,7 +2240,7 @@ export class PiSessionRuntime {
           sessionId: childSessionId,
           actions: () => input.actions,
         }),
-      ];
+      ].map(preferStrictJsonSchemaSampling);
       const systemPrompt = subagentSystemPrompt(
         input.request.role,
         input.timezone,
@@ -2129,8 +2248,6 @@ export class PiSessionRuntime {
         childTools.map((tool) => tool.name),
         this.moduleCatalog.skillContext(input.conversationSpace, input.characterId),
       );
-      const payloadOptions = this.providerPayloadOptions?.(input.parentSessionId) ?? {};
-      const childPayloadOptions = payloadOptions.subagent ?? {};
       const extensionFactory: ExtensionFactory = (pi) => {
         pi.on("before_provider_request", (event) => {
           if (modelCalls >= maxTotalModelCalls) {
@@ -2147,10 +2264,12 @@ export class PiSessionRuntime {
             payload.temperature = childPayloadOptions.temperature;
           }
           payload.max_tokens = subagentSettings.maxOutputTokens;
-          let configuredPayload = applyConfiguredReasoningEffort(payload, {
-            model: childPayloadOptions.model,
-            reasoningEffort: childPayloadOptions.reasoningEffort,
-          }) as Record<string, unknown>;
+          let configuredPayload = childPayloadOptions.thinkingTokenBudgetField
+            ? payload
+            : applyConfiguredReasoningEffort(payload, {
+                model: childPayloadOptions.model,
+                reasoningEffort: childPayloadOptions.reasoningEffort,
+              }) as Record<string, unknown>;
           if (childPayloadOptions.chatTemplateKwargs) {
             configuredPayload.chat_template_kwargs = {
               ...(isRecord(configuredPayload.chat_template_kwargs) ? configuredPayload.chat_template_kwargs : {}),
@@ -2223,29 +2342,29 @@ export class PiSessionRuntime {
         extensionFactories: [extensionFactory],
       });
       await resourceLoader.reload();
-      const model = await this.modelResolver({
+      const resolvedModel = await this.modelResolver({
         appSessionId: input.parentSessionId,
-        authStorage,
-        modelRegistry,
+        modelRuntime,
       });
-      if (!model) throw new Error("Subagent model is unavailable");
+      if (!resolvedModel) throw new Error("Subagent model is unavailable");
+      const model = routeProviderThroughSubagentTransport(
+        modelRuntime,
+        resolvedModel,
+        taskProviderTransport,
+      );
       ({ session: child } = await createAgentSession({
         cwd: input.workspace.dir,
         agentDir: this.piAgentDir,
-        authStorage,
-        modelRegistry,
+        modelRuntime,
         settingsManager,
         resourceLoader,
         sessionManager,
         model,
-        thinkingLevel: "off",
+        thinkingLevel: piThinkingLevel(childPayloadOptions),
         noTools: "builtin",
         tools: childTools.map((tool) => tool.name),
         customTools: childTools,
       }));
-      const childStreamFn = child.agent.streamFn;
-      child.agent.streamFn = (model, context, options) =>
-        taskProviderTransport.run(() => childStreamFn(model, context, options));
       this.activeSubagents.add(child);
 
       let promptError: unknown;
@@ -2599,13 +2718,15 @@ export class PiSessionRuntime {
           if (typeof options.maxTokens === "number") {
             payload.max_tokens = options.maxTokens;
           }
-          payload = applyConfiguredReasoningEffort(
-            payload,
-            {
-              model: options.model,
-              reasoningEffort: options.reasoningEffort,
-            },
-          ) as Record<string, unknown>;
+          if (!options.thinkingTokenBudgetField) {
+            payload = applyConfiguredReasoningEffort(
+              payload,
+              {
+                model: options.model,
+                reasoningEffort: options.reasoningEffort,
+              },
+            ) as Record<string, unknown>;
+          }
           if (options.chatTemplateKwargs) {
             payload.chat_template_kwargs = {
               ...(isRecord(payload.chat_template_kwargs) ? payload.chat_template_kwargs : {}),
@@ -4406,5 +4527,8 @@ function modelFingerprint(model: Model<Api>): string {
     contextWindow: model.contextWindow,
     maxTokens: model.maxTokens,
     input: model.input,
+    reasoning: model.reasoning,
+    thinkingLevelMap: model.thinkingLevelMap,
+    compat: model.compat,
   });
 }

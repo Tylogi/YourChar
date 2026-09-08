@@ -22,6 +22,8 @@ type ScheduleItemRow = {
   owner_type: ScheduleItem["ownerType"];
   character_id: string | null;
   source_session_id: string | null;
+  reminder_json: string | null;
+  revision: number;
   created_at: string;
   updated_at: string;
 };
@@ -32,6 +34,9 @@ type OccurrenceRow = {
   due_at: string;
   status: ReminderOccurrence["status"];
   snoozed_from_id: string | null;
+  event_at: string | null;
+  acknowledged_at: string | null;
+  acknowledged_via: string | null;
   created_at: string;
   updated_at: string;
 };
@@ -48,6 +53,7 @@ type OutboxRow = {
   delivery_body: string | null;
   agent_generated: number;
   composed_at: string | null;
+  suppressed_at: string | null;
   created_at: string;
   updated_at: string;
 };
@@ -65,8 +71,8 @@ export class ScheduleRepository {
         INSERT INTO schedule_items(
           id, kind, title, notes, start_at, end_at, timezone, all_day,
           recurrence_rule, status, owner_type, character_id, source_session_id,
-          idempotency_key, created_at, updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          idempotency_key, created_at, updated_at, reminder_json, revision
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `)
       .run(
         item.id,
@@ -85,6 +91,8 @@ export class ScheduleRepository {
         idempotencyKey ?? null,
         item.createdAt,
         item.updatedAt,
+        item.reminder ? JSON.stringify(item.reminder) : null,
+        item.revision ?? 0,
       );
     return item;
   }
@@ -148,7 +156,7 @@ export class ScheduleRepository {
         UPDATE schedule_items SET
           kind = ?, title = ?, notes = ?, start_at = ?, end_at = ?, timezone = ?,
           all_day = ?, recurrence_rule = ?, status = ?, owner_type = ?, character_id = ?,
-          source_session_id = ?, updated_at = ?
+          source_session_id = ?, updated_at = ?, reminder_json = ?, revision = ?
         WHERE id = ?
       `)
       .run(
@@ -165,6 +173,8 @@ export class ScheduleRepository {
         item.characterId ?? null,
         item.sourceSessionId ?? null,
         item.updatedAt,
+        item.reminder ? JSON.stringify(item.reminder) : null,
+        item.revision ?? 0,
         item.id,
       );
     return item;
@@ -186,7 +196,12 @@ export class ScheduleRepository {
         occurrence.createdAt,
         occurrence.updatedAt,
       );
-    return this.getOccurrenceByItemAndTime(occurrence.scheduleItemId, occurrence.dueAt) ?? occurrence;
+    const stored = this.getOccurrenceByItemAndTime(occurrence.scheduleItemId, occurrence.dueAt) ?? occurrence;
+    this.database.connection.prepare("UPDATE reminder_occurrences SET event_at=? WHERE id=?").run(occurrence.eventAt ?? null, stored.id);
+    if (stored.status === "cancelled" && occurrence.dueAt > occurrence.createdAt) {
+      this.database.connection.prepare("UPDATE reminder_occurrences SET status='scheduled',updated_at=? WHERE id=?").run(occurrence.updatedAt,stored.id);
+    }
+    return this.getOccurrence(stored.id)!;
   }
 
   getOccurrence(id: string): ReminderOccurrence | undefined {
@@ -235,12 +250,50 @@ export class ScheduleRepository {
   }
 
   cancelScheduledOccurrences(scheduleItemId: string, updatedAt: string): void {
+    for (const occurrence of this.listOccurrences(scheduleItemId)) {
+      this.suppressOccurrence(occurrence.id, updatedAt);
+    }
     this.database.connection
       .prepare(`
         UPDATE reminder_occurrences SET status = 'cancelled', updated_at = ?
         WHERE schedule_item_id = ? AND status IN ('scheduled', 'processing')
       `)
       .run(updatedAt, scheduleItemId);
+  }
+
+  suppressOccurrence(id: string, now: string): void {
+    // Preserve platform receipts that arrived before the scheduler's next poll.
+    this.database.connection.prepare(`UPDATE notification_outbox SET status='delivered',updated_at=?,last_error=NULL
+      WHERE occurrence_id=? AND status!='delivered' AND EXISTS (
+        SELECT 1 FROM im_outbox m WHERE m.notification_outbox_id=notification_outbox.id AND m.status='delivered'
+      )`).run(now,id);
+    this.database.connection.prepare("UPDATE notification_outbox SET suppressed_at=? WHERE occurrence_id=? AND status!='delivered'").run(now,id);
+    this.database.connection.prepare(`UPDATE im_outbox SET status='abandoned',lease_token=NULL,lease_expires_at=NULL,updated_at=?,last_error='reminder stopped'
+      WHERE notification_outbox_id IN (SELECT id FROM notification_outbox WHERE occurrence_id=?) AND status!='delivered'`).run(now,id);
+    this.database.connection.prepare("DELETE FROM reminder_drafts WHERE occurrence_id=?").run(id);
+  }
+
+  acknowledgeOccurrence(id: string, via: string, now: string): ReminderOccurrence {
+    this.database.connection.prepare("UPDATE reminder_occurrences SET acknowledged_at=COALESCE(acknowledged_at,?),acknowledged_via=COALESCE(acknowledged_via,?),updated_at=? WHERE id=?").run(now,via,now,id);
+    this.suppressOccurrence(id,now);
+    return this.getOccurrence(id)!;
+  }
+
+  listUpcomingOccurrences(until: string): ReminderOccurrence[] {
+    return (this.database.connection.prepare(`SELECT o.* FROM reminder_occurrences o JOIN schedule_items i ON i.id=o.schedule_item_id
+      WHERE o.status='scheduled' AND o.acknowledged_at IS NULL AND o.due_at<=? AND i.owner_type='user' AND i.status='scheduled'
+      ORDER BY o.due_at LIMIT 100`).all(until) as OccurrenceRow[]).map(mapOccurrence);
+  }
+
+  getDraft(id: string): { revision: number; status: string; body?: string; agentGenerated: boolean } | undefined {
+    const row = this.database.connection.prepare("SELECT * FROM reminder_drafts WHERE occurrence_id=?").get(id);
+    return row ? { revision: Number(row.revision),status: String(row.status),body: row.body ? String(row.body) : undefined,agentGenerated: Boolean(row.agent_generated) } : undefined;
+  }
+
+  saveDraft(id: string, revision: number, status: string, now: string, body?: string, agentGenerated = false): void {
+    this.database.connection.prepare(`INSERT INTO reminder_drafts(occurrence_id,revision,status,body,agent_generated,created_at,updated_at)
+      VALUES(?,?,?,?,?,?,?) ON CONFLICT(occurrence_id) DO UPDATE SET revision=excluded.revision,status=excluded.status,body=excluded.body,agent_generated=excluded.agent_generated,updated_at=excluded.updated_at`)
+      .run(id,revision,status,body ?? null,agentGenerated ? 1 : 0,now,now);
   }
 
   createOutbox(entry: NotificationOutboxEntry): NotificationOutboxEntry {
@@ -283,7 +336,7 @@ export class ScheduleRepository {
     const rows = this.database.connection
       .prepare(`
         SELECT * FROM notification_outbox
-        WHERE status = 'pending' AND available_at <= ?
+        WHERE status = 'pending' AND suppressed_at IS NULL AND available_at <= ?
         ORDER BY available_at, id LIMIT ?
       `)
       .all(now, limit) as OutboxRow[];
@@ -338,6 +391,7 @@ export class ScheduleRepository {
   }
 
   retryOutbox(id: string, availableAt: string, updatedAt: string): void {
+    this.database.connection.prepare("UPDATE im_outbox SET status='pending',attempts=0,available_at=?,last_error=NULL WHERE notification_outbox_id=? AND status='failed'").run(availableAt,id);
     this.database.connection
       .prepare(`
         UPDATE notification_outbox
@@ -345,6 +399,10 @@ export class ScheduleRepository {
         WHERE id = ?
       `)
       .run(availableAt, updatedAt, id);
+  }
+
+  setPendingDetail(id: string, detail?: string): void {
+    this.database.connection.prepare("UPDATE notification_outbox SET last_error=? WHERE id=?").run(detail ?? null,id);
   }
 
   markOutboxDelivered(id: string, updatedAt: string): void {
@@ -389,6 +447,8 @@ function mapItem(row: ScheduleItemRow): ScheduleItem {
     ownerType: row.owner_type,
     characterId: row.character_id ?? undefined,
     sourceSessionId: row.source_session_id ?? undefined,
+    reminder: row.reminder_json ? JSON.parse(row.reminder_json) : undefined,
+    revision: Number(row.revision ?? 0),
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };
@@ -401,6 +461,9 @@ function mapOccurrence(row: OccurrenceRow): ReminderOccurrence {
     dueAt: row.due_at,
     status: row.status,
     snoozedFromId: row.snoozed_from_id ?? undefined,
+    eventAt: row.event_at ?? undefined,
+    acknowledgedAt: row.acknowledged_at ?? undefined,
+    acknowledgedVia: row.acknowledged_via ?? undefined,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };
@@ -419,6 +482,7 @@ function mapOutbox(row: OutboxRow): NotificationOutboxEntry {
     deliveryBody: row.delivery_body ?? undefined,
     agentGenerated: Boolean(row.agent_generated),
     composedAt: row.composed_at ?? undefined,
+    suppressedAt: row.suppressed_at ?? undefined,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };

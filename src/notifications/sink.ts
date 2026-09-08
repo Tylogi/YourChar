@@ -9,10 +9,13 @@ export type NotificationDelivery = {
   dueAt: string;
   sourceSessionId?: string;
   agentGenerated: boolean;
+  eventAt?: string;
+  timezone?: string;
 };
 
 export type DeliveryResult = {
   delivered: boolean;
+  pending?: boolean;
   detail?: string;
 };
 
@@ -41,13 +44,15 @@ export class CaptureNotificationSink implements NotificationSink {
 
 export class NotifySendNotificationSink implements NotificationSink {
   readonly channel = "desktop";
+  constructor(private readonly enabled = true) {}
 
   async deliver(notification: NotificationDelivery): Promise<DeliveryResult> {
+    if (!this.enabled) return { delivered: false, detail: "桌面通知未启用（RP_AGENT_DESKTOP_NOTIFICATIONS=1）；这是服务器桌面通知，不是浏览器推送" };
     return new Promise((resolve, reject) => {
       const child = spawn(
         "notify-send",
         ["--app-name", "YourChar", notification.title, notification.body],
-        { stdio: "ignore" },
+        { stdio: "ignore", timeout: 4000 },
       );
       child.once("error", reject);
       child.once("exit", (code) => {

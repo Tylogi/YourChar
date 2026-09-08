@@ -2,6 +2,7 @@ import type { Clock } from "../app/clock.js";
 import type { IdGenerator } from "../app/id-generator.js";
 import { addZonedCalendarDays, TimeResolutionError } from "../domain/time.js";
 import type { ScheduleRepository } from "./repository.js";
+import { normalizeReminderPolicy, reminderPolicy } from "./reminder-policy.js";
 import type {
   CreateScheduleItemInput,
   ReminderOccurrence,
@@ -72,12 +73,13 @@ export class ScheduleService {
       createdAt: now,
       updatedAt: now,
     };
+    item.reminder = normalizeReminderPolicy(input.reminder, item);
     validateScheduleItem(item);
     assertFutureReminder(item, this.clock.now());
     const warnings = this.overlapWarnings(item);
     const result = this.repository.transaction(() => {
       this.repository.createItem(item, input.idempotencyKey);
-      const occurrence = item.kind === "reminder" ? this.createOccurrence(item, item.startAt!) : undefined;
+      const occurrence = reminderPolicy(item).enabled ? this.createOccurrence(item, notificationTime(item)) : undefined;
       return { item, occurrence, warnings };
     });
     this.emitMutation({ type: "created", item: result.item, occurrence: result.occurrence });
@@ -114,16 +116,21 @@ export class ScheduleService {
           ? current.recurrenceRule
           : normalizeRecurrence(patch.recurrenceRule),
       updatedAt: this.clock.now().toISOString(),
+      revision: (current.revision ?? 0) + 1,
     };
+    if (patch.reminder !== undefined && (!patch.reminder || typeof patch.reminder !== "object" || Array.isArray(patch.reminder))) {
+      throw new Error("reminder policy must be an object");
+    }
+    next.reminder = normalizeReminderPolicy(patch.reminder ? { ...reminderPolicy(current), ...patch.reminder } : reminderPolicy(current), next);
     validateScheduleItem(next);
     assertFutureReminder(next, this.clock.now());
     const warnings = this.overlapWarnings(next);
     const result = this.repository.transaction(() => {
       this.repository.updateItem(next);
       let occurrence: ReminderOccurrence | undefined;
-      if (next.kind === "reminder" && next.startAt !== current.startAt) {
+      if (reminderPolicy(current).enabled || reminderPolicy(next).enabled) {
         this.repository.cancelScheduledOccurrences(next.id, next.updatedAt);
-        occurrence = this.createOccurrence(next, next.startAt!);
+        if (reminderPolicy(next).enabled && next.startAt && next.startAt > next.updatedAt) occurrence = this.createOccurrence(next, notificationTime(next));
       }
       return { item: next, occurrence, warnings };
     });
@@ -156,7 +163,7 @@ export class ScheduleService {
   }
 
   snooze(occurrenceId: string, minutes: number): ReminderOccurrence {
-    if (!Number.isFinite(minutes) || minutes <= 0) {
+    if (!Number.isInteger(minutes) || minutes <= 0 || minutes > 10080) {
       throw new Error("snooze minutes must be greater than zero");
     }
     const occurrence = this.repository.getOccurrence(occurrenceId);
@@ -166,7 +173,9 @@ export class ScheduleService {
     const now = this.clock.now();
     const nextDueAt = new Date(now.getTime() + minutes * 60_000).toISOString();
     const item = this.get(occurrence.scheduleItemId);
+    if (item.status !== "scheduled" || ["cancelled", "snoozed"].includes(occurrence.status)) throw new Error("reminder is no longer active");
     const result = this.repository.transaction(() => {
+      this.repository.suppressOccurrence(occurrence.id, now.toISOString());
       this.repository.setOccurrenceStatus(occurrence.id, "snoozed", now.toISOString());
       return this.createOccurrence(item, nextDueAt, occurrence.id);
     });
@@ -175,8 +184,12 @@ export class ScheduleService {
   }
 
   createNextRecurringOccurrence(item: ScheduleItem, previousDueAt: string): ReminderOccurrence | undefined {
-    const nextDueAt = nextRecurringInstant(previousDueAt, item.recurrenceRule, item.timezone);
-    return nextDueAt ? this.createOccurrence(item, nextDueAt) : undefined;
+    const previous = this.repository.getOccurrenceByItemAndTime(item.id, previousDueAt);
+    if (previous?.snoozedFromId) return undefined;
+    const leadMs = reminderPolicy(item).leadMinutes * 60_000;
+    const eventAt = previous?.eventAt ?? new Date(Date.parse(previousDueAt) + leadMs).toISOString();
+    const nextEventAt = nextRecurringInstant(eventAt, item.recurrenceRule, item.timezone);
+    return nextEventAt ? this.createOccurrence(item, new Date(Date.parse(nextEventAt) - leadMs).toISOString()) : undefined;
   }
 
   listOccurrences(scheduleItemId?: string): ReminderOccurrence[] {
@@ -195,12 +208,20 @@ export class ScheduleService {
     if (!occurrence) {
       throw new ScheduleNotFoundError("occurrence", entry.occurrenceId);
     }
+    if (entry.suppressedAt || occurrence.acknowledgedAt || ["cancelled", "snoozed"].includes(occurrence.status) || this.get(occurrence.scheduleItemId).status !== "scheduled") throw new Error("reminder is no longer active");
     const now = this.clock.now().toISOString();
     return this.repository.transaction(() => {
       this.repository.retryOutbox(entry.id, now, now);
       this.repository.setOccurrenceStatus(occurrence.id, "scheduled", now);
       return this.repository.getOutbox(entry.id)!;
     });
+  }
+
+  acknowledge(occurrenceId: string, via = "in_app"): ReminderOccurrence {
+    const occurrence = this.repository.getOccurrence(occurrenceId);
+    if (!occurrence) throw new ScheduleNotFoundError("occurrence", occurrenceId);
+    if (["cancelled", "snoozed"].includes(occurrence.status)) throw new Error("reminder is no longer active");
+    return this.repository.transaction(() => this.repository.acknowledgeOccurrence(occurrenceId, via, this.clock.now().toISOString()));
   }
 
   private createOccurrence(
@@ -213,6 +234,9 @@ export class ScheduleService {
       id: this.idGenerator.next("occurrence"),
       scheduleItemId: item.id,
       dueAt,
+      eventAt: snoozedFromId
+        ? this.repository.getOccurrence(snoozedFromId)?.eventAt ?? item.startAt ?? dueAt
+        : new Date(Date.parse(dueAt) + reminderPolicy(item).leadMinutes * 60_000).toISOString(),
       status: "scheduled",
       snoozedFromId,
       createdAt: now,
@@ -248,6 +272,10 @@ export class ScheduleService {
       }
     }
   }
+}
+
+function notificationTime(item: ScheduleItem): string {
+  return new Date(Date.parse(item.startAt!) - reminderPolicy(item).leadMinutes * 60_000).toISOString();
 }
 
 function validateCreateInput(input: CreateScheduleItemInput): void {
@@ -328,7 +356,7 @@ function assertTimezone(timezone: string): void {
 }
 
 function assertFutureReminder(item: ScheduleItem, now: Date): void {
-  if (item.kind === "reminder" && item.startAt && new Date(item.startAt).getTime() <= now.getTime()) {
+  if ((item.kind === "reminder" || reminderPolicy(item).enabled) && item.startAt && new Date(item.startAt).getTime() <= now.getTime()) {
     throw new TimeResolutionError("PAST_TIME", "提醒时间已经过去，请提供未来时间");
   }
 }

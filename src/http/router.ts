@@ -70,6 +70,7 @@ import type { InteractionScope } from "../interaction/index.js";
 import { TestRunRegistry, type ScriptedModelResponse } from "../testing/index.js";
 import { renderAppHtml } from "./ui.js";
 import { DiaryValidationError } from "../diary/service.js";
+import { CreatorError } from "../creator/contracts.js";
 import { HistoryQueryError, historyQuery } from "../history/pagination.js";
 import {
   assertLocalControlPlaneMutation,
@@ -228,6 +229,8 @@ export function createHttpServer(options: HttpServerOptions = {}) {
           // request so the UI can safely retry the rejected mutation once.
           attachLocalControlPlaneCookie(request, response);
         }
+        sendJson(response, error.status, { code: error.code, error: error.message });
+      } else if (error instanceof CreatorError) {
         sendJson(response, error.status, { code: error.code, error: error.message });
       } else if (error instanceof ControlPlaneBusyError) {
         sendJson(response, 409, { code: error.code, error: error.message });
@@ -458,6 +461,27 @@ async function route(input: {
 
   const kernel = selectKernel(input.request, input.kernel, input.testRuns, input.response);
   if (!kernel) {
+    return;
+  }
+  if (pathname.startsWith("/api/v1/creator/")) {
+    // Reads also require the browser's control-plane capability. No creator
+    // state is exposed through ordinary character conversation endpoints.
+    assertLocalControlPlaneMutation(input.request);
+    if (method !== "POST") throw new CreatorError("创作助手接口仅接受 POST", 405);
+    const body = asRecord(await readJson(input.request));
+    input.response.setHeader("cache-control", "no-store");
+    if (pathname === "/api/v1/creator/snapshot") {
+      sendJson(input.response, 200, kernel.creator.snapshot(body.before === undefined ? undefined : Number(body.before)));
+    } else if (pathname === "/api/v1/creator/messages") {
+      sendJson(input.response, 200, await kernel.creator.send(body.text as string, body.requestId as string));
+    } else if (pathname === "/api/v1/creator/cancel") {
+      sendJson(input.response, 200, kernel.creator.cancel());
+    } else if (pathname === "/api/v1/creator/review") {
+      if (typeof body.id !== "string" || typeof body.digest !== "string" || !["apply", "reject"].includes(String(body.action))) throw new CreatorError("无效的草案确认请求");
+      sendJson(input.response, 200, { proposal: kernel.creator.review(body.id, body.digest, body.action as "apply" | "reject") });
+    } else {
+      throw new CreatorError("找不到创作助手接口", 404);
+    }
     return;
   }
   if (
@@ -1581,6 +1605,13 @@ async function route(input: {
     return;
   }
 
+  const reminderAckMatch = pathname.match(/^\/api\/v1\/reminder-occurrences\/([^/]+)\/acknowledge$/);
+  if (reminderAckMatch && method === "POST") {
+    sendJson(input.response,200,{ occurrence: kernel.acknowledgeReminder(decodeURIComponent(reminderAckMatch[1])) }); return;
+  }
+  if (pathname === "/api/v1/reminder-inbox" && method === "GET") {
+    sendJson(input.response,200,{ reminders: kernel.reminderInbox() }); return;
+  }
   const snoozeMatch = pathname.match(/^\/api\/v1\/reminder-occurrences\/([^/]+)\/snooze$/);
   if (snoozeMatch && method === "POST") {
     const body = asRecord(await readJson(input.request));
@@ -3422,6 +3453,44 @@ async function route(input: {
     return;
   }
 
+  const recentMatch = pathname.match(/^\/api\/v1\/characters\/([^/]+)\/(recent-activity|goals|background-tasks)(?:\/([^/]+))?$/);
+  if (recentMatch) {
+    const characterId = decodeURIComponent(recentMatch[1]);
+    const spaceValue = new URL(input.request.url ?? "/", "http://localhost").searchParams.get("space") ?? "normal";
+    if (spaceValue !== "normal" && spaceValue !== "secret") throw new WorldValidationError("无效的会话空间");
+    const itemId = recentMatch[3] ? decodeURIComponent(recentMatch[3]) : undefined;
+    if (method === "GET" && recentMatch[2] === "recent-activity" && !itemId) {
+      sendJson(input.response, 200, kernel.getCharacterRecentActivity(characterId, spaceValue));
+      return;
+    }
+    if (method === "POST" || method === "PATCH") {
+      assertLocalControlPlaneMutation(input.request);
+      const body = asRecord(await readJson(input.request));
+      if (recentMatch[2] === "goals" && method === "POST" && !itemId) {
+        if (body.kind !== "request" && body.kind !== "wish") throw new WorldValidationError("无效的事项类型");
+        sendJson(input.response, 201, { goal: kernel.createCharacterGoal(characterId, spaceValue, {
+          kind: body.kind, title: requiredString(body.title, "title"), nextStep: optionalDocumentString(body.nextStep, "nextStep"),
+        }) });
+        return;
+      }
+      if (recentMatch[2] === "goals" && method === "PATCH" && itemId) {
+        const action = requiredString(body.action, "action");
+        if (action !== "pause" && action !== "resume" && action !== "cancel" && action !== "complete" && action !== "edit") throw new WorldValidationError("无效的事项操作");
+        sendJson(input.response, 200, { goal: kernel.updateCharacterGoal(characterId, spaceValue, itemId, {
+          revision: requiredNumber(body.revision, "revision"), action,
+          nextStep: optionalDocumentString(body.nextStep, "nextStep"), completionNote: optionalDocumentString(body.completionNote, "completionNote"),
+        }) });
+        return;
+      }
+      if (recentMatch[2] === "background-tasks" && method === "POST" && itemId) {
+        if (body.action !== "cancel" && body.action !== "retry") throw new WorldValidationError("无效的任务操作");
+        kernel.characterBackgroundTasks.control(characterId, spaceValue, itemId, body.action);
+        sendJson(input.response, 200, { accepted: true });
+        return;
+      }
+    }
+  }
+
   const diaryMatch = pathname.match(/^\/api\/v1\/characters\/([^/]+)\/diary(?:\/(settings)|\/([^/]+)\/(retry))?$/);
   if (diaryMatch) {
     const characterId = decodeURIComponent(diaryMatch[1]);
@@ -3457,7 +3526,8 @@ async function route(input: {
     if (method === "DELETE") {
       assertLocalControlPlaneMutation(input.request);
       const body = asRecord(await readJson(input.request));
-      sendJson(input.response, 200, kernel.deleteCharacter(id, requiredString(body.confirmation, "confirmation")));
+      if (body.mode !== undefined && body.mode !== "depart" && body.mode !== "delete") throw new WorldValidationError("无效的角色移除方式");
+      sendJson(input.response, 200, kernel.deleteCharacter(id, requiredString(body.confirmation, "confirmation"), body.mode as "depart" | "delete" | undefined));
       return;
     }
     if (method === "GET") {

@@ -33,7 +33,7 @@ export type RomanceDecision = {
 
 export type DiaryMemory = { points: DiaryMemoryPoint[]; relationships: RomanceDecision[] };
 export type DiaryJobKind = "memory" | "narrative";
-export type DiaryJobStatus = "pending" | "running" | "ready" | "failed" | "paused";
+export type DiaryJobStatus = "pending" | "running" | "ready" | "failed" | "paused" | "cancelled";
 export type DiarySettings = {
   narrativeEnabled: boolean;
   /** Optional, diary-only writing instructions; retained for existing users. */

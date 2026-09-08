@@ -7,6 +7,7 @@ export type DueReminderContext = {
   notes?: string;
   dueAt: string;
   timezone: string;
+  eventAt?: string;
 };
 
 export type ComposedReminderMessage = {
@@ -15,5 +16,5 @@ export type ComposedReminderMessage = {
 };
 
 export interface ReminderMessageComposer {
-  compose(reminder: DueReminderContext): Promise<ComposedReminderMessage>;
+  compose(reminder: DueReminderContext, signal?: AbortSignal): Promise<ComposedReminderMessage>;
 }

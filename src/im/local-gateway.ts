@@ -83,6 +83,8 @@ export class LocalImGateway implements ImGateway {
   ]);
   private core?: LocalImCore;
   private workerTimer?: NodeJS.Timeout;
+  private notificationTimer?: NodeJS.Timeout;
+  private readonly flushingProviders = new Set<ImProvider>();
   private workerRunning = false;
   private workerPending = false;
   private workerTask?: Promise<void>;
@@ -150,6 +152,12 @@ export class LocalImGateway implements ImGateway {
     this.spool.reviveDeadByError(missingAssistantProfileError);
     this.workerTimer = setInterval(() => this.wakeWorker(), workerIntervalMs);
     this.workerTimer.unref();
+    // Outbound reminders must not wait behind a slow model handling inbound chat.
+    this.notificationTimer = setInterval(() => {
+      void this.flushOutbox("wechat", this.credentials.get<PersistedWechatCredential>("wechat")?.connectionId).catch(() => undefined);
+      void this.flushOutbox("feishu", this.credentials.get<PersistedFeishuCredential>("feishu")?.connectionId).catch(() => undefined);
+    }, 1000);
+    this.notificationTimer.unref();
     this.restoreTask = this.restoreConnectors();
     void this.restoreTask.catch(() => undefined);
   }
@@ -258,6 +266,8 @@ export class LocalImGateway implements ImGateway {
     this.disposed = true;
     if (this.workerTimer) clearInterval(this.workerTimer);
     this.workerTimer = undefined;
+    if (this.notificationTimer) clearInterval(this.notificationTimer);
+    this.notificationTimer = undefined;
     await Promise.allSettled([this.feishu.dispose(), this.wechat.dispose()]);
     if (this.restoreTask) await this.restoreTask;
     if (this.workerTask) await this.workerTask;
@@ -347,6 +357,9 @@ export class LocalImGateway implements ImGateway {
   ): Promise<void> {
     const core = this.core;
     if (!core || !connectionId || this.disposed || this.blockedProviders.has(provider)) return;
+    if (this.flushingProviders.has(provider)) return;
+    this.flushingProviders.add(provider);
+    try {
     const maximumBatches = awaitedOutboxId ? 10 : 1;
     for (let batch = 0; batch < maximumBatches; batch += 1) {
       let items: ImOutboxItem[];
@@ -409,6 +422,7 @@ export class LocalImGateway implements ImGateway {
       }
       if (!awaitedOutboxId || awaitedAttempted) return;
     }
+    } finally { this.flushingProviders.delete(provider); }
   }
 
   private bestEffortWechatTyping(externalChatId: string) {

@@ -40,10 +40,11 @@ export class DataManagementRepository {
     });
   }
 
-  deleteCharacter(characterId: string, sessionIds: string[], now: string): void {
+  deleteCharacter(characterId: string, sessionIds: string[], now: string, beforeDelete?: () => void): void {
     for (const sessionId of sessionIds) this.deleteSessionObservability(sessionId);
     this.database.transaction(() => {
       const connection = this.database.connection;
+      beforeDelete?.();
       for (const sessionId of sessionIds) {
         connection.prepare("DELETE FROM pending_real_mutations WHERE session_id = ?").run(sessionId);
       }
@@ -96,10 +97,18 @@ export class DataManagementRepository {
             updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
         WHERE singleton = 1;
         DELETE FROM notification_outbox;
+        DELETE FROM reminder_drafts;
         DELETE FROM reminder_occurrences;
         DELETE FROM proactive_messages;
         DELETE FROM proactive_topic_policies;
         DELETE FROM character_diary_generations;
+        DELETE FROM character_departure_memories;
+        DELETE FROM character_life_goal_steps;
+        DELETE FROM character_life_goals;
+        DELETE FROM character_planning_jobs;
+        DELETE FROM creator_proposals;
+        DELETE FROM creator_messages;
+        DELETE FROM creator_turns;
         DELETE FROM character_diary_jobs;
         DELETE FROM character_diary_entries;
         DELETE FROM character_diary_settings;

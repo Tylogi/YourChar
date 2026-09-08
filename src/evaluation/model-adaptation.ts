@@ -1,4 +1,4 @@
-import { completeSimple, type AssistantMessage } from "@earendil-works/pi-ai/compat";
+import type { AssistantMessage } from "@earendil-works/pi-ai";
 import { z } from "zod";
 import type { CompanionKernel } from "../domain/kernel.js";
 import type { ModelApiProfile } from "../domain/types.js";
@@ -6,7 +6,10 @@ import {
   applyBackgroundThinkingPolicy,
   backgroundThinkingPolicy,
 } from "../model/background-thinking-policy.js";
-import { createOpenAiCompatibleModel } from "../model/openai-compatible.js";
+import {
+  completeOpenAiCompatible,
+  createOpenAiCompatibleModel,
+} from "../model/openai-compatible.js";
 import {
   listFeatureTestCases,
   type FeatureTestResult,
@@ -180,7 +183,7 @@ export async function judgeFeatureTestQuality(
   for (let attempt = 0; attempt < 2; attempt += 1) {
     try {
       modelRequests += 1;
-      const message = await completeSimple(createOpenAiCompatibleModel(raw), {
+      const message = await completeOpenAiCompatible(createOpenAiCompatibleModel(raw), {
         systemPrompt: qualityJudgeSystemPrompt,
         messages: [{
           role: "user",

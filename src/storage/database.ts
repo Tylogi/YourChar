@@ -2954,6 +2954,126 @@ const migrations: Migration[] = [
       UPDATE character_diary_settings SET preset_mode='none' WHERE length(trim(preset)) > 0;
     `,
   },
+  {
+    version: 54,
+    sql: `
+      -- A departed identity is a historical reference, deliberately NOT a live-character FK.
+      CREATE TABLE character_departure_memories (
+        id TEXT PRIMARY KEY,
+        character_id TEXT NOT NULL REFERENCES characters(id) ON DELETE CASCADE,
+        departed_character_id TEXT NOT NULL,
+        departed_name TEXT NOT NULL,
+        world_id TEXT NOT NULL REFERENCES role_worlds(id) ON DELETE CASCADE,
+        summary TEXT NOT NULL,
+        relationship_json TEXT,
+        experiences_json TEXT NOT NULL DEFAULT '[]',
+        occurred_at TEXT NOT NULL,
+        memory_materialized_at TEXT,
+        UNIQUE(character_id, departed_character_id, world_id)
+      );
+      CREATE INDEX character_departure_owner_idx ON character_departure_memories(character_id, world_id, occurred_at DESC);
+
+      CREATE TABLE character_life_goals (
+        id TEXT PRIMARY KEY,
+        character_id TEXT NOT NULL REFERENCES characters(id) ON DELETE CASCADE,
+        conversation_space TEXT NOT NULL CHECK (conversation_space IN ('normal','secret')),
+        kind TEXT NOT NULL CHECK (kind IN ('request','wish')),
+        world_id TEXT REFERENCES role_worlds(id) ON DELETE CASCADE,
+        title TEXT NOT NULL,
+        next_step TEXT NOT NULL DEFAULT '',
+        status TEXT NOT NULL CHECK (status IN ('active','paused','completed','cancelled')),
+        revision INTEGER NOT NULL DEFAULT 1,
+        completion_note TEXT,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        CHECK (kind <> 'wish' OR (conversation_space = 'normal' AND world_id IS NOT NULL))
+      );
+      CREATE UNIQUE INDEX character_life_goal_active_idx ON character_life_goals(character_id, conversation_space, kind)
+        WHERE status IN ('active','paused');
+      CREATE TABLE character_life_goal_steps (
+        id TEXT PRIMARY KEY,
+        goal_id TEXT NOT NULL REFERENCES character_life_goals(id) ON DELETE CASCADE,
+        schedule_item_id TEXT NOT NULL UNIQUE,
+        title TEXT NOT NULL,
+        status TEXT NOT NULL CHECK (status IN ('planned','settled','cancelled')),
+        source_event_id TEXT,
+        result TEXT,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      );
+
+      -- Planning had no durable execution record. Other task kinds keep their existing stores.
+      CREATE TABLE character_planning_jobs (
+        id TEXT PRIMARY KEY,
+        character_id TEXT NOT NULL REFERENCES characters(id) ON DELETE CASCADE,
+        world_id TEXT NOT NULL REFERENCES role_worlds(id) ON DELETE CASCADE,
+        status TEXT NOT NULL CHECK (status IN ('running','completed','failed','cancelled')),
+        error TEXT,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      );
+      CREATE INDEX character_planning_jobs_owner_idx ON character_planning_jobs(character_id, created_at DESC);
+      ALTER TABLE character_diary_jobs ADD COLUMN cancelled_at TEXT;
+    `,
+  },
+  {
+    version: 55,
+    sql: `
+      CREATE TABLE creator_turns (
+        id TEXT PRIMARY KEY, text TEXT NOT NULL,
+        status TEXT NOT NULL CHECK(status IN ('running','completed','failed','cancelled')), created_at TEXT NOT NULL
+      );
+      CREATE TABLE creator_messages (
+        seq INTEGER PRIMARY KEY AUTOINCREMENT,
+        role TEXT NOT NULL CHECK(role IN ('user','assistant','system')), text TEXT NOT NULL,
+        turn_id TEXT REFERENCES creator_turns(id), created_at TEXT NOT NULL
+      );
+      CREATE TABLE creator_proposals (
+        id TEXT PRIMARY KEY, turn_id TEXT NOT NULL REFERENCES creator_turns(id), tool_key TEXT NOT NULL UNIQUE,
+        payload TEXT NOT NULL,
+        status TEXT NOT NULL CHECK(status IN ('pending','applied','rejected','stale','applying','interrupted','failed')),
+        result TEXT, error TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL
+      );
+      CREATE INDEX creator_proposals_status_idx ON creator_proposals(status);
+    `,
+  },
+  {
+    version: 56,
+    sql: `
+      ALTER TABLE schedule_items ADD COLUMN reminder_json TEXT;
+      ALTER TABLE schedule_items ADD COLUMN revision INTEGER NOT NULL DEFAULT 0;
+      ALTER TABLE reminder_occurrences ADD COLUMN event_at TEXT;
+      ALTER TABLE reminder_occurrences ADD COLUMN acknowledged_at TEXT;
+      ALTER TABLE reminder_occurrences ADD COLUMN acknowledged_via TEXT;
+      ALTER TABLE notification_outbox ADD COLUMN suppressed_at TEXT;
+      CREATE TABLE reminder_drafts (
+        occurrence_id TEXT PRIMARY KEY REFERENCES reminder_occurrences(id) ON DELETE CASCADE,
+        revision INTEGER NOT NULL, status TEXT NOT NULL CHECK(status IN ('preparing','ready','failed')),
+        body TEXT, agent_generated INTEGER NOT NULL DEFAULT 0,
+        created_at TEXT NOT NULL, updated_at TEXT NOT NULL
+      );
+      CREATE TABLE im_outbox_next (
+        id TEXT PRIMARY KEY, provider TEXT NOT NULL CHECK(provider IN ('feishu','wechat')),
+        gateway_connection_id TEXT NOT NULL, binding_generation TEXT NOT NULL, external_chat_id TEXT NOT NULL,
+        inbound_event_id TEXT, notification_outbox_id TEXT UNIQUE REFERENCES notification_outbox(id) ON DELETE CASCADE,
+        text TEXT NOT NULL, attachments_json TEXT NOT NULL DEFAULT '[]',
+        status TEXT NOT NULL DEFAULT 'pending' CHECK(status IN ('pending','delivered','failed','abandoned')),
+        attempts INTEGER NOT NULL DEFAULT 0 CHECK(attempts >= 0), available_at TEXT NOT NULL,
+        lease_token TEXT, lease_expires_at TEXT, last_error TEXT,
+        created_at TEXT NOT NULL, updated_at TEXT NOT NULL, delivered_at TEXT,
+        UNIQUE(provider,inbound_event_id),
+        CHECK((inbound_event_id IS NOT NULL) != (notification_outbox_id IS NOT NULL)),
+        FOREIGN KEY(provider,inbound_event_id) REFERENCES im_inbound_events(provider,event_id) ON DELETE CASCADE
+      );
+      INSERT INTO im_outbox_next(id,provider,gateway_connection_id,binding_generation,external_chat_id,inbound_event_id,
+        text,attachments_json,status,attempts,available_at,lease_token,lease_expires_at,last_error,created_at,updated_at,delivered_at)
+        SELECT id,provider,gateway_connection_id,binding_generation,external_chat_id,inbound_event_id,
+        text,attachments_json,status,attempts,available_at,lease_token,lease_expires_at,last_error,created_at,updated_at,delivered_at FROM im_outbox;
+      DROP TABLE im_outbox;
+      ALTER TABLE im_outbox_next RENAME TO im_outbox;
+      CREATE INDEX im_outbox_pending_idx ON im_outbox(provider,gateway_connection_id,binding_generation,status,available_at,lease_expires_at,created_at,id);
+    `,
+  },
 ];
 
 export class AppDatabase {

@@ -4,11 +4,12 @@ import {
   fauxText,
   fauxThinking,
   fauxToolCall,
+  type Api,
   type Context,
   type FauxResponseFactory,
+  type Model,
 } from "@earendil-works/pi-ai";
 import type { AgentMessage } from "@earendil-works/pi-agent-core";
-import type { Api, Model } from "@earendil-works/pi-ai/compat";
 import { SeededIdGenerator } from "../app/id-generator.js";
 import { VirtualClock } from "../app/clock.js";
 import {
@@ -17,6 +18,7 @@ import {
   type ConversationWakeComposer,
 } from "../domain/kernel.js";
 import { CaptureNotificationSink } from "../notifications/sink.js";
+import type { ReminderMessageComposer } from "../notifications/composer.js";
 import type {
   ConversationLifecycleThresholds,
   PiModelResolver,
@@ -99,6 +101,7 @@ export type CreateTestRuntimeOptions = {
   privateInboxOptions?: PrivateInboxCoordinatorOptions;
   startPrivateInboxCoordinator?: boolean;
   imGateway?: ImGateway | false;
+  reminderMessageComposer?: ReminderMessageComposer | false;
 };
 
 export class ScriptedModelController {
@@ -121,16 +124,20 @@ export class ScriptedModelController {
           : { contextWindow: options.contextWindowTokens }),
       }],
     });
-    this.resolver = ({ authStorage, modelRegistry }) => {
-      if (!this.registered.has(modelRegistry)) {
-        modelRegistry.registerProvider(provider, {
+    this.resolver = ({ modelRuntime }) => {
+      const model = this.core.getModel() as unknown as Model<Api> | undefined;
+      if (!model) return undefined;
+      if (!this.registered.has(modelRuntime)) {
+        modelRuntime.registerProvider(provider, {
+          name: "Scripted test provider",
           api: this.core.api as Api,
+          apiKey: "unused",
           streamSimple: this.core.streamSimple as never,
+          models: [model],
         });
-        this.registered.add(modelRegistry);
+        this.registered.add(modelRuntime);
       }
-      authStorage.setRuntimeApiKey(provider, "unused");
-      return this.core.getModel() as unknown as Model<Api>;
+      return modelRuntime.getModel(provider, model.id) ?? model;
     };
   }
 
@@ -243,6 +250,7 @@ export class TestRuntime {
       idGenerator: new SeededIdGenerator(options.seed ?? id),
       modelResolver: this.model.resolver,
       notificationSink: this.notificationSink,
+      reminderMessageComposer: options.reminderMessageComposer ?? false,
       startScheduler: false,
       quietHours: false,
       workspaceDir: options.workspaceDir,

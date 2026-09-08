@@ -14,10 +14,12 @@ export class CharacterDiaryService {
   private timer?: NodeJS.Timeout;
   private running?: Promise<void>;
   private controller?: AbortController;
+  private activeJob?: { characterId: string; id: string; kind: DiaryJobKind };
   private disposed = false;
   private stopped = false;
 
   get isBusy(): boolean { return Boolean(this.running); }
+  isCharacterBusy(characterId: string): boolean { return this.activeJob?.characterId === characterId; }
 
   constructor(
     private readonly database: AppDatabase,
@@ -56,7 +58,7 @@ export class CharacterDiaryService {
       .run(characterId, Number(patch.narrativeEnabled), patch.preset.trim(), this.now(), presetMode, presetId);
     this.database.connection.prepare(`UPDATE character_diary_jobs SET status=?, lease_id=NULL, lease_until=NULL, updated_at=?
       WHERE kind='narrative' AND entry_id IN (SELECT id FROM character_diary_entries WHERE character_id=? AND invalidated_at IS NULL)
-      AND status IN ('pending','paused','running')`)
+      AND cancelled_at IS NULL AND status IN ('pending','paused','running')`)
       .run(patch.narrativeEnabled ? "pending" : "paused", this.now(), characterId);
     return this.settings(characterId);
   }
@@ -114,14 +116,14 @@ export class CharacterDiaryService {
   get(characterId: string, id: string): DiaryEntry {
     const row = this.database.connection.prepare("SELECT * FROM character_diary_entries WHERE id=? AND character_id=?").get(id, characterId) as Row | undefined;
     if (!row) throw new DiaryValidationError("日记不存在或不属于该角色");
-    const jobs = this.database.connection.prepare("SELECT kind,status,error FROM character_diary_jobs WHERE entry_id=? ORDER BY kind").all(id) as Row[];
+    const jobs = this.database.connection.prepare("SELECT kind,status,error,cancelled_at FROM character_diary_jobs WHERE entry_id=? ORDER BY kind").all(id) as Row[];
     return {
       id, characterId, worldId: String(row.world_id), title: String(row.title), occurredAt: String(row.occurred_at),
       source: JSON.parse(String(row.source_json)) as DiarySource,
       invalidated: Boolean(row.invalidated_at),
       ...(row.memory_json ? { memory: JSON.parse(String(row.memory_json)) as DiaryMemory } : {}),
       ...(row.narrative_text ? { narrative: String(row.narrative_text) } : {}),
-      jobs: jobs.map(job => ({ kind: String(job.kind) as DiaryJobKind, status: String(job.status) as DiaryEntry["jobs"][number]["status"], ...(job.error ? { error: String(job.error) } : {}) })),
+      jobs: jobs.map(job => ({ kind: String(job.kind) as DiaryJobKind, status: (job.cancelled_at ? "cancelled" : String(job.status)) as DiaryEntry["jobs"][number]["status"], ...(job.error ? { error: String(job.error) } : {}) })),
     };
   }
 
@@ -136,9 +138,17 @@ export class CharacterDiaryService {
       throw new DiaryValidationError("请先启用对应的日记创作或角色记忆／关系能力");
     }
     if (entry.jobs.some(job => job.kind === kind && job.status === "running")) throw new DiaryValidationError("正在生成，请稍后重试");
-    this.database.connection.prepare(`UPDATE character_diary_jobs SET status='pending',attempts=0,available_at=?,lease_id=NULL,lease_until=NULL,error=NULL,updated_at=? WHERE entry_id=? AND kind=?`)
+    this.database.connection.prepare(`UPDATE character_diary_jobs SET status='pending',cancelled_at=NULL,attempts=0,available_at=?,lease_id=NULL,lease_until=NULL,error=NULL,updated_at=? WHERE entry_id=? AND kind=?`)
       .run(this.now(), this.now(), id, kind);
     return this.get(characterId, id);
+  }
+
+  cancel(characterId: string, id: string, kind: DiaryJobKind): void {
+    const entry = this.get(characterId, id);
+    if (!entry.jobs.some(job => job.kind === kind && ["pending", "running", "failed", "paused"].includes(job.status))) throw new DiaryValidationError("该任务已经结束");
+    this.database.connection.prepare(`UPDATE character_diary_jobs SET status='paused',cancelled_at=?,lease_id=NULL,lease_until=NULL,error='用户已停止',updated_at=? WHERE entry_id=? AND kind=? AND status<>'ready'`)
+      .run(this.now(), this.now(), id, kind);
+    if (this.activeJob?.id === id && this.activeJob.kind === kind) this.controller?.abort();
   }
 
   memoryContext(characterId: string, worldId: string): string {
@@ -178,7 +188,7 @@ export class CharacterDiaryService {
       const now = this.now();
       this.database.connection.prepare(`UPDATE character_diary_jobs SET status='failed',lease_id=NULL,lease_until=NULL,error='上次生成中断，可重试',updated_at=? WHERE status='running' AND lease_until<=?`).run(now, now);
       const candidates = this.database.connection.prepare(`SELECT j.*,e.character_id FROM character_diary_jobs j JOIN character_diary_entries e ON e.id=j.entry_id
-        WHERE e.invalidated_at IS NULL AND j.status IN ('pending','failed','paused') AND j.attempts<3 AND j.available_at<=? ORDER BY j.updated_at,j.kind`).all(now) as Row[];
+        WHERE e.invalidated_at IS NULL AND j.cancelled_at IS NULL AND j.status IN ('pending','failed','paused') AND j.attempts<3 AND j.available_at<=? ORDER BY j.updated_at,j.kind`).all(now) as Row[];
       const candidate = candidates.find(job => {
         const source = this.get(String(job.character_id), String(job.entry_id)).source;
         if (!this.options.canRun(job.kind as DiaryJobKind, source)) return false;
@@ -198,6 +208,7 @@ export class CharacterDiaryService {
       const entry = this.get(String(candidate.character_id), id);
       const controller = new AbortController();
       this.controller = controller;
+      this.activeJob = { characterId: entry.characterId, id, kind };
       const timeout = setTimeout(() => controller.abort(), 90_000);
       timeout.unref();
       try {
@@ -233,7 +244,7 @@ export class CharacterDiaryService {
           .run(new Date(this.clock.now().getTime() + 600_000).toISOString(), this.now(), id, kind, lease);
       } finally {
         clearTimeout(timeout);
-        if (this.controller === controller) this.controller = undefined;
+        if (this.controller === controller) { this.controller = undefined; this.activeJob = undefined; }
       }
     }
   }

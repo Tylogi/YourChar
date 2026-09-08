@@ -1,4 +1,3 @@
-import { AsyncLocalStorage } from "node:async_hooks";
 import {
   Agent,
   fetch as undiciFetch,
@@ -11,46 +10,15 @@ import {
  */
 export const subagentProviderTransportIdleTimeoutMs = 0;
 
-type ScopedProviderTransport = {
-  dispatcher: Dispatcher;
-};
-
-const scopedProviderTransport = new AsyncLocalStorage<ScopedProviderTransport>();
-let fallbackFetch: typeof globalThis.fetch | undefined;
-
-const scopedFetch: typeof globalThis.fetch = async (input, init) => {
-  const scope = scopedProviderTransport.getStore();
-  if (!scope) {
-    if (!fallbackFetch) throw new Error("Global fetch is unavailable");
-    return fallbackFetch(input, init);
-  }
-
-  // Provider SDKs create their clients inside the scoped model call. Route
-  // those requests through npm Undici with an explicit per-task dispatcher;
-  // unrelated application fetches continue through the original global fetch.
-  return undiciFetch(input as never, {
-    ...(init ?? {}),
-    dispatcher: scope.dispatcher,
-  } as never) as unknown as Promise<Response>;
-};
-
-function installScopedFetch(): void {
-  if (globalThis.fetch === scopedFetch) return;
-  if (typeof globalThis.fetch !== "function") {
-    throw new Error("Global fetch is unavailable");
-  }
-  fallbackFetch = globalThis.fetch;
-  globalThis.fetch = scopedFetch;
-}
-
 export type SubagentProviderHttpTransport = {
-  run<T>(callback: () => T): T;
+  fetch: typeof globalThis.fetch;
   close(): Promise<void>;
 };
 
 /**
- * Create a transport dedicated to one delegated task. AsyncLocalStorage keeps
- * the override scoped even when several parent and child model calls overlap.
+ * Create a transport dedicated to one delegated task. Pi injects this fetch
+ * implementation into only that task's provider requests, so unrelated
+ * application traffic and concurrent parent calls keep their own dispatchers.
  */
 export function createSubagentProviderHttpTransport(
   dispatcher: Dispatcher = new Agent({
@@ -60,12 +28,14 @@ export function createSubagentProviderHttpTransport(
     bodyTimeout: subagentProviderTransportIdleTimeoutMs,
   }),
 ): SubagentProviderHttpTransport {
-  installScopedFetch();
   let closed = false;
   return {
-    run<T>(callback: () => T): T {
+    async fetch(input, init) {
       if (closed) throw new Error("Subagent provider transport is closed");
-      return scopedProviderTransport.run({ dispatcher }, callback);
+      return undiciFetch(input as never, {
+        ...(init ?? {}),
+        dispatcher,
+      } as never) as unknown as Promise<Response>;
     },
     async close(): Promise<void> {
       if (closed) return;

@@ -217,6 +217,7 @@ export type ImOutboxItem = {
   bindingGeneration: string;
   externalChatId: string;
   inboundEventId?: string;
+  notificationOutboxId?: string;
   text: string;
   attachments: ImAttachment[];
   status: ImOutboxItemStatus;

@@ -138,11 +138,110 @@ test("model API reasoning effort validates, exposes safe values, and can return 
       () => kernel.patchModelApiConfig({ reasoningEffort: "extreme" as never }),
       ModelApiConfigValidationError,
     );
+
+    for (const thinkingTokenBudgetField of [
+      "thinking_token_budget",
+      "thinking_budget",
+      "thinking_budget_tokens",
+    ] as const) {
+      const response = await fetch(`${baseUrl}/api/settings/model-api`, {
+        method: "PATCH",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ thinkingTokenBudgetField, thinkingBudgetTokens: 2_048 }),
+      });
+      assert.equal(response.status, 200);
+      const config = await response.json() as {
+        thinkingTokenBudgetField?: string;
+        thinkingBudgetTokens?: number;
+      };
+      assert.equal(config.thinkingTokenBudgetField, thinkingTokenBudgetField);
+      assert.equal(config.thinkingBudgetTokens, 2_048);
+    }
+
+    const clearedThinkingBudget = await fetch(`${baseUrl}/api/settings/model-api`, {
+      method: "PATCH",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ thinkingTokenBudgetField: null, thinkingBudgetTokens: null }),
+    });
+    assert.equal(clearedThinkingBudget.status, 200);
+    const clearedThinkingConfig = await clearedThinkingBudget.json() as object;
+    assert.equal("thinkingTokenBudgetField" in clearedThinkingConfig, false);
+    assert.equal("thinkingBudgetTokens" in clearedThinkingConfig, false);
+
+    const rejectedThinkingField = await fetch(`${baseUrl}/api/settings/model-api`, {
+      method: "PATCH",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ thinkingTokenBudgetField: "unknown_budget" }),
+    });
+    assert.equal(rejectedThinkingField.status, 400);
+    assert.deepEqual(await rejectedThinkingField.json(), {
+      code: "MODEL_API_CONFIG_INVALID",
+      error: "thinkingTokenBudgetField must be thinking_token_budget, thinking_budget, thinking_budget_tokens, or null",
+    });
+
+    const rejectedThinkingBudget = await fetch(`${baseUrl}/api/settings/model-api`, {
+      method: "PATCH",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ thinkingBudgetTokens: 0 }),
+    });
+    assert.equal(rejectedThinkingBudget.status, 400);
+    assert.deepEqual(await rejectedThinkingBudget.json(), {
+      code: "MODEL_API_CONFIG_INVALID",
+      error: "thinkingBudgetTokens must be an integer from 1 to 1000000, or null",
+    });
   } finally {
     await new Promise<void>((resolve, reject) => {
       server.close((error) => error ? reject(error) : resolve());
     });
     kernel.dispose();
+  }
+});
+
+test("native thinking budget is opt-in and replaces the legacy reasoning_effort field", async () => {
+  const capturedBodies: Array<Record<string, unknown>> = [];
+  const modelServer = createServer(async (request, response) => {
+    const chunks: Buffer[] = [];
+    for await (const chunk of request) {
+      chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+    }
+    capturedBodies.push(JSON.parse(Buffer.concat(chunks).toString("utf8")) as Record<string, unknown>);
+    writeChatCompletionStream(response, "预算回复");
+  });
+  await new Promise<void>((resolve) => modelServer.listen(0, "127.0.0.1", resolve));
+
+  const address = modelServer.address();
+  assert.ok(address && typeof address === "object");
+  const kernel = new CompanionKernel({
+    stateDir: false,
+    startScheduler: false,
+    startWorldCoordinator: false,
+    startPrivateInboxCoordinator: false,
+    memoryExtractor: async () => ({ candidates: [] }),
+    characterSkillReflector: false,
+  });
+  try {
+    kernel.patchModelApiConfig({
+      enabled: true,
+      baseUrl: `http://127.0.0.1:${address.port}/v1`,
+      model: "fake-model",
+      maxTokens: 4_096,
+      reasoningEffort: "high",
+      thinkingTokenBudgetField: "thinking_token_budget",
+      thinkingBudgetTokens: 2_048,
+    });
+    const response = await kernel.sendMessage("native-thinking-budget", {
+      mode: "sms",
+      text: "hello",
+    });
+    assert.equal(response.reply, "预算回复");
+    assert.equal(capturedBodies.length, 1);
+    assert.equal(capturedBodies[0].thinking_token_budget, 2_048);
+    assert.equal("reasoning_effort" in capturedBodies[0], false);
+  } finally {
+    kernel.dispose();
+    await new Promise<void>((resolve, reject) => {
+      modelServer.close((error) => error ? reject(error) : resolve());
+    });
   }
 });
 

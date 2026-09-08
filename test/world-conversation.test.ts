@@ -88,7 +88,16 @@ test("world turns use one world narrative model and never invoke character-bound
     kernel.setAgentModuleEnabled("mcp:memory-coordinator", false);
     kernel.setAgentModuleEnabled("mcp:relationship-state", true);
     kernel.patchModelApiConfig({ enabled: true, baseUrl, model: "fallback-model" });
-    const director = kernel.createModelApiProfile({ name: "世界导演", enabled: true, baseUrl, model: "world-director" });
+    const director = kernel.createModelApiProfile({
+      name: "世界导演",
+      enabled: true,
+      baseUrl,
+      model: "world-director",
+      maxTokens: 4_096,
+      reasoningEffort: "high",
+      thinkingTokenBudgetField: "thinking_budget",
+      thinkingBudgetTokens: 2_048,
+    });
     const analyst = kernel.createModelApiProfile({ name: "世界分析", enabled: true, baseUrl, model: "world-analyzer" });
     const aliceModel = kernel.createModelApiProfile({ name: "Alice 模型", enabled: true, baseUrl, model: "alice-actor" });
     const bobModel = kernel.createModelApiProfile({ name: "Bob 模型", enabled: true, baseUrl, model: "bob-actor" });
@@ -160,6 +169,9 @@ test("world turns use one world narrative model and never invoke character-bound
     assert.match(requests[0].body, /global_crisis_level/);
     assert.match(requests[0].body, /全局危机值/);
     assert.match(requests[0].body, /public_trust/);
+    const directorPayload = JSON.parse(requests[0].body) as Record<string, unknown>;
+    assert.equal(directorPayload.thinking_budget, 2_048);
+    assert.equal("reasoning_effort" in directorPayload, false);
     assert.match(requests[1].body, /上午十点半/);
     assert.match(requests[1].body, /角色完成一次公开且可观察的正式会谈/);
     assert.deepEqual(kernel.listWorldConversationMessages(world.id).map((entry) => entry.senderType), [

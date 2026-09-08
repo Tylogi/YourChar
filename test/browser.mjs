@@ -15,6 +15,10 @@ import { runHistoryPaginationChecks } from "./history-pagination.browser.mjs";
 import { runAppearanceChecks } from "./appearance.browser.mjs";
 import { runWorldMapChecks } from "./world-map.browser.mjs";
 import { runCharacterDeletionChecks } from "./character-deletion.browser.mjs";
+import { runCharacterLifeChecks } from "./character-life.browser.mjs";
+import { runCreatorChecks } from "./creator.browser.mjs";
+import { runStreamingOrderChecks } from "./streaming-order.browser.mjs";
+import { runReminderDeliveryChecks } from "./reminder-delivery.browser.mjs";
 
 const artifactsDir = resolve("browser-artifacts");
 mkdirSync(artifactsDir, { recursive: true });
@@ -223,6 +227,10 @@ try {
   await runAppearanceChecks(browser, artifactsDir);
   await runWorldMapChecks(browser, artifactsDir);
   await runCharacterDeletionChecks(browser, artifactsDir);
+  await runCharacterLifeChecks(browser, artifactsDir);
+  await runCreatorChecks(browser, artifactsDir);
+  await runStreamingOrderChecks(browser, artifactsDir);
+  await runReminderDeliveryChecks(browser, artifactsDir);
   await runDesktopWorkflow(browser, baseUrl, artifactsDir);
   await runCompactDesktopWorkflow(browser, baseUrl, artifactsDir);
   await runMobileWorkflow(browser, baseUrl, artifactsDir);

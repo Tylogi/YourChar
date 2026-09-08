@@ -271,7 +271,7 @@ test("schema 40 migrates existing interaction rows to normal and survives later 
         Number((migrated.connection.prepare(
           "SELECT MAX(version) AS version FROM schema_migrations",
         ).get() as { version: number }).version),
-        53,
+        56,
       );
       const state = migrated.connection.prepare(`
         SELECT conversation_space, secret_owner_character_id
