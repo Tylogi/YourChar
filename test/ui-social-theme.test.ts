@@ -39,6 +39,22 @@ test("meeting and settings details use neutral surfaces and readable labels", ()
   assert.doesNotMatch(socialThemeCss, /var\(--(?:ink|surface|border)\)/);
 });
 
+test("IM settings use avatar-led cards, semantic surfaces and accessible switches", () => {
+  const html = renderAppHtml();
+  const styles = html.slice(html.indexOf(".im-settings-head {"), html.indexOf(".im-qr-dialog {"));
+  assert.match(styles, /\.im-character-avatar img \{[^}]*object-fit: cover/);
+  assert.match(styles, /\.im-channel-card \{[^}]*background: var\(--panel\)/);
+  assert.match(styles, /\.im-channel-mark \{[^}]*background: var\(--list\)/);
+  assert.doesNotMatch(styles, /linear-gradient|#[0-9a-f]{3,8}\b/i);
+  assert.match(html, /<details class="im-privacy-note"><summary>/);
+  assert.match(html, /私密模式不互通/);
+  assert.match(html, /平台本身仍会保留已传输的消息/);
+  assert.match(html, /avatarImageOrInitial\(character.avatarUrl, character.name\)/);
+  assert.match(html, /role="switch" aria-label="微信处理时显示正在输入"/);
+  assert.match(html, /class="im-setting-row toggle"/);
+  assert.doesNotMatch(html, /class="im-typing-setting"/);
+});
+
 test("the retained month calendar renders 42 dates with selected/today states and safe event labels", () => {
   const html = renderAppHtml();
   const script = html.match(/function renderScheduleCalendar\(\) \{[\s\S]*?(?=\n    function renderTaskList)/)?.[0];

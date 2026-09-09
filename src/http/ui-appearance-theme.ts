@@ -64,7 +64,7 @@ export const appearanceCss = `
       .economics-metric, .world-card-summary, .world-attribute-meta span, .feature-test-panel,
       .feature-test-input, .task-bench-advanced, .task-bench-upload, .task-bench-isolation,
       .initiative-debug-panel, .initiative-debug-detail pre, .git-registry-context, .git-registry-meta,
-      .im-gateway-state, .emoji-category-tabs, .workspace-file-preview-content, .workspace-html-preview-notice,
+      .emoji-category-tabs, .workspace-file-preview-content, .workspace-html-preview-notice,
       .message-image-thumb, .message-inline-image, .schedule-status-badge,
       .calendar-event.completed, .calendar-event.delivered, .context-budget-metrics) {
       background: var(--list); color: var(--sub); border-color: var(--line);
@@ -105,15 +105,15 @@ export const appearanceCss = `
     :root[data-theme="dark"] .toggle input:checked::after { background: var(--bg); }
     :root[data-theme="dark"] :is(.im-privacy-banner, .incognito-notice, .life-proactive-pause,
       .owned-skill-proposal, .function-status-badge.pending, .owned-skill-badge.draft,
-      .life-decision-badge.pending, .im-gateway-state.unavailable, .im-channel-status) {
+      .life-decision-badge.pending) {
       background: var(--warning-surface); color: var(--warning); border-color: var(--line);
     }
     :root[data-theme="dark"] :is(.character-collaboration-status.failed, .function-status-badge.failed,
-      .life-decision-badge.failed, .schedule-status-badge.failed, .calendar-event.failed, .im-channel-status.error) {
+      .life-decision-badge.failed, .schedule-status-badge.failed, .calendar-event.failed) {
       background: var(--danger-surface); color: var(--danger); border-color: var(--line);
     }
     :root[data-theme="dark"] :is(.function-status-badge.ready, .life-decision-badge.delivered,
-      .schedule-status-badge.scheduled, .im-gateway-state.ready, .im-channel-status.connected) {
+      .schedule-status-badge.scheduled) {
       background: var(--list); color: var(--status-ok); border-color: var(--line);
     }
     :root[data-theme="dark"] .markdown-body :is(blockquote, :not(pre) > code) { background: var(--list); color: var(--sub); border-color: var(--line); }

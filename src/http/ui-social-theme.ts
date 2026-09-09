@@ -384,7 +384,7 @@ export const socialThemeCss = `
     .scene-info-row dt { color: var(--sub); font-size: 13px; }
     .scene-info-actions { border-top-color: var(--line); }
     .scene-editor-form label, .world-capability-options label { color: var(--sub); font-size: 13px; }
-    .settings-field > span:not(.muted), .im-channel-field > span { color: var(--sub); font-size: 13px; }
+    .settings-field > span:not(.muted) { color: var(--sub); font-size: 13px; }
     .meeting-preset-import, .meeting-preset-compatibility, .subagent-settings-runtime {
       background: var(--list); border-color: var(--line); border-radius: 8px; color: var(--sub);
     }
@@ -426,11 +426,6 @@ export const socialThemeCss = `
     .capability-module-option small { font-size: 12px; }
     .capability-module-option small.on { color: var(--green-ink); }
     .capability-row:not(.enabled) .capability-responsibility button.active { background: var(--selected); color: var(--sub); }
-    .im-channel-card.connected { border-color: var(--line); box-shadow: none; }
-    .im-channel-title small, .im-channel-description, .im-channel-status { font-size: 12px; }
-    .im-channel-meta { color: var(--sub); font-size: 12px; }
-    .im-channel-status.connected { background: var(--list); color: var(--green-ink); }
-    .im-typing-setting { background: var(--list); border-color: var(--line); color: var(--sub); font-size: 12px; }
 
     /* The full 7-column month view, agenda and task list remain functional. */
     .schedule-shell { max-width: 1180px; }

@@ -19,6 +19,7 @@ import { runCharacterLifeChecks } from "./character-life.browser.mjs";
 import { runCreatorChecks } from "./creator.browser.mjs";
 import { runStreamingOrderChecks } from "./streaming-order.browser.mjs";
 import { runReminderDeliveryChecks } from "./reminder-delivery.browser.mjs";
+import { runImSettingsChecks } from "./im-settings.browser.mjs";
 
 const artifactsDir = resolve("browser-artifacts");
 mkdirSync(artifactsDir, { recursive: true });
@@ -231,6 +232,7 @@ try {
   await runCreatorChecks(browser, artifactsDir);
   await runStreamingOrderChecks(browser, artifactsDir);
   await runReminderDeliveryChecks(browser, artifactsDir);
+  await runImSettingsChecks(browser, artifactsDir);
   await runDesktopWorkflow(browser, baseUrl, artifactsDir);
   await runCompactDesktopWorkflow(browser, baseUrl, artifactsDir);
   await runMobileWorkflow(browser, baseUrl, artifactsDir);

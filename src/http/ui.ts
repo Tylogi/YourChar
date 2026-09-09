@@ -3739,76 +3739,80 @@ export function renderAppHtml(): string {
     .git-binding-box h5 { margin: 0; font-size: 11px; }
     .git-public-key { min-height: 68px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 10px; }
     .git-public-key[hidden] { display: none; }
-    .im-gateway-state {
-      margin-bottom: 14px;
-      padding: 10px 12px;
-      border: 1px solid var(--line);
-      border-radius: 7px;
-      color: var(--muted);
-      background: #fafafa;
-      font-size: 12px;
-      line-height: 1.5;
-    }
-    .im-gateway-state.ready { color: #176b45; border-color: #b9ddc9; background: #f0faf4; }
-    .im-gateway-state.unavailable { color: #8a620a; border-color: #ead8a5; background: #fff9e9; }
-    .im-channel-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; }
+    .im-settings-head { display: flex; align-items: center; justify-content: space-between; gap: 16px; }
+    .im-settings-head h3 { margin: 0; font-size: 17px; }
+    .im-settings-head p { margin: 6px 0 0; font-size: 13px; }
+    .im-settings-head > button { flex: 0 0 auto; }
+    .im-privacy-note { margin: 20px 0 0; color: var(--sub); font-size: 12px; line-height: 1.65; }
+    .im-privacy-note summary { display: flex; align-items: center; gap: 8px; width: fit-content; max-width: 100%; cursor: pointer; list-style: none; }
+    .im-privacy-note summary::-webkit-details-marker { display: none; }
+    .im-privacy-note summary svg { flex: 0 0 auto; width: 15px; height: 15px; }
+    .im-privacy-note summary .im-disclosure-icon { width: 13px; height: 13px; }
+    .im-privacy-note[open] .im-disclosure-icon { transform: rotate(180deg); }
+    .im-privacy-note p { margin: 10px 0 0; max-width: 76ch; }
+    .im-gateway-state { display: flex; align-items: baseline; gap: 8px; margin: 10px 0 22px; color: var(--sub); font-size: 12px; line-height: 1.65; overflow-wrap: anywhere; }
+    .im-gateway-state::before, .im-channel-status::before { content: ""; display: inline-block; width: 6px; height: 6px; flex: 0 0 6px; border-radius: 50%; background: var(--muted); }
+    .im-gateway-state.ready::before, .im-channel-status.connected::before { background: var(--status-ok); }
+    .im-gateway-state.unavailable::before, .im-channel-status.binding::before { background: var(--warning); }
+    .im-channel-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); align-items: start; gap: 20px; }
     .im-channel-card {
       min-width: 0;
-      padding: 15px;
+      padding: 20px;
       border: 1px solid var(--line);
-      border-radius: 8px;
-      background: #fff;
+      border-radius: 10px;
+      background: var(--panel);
       display: grid;
-      gap: 11px;
+      gap: 0;
     }
-    .im-channel-card.connected { border-color: #acd7be; box-shadow: inset 0 0 0 1px rgba(23, 107, 69, 0.05); }
-    .im-channel-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 10px; }
-    .im-channel-title { min-width: 0; display: flex; align-items: center; gap: 9px; }
+    .im-channel-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+    .im-channel-title { min-width: 0; display: flex; align-items: center; gap: 10px; }
     .im-channel-mark {
-      width: 34px;
-      height: 34px;
-      flex: 0 0 34px;
+      width: 32px;
+      height: 32px;
+      flex: 0 0 32px;
       display: grid;
       place-items: center;
-      border-radius: 9px;
-      color: #fff;
-      font-size: 12px;
-      font-weight: 750;
+      border-radius: 8px;
+      color: var(--sub);
+      background: var(--list);
     }
-    .im-channel-mark.wechat { background: #07c160; }
-    .im-channel-mark.feishu { background: linear-gradient(145deg, #3370ff, #7b67ee); }
-    .im-channel-title h4 { margin: 0 0 2px; font-size: 14px; }
-    .im-channel-title small { color: var(--muted); font-size: 10px; }
-    .im-channel-status {
-      flex: 0 0 auto;
-      padding: 3px 7px;
-      border-radius: 99px;
-      color: #6f5a19;
-      background: #fff1c9;
-      font-size: 10px;
-    }
-    .im-channel-status.connected { color: #176b45; background: #e7f7ee; }
-    .im-channel-status.error { color: var(--danger); background: #fff0f0; }
-    .im-channel-description { margin: 0; min-height: 38px; color: var(--muted); font-size: 11px; line-height: 1.55; }
+    .im-channel-mark svg { width: 18px; height: 18px; }
+    .im-channel-title h4 { margin: 0; font-size: 15px; }
+    .im-channel-status { display: inline-flex; align-items: center; gap: 6px; flex: 0 0 auto; color: var(--sub); font-size: 12px; }
+    .im-channel-status.error { color: var(--danger); }
+    .im-channel-status.error::before { background: var(--danger); }
+    .im-channel-description { margin: 12px 0 20px; color: var(--muted); font-size: 12px; line-height: 1.65; }
+    .im-character-route { display: flex; align-items: center; gap: 12px; }
+    .im-character-avatar { display: grid; place-items: center; width: 52px; height: 52px; flex: 0 0 52px; border-radius: 10px; overflow: hidden; background: var(--selected); color: var(--sub); font-size: 20px; }
+    .im-character-avatar img { width: 100%; height: 100%; object-fit: cover; }
+    .im-character-avatar svg { width: 23px; height: 23px; }
+    .im-character-route .im-channel-field { flex: 1; min-width: 0; }
     .im-channel-field { display: grid; gap: 5px; }
-    .im-channel-field > span { color: var(--muted); font-size: 11px; }
-    .im-channel-field select { width: 100%; min-width: 0; }
-    .im-channel-meta { min-height: 32px; color: #56615c; font-size: 10px; line-height: 1.5; overflow-wrap: anywhere; }
-    .im-channel-actions { display: flex; flex-wrap: wrap; gap: 7px; }
-    .im-typing-setting {
-      padding: 9px 10px;
-      border: 1px solid #cbe5d6;
-      border-radius: 7px;
-      background: #f1faf5;
+    .im-channel-field > span { color: var(--sub); font-size: 12px; }
+    .im-channel-field select { width: 100%; min-width: 0; min-height: 38px; font-family: var(--font-ui); }
+    .im-route-hint { margin: 10px 0 18px; color: var(--muted); font-size: 12px; line-height: 1.6; }
+    .im-channel-preferences { border-top: 1px solid var(--line); }
+    .im-setting-row { min-height: 70px; padding: 14px 0; display: flex; align-items: center; justify-content: space-between; gap: 16px; }
+    .im-setting-row + .im-setting-row { border-top: 1px solid var(--line); }
+    .im-setting-copy { min-width: 0; color: var(--sub); font-size: 12px; line-height: 1.6; }
+    .im-setting-copy strong { display: block; color: var(--text); font-size: 13px; font-weight: 500; }
+    .im-setting-copy small { display: block; font-size: 12px; }
+    .im-setting-row.toggle input { flex: 0 0 42px; }
+    .im-setting-row select { width: auto; max-width: 58%; min-width: 0; min-height: 38px; font-family: var(--font-ui); font-size: 13px; }
+    .im-channel-footer {
+      padding-top: 16px;
+      border-top: 1px solid var(--line);
       display: flex;
       align-items: center;
       justify-content: space-between;
-      gap: 10px;
-      color: #476254;
-      font-size: 10px;
-      line-height: 1.45;
+      flex-wrap: wrap;
+      gap: 12px;
     }
-    .im-typing-setting input { width: 16px; height: 16px; flex: 0 0 auto; }
+    .im-channel-meta { flex: 1 1 130px; min-width: 0; color: var(--muted); font-size: 12px; line-height: 1.6; overflow-wrap: anywhere; }
+    .im-channel-meta strong { display: block; color: var(--sub); font-weight: 500; }
+    .im-channel-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+    #imSettingsPanel > .settings-actions { margin-top: 14px; }
+    #imChannelState:empty { display: none; }
     .im-qr-dialog { width: min(430px, calc(100vw - 28px)); }
     .im-qr-body { padding: 18px; display: grid; justify-items: center; gap: 12px; text-align: center; }
     .im-qr-stage {
@@ -3822,8 +3826,8 @@ export function renderAppHtml(): string {
       place-items: center;
     }
     .im-qr-stage img { display: block; width: 224px; height: 224px; object-fit: contain; }
-    .im-qr-placeholder { color: var(--muted); font-size: 12px; line-height: 1.6; }
-    .im-qr-message { margin: 0; max-width: 350px; color: #4d5852; font-size: 12px; line-height: 1.6; }
+    .im-qr-placeholder { color: #616161; font-size: 13px; line-height: 1.6; }
+    .im-qr-message { margin: 0; max-width: 350px; color: var(--sub); font-size: 13px; line-height: 1.6; }
     .im-verify-form { width: 100%; display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 8px; }
     .im-verify-form input { min-width: 0; }
     .workspace-section {
@@ -5816,15 +5820,15 @@ export function renderAppHtml(): string {
             <p id="appearanceStatus" class="muted" role="status"></p>
           </section>
           <section id="imSettingsPanel" class="management-panel settings-panel" hidden>
-            <div class="schedule-head">
+            <div class="im-settings-head">
               <div>
                 <h3>微信与飞书</h3>
-                <p class="muted">把本人私聊接入指定角色；两个平台分别选择角色。</p>
+                <p class="muted">在常用的聊天应用里，继续和角色对话。</p>
               </div>
               <button id="refreshImChannelsBtn" class="secondary" type="button"><i data-lucide="refresh-cw" aria-hidden="true"></i><span>刷新</span></button>
             </div>
-            <p class="im-privacy-banner"><strong>仅普通模式 · 单主人私聊。</strong> IM 不会打开或读取私密模式，也不支持群聊或多人共享。外部消息会进入所选角色的普通会话，并与该角色的普通历史、记忆和普通 Workspace 连续；平台本身仍会保留已传输的消息。</p>
-            <div id="imGatewayState" class="im-gateway-state" role="status" aria-live="polite">正在读取 Channel Runtime 状态…</div>
+            <details class="im-privacy-note"><summary><i data-lucide="shield-check" aria-hidden="true"></i><span>仅本人私聊 · 私密模式不互通</span><i class="im-disclosure-icon" data-lucide="chevron-down" aria-hidden="true"></i></summary><p><strong>仅普通模式 · 单主人私聊。</strong> IM 不会打开或读取私密模式，也不支持群聊或多人共享。消息进入所选角色的普通会话，沿用该角色的普通历史、记忆和普通 Workspace。平台凭据只保存在本机运行目录，不会显示给角色；平台本身仍会保留已传输的消息。</p></details>
+            <div id="imGatewayState" class="im-gateway-state" role="status" aria-live="polite">正在检查连接服务…</div>
             <div id="imChannelList" class="im-channel-grid" aria-live="polite"></div>
             <div class="settings-actions"><span id="imChannelState" class="muted" role="status" aria-live="polite"></span></div>
           </section>
@@ -15557,7 +15561,7 @@ export function renderAppHtml(): string {
       nodes.refreshImChannelsBtn.disabled = true;
       nodes.imChannelState.textContent = force ? "正在刷新连接状态…" : "正在读取连接状态…";
       nodes.imGatewayState.className = "im-gateway-state";
-      nodes.imGatewayState.textContent = "正在读取 Channel Runtime 状态…";
+      nodes.imGatewayState.textContent = "正在检查连接服务…";
       if (!state.imChannels.length) renderImChannels();
       try {
         const responses = await Promise.all([
@@ -15629,45 +15633,51 @@ export function renderAppHtml(): string {
       const gatewayReady = state.imGateway.configured;
       nodes.imGatewayState.className = "im-gateway-state " + (gatewayReady ? "ready" : "unavailable");
       nodes.imGatewayState.textContent = gatewayReady
-        ? "Channel Runtime 已就绪。平台凭据只保存在本机运行目录，不会显示给角色。"
-        : (state.imGateway.detail || "Channel Runtime 尚未就绪；角色选择可以预先保存，扫码绑定暂不可用。");
+        ? "连接服务已就绪"
+        : "连接服务未就绪，可先选择角色和通知偏好。" + (state.imGateway.detail ? " " + state.imGateway.detail : "");
       nodes.imChannelList.innerHTML = channels.map(renderImChannelCard).join("");
       refreshIcons();
     }
 
     function renderImChannelCard(channel) {
       const connected = channel.status === "connected";
+      const character = state.imCharacters.find((entry) => entry.id === channel.characterId);
+      const platform = channel.provider === "wechat" ? "微信" : "飞书";
       const options = ['<option value="">未选择（停止接收）</option>'].concat(state.imCharacters.map((character) =>
         '<option value="' + escapeHtml(character.id) + '"' + (character.id === channel.characterId ? ' selected' : '') + '>' + escapeHtml(character.name || character.id) + '</option>'
       )).join("");
       const connection = channel.connection;
       const connectionMeta = connection
-        ? '<div class="im-channel-meta"><strong>' + escapeHtml(connection.displayName || "已验证的本人账号") + '</strong><br />连接时间：' + escapeHtml(formatImTime(connection.connectedAt)) + '</div>'
-        : '<div class="im-channel-meta">尚未连接账号。二维码只用于绑定本人私聊，不会开放群聊。</div>';
+        ? '<div class="im-channel-meta" title="连接时间：' + escapeHtml(formatImTime(connection.connectedAt)) + '"><strong>' + escapeHtml(connection.displayName || "已验证的本人账号") + '</strong><span>本人账号已连接</span></div>'
+        : '<div class="im-channel-meta">' + (character ? "扫码连接你的本人账号" : "先选择一位对话角色") + '</div>';
       const availability = imAvailabilityLabel(channel.availability);
       const bindDisabled = channel.availability !== "available" || !channel.characterId || connected;
+      const selectedDomain = (connected ? connection?.domain : state.imBindingDomain) === "lark" ? "lark" : "feishu";
       const domain = channel.provider === "feishu"
-        ? '<label class="im-channel-field"><span>服务区域</span><select data-im-domain="feishu"' + (connected ? ' disabled' : '') + '><option value="feishu">飞书（中国大陆）</option><option value="lark">Lark（国际版）</option></select></label>'
+        ? '<label class="im-setting-row"><span class="im-setting-copy"><strong>服务区域</strong></span><select aria-label="飞书服务区域" data-im-domain="feishu"' + (connected ? ' disabled' : '') + '><option value="feishu"' + (selectedDomain === "feishu" ? ' selected' : '') + '>飞书（中国大陆）</option><option value="lark"' + (selectedDomain === "lark" ? ' selected' : '') + '>Lark（国际版）</option></select></label>'
         : "";
       const typing = channel.provider === "wechat" ? renderWechatTypingSetting() : "";
       return '<article class="im-channel-card' + (connected ? ' connected' : '') + '" data-im-card="' + channel.provider + '">' +
-        '<div class="im-channel-head"><div class="im-channel-title"><span class="im-channel-mark ' + channel.provider + '">' + (channel.provider === "wechat" ? "微" : "飞") + '</span><div><h4>' + escapeHtml(channel.label) + '</h4><small>仅普通模式 · 单主人私聊</small></div></div><span class="im-channel-status ' + (connected ? "connected" : channel.status === "error" ? "error" : "") + '">' + escapeHtml(imChannelStatusLabel(channel.status)) + '</span></div>' +
-        '<p class="im-channel-description">' + escapeHtml(channel.description) + '</p>' +
-        '<label class="im-channel-field"><span>绑定角色（仅影响之后的新消息）</span><select data-im-character="' + channel.provider + '">' + options + '</select></label>' +
-        domain + connectionMeta + renderImReminderSetting(channel) + typing +
-        '<div class="im-channel-actions"><button class="primary" type="button" data-im-action="bind" data-im-provider="' + channel.provider + '"' + (bindDisabled ? ' disabled' : '') + '><i data-lucide="scan-line" aria-hidden="true"></i><span>' + escapeHtml(connected ? "已绑定" : availability) + '</span></button>' +
-        (connected ? '<button class="secondary" type="button" data-im-action="unbind" data-im-provider="' + channel.provider + '">解绑账号</button>' : '') + '</div></article>';
+        '<div class="im-channel-head"><div class="im-channel-title"><span class="im-channel-mark" aria-hidden="true"><i data-lucide="' + (channel.provider === "wechat" ? "messages-square" : "send") + '"></i></span><h4>' + escapeHtml(channel.label) + '</h4></div><span class="im-channel-status ' + channel.status + '">' + escapeHtml(imChannelStatusLabel(channel.status)) + '</span></div>' +
+        '<p class="im-channel-description">' + (channel.provider === "wechat" ? "通过微信 AI 助手，与角色保持联系。" : "通过飞书或 Lark，在私聊里找到角色。") + '</p>' +
+        '<div class="im-character-route"><span class="im-character-avatar" aria-hidden="true">' + (character ? avatarImageOrInitial(character.avatarUrl, character.name) : '<i data-lucide="user-round"></i>') + '</span>' +
+        '<label class="im-channel-field"><span>对话角色</span><select aria-label="' + platform + '对话角色" data-im-character="' + channel.provider + '">' + options + '</select></label></div>' +
+        '<p class="im-route-hint">' + (character ? "新消息进入该角色的普通会话，切换不迁移历史。" : "两个平台可分别选择角色，仅影响之后的新消息。") + '</p>' +
+        '<div class="im-channel-preferences">' + domain + renderImReminderSetting(channel) + typing + '</div>' +
+        '<div class="im-channel-footer">' + connectionMeta + '<div class="im-channel-actions">' +
+        (connected ? '<button class="secondary" type="button" data-im-action="unbind" data-im-provider="' + channel.provider + '">解绑账号</button>'
+          : '<button class="primary" type="button" data-im-action="bind" data-im-provider="' + channel.provider + '"' + (bindDisabled ? ' disabled' : '') + '><i data-lucide="scan-line" aria-hidden="true"></i><span>' + escapeHtml(availability) + '</span></button>') + '</div></div></article>';
     }
 
     function renderWechatTypingSetting() {
       const settings = state.imRuntimeSettings || { wechatTypingEnabled: true, supported: false };
-      return '<label class="im-typing-setting"><span><strong>处理时显示“正在输入”</strong><br />只作用于之后的新微信消息。</span><input type="checkbox" data-im-setting="wechat-typing"' + (settings.wechatTypingEnabled ? ' checked' : '') + (!settings.supported || state.imSettingsSaving ? ' disabled' : '') + ' /></label>';
+      return '<label class="im-setting-row toggle"><span class="im-setting-copy"><strong>处理时显示“正在输入”</strong><small>仅影响之后的新微信消息。</small></span><input type="checkbox" role="switch" aria-label="微信处理时显示正在输入" data-im-setting="wechat-typing"' + (settings.wechatTypingEnabled ? ' checked' : '') + (!settings.supported || state.imSettingsSaving ? ' disabled' : '') + ' /></label>';
     }
 
     function renderImReminderSetting(channel) {
       const key=channel.provider === "wechat" ? "wechatRemindersEnabled" : "feishuRemindersEnabled";
       const enabled=state.imRuntimeSettings?.[key] !== false;
-      return '<label class="im-typing-setting"><span><strong>接收日程提醒</strong><br />普通、重要提醒都推送，关闭不影响聊天。'+(channel.status === "connected" ? '仅投递本人已验证私聊。' : '绑定账号后生效。')+'</span><input type="checkbox" aria-label="'+(channel.provider === "wechat" ? "微信" : "飞书")+'接收日程提醒" data-im-setting="'+channel.provider+'-reminders"'+(enabled?' checked':'')+(!state.imRuntimeSettings || state.imSettingsSaving?' disabled':'')+' /></label>';
+      return '<label class="im-setting-row toggle"><span class="im-setting-copy"><strong>接收日程提醒</strong><small>普通、重要提醒均接收，关闭不影响聊天。'+(channel.status === "connected" ? '' : '绑定后生效。')+'</small></span><input type="checkbox" role="switch" aria-label="'+(channel.provider === "wechat" ? "微信" : "飞书")+'接收日程提醒" data-im-setting="'+channel.provider+'-reminders"'+(enabled?' checked':'')+(!state.imRuntimeSettings || state.imSettingsSaving?' disabled':'')+' /></label>';
     }
 
     function imChannelStatusLabel(status) {
@@ -15675,7 +15685,7 @@ export function renderAppHtml(): string {
     }
 
     function imAvailabilityLabel(availability) {
-      return ({ available: "扫码绑定", gateway_required: "Runtime 未就绪", connector_unavailable: "连接器不可用", unsupported: "当前环境不支持" })[availability] || "暂不可用";
+      return ({ available: "扫码绑定", gateway_required: "连接服务未就绪", connector_unavailable: "连接器不可用", unsupported: "当前环境不支持" })[availability] || "暂不可用";
     }
 
     async function handleImChannelChange(event) {
