@@ -12,10 +12,18 @@ The calendar view remains available. Timed user events and tasks can enable
 advance notification, and channels, with a preview of the effective notification
 time. All-day items and fictional character calendars do not create real reminders.
 
-New important reminders default to UI + WeChat. Ordinary reminders default to UI;
-users can explicitly choose additional channels. Existing schedules without a
-stored policy retain their original time and UI-only behavior: migration does not
-silently opt old reminders into external messaging. Preparation defaults to 10
+New reminders default to `channelMode=follow_settings`: UI plus every currently
+bound IM provider whose **Settings → IM Channels → 接收日程提醒** switch is enabled.
+WeChat and Feishu each have an independent persistent switch, enabled by default.
+Importance does not select channels. The chat schedule tool does not accept
+channel preferences, and ignores stale model-supplied channel fields. A user can
+select `custom` in the schedule editor for an individual reminder, including
+UI-only; custom external channels are still subject to the IM master switches.
+
+Existing policies without `channelMode` retain their stored channels; policies
+missing entirely retain legacy UI-only behavior. Editing such a reminder can
+explicitly opt it into following IM settings. Migration never backfills delivered
+reminders or silently changes prior channel choices. Preparation defaults to 10
 minutes; the API also supports 1–30 minutes.
 
 The header bell opens the notification center. It shows each channel separately,
@@ -32,6 +40,12 @@ with the page closed, delivery is retained in the UI inbox for the next visit.
 - External targets come only from the currently bound owner's verified direct
   messages. Bind the channel, then send one owner DM before using reminders.
   Missing contacts and disconnected bindings remain visible as channel errors.
+- Channels are selected when an occurrence first becomes due. Enabling a switch
+  or binding a provider later does not backfill an already-triggered occurrence.
+  Disabling a provider suppresses only its unsent reminders and revokes their
+  outgoing leases immediately; UI, other providers, and ordinary chat replies
+  are unaffected. Re-enabling does not replay suppressed reminders. Platform
+  sends already in flight cannot be recalled; an acknowledged send is retained.
 - Queued messages stay pinned to their original binding generation and direct
   conversation. Rebinding never retargets old reminders to a new recipient.
 - The external reminder includes a short routing code. Reply `知道了 CODE` to
@@ -89,6 +103,13 @@ IM outbox. Migration preserves prior inbound-reply rows and delivery receipts.
 Take a verified state backup before upgrading a running installation. Do not run
 an older application against the upgraded database without restoring a compatible
 backup.
+
+Schema 57 adds the two per-provider notification preferences to
+`im_runtime_settings`. The existing local-control-plane protected
+`PATCH /api/v1/im/settings` accepts partial boolean fields
+`wechatRemindersEnabled` and `feishuRemindersEnabled`, independently of
+`wechatTypingEnabled`. Database backups preserve them and full user-data reset
+restores defaults. No model tool can edit these settings.
 
 Verification covers virtual-clock timing, slow models, isolated real transport
 drafting against a local fixture, cancellation, acknowledgement, snooze, migration,

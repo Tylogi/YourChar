@@ -8,10 +8,12 @@ export const reminderPolicyHtml = `
 <div id="scheduleReminderOptions" class="reminder-options">
 <label class="checkbox-row"><input id="scheduleReminderEnabled" type="checkbox" checked /><span>通知我</span></label>
 <div id="scheduleReminderDetails"><div class="reminder-options-grid">
-<label>重要性<select id="scheduleReminderImportance"><option value="important">重要 · 默认双通道</option><option value="normal">普通</option></select></label>
+<label>重要性<select id="scheduleReminderImportance"><option value="important">重要</option><option value="normal">普通</option></select></label>
 <label>提前通知<select id="scheduleReminderLead"><option value="0">按约定时间</option><option value="5">提前 5 分钟</option><option value="10">提前 10 分钟</option><option value="15">提前 15 分钟</option><option value="30">提前 30 分钟</option><option value="60">提前 1 小时</option></select></label></div>
-<div class="reminder-channels"><label class="checkbox-row"><input type="checkbox" checked disabled /><span>UI</span></label><label class="checkbox-row"><input id="scheduleReminderWechat" type="checkbox" checked /><span>微信</span></label><label class="checkbox-row"><input id="scheduleReminderFeishu" type="checkbox" /><span>飞书</span></label><label class="checkbox-row"><input id="scheduleReminderDesktop" type="checkbox" /><span>桌面</span></label></div>
-<p id="scheduleReminderPreview" class="reminder-help"></p><p class="reminder-help">后台提前准备，到时模型未完成也会发送基础提醒。外部通道仅限本人已绑定的私聊；勿扰时段仍生效。</p></div></div>`;
+<label>通知渠道<select id="scheduleReminderChannelMode"><option value="follow_settings">跟随 IM 设置（推荐）</option><option value="custom">为本提醒单独选择</option></select></label>
+<p id="scheduleReminderFollowHint" class="reminder-help">站内 + IM 页面已勾选且已绑定的通道。普通提醒也会推送；不随重要性改变。</p>
+<div id="scheduleReminderCustomChannels" class="reminder-channels" hidden><label class="checkbox-row"><input type="checkbox" checked disabled /><span>UI</span></label><label class="checkbox-row"><input id="scheduleReminderWechat" type="checkbox" /><span>微信</span></label><label class="checkbox-row"><input id="scheduleReminderFeishu" type="checkbox" /><span>飞书</span></label><label class="checkbox-row"><input id="scheduleReminderDesktop" type="checkbox" /><span>桌面</span></label></div>
+<p id="scheduleReminderPreview" class="reminder-help"></p><p class="reminder-help">后台提前准备，到时模型未完成也会发送基础提醒。外部通道仅限本人已绑定的私聊；IM 总开关和勿扰时段仍生效。</p></div></div>`;
 export const reminderCenterHtml = `
 <dialog id="reminderInboxDialog" class="reminder-center" aria-labelledby="reminderInboxTitle"><div class="reminder-center-head"><h3 id="reminderInboxTitle">提醒中心</h3><button id="closeReminderInboxBtn" class="secondary icon-button" type="button" aria-label="关闭提醒中心">×</button></div><p id="reminderInboxStatus" class="muted" role="status"></p><div id="reminderInboxList"></div></dialog>
 <div id="reminderToast" class="reminder-toast" role="status" hidden><span>有新的日程提醒</span><button id="openReminderToastBtn" type="button" class="secondary">查看</button><button id="dismissReminderToastBtn" type="button" class="secondary icon-button" aria-label="收起提醒">×</button></div>`;
@@ -52,15 +54,18 @@ export const reminderScript = String.raw`
     }
     async function openReminderInbox() { if (!reminderUiAllowed()) return; reminderNode("reminderToast").hidden=true; if (!reminderNode("reminderInboxDialog").open) reminderNode("reminderInboxDialog").showModal(); await refreshReminderNotifications(); }
     function setScheduleReminderPolicy(policy) {
-      const p=policy || {enabled:nodes.scheduleKind.value==="reminder",importance:"important",leadMinutes:nodes.scheduleKind.value==="event"?15:0,prepareMinutes:10,channels:["in_app","wechat"]};
+      const p=policy || {enabled:nodes.scheduleKind.value==="reminder",importance:"important",leadMinutes:nodes.scheduleKind.value==="event"?15:0,prepareMinutes:10,channelMode:"follow_settings",channels:["in_app"]};
+      reminderNode("scheduleReminderChannelMode").value=p.channelMode || "custom";
       reminderEditorPrepareMinutes=p.prepareMinutes || 10; reminderNode("scheduleReminderEnabled").checked=Boolean(p.enabled); reminderNode("scheduleReminderImportance").value=p.importance || "normal";
       const select=reminderNode("scheduleReminderLead"); if (![...select.options].some(o=>o.value===String(p.leadMinutes))) select.add(new Option("提前 "+p.leadMinutes+" 分钟",String(p.leadMinutes))); select.value=String(p.leadMinutes || 0);
       for (const [id,channel] of [["Wechat","wechat"],["Feishu","feishu"],["Desktop","desktop"]]) reminderNode("scheduleReminder"+id).checked=(p.channels || ["in_app"]).includes(channel); updateReminderEditor();
     }
-    function readScheduleReminderPolicy() { return { enabled:state.scheduleOwnerType==="user" && !nodes.scheduleAllDay.checked && reminderNode("scheduleReminderEnabled").checked, importance:reminderNode("scheduleReminderImportance").value,leadMinutes:Number(reminderNode("scheduleReminderLead").value),prepareMinutes:reminderEditorPrepareMinutes,channels:["in_app",...["Wechat","Feishu","Desktop"].filter(id=>reminderNode("scheduleReminder"+id).checked).map(id=>id.toLowerCase())] }; }
+    function readScheduleReminderPolicy() { const channelMode=reminderNode("scheduleReminderChannelMode").value; return { enabled:state.scheduleOwnerType==="user" && !nodes.scheduleAllDay.checked && reminderNode("scheduleReminderEnabled").checked, importance:reminderNode("scheduleReminderImportance").value,leadMinutes:Number(reminderNode("scheduleReminderLead").value),prepareMinutes:reminderEditorPrepareMinutes,channelMode,channels:channelMode === "follow_settings" ? ["in_app"] : ["in_app",...["Wechat","Feishu","Desktop"].filter(id=>reminderNode("scheduleReminder"+id).checked).map(id=>id.toLowerCase())] }; }
     function updateReminderEditor() {
       reminderNode("scheduleReminderOptions").hidden=state.scheduleOwnerType!=="user" || nodes.scheduleAllDay.checked; reminderNode("scheduleReminderDetails").hidden=!reminderNode("scheduleReminderEnabled").checked;
       const p=readScheduleReminderPolicy(), start=nodes.scheduleStart.value && new Date(nodes.scheduleStart.value);
+      reminderNode("scheduleReminderCustomChannels").hidden=p.channelMode !== "custom";
+      reminderNode("scheduleReminderFollowHint").hidden=p.channelMode === "custom";
       reminderNode("scheduleReminderPreview").textContent=start && Number.isFinite(start.getTime()) && p.enabled ? "通知时间："+new Date(start.getTime()-p.leadMinutes*60000).toLocaleString("zh-CN")+"；后台提前 "+p.prepareMinutes+" 分钟准备。" : "明确说几点提醒，就选择“按约定时间”；事件需要提前提醒时，再设置提前量。";
     }
     reminderNode("reminderInboxBtn").addEventListener("click",openReminderInbox); reminderNode("openReminderToastBtn").addEventListener("click",openReminderInbox);
@@ -70,6 +75,5 @@ export const reminderScript = String.raw`
       try { const r=await fetch("/api/v1/reminder-occurrences/"+encodeURIComponent(id)+"/"+button.dataset.reminderAction,{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({minutes:10})}); if (!r.ok) throw new Error((await r.json()).error || "提醒更新失败"); await refreshReminderNotifications(); } catch(error){reminderNode("reminderInboxStatus").textContent=error.message;} finally{button.disabled=false;}
     });
     nodes.scheduleForm.addEventListener("change",updateReminderEditor); nodes.scheduleKind.addEventListener("change",()=>{if(!state.editingScheduleId)setScheduleReminderPolicy();});
-    reminderNode("scheduleReminderImportance").addEventListener("change",()=>{reminderNode("scheduleReminderWechat").checked=reminderNode("scheduleReminderImportance").value==="important";});
     window.setInterval(()=>void refreshReminderNotifications(),5000);
 `;

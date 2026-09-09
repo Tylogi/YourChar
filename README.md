@@ -16,6 +16,7 @@ and adds the RP companion domain on top:
 - strict time resolution, recurrence, snooze, quiet hours, and delivery retry;
 - rolling, evidence-referenced character checkpoints with bounded model requests and local fallback;
 - early background reminder drafts, deadline fallbacks, and independent UI/owner-IM delivery with shared acknowledgement;
+- user-controlled WeChat/Feishu reminder switches, independent of model-assigned importance;
 - deterministic virtual-clock and scripted-model interfaces for test agents;
 - per-character SOUL.md files, scenes, typed long-term memory, and FTS5 retrieval;
 - runtime MCP/Skill discovery and persisted capability toggles;

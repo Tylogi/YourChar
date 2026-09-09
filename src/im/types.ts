@@ -116,10 +116,12 @@ export type ImChannelState = {
 
 export type ImRuntimeSettings = {
   wechatTypingEnabled: boolean;
+  wechatRemindersEnabled: boolean;
+  feishuRemindersEnabled: boolean;
   updatedAt: string;
 };
 
-export type ImRuntimeSettingsPatch = Partial<Pick<ImRuntimeSettings, "wechatTypingEnabled">>;
+export type ImRuntimeSettingsPatch = Partial<Omit<ImRuntimeSettings, "updatedAt">>;
 
 export type ImRuntimeSettingsResponse = ImRuntimeSettings & {
   supported: boolean;

@@ -5,7 +5,7 @@ import type { ReminderMessageComposer } from "../notifications/composer.js";
 import type { ScheduleRepository } from "./repository.js";
 import type { ScheduleService } from "./service.js";
 import type { QuietHoursPolicy } from "./quiet-hours.js";
-import type { NotificationOutboxEntry, ScheduleItem } from "./types.js";
+import type { NotificationOutboxEntry, ScheduleItem, ReminderChannel } from "./types.js";
 import { reminderPolicy } from "./reminder-policy.js";
 import { ReminderPreparation } from "./reminder-preparation.js";
 
@@ -15,6 +15,8 @@ export type ReminderDeliveryOptions = {
   additionalSinks?: NotificationSink[];
   allowed?: (item: ScheduleItem, channel: string) => boolean;
   onDelivered?: (notification: NotificationDelivery) => void;
+  defaultImChannels?: () => ReminderChannel[];
+  channelEnabled?: (channel: string) => boolean;
 };
 
 export class ScheduleScheduler {
@@ -56,9 +58,14 @@ export class ScheduleScheduler {
         const item = this.repository.getItem(occurrence.scheduleItemId)!;
         const policy = reminderPolicy(item);
         if (!policy.enabled) continue;
-        const channels = new Set([this.sink.channel, ...policy.channels.filter(channel => channel !== "in_app" && this.sinks.has(channel))]);
-        for (const channel of channels) this.repository.createOutbox({ id: this.idGenerator.next("outbox"), occurrenceId: occurrence.id,
-          channel, status: "pending", attempts: 0, availableAt: now, agentGenerated: false, createdAt: now, updatedAt: now });
+        const selected = policy.channelMode === "follow_settings" ? this.options.defaultImChannels?.() ?? [] : policy.channels;
+        const channels = new Set([this.sink.channel, ...selected.filter(channel => channel !== "in_app" && this.sinks.has(channel) && this.options.channelEnabled?.(channel) !== false)]);
+        // Manual retries reuse the original fanout; a newly enabled/bound provider
+        // must not receive historical reminders as a side effect of another retry.
+        if (!this.repository.hasOutboxForOccurrence(occurrence.id)) {
+          for (const channel of channels) this.repository.createOutbox({ id: this.idGenerator.next("outbox"), occurrenceId: occurrence.id,
+            channel, status: "pending", attempts: 0, availableAt: now, agentGenerated: false, createdAt: now, updatedAt: now });
+        }
         this.repository.setOccurrenceStatus(occurrence.id, "processing", now);
       }
     });
@@ -71,6 +78,11 @@ export class ScheduleScheduler {
     const occurrence = this.repository.getOccurrence(entry.occurrenceId);
     const item = occurrence && this.repository.getItem(occurrence.scheduleItemId);
     if (!occurrence || !item) return "skipped";
+    if (this.repository.getOutbox(entry.id)?.suppressedAt) return "skipped";
+    if (this.options.channelEnabled?.(entry.channel) === false) {
+      this.repository.suppressOutbox(entry.id, now, "此通道的日程提醒已关闭");
+      return "skipped";
+    }
     const active = () => {
       const current = this.repository.getOccurrence(occurrence.id); const schedule = this.repository.getItem(item.id);
       return current && schedule?.status === "scheduled" && schedule.revision === item.revision && !current.acknowledgedAt &&

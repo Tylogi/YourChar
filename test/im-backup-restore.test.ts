@@ -30,6 +30,7 @@ test("restore preserves IM credentials but quarantines queued delivery state", (
       name: "IM restore character",
       soulMarkdown: "# SOUL.md\n\nRestore fixture.\n",
     });
+    kernel.patchImRuntimeSettings({ wechatRemindersEnabled: false, feishuRemindersEnabled: true });
     kernel.dispose();
 
     sourceDatabase = new DatabaseSync(join(stateDir, "rp-agent.sqlite"));
@@ -120,6 +121,9 @@ test("restore preserves IM credentials but quarantines queued delivery state", (
     assert.equal(existsSync(join(backupDir, "im-runtime", "spool.json")), true);
 
     restoredDatabase = new DatabaseSync(join(restoredDir, "rp-agent.sqlite"), { readOnly: true });
+    const notificationPreferences = restoredDatabase.prepare("SELECT wechat_reminders_enabled,feishu_reminders_enabled FROM im_runtime_settings").get();
+    assert.equal(notificationPreferences?.wechat_reminders_enabled, 0);
+    assert.equal(notificationPreferences?.feishu_reminders_enabled, 1);
     const restoredRows = restoredDatabase.prepare(`
       SELECT id, status, lease_token, lease_expires_at, last_error
       FROM im_outbox ORDER BY id

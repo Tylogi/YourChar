@@ -650,8 +650,10 @@ async function route(input: {
     if (method === "PATCH") {
       assertLocalControlPlaneMutation(input.request);
       const body = asImRecord(await readJson(input.request));
-      assertOnlyImKeys(body, ["wechatTypingEnabled"], "IM settings");
+      assertOnlyImKeys(body, ["wechatTypingEnabled", "wechatRemindersEnabled", "feishuRemindersEnabled"], "IM settings");
       sendJson(input.response, 200, kernel.patchImRuntimeSettings({
+        ...(body.wechatRemindersEnabled === undefined ? {} : { wechatRemindersEnabled: requiredImBoolean(body.wechatRemindersEnabled, "wechatRemindersEnabled") }),
+        ...(body.feishuRemindersEnabled === undefined ? {} : { feishuRemindersEnabled: requiredImBoolean(body.feishuRemindersEnabled, "feishuRemindersEnabled") }),
         ...(body.wechatTypingEnabled === undefined
           ? {}
           : {

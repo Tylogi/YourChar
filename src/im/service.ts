@@ -65,19 +65,14 @@ export class ImIntegrationService {
   }
 
   patchRuntimeSettings(patch: ImRuntimeSettingsPatch): ImRuntimeSettingsResponse {
-    if (
-      patch.wechatTypingEnabled !== undefined &&
-      typeof patch.wechatTypingEnabled !== "boolean"
-    ) {
-      throw new ImIntegrationError(
-        "IM_REQUEST_INVALID",
-        "wechatTypingEnabled must be a boolean",
-        400,
-      );
+    for (const [key, value] of Object.entries(patch)) {
+      if (!["wechatTypingEnabled", "wechatRemindersEnabled", "feishuRemindersEnabled"].includes(key) || typeof value !== "boolean") {
+        throw new ImIntegrationError("IM_REQUEST_INVALID", "IM settings require supported boolean fields", 400);
+      }
     }
-    if (patch.wechatTypingEnabled !== undefined) {
+    if (Object.keys(patch).length) {
       this.repository.patchRuntimeSettings(
-        patch.wechatTypingEnabled,
+        patch,
         this.clock.now().toISOString(),
       );
     }

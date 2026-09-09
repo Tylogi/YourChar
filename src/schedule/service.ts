@@ -121,7 +121,11 @@ export class ScheduleService {
     if (patch.reminder !== undefined && (!patch.reminder || typeof patch.reminder !== "object" || Array.isArray(patch.reminder))) {
       throw new Error("reminder policy must be an object");
     }
-    next.reminder = normalizeReminderPolicy(patch.reminder ? { ...reminderPolicy(current), ...patch.reminder } : reminderPolicy(current), next);
+    const currentPolicy = reminderPolicy(current);
+    next.reminder = normalizeReminderPolicy(patch.reminder ? {
+      ...currentPolicy, ...patch.reminder,
+      channelMode: patch.reminder.channelMode ?? (patch.reminder.channels ? "custom" : currentPolicy.channelMode ?? "custom"),
+    } : currentPolicy, next);
     validateScheduleItem(next);
     assertFutureReminder(next, this.clock.now());
     const warnings = this.overlapWarnings(next);

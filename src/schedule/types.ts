@@ -8,6 +8,8 @@ export type ReminderPolicy = {
   leadMinutes: number;
   prepareMinutes: number;
   channels: ReminderChannel[];
+  /** Missing on historical policies means the existing explicit channels remain authoritative. */
+  channelMode?: "follow_settings" | "custom";
 };
 
 export type ScheduleItem = {

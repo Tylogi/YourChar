@@ -3886,6 +3886,7 @@ export function renderAppHtml(): string {
     }
 
     @media (max-width: 900px) {
+      .im-channel-grid { grid-template-columns: minmax(0, 1fr); }
       .app {
         grid-template-columns: minmax(0, 1fr);
         grid-template-rows: 138px minmax(0, 1fr) 60px;
@@ -15551,6 +15552,8 @@ export function renderAppHtml(): string {
     async function loadImSettingsView(force = false) {
       const epoch = ++state.imViewEpoch;
       const requestId = ++state.imLoadRequestId;
+      const settingsRequestId = state.imSettingsRequestId;
+      const settingsSavePending = state.imSettingsSaving;
       nodes.refreshImChannelsBtn.disabled = true;
       nodes.imChannelState.textContent = force ? "正在刷新连接状态…" : "正在读取连接状态…";
       nodes.imGatewayState.className = "im-gateway-state";
@@ -15572,7 +15575,9 @@ export function renderAppHtml(): string {
           ? { configured: bodies[1].gateway.configured === true, detail: typeof bodies[1].gateway.detail === "string" ? bodies[1].gateway.detail : "" }
           : { configured: false, detail: "" };
         state.imChannels = normalizeImChannels(bodies[1].channels);
-        state.imRuntimeSettings = normalizeImRuntimeSettings(bodies[2]);
+        if (!settingsSavePending && !state.imSettingsSaving && settingsRequestId === state.imSettingsRequestId) {
+          state.imRuntimeSettings = normalizeImRuntimeSettings(bodies[2]);
+        }
         renderImChannels();
         nodes.imChannelState.textContent = force ? "连接状态已刷新" : "";
       } catch (error) {
@@ -15612,6 +15617,8 @@ export function renderAppHtml(): string {
     function normalizeImRuntimeSettings(value) {
       return {
         wechatTypingEnabled: value?.wechatTypingEnabled !== false,
+        wechatRemindersEnabled: value?.wechatRemindersEnabled !== false,
+        feishuRemindersEnabled: value?.feishuRemindersEnabled !== false,
         supported: value?.supported === true,
         appliesTo: "new_wechat_messages"
       };
@@ -15647,14 +15654,20 @@ export function renderAppHtml(): string {
         '<div class="im-channel-head"><div class="im-channel-title"><span class="im-channel-mark ' + channel.provider + '">' + (channel.provider === "wechat" ? "微" : "飞") + '</span><div><h4>' + escapeHtml(channel.label) + '</h4><small>仅普通模式 · 单主人私聊</small></div></div><span class="im-channel-status ' + (connected ? "connected" : channel.status === "error" ? "error" : "") + '">' + escapeHtml(imChannelStatusLabel(channel.status)) + '</span></div>' +
         '<p class="im-channel-description">' + escapeHtml(channel.description) + '</p>' +
         '<label class="im-channel-field"><span>绑定角色（仅影响之后的新消息）</span><select data-im-character="' + channel.provider + '">' + options + '</select></label>' +
-        domain + connectionMeta + typing +
+        domain + connectionMeta + renderImReminderSetting(channel) + typing +
         '<div class="im-channel-actions"><button class="primary" type="button" data-im-action="bind" data-im-provider="' + channel.provider + '"' + (bindDisabled ? ' disabled' : '') + '><i data-lucide="scan-line" aria-hidden="true"></i><span>' + escapeHtml(connected ? "已绑定" : availability) + '</span></button>' +
         (connected ? '<button class="secondary" type="button" data-im-action="unbind" data-im-provider="' + channel.provider + '">解绑账号</button>' : '') + '</div></article>';
     }
 
     function renderWechatTypingSetting() {
       const settings = state.imRuntimeSettings || { wechatTypingEnabled: true, supported: false };
-      return '<label class="im-typing-setting"><span><strong>处理时显示“正在输入”</strong><br />只作用于之后的新微信消息。</span><input type="checkbox" data-im-setting="wechat-typing"' + (settings.wechatTypingEnabled ? ' checked' : '') + (!settings.supported ? ' disabled' : '') + ' /></label>';
+      return '<label class="im-typing-setting"><span><strong>处理时显示“正在输入”</strong><br />只作用于之后的新微信消息。</span><input type="checkbox" data-im-setting="wechat-typing"' + (settings.wechatTypingEnabled ? ' checked' : '') + (!settings.supported || state.imSettingsSaving ? ' disabled' : '') + ' /></label>';
+    }
+
+    function renderImReminderSetting(channel) {
+      const key=channel.provider === "wechat" ? "wechatRemindersEnabled" : "feishuRemindersEnabled";
+      const enabled=state.imRuntimeSettings?.[key] !== false;
+      return '<label class="im-typing-setting"><span><strong>接收日程提醒</strong><br />普通、重要提醒都推送，关闭不影响聊天。'+(channel.status === "connected" ? '仅投递本人已验证私聊。' : '绑定账号后生效。')+'</span><input type="checkbox" aria-label="'+(channel.provider === "wechat" ? "微信" : "飞书")+'接收日程提醒" data-im-setting="'+channel.provider+'-reminders"'+(enabled?' checked':'')+(!state.imRuntimeSettings || state.imSettingsSaving?' disabled':'')+' /></label>';
     }
 
     function imChannelStatusLabel(status) {
@@ -15675,6 +15688,13 @@ export function renderAppHtml(): string {
       if (domain) state.imBindingDomain = domain.value === "lark" ? "lark" : "feishu";
       const typing = event.target.closest('input[data-im-setting="wechat-typing"]');
       if (typing) await saveWechatTypingSetting(typing.checked, typing);
+      const reminders = event.target.closest('input[data-im-setting$="-reminders"]');
+      if (reminders) {
+        const provider=reminders.dataset.imSetting.split("-")[0];
+        if (!["wechat","feishu"].includes(provider)) return;
+        const key=provider === "wechat" ? "wechatRemindersEnabled" : "feishuRemindersEnabled";
+        await saveImRuntimeSetting({[key]:reminders.checked}, (provider === "wechat" ? "微信" : "飞书")+"日程提醒已"+(reminders.checked ? "开启；新提醒跟随此设置" : "关闭；尚未发出的本通道提醒已停止"));
+      }
     }
 
     async function saveImCharacterRoute(provider, characterId, control) {
@@ -15714,25 +15734,35 @@ export function renderAppHtml(): string {
     }
 
     async function saveWechatTypingSetting(enabled, control) {
+      await saveImRuntimeSetting({ wechatTypingEnabled: Boolean(enabled) }, enabled ? "微信“正在输入”已开启" : "微信“正在输入”已关闭");
+    }
+
+    async function saveImRuntimeSetting(patch, successMessage) {
+      if (state.imSettingsSaving) return;
       const epoch = state.imViewEpoch;
       const requestId = ++state.imSettingsRequestId;
-      control.disabled = true;
-      nodes.imChannelState.textContent = "正在保存微信输入状态设置…";
+      state.imSettingsSaving = true;
+      nodes.imChannelList.querySelectorAll("input[data-im-setting]").forEach(control => {control.disabled=true;});
+      nodes.imChannelState.textContent = "正在保存 IM 设置…";
       try {
         const response = await controlPlaneFetch("/api/v1/im/settings", {
           method: "PATCH",
-          body: JSON.stringify({ wechatTypingEnabled: Boolean(enabled) })
+          body: JSON.stringify(patch)
         });
         const body = await response.json().catch(() => ({}));
         if (!imViewIsCurrent(epoch) || requestId !== state.imSettingsRequestId) return;
-        if (!response.ok) throw new Error(body.error || "微信输入状态设置保存失败");
+        if (!response.ok) throw new Error(body.error || "IM 设置保存失败");
         state.imRuntimeSettings = normalizeImRuntimeSettings(body);
         renderImChannels();
-        nodes.imChannelState.textContent = enabled ? "微信“正在输入”已开启" : "微信“正在输入”已关闭";
+        nodes.imChannelState.textContent = successMessage;
       } catch (error) {
         if (!imViewIsCurrent(epoch) || requestId !== state.imSettingsRequestId) return;
         nodes.imChannelState.textContent = imErrorMessage(error);
         renderImChannels();
+      } finally {
+        state.imSettingsSaving = false;
+        if (imViewIsCurrent(epoch)) renderImChannels();
+        else if (state.uiMode === "settings" && state.settingsTab === "im") void loadImSettingsView(true);
       }
     }
 

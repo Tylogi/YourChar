@@ -40,7 +40,7 @@ test("schema 44 world attributes migrate disabled into separate post-turn rules"
     const migrated = new AppDatabase(path);
     try {
       const version = migrated.connection.prepare("SELECT MAX(version) AS version FROM schema_migrations").get() as { version: number };
-      assert.equal(Number(version.version), 56);
+      assert.equal(Number(version.version), 57);
       const definition = new WorldRepository(migrated).getAttributeDefinition("attribute-v44");
       assert.ok(definition);
       assert.equal(definition.analysisEnabled, false);

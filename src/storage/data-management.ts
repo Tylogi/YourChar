@@ -85,6 +85,8 @@ export class DataManagementRepository {
         DELETE FROM im_character_routes;
         UPDATE im_runtime_settings
         SET wechat_typing_enabled = 1,
+            wechat_reminders_enabled = 1,
+            feishu_reminders_enabled = 1,
             updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
         WHERE singleton = 1;
         UPDATE subagent_runtime_settings

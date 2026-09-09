@@ -545,7 +545,9 @@ test("a tired tool turn is checkpointed at the next safe boundary without anothe
     runtime.model.enqueue([
       {
         kind: "assistant_text",
-        text: `这是后续操作需要保留的上下文。${"abcd".repeat(45_000)}`,
+        // Exercise planned pressure, with room for tool-schema growth below the
+        // emergency preflight threshold (which is tested separately).
+        text: `这是后续操作需要保留的上下文。${"abcd".repeat(44_500)}`,
       },
       { kind: "tool_call", name: "write", arguments: { path: "second.txt", content: "second" } },
       {

@@ -343,6 +343,19 @@ export class ScheduleRepository {
     return rows.map(mapOutbox);
   }
 
+  hasOutboxForOccurrence(id: string): boolean {
+    return Boolean(this.database.connection.prepare("SELECT 1 FROM notification_outbox WHERE occurrence_id=? LIMIT 1").get(id));
+  }
+
+  suppressOutbox(id: string, now: string, detail: string): void {
+    this.database.transaction(() => {
+      this.database.connection.prepare("UPDATE notification_outbox SET suppressed_at=COALESCE(suppressed_at,?),last_error=?,updated_at=? WHERE id=? AND status!='delivered'")
+        .run(now, detail, now, id);
+      this.database.connection.prepare("UPDATE im_outbox SET status='abandoned',lease_token=NULL,lease_expires_at=NULL,last_error=?,updated_at=? WHERE notification_outbox_id=? AND status IN ('pending','failed')")
+        .run(detail, now, id);
+    });
+  }
+
   listOutbox(): NotificationOutboxEntry[] {
     return (
       this.database.connection.prepare("SELECT * FROM notification_outbox ORDER BY created_at, id").all() as OutboxRow[]

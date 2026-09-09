@@ -33,7 +33,7 @@ function setupWechat(runtime: ReturnType<typeof createTestRuntime>) {
 function multiScheduler(runtime: ReturnType<typeof createTestRuntime>) {
   const ui=new CaptureNotificationSink();
   const scheduler=new ScheduleScheduler(runtime.kernel.scheduleService.repository,runtime.kernel.scheduleService,ui,runtime.clock,new SeededIdGenerator("multi"),undefined,undefined,undefined,
-    {additionalSinks:[new ImNotificationSink("wechat",runtime.kernel.imIntegrations,runtime.clock)]});
+    {additionalSinks:[new ImNotificationSink("wechat",runtime.kernel.imIntegrations,runtime.clock)],defaultImChannels:()=>["wechat"]});
   return {ui,scheduler};
 }
 
@@ -50,7 +50,8 @@ test("event time, notification lead and draft lead are independent; legacy sched
     runtime.clock.advance(10*60000);await runtime.schedulerTick();assert.equal(runtime.notifications.length,1);assert.equal(runtime.notifications[0].agentGenerated,true);
     const reminder=runtime.kernel.createScheduleItem({kind:"reminder",title:"明确时刻",startAt:"2026-09-08T03:00:00Z",timezone:"Asia/Shanghai"});
     assert.equal(reminder.occurrence?.dueAt,"2026-09-08T03:00:00.000Z");
-    assert.deepEqual(reminder.item.reminder?.channels,["in_app","wechat"]);
+    assert.deepEqual(reminder.item.reminder?.channels,["in_app"]);
+    assert.equal(reminder.item.reminder?.channelMode,"follow_settings");
     runtime.kernel.database.connection.prepare("UPDATE schedule_items SET reminder_json=NULL WHERE id=?").run(reminder.item.id);
     assert.deepEqual(reminderPolicy(runtime.kernel.getScheduleItem(reminder.item.id)).channels,["in_app"]);
   } finally {runtime.dispose();}

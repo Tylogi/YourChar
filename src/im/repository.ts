@@ -10,6 +10,7 @@ import type {
   ImOutboxItem,
   ImProvider,
   ImRuntimeSettings,
+  ImRuntimeSettingsPatch,
 } from "./types.js";
 
 type Row = Record<string, unknown>;
@@ -24,24 +25,46 @@ export class ImRepository {
 
   getRuntimeSettings(): ImRuntimeSettings {
     const row = this.database.connection.prepare(`
-      SELECT wechat_typing_enabled, updated_at
+      SELECT wechat_typing_enabled, wechat_reminders_enabled, feishu_reminders_enabled, updated_at
       FROM im_runtime_settings
       WHERE singleton = 1
-    `).get() as { wechat_typing_enabled: number; updated_at: string } | undefined;
+    `).get() as { wechat_typing_enabled: number; wechat_reminders_enabled: number; feishu_reminders_enabled: number; updated_at: string } | undefined;
     if (!row) throw new Error("IM runtime settings are missing");
     return {
       wechatTypingEnabled: Boolean(row.wechat_typing_enabled),
+      wechatRemindersEnabled: Boolean(row.wechat_reminders_enabled),
+      feishuRemindersEnabled: Boolean(row.feishu_reminders_enabled),
       updatedAt: row.updated_at,
     };
   }
 
-  patchRuntimeSettings(wechatTypingEnabled: boolean, updatedAt: string): ImRuntimeSettings {
-    this.database.connection.prepare(`
-      UPDATE im_runtime_settings
-      SET wechat_typing_enabled = ?, updated_at = ?
-      WHERE singleton = 1
-    `).run(wechatTypingEnabled ? 1 : 0, updatedAt);
-    return this.getRuntimeSettings();
+  patchRuntimeSettings(patch: ImRuntimeSettingsPatch, updatedAt: string): ImRuntimeSettings {
+    return this.database.transaction(() => {
+      const next = { ...this.getRuntimeSettings(), ...patch };
+      this.database.connection.prepare(`UPDATE im_runtime_settings
+        SET wechat_typing_enabled=?, wechat_reminders_enabled=?, feishu_reminders_enabled=?, updated_at=? WHERE singleton=1`)
+        .run(Number(next.wechatTypingEnabled), Number(next.wechatRemindersEnabled), Number(next.feishuRemindersEnabled), updatedAt);
+      // Re-enabling is never permission to replay an already suppressed reminder.
+      for (const provider of ["wechat", "feishu"] as const) {
+        if (next[provider === "wechat" ? "wechatRemindersEnabled" : "feishuRemindersEnabled"]) continue;
+        this.database.connection.prepare(`UPDATE notification_outbox SET status='delivered',updated_at=?,last_error=NULL
+          WHERE channel=? AND status!='delivered' AND EXISTS (
+            SELECT 1 FROM im_outbox m WHERE m.notification_outbox_id=notification_outbox.id AND m.status='delivered')`).run(updatedAt, provider);
+        this.database.connection.prepare(`UPDATE notification_outbox SET suppressed_at=COALESCE(suppressed_at,?),updated_at=?,last_error='此 IM 通道的日程提醒已关闭'
+          WHERE channel=? AND status!='delivered'`).run(updatedAt, updatedAt, provider);
+      }
+      this.invalidateReminderOutbox(updatedAt);
+      return this.getRuntimeSettings();
+    });
+  }
+
+  isReminderChannelEnabled(provider: ImProvider): boolean {
+    const settings = this.getRuntimeSettings();
+    return provider === "wechat" ? settings.wechatRemindersEnabled : settings.feishuRemindersEnabled;
+  }
+
+  reminderChannels(): ImProvider[] {
+    return this.listConnections().filter(binding => this.isReminderChannelEnabled(binding.provider)).map(binding => binding.provider);
   }
 
   listCharacterRoutes(): ImCharacterRoute[] {
@@ -456,6 +479,7 @@ export class ImRepository {
   }
 
   enqueueNotification(input: { id: string; provider: ImProvider; notificationId: string; text: string; now: string }): ImOutboxItem {
+    if (!this.isReminderChannelEnabled(input.provider)) throw new Error("此 IM 通道的日程提醒已关闭");
     const existing = this.database.connection.prepare("SELECT * FROM im_outbox WHERE notification_outbox_id=?").get(input.notificationId) as Row | undefined;
     if (existing) return mapOutbox(existing);
     const target = this.database.connection.prepare(`SELECT b.gateway_connection_id,b.binding_generation,e.external_chat_id
@@ -629,7 +653,9 @@ export class ImRepository {
       WHERE notification_outbox_id IS NOT NULL AND status IN ('pending','failed') AND EXISTS (
         SELECT 1 FROM notification_outbox n JOIN reminder_occurrences o ON o.id=n.occurrence_id JOIN schedule_items i ON i.id=o.schedule_item_id
         WHERE n.id=im_outbox.notification_outbox_id AND (n.suppressed_at IS NOT NULL OR o.acknowledged_at IS NOT NULL
-          OR o.status IN ('cancelled','snoozed') OR i.status!='scheduled' OR i.owner_type!='user')
+          OR o.status IN ('cancelled','snoozed') OR i.status!='scheduled' OR i.owner_type!='user'
+          OR EXISTS (SELECT 1 FROM im_runtime_settings s WHERE s.singleton=1 AND
+            ((im_outbox.provider='wechat' AND s.wechat_reminders_enabled=0) OR (im_outbox.provider='feishu' AND s.feishu_reminders_enabled=0))))
       )`).run(now);
   }
 

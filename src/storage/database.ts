@@ -3074,6 +3074,13 @@ const migrations: Migration[] = [
       CREATE INDEX im_outbox_pending_idx ON im_outbox(provider,gateway_connection_id,binding_generation,status,available_at,lease_expires_at,created_at,id);
     `,
   },
+  {
+    version: 57,
+    sql: `
+      ALTER TABLE im_runtime_settings ADD COLUMN wechat_reminders_enabled INTEGER NOT NULL DEFAULT 1 CHECK(wechat_reminders_enabled IN (0,1));
+      ALTER TABLE im_runtime_settings ADD COLUMN feishu_reminders_enabled INTEGER NOT NULL DEFAULT 1 CHECK(feishu_reminders_enabled IN (0,1));
+    `,
+  },
 ];
 
 export class AppDatabase {

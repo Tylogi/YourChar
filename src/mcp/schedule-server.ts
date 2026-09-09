@@ -40,8 +40,7 @@ const reminderOptions = z.object({
   enabled: z.boolean().optional(), importance: z.enum(["normal", "important"]).optional(),
   leadMinutes: z.number().int().min(0).max(10080).optional().describe("Minutes BEFORE the event time to notify. Keep 0 for an explicit 'remind me at X'; use e.g. 15 only for advance notice of an event."),
   prepareMinutes: z.number().int().min(1).max(30).optional().describe("Background drafting lead before NOTIFICATION time; default 10. Does not change delivery time."),
-  channels: z.array(z.enum(["in_app", "wechat", "desktop", "feishu"])).min(1).optional().describe("Important reminders default to in_app + bound-owner WeChat. Never specify recipients or forward private content."),
-}).optional();
+}).optional().describe("Notification timing and importance only. Channels follow user IM settings and are independent of importance; the Agent cannot change channel preferences.");
 const worldCapability = z.enum([
   "rest",
   "work",
@@ -75,7 +74,7 @@ export function createScheduleMcpServer(context: ScheduleMcpContext): McpServer 
     { name: "rp-agent-schedule", version: "1.0.0" },
     {
       instructions:
-        `Schedule tools manage two isolated calendars. calendar=user is real user data and may notify the user; calendar=character is the selected character's fictional schedule and never creates system reminders. ${ownershipGuidance} Preserve natural-language time in timeExpression and let the server resolve it from its trusted clock.`,
+        `Schedule tools manage two isolated calendars. calendar=user is real user data and may notify the user; calendar=character is the selected character's fictional schedule and never creates system reminders. ${ownershipGuidance} Preserve natural-language time in timeExpression and let the server resolve it from its trusted clock. Notification channels are controlled by user IM settings, regardless of importance. Never choose channels or disable IM delivery. Per-reminder channel exceptions must be selected by the user in the schedule editor.`,
     },
   );
 
@@ -84,7 +83,7 @@ export function createScheduleMcpServer(context: ScheduleMcpContext): McpServer 
     {
       title: "Create schedule item",
       description:
-        `Create an item in the real user calendar or the selected character's fictional calendar. kind=reminder always belongs to calendar=user; character calendars accept only events and tasks. ${ownershipGuidance} For a canonical-world location activity, provide both placeId and capabilityId; travel means arrival at the destination when the item ends. A bound world activity with no time starts at trusted server now. Prefer timeExpression for an explicit relative or local-language time.`,
+        `Create an item in the real user calendar or the selected character's fictional calendar. kind=reminder always belongs to calendar=user; character calendars accept only events and tasks. ${ownershipGuidance} All new reminders follow the user's IM notification settings, including normal-importance reminders. Never select channels; per-reminder exceptions belong in the user's schedule editor. For a canonical-world location activity, provide both placeId and capabilityId; travel means arrival at the destination when the item ends. A bound world activity with no time starts at trusted server now. Prefer timeExpression for an explicit relative or local-language time.`,
       inputSchema: z.object({
         calendar: scheduleCalendar.optional().describe("user for the real user calendar and every reminder; character only for the selected character's fictional events/tasks. Defaults to user. In-person scene perspective does not change ownership."),
         kind: scheduleKind,
@@ -144,7 +143,7 @@ export function createScheduleMcpServer(context: ScheduleMcpContext): McpServer 
           timezone,
           allDay: input.allDay,
           recurrenceRule: input.recurrenceRule,
-          reminder: input.reminder,
+          reminder: { ...input.reminder, channelMode: "follow_settings" },
           ...owner,
           sourceSessionId: context.sessionId,
           idempotencyKey: mcpToolCallId(extra),
@@ -219,7 +218,7 @@ export function createScheduleMcpServer(context: ScheduleMcpContext): McpServer 
     "update_schedule_item",
     {
       title: "Update schedule item",
-      description: "Update an item in the specified user or character calendar after the target is explicit.",
+      description: "Update an item in the specified user or character calendar after the target is explicit. Preserve the user's channel policy: importance never changes notification channels; channel exceptions must be chosen in the schedule editor.",
       inputSchema: z.object({
         calendar: scheduleCalendar.optional().describe("Defaults to user."),
         id: z.string(),

@@ -1141,6 +1141,8 @@ export class CompanionKernel {
           new ImNotificationSink("feishu", this.imIntegrations, this.clock),
           new NotifySendNotificationSink(process.env.RP_AGENT_DESKTOP_NOTIFICATIONS === "1"),
         ],
+        defaultImChannels: () => this.imIntegrations.repository.reminderChannels(),
+        channelEnabled: channel => channel !== "wechat" && channel !== "feishu" || this.imIntegrations.repository.isReminderChannelEnabled(channel),
         allowed: (item) => !this.incognitoChild && item.ownerType === "user" &&
           !this.sessionRuntime.getConversationMetadata().some(session => session.id === item.sourceSessionId && session.conversationSpace === "secret"),
         onDelivered: (notification) => { void this.publishReminderMessage(notification).catch(() => undefined); },
