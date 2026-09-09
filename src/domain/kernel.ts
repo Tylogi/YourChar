@@ -1,4 +1,5 @@
 import type { AgentMessage } from "@earendil-works/pi-agent-core";
+import { checkpointSystemPrompt, type ConversationCheckpointSummarizer, type CheckpointSummaryInput } from "../pi/conversation-checkpoint.js";
 import type { AgentSessionEvent } from "@earendil-works/pi-coding-agent";
 import {
   type Api,
@@ -480,6 +481,7 @@ export type CompanionKernelOptions = CompanionStoreOptions & {
   rpService?: RpService;
   notificationSink?: NotificationSink;
   reminderMessageComposer?: ReminderMessageComposer | false;
+  conversationCheckpointSummarizer?: ConversationCheckpointSummarizer | false;
   startScheduler?: boolean;
   quietHours?: QuietHoursPolicy | false;
   workspaceDir?: string;
@@ -1041,6 +1043,8 @@ export class CompanionKernel {
           : {}),
         workspaceRegistry: this.workspaceRegistry,
         conversationLifecycleThresholds: normalizedOptions.conversationLifecycleThresholds,
+        conversationCheckpointSummarizer: normalizedOptions.conversationCheckpointSummarizer === false
+          ? undefined : normalizedOptions.conversationCheckpointSummarizer ?? this.summarizeConversationCheckpoint.bind(this),
         subagentTimeoutMs: normalizedOptions.subagentTimeoutMs,
         subagentSettings: () => this.subagentSettingsService.snapshot(),
         incognitoChild: this.incognitoChild,
@@ -5892,6 +5896,33 @@ export class CompanionKernel {
         recoveredIntent: remember ? "explicit_remember" : "explicit_forget",
       },
     };
+  }
+
+  private async summarizeConversationCheckpoint(input: CheckpointSummaryInput, signal: AbortSignal): Promise<unknown> {
+    const metadata = this.sessionRuntime.getConversationMetadata().find(entry => entry.id === input.sessionId);
+    if (!metadata || metadata.characterId !== input.characterId || metadata.conversationSpace !== input.conversationSpace) throw new Error("checkpoint scope changed");
+    const config = this.modelBindingForSession(input.sessionId).config;
+    if (!config.enabled || !config.baseUrl || !config.model) throw new Error("checkpoint model unavailable");
+    const maxTokens = Math.min(input.maxOutputTokens, backgroundThinkingPolicy(config, "conversation_compaction").maxTokens);
+    const contextWindow = config.contextWindowTokens ?? 131_072;
+    const reserve = Math.max(2_048, Math.min(16_384, contextWindow * 0.08));
+    // The model binding may have changed between preparation and this request.
+    if (estimateRpContextTokens(checkpointSystemPrompt) + estimateRpContextTokens(input) + 256 + maxTokens + reserve > contextWindow) {
+      throw new Error("checkpoint model input budget changed");
+    }
+    signal.throwIfAborted();
+    const message = await completeOpenAiCompatible(createOpenAiCompatibleModel(config), {
+      systemPrompt: checkpointSystemPrompt,
+      messages: [{ role: "user", content: JSON.stringify(input), timestamp: this.clock.now().getTime() }],
+    }, {
+      apiKey: config.apiKey || "unused", temperature: 0, maxTokens, signal,
+      sessionId: "conversation-checkpoint:" + input.sessionId,
+      onPayload: payload => ({ ...applyBackgroundThinkingPolicy(payload, config, "conversation_compaction") as Record<string, unknown>, max_tokens: maxTokens }),
+    });
+    if (!["stop"].includes(message.stopReason)) throw new Error("checkpoint model did not complete");
+    const current = this.sessionRuntime.getConversationMetadata().find(entry => entry.id === input.sessionId);
+    if (!current || current.characterId !== input.characterId || current.conversationSpace !== input.conversationSpace) throw new Error("checkpoint scope changed");
+    return stripReasoningText(agentEventMessageText(message));
   }
 
   private async composeDueReminder(reminder: DueReminderContext, signal?: AbortSignal): Promise<ComposedReminderMessage> {

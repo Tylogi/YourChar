@@ -14,6 +14,7 @@ and adds the RP companion domain on top:
 - Pi-owned persistent session state with application metadata;
 - SQLite schedule, occurrence, and notification-outbox persistence;
 - strict time resolution, recurrence, snooze, quiet hours, and delivery retry;
+- rolling, evidence-referenced character checkpoints with bounded model requests and local fallback;
 - early background reminder drafts, deadline fallbacks, and independent UI/owner-IM delivery with shared acknowledgement;
 - deterministic virtual-clock and scripted-model interfaces for test agents;
 - per-character SOUL.md files, scenes, typed long-term memory, and FTS5 retrieval;

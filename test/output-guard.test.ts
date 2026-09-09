@@ -578,7 +578,7 @@ test("roleplay compaction creates a deterministic untrusted-data checkpoint", as
     assert.equal(compactingTurn.status, "completed");
     assert.equal(compactingTurn.reply, "舰长，我认为压缩后的本轮回复仍应作为 completed 返回。");
     assert.ok(compaction && compaction.type === "compaction");
-    assert.equal((compaction.details as { policy?: string }).policy, "rp-agent-roleplay-v1");
+    assert.equal((compaction.details as { policy?: string }).policy, "yourchar-rolling-v2");
     assert.ok(handle.session.messages.length < 45);
     assert.equal(runtime.model.requests.length, requestsBefore + 1);
     const checkpoint = JSON.stringify(handle.session.messages);

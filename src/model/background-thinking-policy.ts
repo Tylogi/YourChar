@@ -16,6 +16,7 @@ export type BackgroundThinkingScenario =
   | "quality_judge"
   | "world_analysis"
   | "diary_memory"
+  | "conversation_compaction"
   | "diary_narrative";
 
 export type BackgroundThinkingPolicy = {
@@ -58,6 +59,7 @@ const budgets: Record<BackgroundThinkingScenario, { thinkingOff: number; fallbac
   quality_judge: { thinkingOff: 1_200, fallback: 2_800 },
   world_analysis: { thinkingOff: 1_400, fallback: 2_800 },
   diary_memory: { thinkingOff: 2_400, fallback: 2_400 },
+  conversation_compaction: { thinkingOff: 2_400, fallback: 3_200 },
   diary_narrative: { thinkingOff: 6_000, fallback: 6_000 },
 };
 

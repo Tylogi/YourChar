@@ -19,6 +19,7 @@ import {
 } from "../domain/kernel.js";
 import { CaptureNotificationSink } from "../notifications/sink.js";
 import type { ReminderMessageComposer } from "../notifications/composer.js";
+import type { ConversationCheckpointSummarizer } from "../pi/conversation-checkpoint.js";
 import type {
   ConversationLifecycleThresholds,
   PiModelResolver,
@@ -78,6 +79,7 @@ export type CreateTestRuntimeOptions = {
   workspaceDir?: string;
   tavilyBaseUrl?: string;
   memoryExtractor?: MemoryExtractor;
+  conversationCheckpointSummarizer?: ConversationCheckpointSummarizer | false;
   relationshipExtractor?: RelationshipExtractor;
   postTurnAnalyzer?: PostTurnAnalyzer;
   worldPlanner?: WorldPlanner;
@@ -251,6 +253,7 @@ export class TestRuntime {
       modelResolver: this.model.resolver,
       notificationSink: this.notificationSink,
       reminderMessageComposer: options.reminderMessageComposer ?? false,
+      conversationCheckpointSummarizer: options.conversationCheckpointSummarizer ?? false,
       startScheduler: false,
       quietHours: false,
       workspaceDir: options.workspaceDir,
