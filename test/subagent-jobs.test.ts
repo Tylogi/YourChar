@@ -1287,13 +1287,146 @@ test("Subagent tool intents commit private results and make external replay expl
   }
 });
 
-test("startup recovery fails interrupted Subagent jobs closed without silently replaying work", async () => {
+test("orderly shutdown releases a live Subagent fence for immediate restart recovery", async () => {
+  const stateDir = mkdtempSync(join(tmpdir(), "yourchar-subagent-orderly-recovery-"));
+  const parentSessionId = "orderly-recovery-parent";
+  let first: ReturnType<typeof createTestRuntime> | undefined = createTestRuntime({
+    stateDir,
+    seed: "orderly-recovery-first",
+  });
+  try {
+    first.kernel.setAgentModuleEnabled("mcp:subagent", true);
+    first.model.enqueue([{ kind: "assistant_text", text: "父会话已建立。" }]);
+    await first.kernel.sendMessage(parentSessionId, { mode: "sms", text: "建立恢复父会话。" });
+    first.model.enqueue([{
+      kind: "assistant_text",
+      text: "ORDERLY_RECOVERY_STALE_RESULT_MUST_NOT_COMMIT",
+      delayMs: 250,
+    }]);
+    const started = first.kernel.startSubagentJob(parentSessionId, {
+      role: "worker",
+      task: "ORDERLY_RECOVERY_PRIVATE_TASK_SENTINEL",
+    });
+    await waitFor(() => first?.kernel.getSubagentJob(parentSessionId, started.id).status === "running");
+    first.dispose();
+    first = undefined;
+
+    const second = createTestRuntime({
+      stateDir,
+      seed: "orderly-recovery-second",
+      initialModelResponses: [{
+        kind: "assistant_text",
+        text: "ORDERLY_RECOVERY_FRESH_RESULT_SENTINEL",
+      }],
+    });
+    try {
+      await waitFor(() => second.kernel.getSubagentJob(parentSessionId, started.id).status === "completed");
+      const recovered = second.kernel.getSubagentJob(parentSessionId, started.id);
+      assert.equal(recovered.output, "ORDERLY_RECOVERY_FRESH_RESULT_SENTINEL");
+      assert.equal(recovered.recoveryCount, 1);
+      const run = second.kernel.database.connection.prepare(`
+        SELECT status, attempt_count, owner_id, claim_token
+        FROM subagent_job_runs WHERE job_id = ? AND generation = 1
+      `).get(started.id) as Record<string, unknown>;
+      assert.deepEqual({ ...run }, {
+        status: "completed",
+        attempt_count: 2,
+        owner_id: null,
+        claim_token: null,
+      });
+    } finally {
+      second.dispose();
+    }
+  } finally {
+    first?.dispose();
+    rmSync(stateDir, { recursive: true, force: true });
+  }
+});
+
+test("recovery never steals a live lease and fences its owner after expiry", async () => {
+  const stateDir = mkdtempSync(join(tmpdir(), "yourchar-subagent-lease-recovery-"));
+  const parentSessionId = "lease-recovery-parent";
+  const runtime = createTestRuntime({
+    stateDir,
+    seed: "lease-recovery-first",
+  });
+  try {
+    runtime.kernel.setAgentModuleEnabled("mcp:subagent", true);
+    runtime.model.enqueue([{ kind: "assistant_text", text: "父会话已建立。" }]);
+    await runtime.kernel.sendMessage(parentSessionId, { mode: "sms", text: "建立租约恢复父会话。" });
+    const settings = runtime.kernel.getSubagentSettings();
+    const created = runtime.kernel.subagentJobs.create({
+      parentSessionId,
+      role: "worker",
+      task: "LEASE_RECOVERY_PRIVATE_TASK_SENTINEL",
+      mode: "sms",
+      conversationSpace: "normal",
+      budgets: { ...settings, timeoutMs: settings.timeoutSeconds * 1_000 },
+      grants: {
+        workspaceAccess: "off",
+        moduleIds: [],
+        skillNames: [],
+        toolNames: [],
+      },
+    });
+    const originalClaim = runtime.kernel.subagentJobs.claimRun(
+      created.id,
+      created.grants,
+      "lease-recovery-live-owner",
+    );
+
+    assert.equal(runtime.kernel.sessionRuntime.recoverSubagentJobs(), 0);
+    const stillOwned = runtime.kernel.getSubagentJob(parentSessionId, created.id);
+    assert.equal(stillOwned.status, "running");
+    assert.equal(stillOwned.recoveryCount, 0);
+    assert.equal(runtime.model.requests.length, 1);
+
+    runtime.kernel.database.connection.prepare(`
+      UPDATE subagent_job_runs SET lease_expires_at = ?
+      WHERE job_id = ? AND generation = 1
+    `).run("2025-12-31T23:59:59.000Z", created.id);
+    runtime.model.enqueue([{
+      kind: "assistant_text",
+      text: "LEASE_RECOVERY_FRESH_RESULT_SENTINEL",
+    }]);
+    assert.equal(runtime.kernel.sessionRuntime.recoverSubagentJobs(), 1);
+    await waitFor(() => runtime.kernel.getSubagentJob(parentSessionId, created.id).status === "completed");
+    const recovered = runtime.kernel.getSubagentJob(parentSessionId, created.id);
+    assert.equal(recovered.output, "LEASE_RECOVERY_FRESH_RESULT_SENTINEL");
+    assert.equal(recovered.recoveryCount, 1);
+    const run = runtime.kernel.database.connection.prepare(`
+      SELECT status, attempt_count, owner_id, claim_token
+      FROM subagent_job_runs WHERE job_id = ? AND generation = 1
+    `).get(created.id) as Record<string, unknown>;
+    assert.deepEqual({ ...run }, {
+      status: "completed",
+      attempt_count: 2,
+      owner_id: null,
+      claim_token: null,
+    });
+    assert.throws(
+      () => runtime.kernel.subagentJobs.checkpointRun(
+        originalClaim,
+        { modelCalls: 1, toolCalls: 0, inputTokens: 1, outputTokens: 1, durationMs: 1 },
+        [],
+      ),
+      /fenced run claim/u,
+    );
+  } finally {
+    runtime.dispose();
+    rmSync(stateDir, { recursive: true, force: true });
+  }
+});
+
+test("startup recovery automatically resumes durable queued Subagent work", async () => {
   const stateDir = mkdtempSync(join(tmpdir(), "yourchar-subagent-job-recovery-"));
   let first: ReturnType<typeof createTestRuntime> | undefined = createTestRuntime({
     stateDir,
     seed: "subagent-job-recovery-first",
   });
   try {
+    first.kernel.setAgentModuleEnabled("mcp:subagent", true);
+    first.kernel.patchAgentPermissions({ workspaceAccess: "read_write" });
     first.model.enqueue([{ kind: "assistant_text", text: "持久父会话已建立。" }]);
     await first.kernel.sendMessage("recoverable-subagent-parent", {
       mode: "sms",
@@ -1307,6 +1440,7 @@ test("startup recovery fails interrupted Subagent jobs closed without silently r
       context: "RECOVERED_SUBAGENT_PRIVATE_CONTEXT_SENTINEL",
       mode: "sms",
       conversationSpace: "normal",
+      timezone: "America/Los_Angeles",
       budgets: {
         maxConcurrentTasks: settings.maxConcurrentTasks,
         maxWorkModelCalls: settings.maxWorkModelCalls,
@@ -1316,151 +1450,355 @@ test("startup recovery fails interrupted Subagent jobs closed without silently r
         timeoutMs: settings.timeoutSeconds * 1_000,
       },
       grants: {
-        workspaceAccess: "off",
+        workspaceAccess: "read_only",
         moduleIds: [],
         skillNames: [],
         toolNames: [],
       },
     });
     assert.equal(queued.status, "queued");
-    const continuable = first.kernel.subagentJobs.create({
-      parentSessionId: "recoverable-subagent-parent",
-      role: "worker",
-      task: "RECOVERED_SUBAGENT_CONTINUATION_ORIGINAL_SENTINEL",
-      mode: "sms",
-      conversationSpace: "normal",
-      budgets: {
-        maxConcurrentTasks: settings.maxConcurrentTasks,
-        maxWorkModelCalls: settings.maxWorkModelCalls,
-        maxOutputTokens: settings.maxOutputTokens,
-        maxResultCharacters: settings.maxResultCharacters,
-        timeoutSeconds: settings.timeoutSeconds,
-        timeoutMs: settings.timeoutSeconds * 1_000,
-      },
-      grants: {
-        workspaceAccess: "off",
-        moduleIds: [],
-        skillNames: [],
-        toolNames: [],
-      },
-    });
-    first.kernel.subagentJobs.start(continuable.id, continuable.grants);
-    first.kernel.subagentJobs.complete(
-      continuable.id,
-      subagentCompletion("RECOVERED_SUBAGENT_CONTINUATION_FIRST_RESULT_SENTINEL"),
-      [
-        { role: "user", content: "RECOVERED_SUBAGENT_CONTINUATION_ORIGINAL_SENTINEL" },
-        {
-          role: "assistant",
-          content: [{
-            type: "text",
-            text: "RECOVERED_SUBAGENT_CONTINUATION_FIRST_RESULT_SENTINEL",
-          }],
-        },
-      ],
-    );
-    const queuedFollowup = first.kernel.subagentJobs.queueFollowup(
-      continuable.parentSessionId,
-      continuable.id,
-      "RECOVERED_SUBAGENT_PENDING_FOLLOWUP_SENTINEL",
-      continuable.grants,
-    );
-    assert.equal(queuedFollowup.job.status, "queued");
-    const followupClaim = first.kernel.subagentJobs.claimRun(
-      continuable.id,
-      continuable.grants,
-      "recovery-test-owner",
-    );
-    first.kernel.subagentJobs.checkpointRun(
-      followupClaim,
-      {
-        modelCalls: 1,
-        toolCalls: 2,
-        inputTokens: 30,
-        outputTokens: 40,
-        durationMs: 500,
-      },
-      [
-        ...queuedFollowup.transcript,
-        { role: "user", content: queuedFollowup.prompt },
-      ],
-    );
     first.dispose();
     first = undefined;
 
     const second = createTestRuntime({
       stateDir,
       seed: "subagent-job-recovery-second",
+      initialModelResponses: [{
+        kind: "assistant_text",
+        text: "RECOVERED_SUBAGENT_AUTOMATIC_RESULT_SENTINEL",
+      }],
     });
     try {
+      await waitFor(() => second.kernel.getSubagentJob(
+        "recoverable-subagent-parent",
+        queued.id,
+      ).status === "completed");
       const recovered = second.kernel.getSubagentJob(
         "recoverable-subagent-parent",
         queued.id,
       );
-      assert.equal(recovered.status, "failed");
-      assert.equal(recovered.revision, 2);
+      assert.equal(recovered.status, "completed");
+      assert.equal(recovered.output, "RECOVERED_SUBAGENT_AUTOMATIC_RESULT_SENTINEL");
       assert.equal(recovered.recoveryCount, 1);
-      assert.equal(recovered.failure?.failureKind, "interrupted");
-      assert.equal(recovered.failure?.retryable, true);
-      assert.equal(recovered.output, undefined);
+      assert.equal(recovered.recovery, undefined);
       assert.doesNotMatch(
         JSON.stringify(recovered),
         /RECOVERED_SUBAGENT_PRIVATE_(?:TASK|CONTEXT)_SENTINEL/u,
       );
-      assert.equal(second.model.requests.length, 0, "recovery must not repeat model work");
+      assert.equal(second.model.requests.length, 1);
+      assert.match(second.model.requests[0].systemPrompt, /\(America\/Los_Angeles\)/u);
+      assert.deepEqual(
+        [...second.model.requests[0].toolNames].sort(),
+        ["list_workspace", "read", "read_document"],
+      );
+      assert.match(
+        JSON.stringify(second.model.requests[0].messages),
+        /RECOVERED_SUBAGENT_PRIVATE_TASK_SENTINEL/u,
+      );
       const raw = second.kernel.database.connection.prepare(
         "SELECT task_text, context_text FROM subagent_jobs WHERE id = ?",
       ).get(queued.id) as { task_text: string; context_text: string };
       assert.equal(raw.task_text, "RECOVERED_SUBAGENT_PRIVATE_TASK_SENTINEL");
       assert.equal(raw.context_text, "RECOVERED_SUBAGENT_PRIVATE_CONTEXT_SENTINEL");
-
-      const recoveredFollowup = second.kernel.getSubagentJob(
-        "recoverable-subagent-parent",
-        continuable.id,
-      );
-      assert.equal(recoveredFollowup.status, "failed");
-      assert.equal(recoveredFollowup.failure?.failureKind, "interrupted");
-      assert.equal(recoveredFollowup.recoveryCount, 1);
-      assert.equal(recoveredFollowup.continuation.followupCount, 1);
-      assert.equal(recoveredFollowup.continuation.transcriptStored, true);
-      assert.equal(recoveredFollowup.continuation.available, false);
-      assert.doesNotMatch(
-        JSON.stringify(recoveredFollowup),
-        /RECOVERED_SUBAGENT_(?:CONTINUATION|PENDING_FOLLOWUP)_/u,
-      );
-      const rawFollowup = second.kernel.database.connection.prepare(`
-        SELECT transcript_json, pending_input_text
-        FROM subagent_jobs WHERE id = ?
-      `).get(continuable.id) as {
-        transcript_json: string;
-        pending_input_text: string;
-      };
-      assert.match(rawFollowup.transcript_json, /RECOVERED_SUBAGENT_CONTINUATION_ORIGINAL_SENTINEL/u);
-      assert.equal(
-        rawFollowup.pending_input_text,
-        "RECOVERED_SUBAGENT_PENDING_FOLLOWUP_SENTINEL",
-      );
       const recoveredRun = second.kernel.database.connection.prepare(`
-        SELECT status, attempt_count, model_calls, tool_calls,
-          input_tokens, output_tokens, duration_ms, checkpoint_at,
-          owner_id, claim_token, lease_expires_at
-        FROM subagent_job_runs WHERE job_id = ? AND generation = 2
-      `).get(continuable.id) as Record<string, unknown>;
+        SELECT status, attempt_count, owner_id, claim_token, lease_expires_at
+        FROM subagent_job_runs WHERE job_id = ? AND generation = 1
+      `).get(queued.id) as Record<string, unknown>;
       assert.deepEqual({ ...recoveredRun }, {
-        status: "failed",
+        status: "completed",
         attempt_count: 1,
-        model_calls: 1,
-        tool_calls: 2,
-        input_tokens: 30,
-        output_tokens: 40,
-        duration_ms: 500,
-        checkpoint_at: recoveredRun.checkpoint_at,
         owner_id: null,
         claim_token: null,
         lease_expires_at: null,
       });
-      assert.equal(typeof recoveredRun.checkpoint_at, "string");
     } finally {
+      second.dispose();
+    }
+  } finally {
+    first?.dispose();
+    rmSync(stateDir, { recursive: true, force: true });
+  }
+});
+
+test("startup recovery reconciles committed results and safely retries interrupted local reads", async () => {
+  const stateDir = mkdtempSync(join(tmpdir(), "yourchar-subagent-tool-recovery-"));
+  const parentSessionId = "tool-recovery-parent";
+  let first: ReturnType<typeof createTestRuntime> | undefined = createTestRuntime({
+    stateDir,
+    seed: "tool-recovery-first",
+  });
+  try {
+    first.kernel.setAgentModuleEnabled("mcp:subagent", true);
+    first.model.enqueue([{ kind: "assistant_text", text: "父会话已建立。" }]);
+    await first.kernel.sendMessage(parentSessionId, { mode: "sms", text: "建立恢复父会话。" });
+    const settings = first.kernel.getSubagentSettings();
+    const grants = {
+      workspaceAccess: "off" as const,
+      moduleIds: [] as string[],
+      skillNames: [] as string[],
+      toolNames: ["tavily_search", "read"],
+    };
+    const created = first.kernel.subagentJobs.create({
+      parentSessionId,
+      role: "researcher",
+      task: "RECOVERY_RECONCILIATION_PRIVATE_TASK_SENTINEL",
+      mode: "sms",
+      conversationSpace: "normal",
+      budgets: {
+        ...settings,
+        timeoutMs: settings.timeoutSeconds * 1_000,
+      },
+      grants,
+    });
+    const claim = first.kernel.subagentJobs.claimRun(
+      created.id,
+      grants,
+      "tool-recovery-owner",
+    );
+    const userMessage = {
+      role: "user",
+      content: [{ type: "text", text: "RECOVERY_RECONCILIATION_PRIVATE_TASK_SENTINEL" }],
+      timestamp: Date.parse("2026-01-01T00:00:00.000Z"),
+    };
+    const assistantMessage = {
+      role: "assistant",
+      content: [
+        {
+          type: "toolCall",
+          id: "committed-external-call",
+          name: "tavily_search",
+          arguments: { query: "RECOVERY_EXTERNAL_ARGUMENT_SENTINEL" },
+        },
+        {
+          type: "toolCall",
+          id: "interrupted-local-read",
+          name: "read",
+          arguments: { path: "RECOVERY_LOCAL_READ_ARGUMENT_SENTINEL" },
+        },
+      ],
+      api: "faux",
+      provider: "faux",
+      model: "faux-1",
+      usage: {
+        input: 10,
+        output: 10,
+        cacheRead: 0,
+        cacheWrite: 0,
+        totalTokens: 20,
+        cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+      },
+      stopReason: "toolUse",
+      timestamp: Date.parse("2026-01-01T00:00:01.000Z"),
+    };
+    const transcript = [userMessage, assistantMessage];
+    first.kernel.subagentJobs.recordToolCallStart(
+      claim,
+      {
+        toolCallId: "committed-external-call",
+        toolName: "tavily_search",
+        input: { query: "RECOVERY_EXTERNAL_ARGUMENT_SENTINEL" },
+      },
+      { modelCalls: 1, toolCalls: 1, inputTokens: 10, outputTokens: 10, durationMs: 100 },
+      transcript,
+    );
+    first.kernel.subagentJobs.recordToolCallStart(
+      claim,
+      {
+        toolCallId: "interrupted-local-read",
+        toolName: "read",
+        input: { path: "RECOVERY_LOCAL_READ_ARGUMENT_SENTINEL" },
+      },
+      { modelCalls: 1, toolCalls: 2, inputTokens: 10, outputTokens: 10, durationMs: 120 },
+      transcript,
+    );
+    first.kernel.subagentJobs.recordToolCallResult(claim, {
+      toolCallId: "committed-external-call",
+      toolName: "tavily_search",
+      input: { query: "RECOVERY_EXTERNAL_ARGUMENT_SENTINEL" },
+      content: [{ type: "text", text: "RECOVERY_COMMITTED_TOOL_RESULT_SENTINEL" }],
+      isError: false,
+    });
+    first.dispose();
+    first = undefined;
+
+    const second = createTestRuntime({
+      stateDir,
+      now: "2026-01-01T01:00:00.000Z",
+      seed: "tool-recovery-second",
+      initialModelResponses: [{
+        kind: "assistant_text",
+        text: "RECOVERY_RECONCILIATION_FINAL_RESULT_SENTINEL",
+      }],
+    });
+    try {
+      await waitFor(() => second.kernel.getSubagentJob(parentSessionId, created.id).status === "completed");
+      const recovered = second.kernel.getSubagentJob(parentSessionId, created.id);
+      assert.equal(recovered.output, "RECOVERY_RECONCILIATION_FINAL_RESULT_SENTINEL");
+      assert.equal(recovered.recoveryCount, 1);
+      assert.equal(second.model.requests.length, 1);
+      const providerContext = JSON.stringify(second.model.requests[0].messages);
+      assert.match(providerContext, /RECOVERY_COMMITTED_TOOL_RESULT_SENTINEL/u);
+      assert.match(providerContext, /prior local read was interrupted/u);
+      const run = second.kernel.database.connection.prepare(`
+        SELECT status, attempt_count, model_calls, tool_calls
+        FROM subagent_job_runs WHERE job_id = ? AND generation = 1
+      `).get(created.id) as Record<string, unknown>;
+      assert.equal(run.status, "completed");
+      assert.equal(run.attempt_count, 2);
+      assert.equal(run.model_calls, 2);
+      assert.equal(run.tool_calls, 2);
+    } finally {
+      second.dispose();
+    }
+  } finally {
+    first?.dispose();
+    rmSync(stateDir, { recursive: true, force: true });
+  }
+});
+
+test("ambiguous external effects stay idle until the local control plane explicitly retries", async () => {
+  const stateDir = mkdtempSync(join(tmpdir(), "yourchar-subagent-explicit-recovery-"));
+  const parentSessionId = "explicit-recovery-parent";
+  let first: ReturnType<typeof createTestRuntime> | undefined = createTestRuntime({
+    stateDir,
+    seed: "explicit-recovery-first",
+  });
+  try {
+    first.kernel.setAgentModuleEnabled("mcp:subagent", true);
+    first.model.enqueue([{ kind: "assistant_text", text: "父会话已建立。" }]);
+    await first.kernel.sendMessage(parentSessionId, { mode: "sms", text: "建立恢复父会话。" });
+    const settings = first.kernel.getSubagentSettings();
+    const grants = {
+      workspaceAccess: "off" as const,
+      moduleIds: [] as string[],
+      skillNames: [] as string[],
+      toolNames: ["tavily_search"],
+    };
+    const created = first.kernel.subagentJobs.create({
+      parentSessionId,
+      role: "researcher",
+      task: "EXPLICIT_RECOVERY_PRIVATE_TASK_SENTINEL",
+      mode: "sms",
+      conversationSpace: "normal",
+      budgets: { ...settings, timeoutMs: settings.timeoutSeconds * 1_000 },
+      grants,
+    });
+    const claim = first.kernel.subagentJobs.claimRun(
+      created.id,
+      grants,
+      "explicit-recovery-owner",
+    );
+    const transcript = [
+      {
+        role: "user",
+        content: [{ type: "text", text: "EXPLICIT_RECOVERY_PRIVATE_TASK_SENTINEL" }],
+        timestamp: Date.parse("2026-01-01T00:00:00.000Z"),
+      },
+      {
+        role: "assistant",
+        content: [{
+          type: "toolCall",
+          id: "ambiguous-external-call",
+          name: "tavily_search",
+          arguments: { query: "EXPLICIT_RECOVERY_PRIVATE_ARGUMENT_SENTINEL" },
+        }],
+        api: "faux",
+        provider: "faux",
+        model: "faux-1",
+        usage: {
+          input: 10,
+          output: 10,
+          cacheRead: 0,
+          cacheWrite: 0,
+          totalTokens: 20,
+          cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+        },
+        stopReason: "toolUse",
+        timestamp: Date.parse("2026-01-01T00:00:01.000Z"),
+      },
+    ];
+    first.kernel.subagentJobs.recordToolCallStart(
+      claim,
+      {
+        toolCallId: "ambiguous-external-call",
+        toolName: "tavily_search",
+        input: { query: "EXPLICIT_RECOVERY_PRIVATE_ARGUMENT_SENTINEL" },
+      },
+      { modelCalls: 1, toolCalls: 1, inputTokens: 10, outputTokens: 10, durationMs: 100 },
+      transcript,
+    );
+    first.dispose();
+    first = undefined;
+
+    const second = createTestRuntime({
+      stateDir,
+      now: "2026-01-01T01:00:00.000Z",
+      seed: "explicit-recovery-second",
+      initialModelResponses: [{
+        kind: "assistant_text",
+        text: "EXPLICIT_RECOVERY_FINAL_RESULT_SENTINEL",
+      }],
+    });
+    const server = createHttpServer({ kernel: second.kernel });
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+    try {
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      const staged = second.kernel.getSubagentJob(parentSessionId, created.id);
+      assert.equal(staged.status, "idle");
+      assert.deepEqual(staged.recovery, {
+        state: "decision_required",
+        reason: "external_effect_ambiguous",
+        generation: 1,
+        attemptCount: 1,
+        recoverableToolCalls: 0,
+        ambiguousToolCalls: 1,
+      });
+      assert.equal(second.model.requests.length, 0);
+      assert.doesNotMatch(
+        JSON.stringify(staged),
+        /EXPLICIT_RECOVERY_PRIVATE_(?:TASK|ARGUMENT)_SENTINEL/u,
+      );
+
+      const address = server.address();
+      assert.ok(address && typeof address === "object");
+      const origin = `http://127.0.0.1:${address.port}`;
+      const retryEndpoint =
+        `${origin}/api/v1/sessions/${parentSessionId}/subagent-jobs/${encodeURIComponent(created.id)}/retry`;
+      const rejected = await fetch(retryEndpoint, {
+        method: "POST",
+        headers: { "content-type": "application/json", origin: "https://untrusted.example" },
+        body: "{}",
+      });
+      assert.equal(rejected.status, 403);
+      assert.equal(second.kernel.getSubagentJob(parentSessionId, created.id).status, "idle");
+      const bootstrap = await fetch(`${origin}/`);
+      const cookie = bootstrap.headers.get("set-cookie")?.split(";", 1)[0];
+      assert.ok(cookie);
+      const retryResponse = await fetch(
+        retryEndpoint,
+        {
+          method: "POST",
+          headers: { "content-type": "application/json", origin, cookie },
+          body: "{}",
+        },
+      );
+      assert.equal(retryResponse.status, 202);
+      await waitFor(() => second.kernel.getSubagentJob(parentSessionId, created.id).status === "completed");
+      const recovered = second.kernel.getSubagentJob(parentSessionId, created.id);
+      assert.equal(recovered.output, "EXPLICIT_RECOVERY_FINAL_RESULT_SENTINEL");
+      assert.equal(second.model.requests.length, 1);
+      assert.match(
+        JSON.stringify(second.model.requests[0].messages),
+        /user explicitly authorized a retry/u,
+      );
+      const transcriptRow = second.kernel.database.connection.prepare(`
+        SELECT transcript_json FROM subagent_jobs WHERE id = ?
+      `).get(created.id) as { transcript_json: string };
+      assert.match(transcriptRow.transcript_json, /user explicitly authorized a retry/u);
+    } finally {
+      await new Promise<void>((resolve, reject) =>
+        server.close((error) => error ? reject(error) : resolve())
+      );
       second.dispose();
     }
   } finally {

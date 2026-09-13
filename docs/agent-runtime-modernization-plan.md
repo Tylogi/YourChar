@@ -104,8 +104,8 @@ Required invariants:
   budgets and explicit read-only grants.
 - [x] Add parent-session-scoped list/status/result tools and host GET endpoints
   without exposing task/context bodies in list or audit projections.
-- [x] Fail interrupted non-terminal work closed on startup instead of silently
-  replaying it; purge private job bodies from incognito and deletion flows.
+- [x] Stage interrupted non-terminal work without silently replaying ambiguous
+  effects; purge private job bodies from incognito and deletion flows.
 
 ### P2b — Background control and continuation
 
@@ -125,12 +125,12 @@ Required invariants:
 - [x] Persist one fenced run ledger per initial/follow-up turn, including
   attempt ownership, bounded transcript checkpoints, and cumulative model,
   tool, token, elapsed-time, and result-size accounting.
-- [ ] Recover expired leased work from persistent child checkpoints without
+- [x] Recover expired leased work from persistent child checkpoints without
   resetting its frozen budgets or three-attempt ceiling.
 - [x] Write-ahead journal every admitted tool call, store only its argument
   digest plus a bounded private result, and classify external or metered calls
   as requiring an explicit replay decision.
-- [ ] Reconcile committed tool results during recovery and expose an explicit
+- [x] Reconcile committed tool results during recovery and expose an explicit
   decision path for ambiguous external calls; never silently repeat them.
 - [x] Keep continuation depth, run attempts, elapsed time, tokens, result size,
   and capability grants durably bounded across process restarts.
@@ -165,9 +165,8 @@ feature counts must not be reported as task-success improvements.
 - [x] P1a session capability lifecycle.
 - [x] P1b declarative product contributions.
 - [x] P1c profiles, reload, and declarative provider settings.
-- [ ] P2 continuable jobs and subagents (P2a/P2b plus the P2c fenced run ledger
-  and tool journal are complete; recovery reconciliation and explicit replay
-  decisions remain).
+- [x] P2 continuable jobs and subagents, including fenced checkpoint recovery,
+  committed-result reconciliation, and explicit replay decisions.
 - [ ] P3 general execution.
 - [ ] P4 provider and host seams.
 - [ ] P5 event-sourced runtime state.

@@ -168,7 +168,9 @@ test("private Pi session delegates to an isolated read-only subagent and resumes
 test("a short hard deadline times out a subagent without activity-based extension", async () => {
   const runtime = createTestRuntime({
     seed: "subagent-hard-timeout",
-    subagentTimeoutMs: 30,
+    // Leave enough admission time under the full parallel suite for the
+    // delayed response to be claimed by the child before its fixed deadline.
+    subagentTimeoutMs: 1_000,
   });
   try {
     runtime.kernel.setAgentModuleEnabled("mcp:subagent", true);
@@ -178,7 +180,7 @@ test("a short hard deadline times out a subagent without activity-based extensio
         name: "delegate_task",
         arguments: { role: "reviewer", task: "Perform a deliberately slow review." },
       },
-      { kind: "assistant_text", text: "This result arrived too late.", delayMs: 90 },
+      { kind: "assistant_text", text: "This result arrived too late.", delayMs: 1_100 },
       { kind: "assistant_text", text: "委派超过了固定时限。" },
     ]);
 

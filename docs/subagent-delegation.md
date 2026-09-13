@@ -1,6 +1,6 @@
 # Private-Chat Subagent Delegation
 
-Status: P2 durable background continuation, result delivery, fenced run checkpoints, and the tool side-effect journal implemented; recovery reconciliation and explicit replay decisions remain
+Status: P2 durable background continuation, fenced checkpoint recovery, result delivery, and side-effect-safe replay implemented
 
 ## Product boundary
 
@@ -116,13 +116,34 @@ decision if execution is interrupted. Unserializable or over-budget results
 are recorded as unavailable and are never silently regenerated. Journal result
 bodies share a 4 MiB limit per run.
 
+On startup, unowned queued work and running work whose lease has expired move
+to `idle` before recovery. The runtime pages through every staged row, observes
+the original frozen concurrency, model, token, elapsed-time, result-size, and
+three-attempt limits, intersects the stored grant with current permissions, and
+then obtains a new fenced claim. A non-expired lease is never stolen; the
+runtime schedules another scan for its expiry.
+
+Recovery verifies the private transcript against the tool journal. A committed
+result is hash-checked and restored as the missing `toolResult`, so the tool is
+not executed again. An interrupted local Workspace/Skill/document read receives
+a bounded recovery error result and the child resumes; it may safely issue a
+fresh read if still needed. An interrupted network, vision, MinerU, or unknown
+call has an ambiguous external effect and remains `idle`. Its public projection
+contains only counts and the `decision_required` reason. It can continue only
+after the trusted local control plane explicitly calls the retry endpoint,
+which durably records that authorization as the reconciled tool result before
+launching the next attempt. Invalid checkpoints, exhausted attempts, and
+exhausted frozen budgets remain `unavailable` and can be cancelled without
+replaying work.
+
 Parent cancellation propagates to a blocking child, while
 `interrupt_subagent_job` propagates an explicit cancellation to a background
 child's model and provider transport. Schema 60 introduced the host-owned job
 record; schema 61 adds its bounded private transcript, pending follow-up, and
 continuation counter. Schema 62 adds a durable per-run delivery outbox. Schema
-63 adds fenced execution claims and cumulative run checkpoints, and schema 64
-adds the bounded private tool intent/result journal. The
+63 adds fenced execution claims and cumulative run checkpoints, schema 64 adds
+the bounded private tool intent/result journal, and schema 65 preserves the
+current run's IANA timezone across recovery. The
 record retains stable job/child IDs, frozen budgets,
 the explicit read-only module/Skill/tool grant, lifecycle timestamps, bounded
 result, and safe failure diagnostic. Raw task/context/follow-up text and the
@@ -155,6 +176,7 @@ scope is available to the host through:
 - `GET /api/v1/sessions/{parentSessionId}/subagent-jobs/{jobId}`
 - `POST /api/v1/sessions/{parentSessionId}/subagent-jobs/{jobId}/messages`
 - `POST /api/v1/sessions/{parentSessionId}/subagent-jobs/{jobId}/interrupt`
+- `POST /api/v1/sessions/{parentSessionId}/subagent-jobs/{jobId}/retry`
 
 Host mutations require the local browser control-plane capability. Lists and
 start responses omit task, context, and output bodies. Detail omits task/context
@@ -166,14 +188,12 @@ is active. Once inactive, conversation deletion and full user-data deletion
 remove the corresponding rows, while incognito snapshots physically purge the
 entire table because the Subagent capability is unavailable there.
 
-Application disposal aborts live children after synchronously marking their
-durable rows interrupted. If the application starts with a `queued` or
-`running` row, it likewise marks that row failed with the retryable
-`interrupted` diagnostic. It deliberately does not replay model/tool work:
-pending follow-up text, the latest bounded transcript checkpoint, and
-cumulative usage remain durable. Automatic replay stays disabled until the
-next recovery slice can reconcile committed results and obtain an explicit
-decision for ambiguous external calls.
+Application disposal first releases live child fences to `idle`, then aborts
+their in-memory model/tool/provider work. A late callback holding the old claim
+cannot checkpoint or commit. A later process resumes the durable checkpoint;
+an abrupt crash follows the same path after its lease expires. Pending
+follow-up text, the latest bounded transcript, original timezone, cumulative
+usage, and prior attempts remain durable throughout.
 
 ## Observability and testing
 
@@ -194,6 +214,7 @@ Regression tests must preserve:
   handle-eviction and completed-transcript restart continuation, grant
   non-expansion, terminal transitions, idempotent result-reference delivery,
   fenced run ownership, cumulative checkpoint accounting, write-ahead tool
-  intent/result journaling, restart fail-closed, conversation erasure, and
-  incognito physical purge;
+  intent/result journaling, lease-respecting restart recovery, committed-result
+  reconciliation, explicit external replay authorization, conversation
+  erasure, and incognito physical purge;
 - management-page detail and token-estimate rendering.

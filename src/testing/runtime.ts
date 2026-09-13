@@ -113,6 +113,8 @@ export type CreateTestRuntimeOptions = {
   startPrivateInboxCoordinator?: boolean;
   imGateway?: ImGateway | false;
   reminderMessageComposer?: ReminderMessageComposer | false;
+  /** Responses available before Kernel startup work schedules background recovery. */
+  initialModelResponses?: readonly ScriptedModelResponse[];
 };
 
 export class ScriptedModelController {
@@ -255,6 +257,9 @@ export class TestRuntime {
     this.model = new ScriptedModelController(id, {
       contextWindowTokens: options.scriptedModelContextWindowTokens,
     });
+    if (options.initialModelResponses?.length) {
+      this.model.enqueue([...options.initialModelResponses]);
+    }
     this.kernel = new CompanionKernel({
       stateDir: options.stateDir ?? false,
       clock: this.clock,

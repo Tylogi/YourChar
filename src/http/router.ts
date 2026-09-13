@@ -645,7 +645,7 @@ async function route(input: {
       contextBudget: "GET /api/v1/sessions/{id}/context-budget",
       compactContext: "POST /api/v1/sessions/{id}/compact",
       subagentJobs:
-        "GET/POST /api/v1/sessions/{id}/subagent-jobs; GET /api/v1/sessions/{id}/subagent-jobs/{jobId}; POST /api/v1/sessions/{id}/subagent-jobs/{jobId}/{messages|interrupt}",
+        "GET/POST /api/v1/sessions/{id}/subagent-jobs; GET /api/v1/sessions/{id}/subagent-jobs/{jobId}; POST /api/v1/sessions/{id}/subagent-jobs/{jobId}/{messages|interrupt|retry}",
       imChannels: "GET /api/v1/im/channels",
       imSettings: "GET/PATCH /api/v1/im/settings",
       imBindingQr: "POST /api/v1/im/bindings/{provider}/qr",
@@ -937,6 +937,21 @@ async function route(input: {
         updatedAt: record.updatedAt,
       })),
     });
+    return;
+  }
+
+  const subagentJobRetryMatch = pathname.match(
+    /^\/api\/v1\/sessions\/([^/]+)\/subagent-jobs\/([^/]+)\/retry$/,
+  );
+  if (subagentJobRetryMatch && method === "POST") {
+    assertLocalControlPlaneMutation(input.request);
+    const body = asRecord(await readJson(input.request));
+    assertOnlyKeys(body, [], "Subagent recovery retry");
+    const job = kernel.retrySubagentJob(
+      decodeURIComponent(subagentJobRetryMatch[1]),
+      decodeURIComponent(subagentJobRetryMatch[2]),
+    );
+    sendJson(input.response, 202, { job });
     return;
   }
 

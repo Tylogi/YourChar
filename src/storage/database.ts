@@ -3371,6 +3371,13 @@ const migrations: Migration[] = [
         ON subagent_job_tool_calls(job_id, generation, status, replay_policy, attempt, started_at);
     `,
   },
+  {
+    version: 65,
+    sql: `
+      ALTER TABLE subagent_jobs ADD COLUMN timezone TEXT NOT NULL DEFAULT 'Asia/Shanghai'
+        CHECK (length(timezone) BETWEEN 1 AND 200 AND trim(timezone) = timezone);
+    `,
+  },
 ];
 
 export class AppDatabase {

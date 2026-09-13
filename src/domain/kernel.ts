@@ -114,6 +114,7 @@ import {
   visionMcpModuleId,
   mineruMcpModuleId,
   gitMcpModuleId,
+  subagentMcpModuleId,
 } from "../modules/catalog.js";
 import { AgentPermissionCatalog } from "../modules/permissions.js";
 import type {
@@ -1274,6 +1275,7 @@ export class CompanionKernel {
         this.scheduleConversationWakeNotification(notification.sessionId);
       }
       this.scheduleSubagentJobDeliveries();
+      this.sessionRuntime.scheduleSubagentRecovery();
     }
   }
 
@@ -3636,6 +3638,14 @@ export class CompanionKernel {
     return this.sessionRuntime.interruptSubagentJob(parentSessionId, jobId);
   }
 
+  retrySubagentJob(
+    parentSessionId: string,
+    jobId: string,
+  ) {
+    this.requireSubagentParentSession(parentSessionId);
+    return this.sessionRuntime.retrySubagentJob(parentSessionId, jobId);
+  }
+
   sendSubagentMessage(
     parentSessionId: string,
     jobId: string,
@@ -3969,6 +3979,9 @@ export class CompanionKernel {
     this.store.addAction("set_agent_module", "completed", { moduleId, enabled });
     if (moduleId === memoryCoordinatorMcpModuleId) this.reconcileUserInsights("module_toggle");
     this.sessionRuntime.invalidateCapabilities(`module_toggle:${moduleId}`);
+    if (moduleId === subagentMcpModuleId && enabled) {
+      this.sessionRuntime.scheduleSubagentRecovery();
+    }
     return module;
   }
 

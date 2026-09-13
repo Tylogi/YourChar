@@ -115,6 +115,7 @@ export type SubagentJobSummary = Readonly<{
     maxFollowupTurns: number;
     pendingInputCharacters: number;
   }>;
+  recovery?: SubagentJobRecoveryProjection;
   result?: Readonly<Omit<SubagentJobCompletion, "output">>;
   failure?: Readonly<SubagentFailureDiagnostic>;
   recoveryCount: number;
@@ -122,6 +123,25 @@ export type SubagentJobSummary = Readonly<{
   startedAt?: string;
   finishedAt?: string;
   updatedAt: string;
+}>;
+
+export type SubagentJobRecoveryProjection = Readonly<{
+  state: "automatic_pending" | "decision_required" | "unavailable";
+  reason:
+    | "safe_checkpoint"
+    | "external_effect_ambiguous"
+    | "checkpoint_invalid"
+    | "attempts_exhausted"
+    | "budget_exhausted";
+  generation: number;
+  attemptCount: number;
+  recoverableToolCalls: number;
+  ambiguousToolCalls: number;
+}>;
+
+export type SubagentJobRecoveryCursor = Readonly<{
+  updatedAt: string;
+  jobId: string;
 }>;
 
 export type SubagentJobDetail = SubagentJobSummary & Readonly<{
@@ -138,6 +158,7 @@ export type CreateSubagentJobInput = Readonly<{
   conversationSpace: ConversationSpace;
   characterId?: string;
   secretOwnerCharacterId?: string;
+  timezone?: string;
   budgets: SubagentJobBudgetSnapshot;
   grants: SubagentJobGrantSnapshot;
   /** Background admission requests one durable parent notification for this run. */
@@ -151,6 +172,17 @@ export type SubagentJobFollowupExecution = Readonly<{
   context?: string;
   prompt: string;
   transcript: readonly unknown[];
+}>;
+
+/** Private recovery material. Never return this shape from list/detail APIs. */
+export type SubagentJobRecoveryExecution = Readonly<{
+  job: SubagentJobSummary;
+  task: string;
+  context?: string;
+  followupPrompt?: string;
+  transcript?: readonly unknown[];
+  timezone: string;
+  mode: "prompt" | "continue" | "finalize";
 }>;
 
 export type SubagentJobDeliveryStatus = "waiting" | "pending" | "delivered" | "discarded";
@@ -238,6 +270,7 @@ type SubagentJobRow = {
   conversation_space: string;
   character_id: string | null;
   secret_owner_character_id: string | null;
+  timezone: string;
   budgets_json: string;
   grants_json: string;
   result_json: string | null;
@@ -316,6 +349,17 @@ type SubagentToolCallRow = {
   updated_at: string;
 };
 
+type RecoveryTranscriptToolCall = Readonly<{
+  id: string;
+  name: string;
+}>;
+
+type SubagentRecoveryAssessment = Readonly<{
+  projection: SubagentJobRecoveryProjection;
+  transcript?: readonly unknown[];
+  mode?: SubagentJobRecoveryExecution["mode"];
+}>;
+
 export class SubagentJobNotFoundError extends Error {
   readonly code = "SUBAGENT_JOB_NOT_FOUND";
 
@@ -346,7 +390,7 @@ export class SubagentJobService {
     private readonly clock: Clock,
     private readonly idGenerator: IdGenerator,
   ) {
-    this.recoverInterruptedJobs();
+    this.stageExpiredJobsForRecovery();
   }
 
   create(input: CreateSubagentJobInput): SubagentJobSummary {
@@ -359,10 +403,10 @@ export class SubagentJobService {
         INSERT INTO subagent_jobs(
           id, parent_session_id, child_session_id, role, status, revision,
           task_text, context_text, task_sha256, task_characters, context_characters,
-          mode, conversation_space, character_id, secret_owner_character_id,
+          mode, conversation_space, character_id, secret_owner_character_id, timezone,
           budgets_json, grants_json, result_json, failure_json, recovery_count,
           created_at, started_at, finished_at, updated_at
-        ) VALUES (?, ?, ?, ?, 'queued', 1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL, 0, ?, NULL, NULL, ?)
+        ) VALUES (?, ?, ?, ?, 'queued', 1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL, 0, ?, NULL, NULL, ?)
       `).run(
         id,
         input.parentSessionId,
@@ -377,6 +421,7 @@ export class SubagentJobService {
         input.conversationSpace,
         input.characterId ?? null,
         input.secretOwnerCharacterId ?? null,
+        normalizeSubagentTimezone(input.timezone),
         JSON.stringify(input.budgets),
         JSON.stringify(normalizeGrants(input.grants)),
         createdAt,
@@ -736,6 +781,7 @@ export class SubagentJobService {
     jobId: string,
     prompt: string,
     grants: SubagentJobGrantSnapshot,
+    timezone?: string,
   ): SubagentJobFollowupExecution {
     validateParentSessionId(parentSessionId);
     const normalizedPrompt = validateFollowupPrompt(prompt);
@@ -745,6 +791,7 @@ export class SubagentJobService {
       WHERE parent_session_id = ? AND id = ?
     `).get(parentSessionId, jobId) as SubagentJobRow | undefined;
     if (!row) throw new SubagentJobNotFoundError(jobId);
+    const normalizedTimezone = normalizeSubagentTimezone(timezone ?? row.timezone);
     const transcript = parseTranscript(row.transcript_json);
     if (!isGrantSubset(normalizedGrants, parseGrants(row.grants_json))) {
       throw new SubagentJobStateError(jobId, "a continuation grant no wider than its prior grant");
@@ -767,7 +814,8 @@ export class SubagentJobService {
         SET status = 'queued', revision = revision + 1,
             pending_input_text = ?, pending_input_sha256 = ?, pending_input_characters = ?,
             followup_count = followup_count + 1, result_json = NULL,
-            failure_json = NULL, grants_json = ?, finished_at = NULL, updated_at = ?
+            failure_json = NULL, grants_json = ?, timezone = ?,
+            finished_at = NULL, updated_at = ?
         WHERE parent_session_id = ? AND id = ? AND status = 'completed'
           AND revision = ? AND transcript_json IS NOT NULL
           AND followup_count < ?
@@ -776,6 +824,7 @@ export class SubagentJobService {
         createHash("sha256").update(normalizedPrompt).digest("hex"),
         [...normalizedPrompt].length,
         JSON.stringify(normalizedGrants),
+        normalizedTimezone,
         updatedAt,
         parentSessionId,
         jobId,
@@ -821,8 +870,8 @@ export class SubagentJobService {
     return this.database.transaction(() => {
       const current = this.requireRow(jobId);
       if (isTerminal(requiredStatus(current.status))) return mapSummary(current);
-      if (current.status !== "queued" && current.status !== "running") {
-        throw new SubagentJobStateError(jobId, "queued or running");
+      if (current.status !== "queued" && current.status !== "running" && current.status !== "idle") {
+        throw new SubagentJobStateError(jobId, "queued, running, or awaiting recovery");
       }
       const run = claim
         ? this.requireClaimedRun(current, claim)
@@ -838,7 +887,7 @@ export class SubagentJobService {
         UPDATE subagent_jobs
         SET status = ?, revision = revision + 1, failure_json = ?,
             result_json = NULL, finished_at = ?, updated_at = ?
-        WHERE id = ? AND status IN ('queued', 'running') AND revision = ?
+        WHERE id = ? AND status IN ('queued', 'running', 'idle') AND revision = ?
       `).run(
         status,
         JSON.stringify(failure),
@@ -853,7 +902,7 @@ export class SubagentJobService {
             output_tokens = ?, duration_ms = ?, result_characters = ?,
             owner_id = NULL, claim_token = NULL, lease_expires_at = NULL,
             attempt_started_at = NULL, finished_at = ?, updated_at = ?
-        WHERE job_id = ? AND generation = ? AND status IN ('queued', 'running')
+        WHERE job_id = ? AND generation = ? AND status IN ('queued', 'running', 'idle')
           AND (? IS NULL OR (
             status = 'running' AND attempt_count = ? AND owner_id = ? AND claim_token = ?
           ))
@@ -893,7 +942,8 @@ export class SubagentJobService {
       WHERE parent_session_id = ?
       ORDER BY updated_at DESC, id DESC
       LIMIT ?
-    `).all(parentSessionId, limit) as unknown as SubagentJobRow[]).map(mapSummary);
+    `).all(parentSessionId, limit) as unknown as SubagentJobRow[])
+      .map((row) => this.mapSummary(row));
   }
 
   get(parentSessionId: string, jobId: string): SubagentJobDetail | undefined {
@@ -902,7 +952,7 @@ export class SubagentJobService {
       SELECT * FROM subagent_jobs
       WHERE parent_session_id = ? AND id = ?
     `).get(parentSessionId, jobId) as SubagentJobRow | undefined;
-    return row ? mapDetail(row) : undefined;
+    return row ? this.mapDetail(row) : undefined;
   }
 
   listPendingDeliveries(
@@ -1004,54 +1054,179 @@ export class SubagentJobService {
     ).run(parentSessionId).changes);
   }
 
-  /** Fail closed on startup; terminal notifications remain recoverable. */
-  private recoverInterruptedJobs(): void {
+  /**
+   * Release an in-process owner during orderly shutdown. The fenced claim is
+   * invalidated before cancellation reaches Pi, so late callbacks cannot turn
+   * recoverable work into a terminal failure.
+   */
+  releaseForRecovery(jobId: string): SubagentJobSummary {
     const updatedAt = this.clock.now().toISOString();
-    const failure: SubagentFailureDiagnostic = {
-      failureKind: "interrupted",
-      modelCalls: 0,
-      toolCalls: 0,
-      inputTokens: 0,
-      outputTokens: 0,
-      durationMs: 0,
-      forcedFinalization: false,
-      retryable: true,
-    };
     this.database.transaction(() => {
+      const row = this.requireRow(jobId);
+      if (isTerminal(requiredStatus(row.status)) || row.status === "idle") return;
+      const generation = currentRunGeneration(row);
       this.database.connection.prepare(`
         UPDATE subagent_job_runs
-        SET status = 'failed', owner_id = NULL, claim_token = NULL,
+        SET status = 'idle', owner_id = NULL, claim_token = NULL,
             lease_expires_at = NULL, attempt_started_at = NULL,
-            finished_at = ?, updated_at = ?
-        WHERE status IN ('queued', 'running') AND EXISTS (
+            finished_at = NULL, updated_at = ?
+        WHERE job_id = ? AND generation = ? AND status IN ('queued', 'running')
+      `).run(updatedAt, jobId, generation);
+      const result = this.database.connection.prepare(`
+        UPDATE subagent_jobs
+        SET status = 'idle', revision = revision + 1,
+            recovery_count = recovery_count + 1,
+            finished_at = NULL, updated_at = ?
+        WHERE id = ? AND status IN ('queued', 'running') AND revision = ?
+      `).run(updatedAt, jobId, row.revision);
+      if (Number(result.changes) !== 1) {
+        throw new SubagentJobStateError(jobId, "a releasable durable run");
+      }
+    });
+    return this.mapSummary(this.requireRow(jobId));
+  }
+
+  /** Stage unowned queued work and expired fenced claims for deterministic recovery. */
+  stageExpiredJobsForRecovery(includeQueued = true): number {
+    const updatedAt = this.clock.now().toISOString();
+    return this.database.transaction(() => {
+      this.database.connection.prepare(`
+        UPDATE subagent_job_runs
+        SET status = 'idle', owner_id = NULL, claim_token = NULL,
+            lease_expires_at = NULL, attempt_started_at = NULL,
+            finished_at = NULL, updated_at = ?
+        WHERE (
+          (status = 'queued' AND ? = 1)
+          OR (status = 'running' AND (lease_expires_at IS NULL OR lease_expires_at <= ?))
+        ) AND EXISTS (
           SELECT 1 FROM subagent_jobs j
           WHERE j.id = subagent_job_runs.job_id
             AND subagent_job_runs.generation = j.followup_count + 1
             AND j.status IN ('queued', 'running')
         )
-      `).run(updatedAt, updatedAt);
-      this.database.connection.prepare(`
+      `).run(updatedAt, includeQueued ? 1 : 0, updatedAt);
+      const result = this.database.connection.prepare(`
         UPDATE subagent_jobs
-        SET status = 'failed', revision = revision + 1, failure_json = ?,
-            result_json = NULL, recovery_count = recovery_count + 1,
-            finished_at = ?, updated_at = ?
-        WHERE status IN ('queued', 'running')
-      `).run(JSON.stringify(failure), updatedAt, updatedAt);
-      this.database.connection.prepare(`
-        UPDATE subagent_job_deliveries
-        SET status = 'pending', outcome_status = (
-              SELECT status FROM subagent_jobs WHERE id = subagent_job_deliveries.job_id
-            ),
-            job_revision = (
-              SELECT revision FROM subagent_jobs WHERE id = subagent_job_deliveries.job_id
-            ),
-            updated_at = ?
-        WHERE status = 'waiting' AND EXISTS (
-          SELECT 1 FROM subagent_jobs
-          WHERE id = subagent_job_deliveries.job_id
-            AND status IN ('completed', 'failed', 'cancelled')
+        SET status = 'idle', revision = revision + 1,
+            recovery_count = recovery_count + 1,
+            result_json = NULL, failure_json = NULL,
+            finished_at = NULL, updated_at = ?
+        WHERE status IN ('queued', 'running') AND EXISTS (
+          SELECT 1 FROM subagent_job_runs r
+          WHERE r.job_id = subagent_jobs.id
+            AND r.generation = subagent_jobs.followup_count + 1
+            AND r.status = 'idle'
         )
       `).run(updatedAt);
+      return Number(result.changes);
+    });
+  }
+
+  /** Safe projections for the runtime recovery pump; no private bodies leave the service. */
+  listRecoveryCandidates(
+    limit = 100,
+    after?: SubagentJobRecoveryCursor,
+  ): SubagentJobSummary[] {
+    if (!Number.isSafeInteger(limit) || limit < 1 || limit > 100) {
+      throw new TypeError("Subagent recovery limit must be an integer from 1 to 100");
+    }
+    if (after && (
+      !after.updatedAt.trim() || [...after.updatedAt].length > 128 ||
+      !after.jobId.trim() || [...after.jobId].length > 256
+    )) {
+      throw new TypeError("Subagent recovery cursor is invalid");
+    }
+    this.stageExpiredJobsForRecovery(false);
+    return (this.database.connection.prepare(`
+      SELECT * FROM subagent_jobs
+      WHERE status = 'idle' AND (
+        ? IS NULL OR updated_at > ? OR (updated_at = ? AND id > ?)
+      )
+      ORDER BY updated_at, id
+      LIMIT ?
+    `).all(
+      after?.updatedAt ?? null,
+      after?.updatedAt ?? null,
+      after?.updatedAt ?? null,
+      after?.jobId ?? null,
+      limit,
+    ) as unknown as SubagentJobRow[]).map((row) => this.mapSummary(row));
+  }
+
+  /** Earliest live fence that a later recovery scan may safely reclaim. */
+  nextRecoveryLeaseExpiresAt(): string | undefined {
+    const row = this.database.connection.prepare(`
+      SELECT MIN(r.lease_expires_at) AS lease_expires_at
+      FROM subagent_job_runs r
+      JOIN subagent_jobs j ON j.id = r.job_id
+      WHERE j.status = 'running' AND r.status = 'running'
+        AND r.generation = j.followup_count + 1
+        AND r.lease_expires_at IS NOT NULL
+        AND r.lease_expires_at > ?
+    `).get(this.clock.now().toISOString()) as { lease_expires_at: string | null };
+    return row.lease_expires_at ?? undefined;
+  }
+
+  /**
+   * Atomically reconcile a staged checkpoint and queue its next fenced attempt.
+   * `allowExplicitReplay` is reserved for a trusted, explicit host decision.
+   */
+  prepareRecovery(
+    parentSessionId: string,
+    jobId: string,
+    allowExplicitReplay = false,
+  ): SubagentJobRecoveryExecution {
+    validateParentSessionId(parentSessionId);
+    const updatedAt = this.clock.now().toISOString();
+    return this.database.transaction(() => {
+      const row = this.database.connection.prepare(`
+        SELECT * FROM subagent_jobs
+        WHERE parent_session_id = ? AND id = ?
+      `).get(parentSessionId, jobId) as SubagentJobRow | undefined;
+      if (!row) throw new SubagentJobNotFoundError(jobId);
+      if (row.status !== "idle") throw new SubagentJobStateError(jobId, "awaiting recovery");
+      const assessment = this.assessRecovery(row, allowExplicitReplay);
+      if (assessment.projection.state === "decision_required" && !allowExplicitReplay) {
+        throw new SubagentJobStateError(jobId, "an explicit external-effect retry decision");
+      }
+      if (assessment.projection.state === "unavailable" || !assessment.mode) {
+        throw new SubagentJobStateError(jobId, "a valid recoverable checkpoint and remaining budget");
+      }
+      const transcriptJson = assessment.transcript === undefined
+        ? null
+        : boundedTranscriptJson(assessment.transcript);
+      if (assessment.transcript !== undefined && transcriptJson === null) {
+        throw new SubagentJobStateError(jobId, "a bounded reconciled recovery transcript");
+      }
+      const generation = currentRunGeneration(row);
+      const runResult = this.database.connection.prepare(`
+        UPDATE subagent_job_runs
+        SET status = 'queued', updated_at = ?
+        WHERE job_id = ? AND generation = ? AND status = 'idle'
+      `).run(updatedAt, jobId, generation);
+      const jobResult = this.database.connection.prepare(`
+        UPDATE subagent_jobs
+        SET status = 'queued', revision = revision + 1,
+            transcript_json = ?, updated_at = ?
+        WHERE parent_session_id = ? AND id = ? AND status = 'idle' AND revision = ?
+      `).run(transcriptJson, updatedAt, parentSessionId, jobId, row.revision);
+      if (Number(runResult.changes) !== 1 || Number(jobResult.changes) !== 1) {
+        throw new SubagentJobStateError(jobId, "the staged durable recovery");
+      }
+      const queued = this.requireRow(jobId);
+      return Object.freeze({
+        job: mapSummary(queued),
+        task: queued.task_text,
+        ...(queued.context_text === null ? {} : { context: queued.context_text }),
+        ...(queued.pending_input_text === null
+          ? {}
+          : { followupPrompt: queued.pending_input_text }),
+        ...(assessment.transcript === undefined
+          ? {}
+          : { transcript: assessment.transcript }),
+        timezone: normalizeSubagentTimezone(queued.timezone),
+        mode: assessment.mode,
+      });
     });
   }
 
@@ -1213,15 +1388,52 @@ export class SubagentJobService {
     `).get(jobId, generation) as SubagentJobDeliveryRow | undefined;
   }
 
+  private assessRecovery(
+    row: SubagentJobRow,
+    allowExplicitReplay: boolean,
+  ): SubagentRecoveryAssessment {
+    const generation = currentRunGeneration(row);
+    const run = this.requireRunRow(row.id, generation);
+    const toolCalls = this.database.connection.prepare(`
+      SELECT * FROM subagent_job_tool_calls
+      WHERE job_id = ? AND generation = ?
+      ORDER BY model_call, attempt, started_at, tool_call_id
+    `).all(row.id, generation) as unknown as SubagentToolCallRow[];
+    return assessRecoveryCheckpoint(
+      row,
+      run,
+      toolCalls,
+      allowExplicitReplay,
+      this.clock.now().getTime(),
+    );
+  }
+
+  private mapSummary(row: SubagentJobRow): SubagentJobSummary {
+    return mapSummary(
+      row,
+      row.status === "idle" ? this.assessRecovery(row, false).projection : undefined,
+    );
+  }
+
+  private mapDetail(row: SubagentJobRow): SubagentJobDetail {
+    return mapDetail(
+      row,
+      row.status === "idle" ? this.assessRecovery(row, false).projection : undefined,
+    );
+  }
+
   private getSummaryById(jobId: string): SubagentJobSummary | undefined {
     const row = this.database.connection.prepare(
       "SELECT * FROM subagent_jobs WHERE id = ?",
     ).get(jobId) as SubagentJobRow | undefined;
-    return row ? mapSummary(row) : undefined;
+    return row ? this.mapSummary(row) : undefined;
   }
 }
 
-function mapSummary(row: SubagentJobRow): SubagentJobSummary {
+function mapSummary(
+  row: SubagentJobRow,
+  recovery?: SubagentJobRecoveryProjection,
+): SubagentJobSummary {
   const status = requiredStatus(row.status);
   const followupCount = requiredBoundedInteger(
     row.followup_count,
@@ -1278,6 +1490,7 @@ function mapSummary(row: SubagentJobRow): SubagentJobSummary {
       maxFollowupTurns: maximumSubagentFollowupTurns,
       pendingInputCharacters,
     }),
+    ...(recovery ? { recovery } : {}),
     ...(result ? { result } : {}),
     ...(failure ? { failure } : {}),
     recoveryCount: Number(row.recovery_count),
@@ -1288,8 +1501,11 @@ function mapSummary(row: SubagentJobRow): SubagentJobSummary {
   });
 }
 
-function mapDetail(row: SubagentJobRow): SubagentJobDetail {
-  const summary = mapSummary(row);
+function mapDetail(
+  row: SubagentJobRow,
+  recovery?: SubagentJobRecoveryProjection,
+): SubagentJobDetail {
+  const summary = mapSummary(row, recovery);
   const completion = parseCompletion(row.result_json);
   return Object.freeze({
     ...summary,
@@ -1347,6 +1563,328 @@ function currentRunGeneration(row: SubagentJobRow): number {
     1,
     maximumSubagentFollowupTurns + 1,
   );
+}
+
+function assessRecoveryCheckpoint(
+  job: SubagentJobRow,
+  run: SubagentJobRunRow,
+  journal: readonly SubagentToolCallRow[],
+  allowExplicitReplay: boolean,
+  nowMs: number,
+): SubagentRecoveryAssessment {
+  const generation = currentRunGeneration(job);
+  const attemptCount = requiredBoundedInteger(
+    run.attempt_count,
+    "run attempt count",
+    0,
+    maximumSubagentRunAttempts,
+  );
+  const projection = (
+    state: SubagentJobRecoveryProjection["state"],
+    reason: SubagentJobRecoveryProjection["reason"],
+    recoverableToolCalls: number,
+    ambiguousToolCalls: number,
+  ): SubagentJobRecoveryProjection => Object.freeze({
+    state,
+    reason,
+    generation,
+    attemptCount,
+    recoverableToolCalls,
+    ambiguousToolCalls,
+  });
+  if (run.status !== "idle") {
+    return Object.freeze({
+      projection: projection("unavailable", "checkpoint_invalid", 0, 0),
+    });
+  }
+
+  let transcript: readonly unknown[] | undefined;
+  try {
+    transcript = parseTranscript(job.transcript_json);
+  } catch {
+    return Object.freeze({
+      projection: projection("unavailable", "checkpoint_invalid", 0, 0),
+    });
+  }
+  const inventory = recoveryTranscriptInventory(transcript ?? []);
+  if (!inventory.valid || (transcript === undefined && journal.length > 0)) {
+    return Object.freeze({
+      projection: projection("unavailable", "checkpoint_invalid", 0, 0),
+    });
+  }
+  const journalByToolCallId = new Map<string, SubagentToolCallRow>();
+  for (const row of journal) {
+    const knownCall = inventory.callsById.get(row.tool_call_id);
+    if (!knownCall && !inventory.resultIds.has(row.tool_call_id)) {
+      return Object.freeze({
+        projection: projection("unavailable", "checkpoint_invalid", 0, 0),
+      });
+    }
+    if (knownCall && knownCall.name !== row.tool_name) {
+      return Object.freeze({
+        projection: projection("unavailable", "checkpoint_invalid", 0, 0),
+      });
+    }
+    const existing = journalByToolCallId.get(row.tool_call_id);
+    if (!existing || row.attempt > existing.attempt) {
+      journalByToolCallId.set(row.tool_call_id, row);
+    }
+  }
+
+  const additions: unknown[] = [];
+  let recoverableToolCalls = 0;
+  let ambiguousToolCalls = 0;
+  for (const call of inventory.calls) {
+    if (inventory.resultIds.has(call.id)) continue;
+    const row = journalByToolCallId.get(call.id);
+    if (row?.status === "committed") {
+      const result = recoveryCommittedToolResult(row, nowMs);
+      if (!result) {
+        return Object.freeze({
+          projection: projection(
+            "unavailable",
+            "checkpoint_invalid",
+            recoverableToolCalls,
+            ambiguousToolCalls,
+          ),
+        });
+      }
+      recoverableToolCalls += 1;
+      additions.push(result);
+      continue;
+    }
+    const replayPolicy = row
+      ? requiredToolReplayPolicy(row.replay_policy)
+      : subagentToolReplayPolicy(call.name);
+    if (replayPolicy === "automatic") {
+      recoverableToolCalls += 1;
+      additions.push(recoveryInterruptedToolResult(call, false, nowMs));
+      continue;
+    }
+    ambiguousToolCalls += 1;
+    if (allowExplicitReplay) {
+      additions.push(recoveryInterruptedToolResult(call, true, nowMs));
+    }
+  }
+
+  const recoveryState = ambiguousToolCalls > 0
+    ? projection(
+        "decision_required",
+        "external_effect_ambiguous",
+        recoverableToolCalls,
+        ambiguousToolCalls,
+      )
+    : projection("automatic_pending", "safe_checkpoint", recoverableToolCalls, 0);
+  const budgets = parseBudgets(job.budgets_json);
+  const usage = mapRunUsage(run);
+  if (attemptCount >= maximumSubagentRunAttempts) {
+    return Object.freeze({
+      projection: projection(
+        "unavailable",
+        "attempts_exhausted",
+        recoverableToolCalls,
+        ambiguousToolCalls,
+      ),
+    });
+  }
+  if (usage.modelCalls >= budgets.maxWorkModelCalls + 1 || usage.durationMs >= budgets.timeoutMs) {
+    return Object.freeze({
+      projection: projection(
+        "unavailable",
+        "budget_exhausted",
+        recoverableToolCalls,
+        ambiguousToolCalls,
+      ),
+    });
+  }
+  if (ambiguousToolCalls > 0 && !allowExplicitReplay) {
+    return Object.freeze({ projection: recoveryState });
+  }
+
+  const reconciled = transcript === undefined
+    ? undefined
+    : [...transcript, ...additions];
+  const normalized = stripRetryableTerminalAssistant(reconciled);
+  const mode = recoveryExecutionMode(job, run, normalized);
+  if (!mode || (normalized !== undefined && boundedTranscriptJson(normalized) === null)) {
+    return Object.freeze({
+      projection: projection(
+        "unavailable",
+        "checkpoint_invalid",
+        recoverableToolCalls,
+        ambiguousToolCalls,
+      ),
+    });
+  }
+  return Object.freeze({
+    projection: recoveryState,
+    ...(normalized === undefined ? {} : { transcript: Object.freeze(normalized) }),
+    mode,
+  });
+}
+
+function recoveryTranscriptInventory(transcript: readonly unknown[]): Readonly<{
+  valid: boolean;
+  calls: readonly RecoveryTranscriptToolCall[];
+  callsById: ReadonlyMap<string, RecoveryTranscriptToolCall>;
+  resultIds: ReadonlySet<string>;
+}> {
+  const calls: RecoveryTranscriptToolCall[] = [];
+  const callsById = new Map<string, RecoveryTranscriptToolCall>();
+  const resultIds = new Set<string>();
+  let valid = true;
+  for (const message of transcript) {
+    if (!isPlainRecord(message)) {
+      valid = false;
+      continue;
+    }
+    if (message.role === "assistant" && Array.isArray(message.content)) {
+      for (const block of message.content) {
+        if (!isPlainRecord(block) || block.type !== "toolCall") continue;
+        const id = typeof block.id === "string" ? block.id : "";
+        const name = typeof block.name === "string" ? block.name : "";
+        if (!validRecoveryToolIdentity(id, 512) || !validRecoveryToolIdentity(name, 128) ||
+            callsById.has(id)) {
+          valid = false;
+          continue;
+        }
+        const call = Object.freeze({ id, name });
+        calls.push(call);
+        callsById.set(id, call);
+      }
+      continue;
+    }
+    if (message.role === "toolResult") {
+      const id = typeof message.toolCallId === "string" ? message.toolCallId : "";
+      if (!validRecoveryToolIdentity(id, 512) || resultIds.has(id)) {
+        valid = false;
+        continue;
+      }
+      resultIds.add(id);
+    }
+  }
+  for (const resultId of resultIds) {
+    if (!callsById.has(resultId)) valid = false;
+  }
+  return Object.freeze({
+    valid,
+    calls: Object.freeze(calls),
+    callsById,
+    resultIds,
+  });
+}
+
+function recoveryCommittedToolResult(
+  row: SubagentToolCallRow,
+  fallbackTimestamp: number,
+): Readonly<Record<string, unknown>> | undefined {
+  if (row.result_json === null || row.result_sha256 === null || row.result_bytes === null ||
+      row.is_error === null) return undefined;
+  if (Buffer.byteLength(row.result_json, "utf8") !== Number(row.result_bytes) ||
+      createHash("sha256").update(row.result_json).digest("hex") !== row.result_sha256) {
+    return undefined;
+  }
+  let value: unknown;
+  try {
+    value = JSON.parse(row.result_json);
+  } catch {
+    return undefined;
+  }
+  if (!isPlainRecord(value) || !Array.isArray(value.content) ||
+      typeof value.isError !== "boolean" || value.isError !== (row.is_error === 1)) {
+    return undefined;
+  }
+  return Object.freeze({
+    role: "toolResult",
+    toolCallId: row.tool_call_id,
+    toolName: row.tool_name,
+    content: value.content,
+    ...(value.details === undefined ? {} : { details: value.details }),
+    ...(value.usage === undefined ? {} : { usage: value.usage }),
+    isError: value.isError,
+    timestamp: recoveryTimestamp(row.finished_at, fallbackTimestamp),
+  });
+}
+
+function recoveryInterruptedToolResult(
+  call: RecoveryTranscriptToolCall,
+  explicitlyAuthorized: boolean,
+  timestamp: number,
+): Readonly<Record<string, unknown>> {
+  const text = explicitlyAuthorized
+    ? "The prior external tool call was interrupted with an unknown outcome. The user explicitly authorized a retry; issue a new call only if it is still required."
+    : "The prior local read was interrupted before its result checkpoint. It is safe to issue the read again if it is still required.";
+  return Object.freeze({
+    role: "toolResult",
+    toolCallId: call.id,
+    toolName: call.name,
+    content: Object.freeze([{ type: "text", text }]),
+    isError: true,
+    timestamp,
+  });
+}
+
+function stripRetryableTerminalAssistant(
+  transcript: readonly unknown[] | undefined,
+): unknown[] | undefined {
+  if (transcript === undefined) return undefined;
+  const output = [...transcript];
+  const last = output.at(-1);
+  if (isPlainRecord(last) && last.role === "assistant" &&
+      (last.stopReason === "error" || last.stopReason === "aborted") &&
+      !assistantRecordHasToolCall(last)) {
+    output.pop();
+  }
+  return output;
+}
+
+function recoveryExecutionMode(
+  job: SubagentJobRow,
+  run: SubagentJobRunRow,
+  transcript: readonly unknown[] | undefined,
+): SubagentJobRecoveryExecution["mode"] | undefined {
+  if (!transcript || transcript.length === 0 || Number(run.attempt_count) === 0) {
+    return "prompt";
+  }
+  const last = transcript.at(-1);
+  if (!isPlainRecord(last)) return undefined;
+  if (
+    job.pending_input_text !== null &&
+    Number(run.model_calls) === 0 &&
+    last.role === "assistant"
+  ) {
+    return "prompt";
+  }
+  if (last.role === "user" || last.role === "toolResult") return "continue";
+  if (last.role === "assistant" && !assistantRecordHasToolCall(last)) return "finalize";
+  return undefined;
+}
+
+function assistantRecordHasToolCall(message: Readonly<Record<string, unknown>>): boolean {
+  return Array.isArray(message.content) && message.content.some((block) =>
+    isPlainRecord(block) && block.type === "toolCall"
+  );
+}
+
+function requiredToolReplayPolicy(value: string): SubagentToolReplayPolicy {
+  if (value !== "automatic" && value !== "explicit") {
+    throw new TypeError("Subagent tool replay policy is invalid");
+  }
+  return value;
+}
+
+function validRecoveryToolIdentity(value: string, maximumCharacters: number): boolean {
+  return Boolean(value.trim()) && value === value.trim() && [...value].length <= maximumCharacters;
+}
+
+function recoveryTimestamp(value: string | null, fallback: number): number {
+  if (value === null) return fallback;
+  const timestamp = Date.parse(value);
+  return Number.isFinite(timestamp) ? timestamp : fallback;
+}
+
+function isPlainRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
 }
 
 function mapRunUsage(row: SubagentJobRunRow): SubagentJobRunUsage {
@@ -1690,11 +2228,26 @@ function validateCreateInput(input: CreateSubagentJobInput): void {
   } else if (input.secretOwnerCharacterId !== undefined) {
     throw new TypeError("Normal Subagent jobs cannot declare a secret owner");
   }
+  normalizeSubagentTimezone(input.timezone);
   if (input.notifyParent !== undefined && typeof input.notifyParent !== "boolean") {
     throw new TypeError("Subagent notifyParent must be a boolean");
   }
   parseBudgets(JSON.stringify(input.budgets));
   normalizeGrants(input.grants);
+}
+
+function normalizeSubagentTimezone(value: string | undefined): string {
+  const timezone = value ?? "Asia/Shanghai";
+  if (typeof timezone !== "string" || !timezone.trim() || timezone !== timezone.trim() ||
+      [...timezone].length > 200) {
+    throw new TypeError("Subagent job timezone must contain 1-200 trimmed characters");
+  }
+  try {
+    new Intl.DateTimeFormat("en-US", { timeZone: timezone }).format(0);
+  } catch {
+    throw new TypeError("Subagent job timezone must be a valid IANA timezone");
+  }
+  return timezone;
 }
 
 function validateCompletion(input: SubagentJobCompletion): void {

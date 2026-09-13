@@ -86,6 +86,7 @@ import {
   SubagentJobNotFoundError,
   SubagentJobStateError,
   type SubagentJobGrantSnapshot,
+  type SubagentJobRecoveryExecution,
   type SubagentJobRunClaim,
   type SubagentJobRunProgress,
   type SubagentJobSummary,
@@ -400,6 +401,7 @@ type SubagentRunInput = {
   signal?: AbortSignal;
   followupPrompt?: string;
   restoredMessages?: readonly AgentMessage[];
+  recoveryMode?: SubagentJobRecoveryExecution["mode"];
   notifyParent?: boolean;
 };
 
@@ -604,6 +606,9 @@ export class PiSessionRuntime {
   private readonly activeSubagents = new Set<AgentSession>();
   private readonly activeSubagentJobIds = new Set<string>();
   private readonly backgroundSubagentRuns = new Map<string, BackgroundSubagentRun>();
+  private subagentRecoveryTimer?: NodeJS.Timeout;
+  private subagentRecoveryScheduled = false;
+  private disposed = false;
   private activeCapabilityTurns = 0;
   private readonly canonicalDirectLoading = new Map<string, Promise<PiSessionHandle>>();
   private readonly legacyDirectMigrationTargets = new Map<string, string>();
@@ -682,12 +687,75 @@ export class PiSessionRuntime {
     this.subagentJobTerminalListener = listener;
   }
 
+  /** Queue one non-reentrant startup/lease-expiry recovery scan. */
+  scheduleSubagentRecovery(): void {
+    if (this.disposed || this.incognitoChild || this.subagentRecoveryScheduled) return;
+    this.subagentRecoveryScheduled = true;
+    queueMicrotask(() => {
+      this.subagentRecoveryScheduled = false;
+      if (this.disposed) return;
+      try {
+        this.recoverSubagentJobs();
+      } catch {
+        // Durable idle rows remain visible and retryable after a transient scan failure.
+      }
+    });
+  }
+
+  /** Resume every safe staged job up to its frozen per-parent concurrency limit. */
+  recoverSubagentJobs(): number {
+    if (this.disposed || this.incognitoChild || !this.moduleCatalog.isEnabled(subagentMcpModuleId)) {
+      return 0;
+    }
+    if (this.subagentRecoveryTimer) {
+      clearTimeout(this.subagentRecoveryTimer);
+      this.subagentRecoveryTimer = undefined;
+    }
+    let launched = 0;
+    let cursor: { updatedAt: string; jobId: string } | undefined;
+    do {
+      const candidates = this.subagentJobs.listRecoveryCandidates(100, cursor);
+      for (const job of candidates) {
+        if (job.recovery?.state !== "automatic_pending") continue;
+        if (this.backgroundSubagentRuns.has(job.id)) continue;
+        try {
+          this.launchRecoveredSubagent(job, false);
+          launched += 1;
+        } catch {
+          // A configuration, capacity, or parent-scope failure must not broaden
+          // grants or consume a recovery decision on behalf of the user.
+        }
+      }
+      if (candidates.length < 100) break;
+      const last = candidates.at(-1)!;
+      cursor = { updatedAt: last.updatedAt, jobId: last.id };
+    } while (!this.disposed);
+    this.armSubagentRecoveryLeaseTimer();
+    return launched;
+  }
+
+  private armSubagentRecoveryLeaseTimer(): void {
+    const expiresAt = this.subagentJobs.nextRecoveryLeaseExpiresAt();
+    if (!expiresAt || this.disposed) return;
+    const delayMs = Date.parse(expiresAt) - this.clock.now().getTime();
+    if (!Number.isFinite(delayMs) || delayMs <= 0) {
+      this.scheduleSubagentRecovery();
+      return;
+    }
+    this.subagentRecoveryTimer = setTimeout(() => {
+      this.subagentRecoveryTimer = undefined;
+      this.scheduleSubagentRecovery();
+    }, Math.min(delayMs, maximumSubagentRuntimeTimeoutMs));
+    this.subagentRecoveryTimer.unref?.();
+  }
+
   async getOrCreate(
     sessionId: string,
     mode: Mode,
     characterId?: string,
     conversationSpace?: ConversationSpace,
   ): Promise<PiSessionHandle> {
+    if (this.disposed) throw new Error("Session runtime has been disposed");
     const id = normalizeSessionId(sessionId);
     const existing = this.metadata.get(id);
     const effectiveSpace = existing?.conversationSpace ?? conversationSpace ?? "normal";
@@ -762,6 +830,11 @@ export class PiSessionRuntime {
     this.loading.set(id, load);
     try {
       const handle = await load;
+      if (this.disposed) {
+        handle.session.dispose();
+        await closeMountedSessionCapabilities(handle.capabilityMounts).catch(() => undefined);
+        throw new Error("Session runtime has been disposed");
+      }
       this.handles.set(id, handle);
       return handle;
     } finally {
@@ -1613,12 +1686,18 @@ export class PiSessionRuntime {
   }
 
   dispose(): void {
+    if (this.disposed) return;
+    this.disposed = true;
+    if (this.subagentRecoveryTimer) {
+      clearTimeout(this.subagentRecoveryTimer);
+      this.subagentRecoveryTimer = undefined;
+    }
     for (const controller of this.checkpointControllers) controller.abort();
     for (const jobId of this.activeSubagentJobIds) {
       try {
-        this.subagentJobs.fail(jobId, emptySubagentFailureDiagnostic("interrupted", true));
+        this.subagentJobs.releaseForRecovery(jobId);
       } catch {
-        // Startup recovery will fail closed if the database is temporarily unavailable.
+        // Startup recovery can reclaim the queued row or its expired fenced lease.
       }
     }
     for (const run of this.backgroundSubagentRuns.values()) run.controller.abort();
@@ -2129,6 +2208,7 @@ export class PiSessionRuntime {
       jobId,
       prompt,
       admittedGrants,
+      timezone,
     );
     const controller = new AbortController();
     const input: SubagentRunInput = {
@@ -2168,6 +2248,118 @@ export class PiSessionRuntime {
     return this.launchBackgroundSubagent(input, admission, controller);
   }
 
+  retrySubagentJob(
+    parentSessionId: string,
+    jobId: string,
+  ): SubagentJobSummary {
+    if (this.incognitoChild || !this.moduleCatalog.isEnabled(subagentMcpModuleId)) {
+      throw new Error("Subagent recovery is unavailable");
+    }
+    this.assertConversationActive(parentSessionId);
+    const job = this.subagentJobs.get(parentSessionId, jobId);
+    if (!job) throw new SubagentJobNotFoundError(jobId);
+    if (job.status !== "idle" || job.recovery?.state !== "decision_required") {
+      throw new SubagentJobStateError(jobId, "an explicit recovery decision");
+    }
+    return this.launchRecoveredSubagent(job, true);
+  }
+
+  private launchRecoveredSubagent(
+    existing: SubagentJobSummary,
+    allowExplicitReplay: boolean,
+  ): SubagentJobSummary {
+    const metadata = this.requireMetadata(existing.parentSessionId);
+    if (metadata.archivedAt) throw new ConversationArchivedError(metadata.id);
+    if (
+      existing.mode !== metadata.mode ||
+      existing.conversationSpace !== metadata.conversationSpace ||
+      existing.characterId !== metadata.characterId
+    ) {
+      throw new SubagentJobStateError(existing.id, "the unchanged parent conversation scope");
+    }
+    const active = this.activeSubagentCounts.get(metadata.id) ?? 0;
+    const currentSettings = this.subagentRunSettingsSnapshot();
+    const concurrencyLimit = Math.min(
+      currentSettings.maxConcurrentTasks,
+      existing.budgets.maxConcurrentTasks,
+    );
+    if (active >= concurrencyLimit) {
+      throw new SubagentRunError(
+        `Subagent capacity is full: at most ${concurrencyLimit} subagents may run concurrently per session`,
+        emptySubagentFailureDiagnostic("capacity", true),
+      );
+    }
+    const permissions = this.permissionCatalog.get();
+    const childWorkspaceAccess =
+      existing.grants.workspaceAccess === "read_only" && permissions.workspaceAccess !== "off"
+        ? "read_only"
+        : "off";
+    const grantedSkillNames = new Set(existing.grants.skillNames);
+    const enabledSkills = this.moduleCatalog.enabledSkills(
+      existing.conversationSpace,
+      existing.characterId,
+    ).filter((skill) => grantedSkillNames.has(skill.name));
+    const admittedModuleIds = this.availableSubagentModuleIds(existing.grants.moduleIds)
+      .filter((moduleId) => moduleId !== mineruMcpModuleId || childWorkspaceAccess !== "off");
+    const admittedGrants: SubagentJobGrantSnapshot = Object.freeze({
+      workspaceAccess: childWorkspaceAccess,
+      moduleIds: Object.freeze(admittedModuleIds),
+      skillNames: Object.freeze(enabledSkills.map((skill) => skill.name)),
+      toolNames: Object.freeze([...existing.grants.toolNames]),
+    });
+    const allowedToolNames =
+      existing.recovery?.generation === 1 && existing.recovery.attemptCount === 0
+        ? undefined
+        : Object.freeze([...existing.grants.toolNames]);
+    const workspace = this.workspaceRegistry.resolve(metadata);
+    const execution = this.subagentJobs.prepareRecovery(
+      metadata.id,
+      existing.id,
+      allowExplicitReplay,
+    );
+    const controller = new AbortController();
+    const input: SubagentRunInput = {
+      parentSessionId: metadata.id,
+      mode: execution.job.mode,
+      conversationSpace: execution.job.conversationSpace,
+      ...(execution.job.characterId ? { characterId: execution.job.characterId } : {}),
+      ...(execution.job.secretOwnerCharacterId
+        ? { secretOwnerCharacterId: execution.job.secretOwnerCharacterId }
+        : {}),
+      workspace,
+      request: {
+        role: execution.job.role,
+        task: execution.task,
+        ...(execution.context === undefined ? {} : { context: execution.context }),
+      },
+      timezone: execution.timezone,
+      actions: [],
+      signal: controller.signal,
+      ...(execution.followupPrompt === undefined
+        ? {}
+        : { followupPrompt: execution.followupPrompt }),
+      ...(execution.transcript === undefined
+        ? {}
+        : { restoredMessages: execution.transcript as readonly AgentMessage[] }),
+      recoveryMode: execution.mode,
+    };
+    const settings = execution.job.budgets;
+    const admission: SubagentRunAdmission = Object.freeze({
+      settings,
+      maxTotalModelCalls: settings.maxWorkModelCalls + 1,
+      startedAt: performance.now(),
+      childWorkspaceAccess,
+      enabledSkills,
+      admittedModuleIds: Object.freeze(admittedModuleIds),
+      admittedGrants,
+      ...(allowedToolNames === undefined ? {} : { allowedToolNames }),
+      job: execution.job,
+    });
+    this.activeSubagentCounts.set(metadata.id, active + 1);
+    this.activeSubagentJobIds.add(execution.job.id);
+    return this.launchBackgroundSubagent(input, admission, controller);
+  }
+
   private launchBackgroundSubagent(
     input: SubagentRunInput,
     admission: SubagentRunAdmission,
@@ -2176,6 +2368,7 @@ export class PiSessionRuntime {
     const execution = this.executeSubagent(input, admission);
     const observed = execution.then(
       (result) => {
+        if (this.disposed) return result;
         try {
           this.recordBackgroundSubagentOutcome(input, result);
         } finally {
@@ -2184,6 +2377,7 @@ export class PiSessionRuntime {
         return result;
       },
       (error: unknown) => {
+        if (this.disposed) throw error;
         try {
           this.recordBackgroundSubagentOutcome(input, error);
         } finally {
@@ -2194,6 +2388,7 @@ export class PiSessionRuntime {
     );
     const tracked = observed.finally(() => {
       this.backgroundSubagentRuns.delete(admission.job.id);
+      this.scheduleSubagentRecovery();
     });
     this.backgroundSubagentRuns.set(admission.job.id, {
       parentSessionId: input.parentSessionId,
@@ -2347,6 +2542,7 @@ export class PiSessionRuntime {
       ...(input.secretOwnerCharacterId
         ? { secretOwnerCharacterId: input.secretOwnerCharacterId }
         : {}),
+      timezone: input.timezone,
       budgets: subagentSettings,
       grants: admittedGrants,
       notifyParent: input.notifyParent === true,
@@ -2760,15 +2956,19 @@ export class PiSessionRuntime {
         if (timedOut) {
           throw new Error(`Subagent timed out after ${subagentSettings.timeoutMs / 1_000} seconds`);
         }
-        await child.prompt(
-          input.followupPrompt === undefined
-            ? subagentTaskPrompt(input.request)
-            : subagentFollowupPrompt(input.followupPrompt),
-          {
-            expandPromptTemplates: false,
-            source: "rpc",
-          },
-        );
+        if (input.recoveryMode === "continue") {
+          await child.agent.continue();
+        } else if (input.recoveryMode !== "finalize") {
+          await child.prompt(
+            input.followupPrompt === undefined
+              ? subagentTaskPrompt(input.request)
+              : subagentFollowupPrompt(input.followupPrompt),
+            {
+              expandPromptTemplates: false,
+              source: "rpc",
+            },
+          );
+        }
       } catch (error) {
         promptError = error;
       }
@@ -2847,7 +3047,7 @@ export class PiSessionRuntime {
               retryable: subagentFailureIsRetryable(failureKind),
             };
           })();
-      if (!jobSettled) {
+      if (!jobSettled && !this.disposed) {
         try {
           this.subagentJobs.fail(job.id, diagnostic, runClaim);
           jobSettled = true;
