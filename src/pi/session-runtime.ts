@@ -135,7 +135,7 @@ import {
   closeMountedSessionCapabilities,
   type MountedSessionCapability,
   type SessionCapability,
-  type SessionCapabilityContext,
+  type SessionCapabilityRegistryContext,
 } from "./session-capability.js";
 
 // Pi's generic estimator uses characters/4, while Chinese dialogue is much denser.
@@ -1751,7 +1751,7 @@ export class PiSessionRuntime {
         .filter((module) => module.type === "mcp" && module.enabled)
         .map((module) => module.id),
     );
-    const capabilityContext: SessionCapabilityContext = Object.freeze({
+    const capabilityContext: SessionCapabilityRegistryContext = Object.freeze({
       sessionId: metadata.id,
       mode: metadata.mode,
       conversationSpace: metadata.conversationSpace,
@@ -1763,6 +1763,7 @@ export class PiSessionRuntime {
       timezone: () => toolState.timezone,
       actions: () => toolState.actions,
       moduleEnabled: (moduleId) => enabledMcpModuleIds.has(moduleId),
+      settingsForModule: (moduleId) => this.moduleCatalog.resolvedProviderSettings(moduleId),
     });
     const enabledSkills = this.moduleCatalog.enabledSkills(
       metadata.conversationSpace,

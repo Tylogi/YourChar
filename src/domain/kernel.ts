@@ -116,7 +116,10 @@ import {
   gitMcpModuleId,
 } from "../modules/catalog.js";
 import { AgentPermissionCatalog } from "../modules/permissions.js";
-import type { AgentPermissionsPatch } from "../modules/types.js";
+import type {
+  AgentModuleSettingsPatch,
+  AgentPermissionsPatch,
+} from "../modules/types.js";
 import {
   AgentSkillInstallerError,
   AgentSkillInstallerService,
@@ -3652,6 +3655,28 @@ export class CompanionKernel {
     conversationSpace: ConversationSpace = "normal",
   ) {
     return this.moduleCatalog.getDetail(moduleId, conversationSpace);
+  }
+
+  getAgentModuleProviderSettings(moduleId: string) {
+    return this.moduleCatalog.getProviderSettings(moduleId);
+  }
+
+  patchAgentModuleProviderSettings(moduleId: string, patch: AgentModuleSettingsPatch) {
+    this.assertControlPlaneIdle();
+    const settings = this.moduleCatalog.patchProviderSettings(moduleId, patch);
+    const changedKeys = Object.keys(patch.values ?? {}).sort();
+    const clearedKeys = [...(patch.clear ?? [])].sort();
+    if (settings.revision !== patch.expectedRevision) {
+      this.store.addAction("set_agent_module_provider_settings", "completed", {
+        moduleId,
+        revision: settings.revision,
+        changedKeys,
+        clearedKeys,
+        complete: settings.complete,
+      });
+      this.sessionRuntime.invalidateCapabilities(`module_settings:${moduleId}`);
+    }
+    return settings;
   }
 
   setAgentModuleEnabled(moduleId: string, enabled: boolean) {

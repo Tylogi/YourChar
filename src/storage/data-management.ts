@@ -162,6 +162,7 @@ export class DataManagementRepository {
         DELETE FROM characters;
         DELETE FROM meeting_presets;
         DELETE FROM user_profiles;
+        DELETE FROM agent_module_provider_settings;
         DELETE FROM agent_skill_space_settings;
         DELETE FROM agent_module_settings;
         DELETE FROM memory_extraction_jobs;

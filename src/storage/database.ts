@@ -3093,6 +3093,17 @@ const migrations: Migration[] = [
       );
     `,
   },
+  {
+    version: 59,
+    sql: `
+      CREATE TABLE agent_module_provider_settings (
+        module_id TEXT PRIMARY KEY,
+        revision INTEGER NOT NULL CHECK (revision >= 1),
+        values_json TEXT NOT NULL CHECK (json_valid(values_json)),
+        updated_at TEXT NOT NULL
+      );
+    `,
+  },
 ];
 
 export class AppDatabase {

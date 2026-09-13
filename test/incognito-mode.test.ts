@@ -18,6 +18,7 @@ import { tmpdir } from "node:os";
 import { join, relative } from "node:path";
 import test from "node:test";
 import { Worker } from "node:worker_threads";
+import { DatabaseSync } from "node:sqlite";
 import { strToU8, zipSync } from "fflate";
 import {
   CompanionKernel,
@@ -457,6 +458,13 @@ test("snapshot physically excludes private Vault data and secret-only Skill pack
       INSERT OR REPLACE INTO memory_retrieval_stats(memory_id, hit_count, last_hit_at)
       VALUES (?, 1, ?)
     `).run(secretMemory.id, new Date().toISOString());
+    runtime.kernel.database.connection.prepare(`
+      INSERT INTO agent_module_provider_settings(module_id, revision, values_json, updated_at)
+      VALUES ('mcp:private-provider', 1, ?, ?)
+    `).run(
+      JSON.stringify({ apiToken: "PRIVATE_PROVIDER_CREDENTIAL_SENTINEL" }),
+      new Date().toISOString(),
+    );
     const secretPadding = join(stateDir, "memory-vault", "secret", "large-private-padding.bin");
     writeFileSync(secretPadding, "SECRET_PADDING_SENTINEL");
     truncateSync(secretPadding, 257 * 1024 * 1024);
@@ -476,6 +484,18 @@ test("snapshot physically excludes private Vault data and secret-only Skill pack
     assert.equal(snapshotContains(root, "SECRET_AUDIT_LOCATION_SENTINEL"), false);
     assert.equal(snapshotContains(root, secretMemory.id), false);
     assert.equal(snapshotContains(root, "SECRET_PADDING_SENTINEL"), false);
+    assert.equal(snapshotContains(root, "PRIVATE_PROVIDER_CREDENTIAL_SENTINEL"), false);
+    const snapshotDatabase = new DatabaseSync(join(root, "rp-agent.sqlite"), { readOnly: true });
+    try {
+      assert.equal(
+        Number((snapshotDatabase.prepare(
+          "SELECT COUNT(*) AS count FROM agent_module_provider_settings",
+        ).get() as { count: number }).count),
+        0,
+      );
+    } finally {
+      snapshotDatabase.close();
+    }
     await runtime.kernel.closeIncognitoConversation(incognito.id);
   } finally {
     runtime.dispose();

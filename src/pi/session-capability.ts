@@ -1,6 +1,10 @@
 import type { ToolDefinition } from "@earendil-works/pi-coding-agent";
 import type { ActionRecord, ConversationSpace, Mode } from "../domain/types.js";
-import type { AgentMcpModuleContribution, AgentPermissions } from "../modules/types.js";
+import type {
+  AgentMcpModuleContribution,
+  AgentModuleSettingValue,
+  AgentPermissions,
+} from "../modules/types.js";
 import type { ScopedWorkspace } from "../workspace/scope.js";
 
 const capabilityIdPattern = /^[a-z0-9][a-z0-9._:/-]{0,127}$/u;
@@ -19,7 +23,18 @@ export type SessionCapabilityContext = Readonly<{
   timezone: () => string;
   actions: () => ActionRecord[];
   moduleEnabled: (moduleId: string) => boolean;
+  /** Immutable values from this capability's own declared module namespace. */
+  settings: Readonly<Record<string, AgentModuleSettingValue>>;
 }>;
+
+/** Host-only resolver; it is removed before the context reaches a capability. */
+export type SessionCapabilityRegistryContext = Readonly<
+  Omit<SessionCapabilityContext, "settings"> & {
+    settingsForModule?: (
+      moduleId: string,
+    ) => Readonly<Record<string, AgentModuleSettingValue>>;
+  }
+>;
 
 /**
  * One handle-scoped resource contribution. MCP bridges satisfy this interface,
@@ -178,7 +193,7 @@ export class SessionCapabilityRegistry {
   }
 
   async mountAll(
-    context: SessionCapabilityContext,
+    context: SessionCapabilityRegistryContext,
     reservedToolNames: readonly string[] = [],
   ): Promise<MountedSessionCapability[]> {
     const mounted: MountedSessionCapability[] = [];
@@ -200,11 +215,19 @@ export class SessionCapabilityRegistry {
       toolOwners.set(name, "host runtime");
     }
 
+    const { settingsForModule, ...baseContext } = context;
+    const emptySettings = Object.freeze({});
     for (const capability of this.capabilities) {
       if (capability.moduleId && !context.moduleEnabled(capability.moduleId)) continue;
       let current: MountedSessionCapability | undefined;
       try {
-        const contribution = await capability.mount(context);
+        const settings = capability.moduleId
+          ? settingsForModule?.(capability.moduleId) ?? emptySettings
+          : emptySettings;
+        const contribution = await capability.mount(Object.freeze({
+          ...baseContext,
+          settings,
+        }));
         if (!contribution) continue;
         try {
           current = normalizeMount(capability.id, contribution);

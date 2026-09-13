@@ -13,7 +13,7 @@ import {
   SessionCapabilityRegistry,
   closeMountedSessionCapabilities,
   type SessionCapability,
-  type SessionCapabilityContext,
+  type SessionCapabilityRegistryContext,
 } from "../src/pi/session-capability.js";
 import { AppDatabase } from "../src/storage/database.js";
 import { createTestRuntime } from "../src/testing/runtime.js";
@@ -38,7 +38,7 @@ test("session capability registry orders mounts and closes them once in reverse 
     { id: "test:disabled", order: 15 },
     { id: "test:later", order: 20 },
   ]);
-  const mounts = await registry.mountAll({} as SessionCapabilityContext);
+  const mounts = await registry.mountAll({} as SessionCapabilityRegistryContext);
   assert.deepEqual(events, ["mount:earlier", "mount:disabled", "mount:later"]);
   assert.deepEqual(mounts.map((mount) => mount.id), ["test:earlier", "test:later"]);
 
@@ -51,6 +51,39 @@ test("session capability registry orders mounts and closes them once in reverse 
     "close:later",
     "close:earlier",
   ]);
+});
+
+test("session capability registry resolves one immutable settings namespace per module", async () => {
+  const observed: Array<{ moduleId: string; settings: Record<string, unknown> }> = [];
+  const registry = new SessionCapabilityRegistry([{
+    id: "test:settings-one",
+    moduleId: "mcp:settings-one",
+    async mount(context) {
+      observed.push({ moduleId: "mcp:settings-one", settings: { ...context.settings } });
+      return undefined;
+    },
+  }, {
+    id: "test:settings-two",
+    moduleId: "mcp:settings-two",
+    async mount(context) {
+      observed.push({ moduleId: "mcp:settings-two", settings: { ...context.settings } });
+      return undefined;
+    },
+  }]);
+  await registry.mountAll({
+    moduleEnabled: () => true,
+    settingsForModule: (moduleId: string) => Object.freeze({
+      owner: moduleId,
+      [moduleId === "mcp:settings-one" ? "one" : "two"]: true,
+    }),
+  } as unknown as SessionCapabilityRegistryContext);
+  assert.deepEqual(observed, [{
+    moduleId: "mcp:settings-one",
+    settings: { owner: "mcp:settings-one", one: true },
+  }, {
+    moduleId: "mcp:settings-two",
+    settings: { owner: "mcp:settings-two", two: true },
+  }]);
 });
 
 test("session capability registry rejects invalid and duplicate identities", () => {
@@ -136,7 +169,7 @@ test("session capability registry fails closed on duplicate tool names", async (
   ]);
 
   await assert.rejects(
-    registry.mountAll({} as SessionCapabilityContext),
+    registry.mountAll({} as SessionCapabilityRegistryContext),
     (error) => error instanceof SessionCapabilityMountError &&
       error.capabilityId === "test:second" &&
       /conflicts with test:first/u.test(error.message),
@@ -156,7 +189,7 @@ test("session capability registry cannot shadow a host tool", async () => {
   ]);
 
   await assert.rejects(
-    registry.mountAll({} as SessionCapabilityContext, ["read", "write"]),
+    registry.mountAll({} as SessionCapabilityRegistryContext, ["read", "write"]),
     (error) => error instanceof SessionCapabilityMountError &&
       error.capabilityId === "test:shadow" &&
       /conflicts with host runtime/u.test(error.message),
@@ -179,7 +212,7 @@ test("session capability registry rolls back earlier mounts after a later failur
   ]);
 
   await assert.rejects(
-    registry.mountAll({} as SessionCapabilityContext),
+    registry.mountAll({} as SessionCapabilityRegistryContext),
     (error) => error instanceof SessionCapabilityMountError &&
       error.capabilityId === "test:failing" &&
       error.cause instanceof Error &&

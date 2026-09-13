@@ -1014,6 +1014,15 @@ function purgeSecretSnapshotState(database: DatabaseSync, secretSessionIds: stri
       database.prepare("DELETE FROM agent_skill_space_settings WHERE normal_enabled = 0").run();
       database.prepare("UPDATE agent_skill_space_settings SET secret_enabled = 0").run();
     }
+    const providerSettingsTable = database.prepare(`
+      SELECT 1 FROM sqlite_master
+      WHERE type = 'table' AND name = 'agent_module_provider_settings'
+    `).get();
+    if (providerSettingsTable) {
+      // Runtime packages are deliberately not inherited by disposable child
+      // kernels, so neither are their provider settings or write-only secrets.
+      database.prepare("DELETE FROM agent_module_provider_settings").run();
+    }
     const auditRows = database.prepare("SELECT id, payload_json FROM audit_actions").all() as Array<{
       id: string;
       payload_json: string;

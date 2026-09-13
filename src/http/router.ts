@@ -86,6 +86,10 @@ import { CharacterSoulValidationError } from "../rp/soul.js";
 import { AgentPermissionValidationError } from "../modules/permissions.js";
 import type { AgentPermissionsPatch, WorkspaceAccess } from "../modules/types.js";
 import {
+  AgentModuleSettingsConflictError,
+  AgentModuleSettingsSchemaConflictError,
+  AgentModuleSettingsUnavailableError,
+  AgentModuleSettingsValidationError,
   SubagentSettingsConflictError,
   SubagentSettingsValidationError,
   type SubagentSettingsPatch,
@@ -357,6 +361,24 @@ export function createHttpServer(options: HttpServerOptions = {}) {
         sendJson(response, 422, { code: error.code, error: error.message });
       } else if (error instanceof AgentPermissionValidationError) {
         sendJson(response, 400, { code: "AGENT_PERMISSION_INVALID", error: error.message });
+      } else if (error instanceof AgentModuleSettingsValidationError) {
+        sendJson(response, 400, { code: error.code, error: error.message });
+      } else if (error instanceof AgentModuleSettingsConflictError) {
+        sendJson(response, 409, {
+          code: error.code,
+          error: error.message,
+          expectedRevision: error.expectedRevision,
+          actualRevision: error.actualRevision,
+        });
+      } else if (error instanceof AgentModuleSettingsSchemaConflictError) {
+        sendJson(response, 409, {
+          code: error.code,
+          error: error.message,
+          expectedSchemaVersion: error.expectedSchemaVersion,
+          actualSchemaVersion: error.actualSchemaVersion,
+        });
+      } else if (error instanceof AgentModuleSettingsUnavailableError) {
+        sendJson(response, 404, { code: error.code, error: error.message });
       } else if (error instanceof SubagentSettingsValidationError) {
         sendJson(response, 400, { code: error.code, error: error.message });
       } else if (error instanceof SubagentSettingsConflictError) {
@@ -597,7 +619,7 @@ async function route(input: {
       debugContextEconomics: "GET /api/debug/context-economics",
       taskBench: "POST /api/v1/task-bench/run; GET /api/v1/task-bench/reports[/{id}]",
       taskBenchUploads: "POST/DELETE /api/v1/task-bench/uploads[/{id}]",
-      agentModules: "GET /api/v1/agent-modules",
+      agentModules: "GET /api/v1/agent-modules; GET/PATCH /api/v1/agent-modules/{id}/settings",
       agentRuntime: "GET /api/v1/agent-runtime/configuration; PATCH /api/v1/agent-runtime/profile",
       subagentSettings: "GET/PATCH /api/v1/subagent-settings",
       agentPermissions: "GET/PATCH /api/v1/agent-permissions",
@@ -1634,6 +1656,47 @@ async function route(input: {
 
   if (pathname === "/api/v1/agent-modules" && method === "GET") {
     sendJson(input.response, 200, { modules: kernel.listAgentModules() });
+    return;
+  }
+
+  const moduleProviderSettingsMatch = pathname.match(
+    /^\/api\/v1\/agent-modules\/([^/]+)\/settings$/,
+  );
+  if (moduleProviderSettingsMatch && method === "GET") {
+    sendJson(input.response, 200, {
+      settings: kernel.getAgentModuleProviderSettings(
+        decodeURIComponent(moduleProviderSettingsMatch[1]),
+      ),
+    });
+    return;
+  }
+  if (moduleProviderSettingsMatch && method === "PATCH") {
+    assertLocalControlPlaneMutation(input.request);
+    const body = asRecord(await readJson(input.request));
+    assertOnlyKeys(
+      body,
+      ["expectedSchemaVersion", "expectedRevision", "values", "clear"],
+      "Agent module settings update",
+    );
+    sendJson(input.response, 200, {
+      settings: kernel.patchAgentModuleProviderSettings(
+        decodeURIComponent(moduleProviderSettingsMatch[1]),
+        {
+          expectedSchemaVersion: requiredPositiveInteger(
+            body.expectedSchemaVersion,
+            "expectedSchemaVersion",
+          ),
+          expectedRevision: requiredNonNegativeInteger(
+            body.expectedRevision,
+            "expectedRevision",
+          ),
+          ...(body.values === undefined ? {} : { values: asRecord(body.values) }),
+          ...(body.clear === undefined
+            ? {}
+            : { clear: requiredExactStringArray(body.clear, "clear") }),
+        },
+      ),
+    });
     return;
   }
 
@@ -4677,6 +4740,27 @@ function requiredNumber(value: unknown, field: string): number {
     throw new Error(`${field} must be a finite number`);
   }
   return value;
+}
+
+function requiredNonNegativeInteger(value: unknown, field: string): number {
+  if (typeof value !== "number" || !Number.isSafeInteger(value) || value < 0) {
+    throw new SyntaxError(`${field} must be a non-negative safe integer`);
+  }
+  return value;
+}
+
+function requiredPositiveInteger(value: unknown, field: string): number {
+  if (typeof value !== "number" || !Number.isSafeInteger(value) || value < 1) {
+    throw new SyntaxError(`${field} must be a positive safe integer`);
+  }
+  return value;
+}
+
+function requiredExactStringArray(value: unknown, field: string): string[] {
+  if (!Array.isArray(value) || value.some((entry) => typeof entry !== "string")) {
+    throw new SyntaxError(`${field} must be a string array`);
+  }
+  return [...value];
 }
 
 function requiredBoolean(value: unknown, field: string): boolean {

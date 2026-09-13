@@ -10,7 +10,13 @@ import type {
   AgentMcpModuleContribution,
   AgentModule,
   AgentModuleDetail,
+  AgentModuleSettingsPatch,
 } from "./types.js";
+import {
+  AgentModuleSettingsRepository,
+  AgentModuleSettingsUnavailableError,
+  normalizeAgentModuleSettingsSchema,
+} from "./provider-settings.js";
 
 type SettingRow = { module_id: string; enabled: number };
 type SkillSpaceSettingRow = {
@@ -496,6 +502,9 @@ export function normalizeAgentMcpModuleContributions(
     const context = contribution.context === undefined
       ? undefined
       : normalizeContextContribution(id, contribution.context);
+    const settings = contribution.settings === undefined
+      ? undefined
+      : normalizeAgentModuleSettingsSchema(contribution.settings, id);
     return Object.freeze({
       id,
       name: boundedContributionString(contribution.name, `${id} name`, 200),
@@ -509,6 +518,7 @@ export function normalizeAgentMcpModuleContributions(
       estimatedTokens: contribution.estimatedTokens,
       detail: boundedContributionText(contribution.detail, `${id} detail`, 100_000),
       ...(context ? { context } : {}),
+      ...(settings ? { settings } : {}),
     });
   });
   const maximumContextCharacters = normalized.reduce(
@@ -586,6 +596,7 @@ export class AgentModuleCatalog {
   private readonly agentDir: string;
   private mcpModules: readonly AgentMcpModuleContribution[];
   private mcpModulesById: ReadonlyMap<string, AgentMcpModuleContribution>;
+  private readonly providerSettings: AgentModuleSettingsRepository;
   private characterSkillPackages?: CharacterSkillPackageProvider;
 
   constructor(
@@ -606,6 +617,7 @@ export class AgentModuleCatalog {
       ...(options.additionalMcpModules ?? []),
     ]);
     this.mcpModulesById = new Map(this.mcpModules.map((module) => [module.id, module]));
+    this.providerSettings = new AgentModuleSettingsRepository(this.database, this.clock);
   }
 
   replaceAdditionalMcpModules(
@@ -644,6 +656,8 @@ export class AgentModuleCatalog {
         enabled: settings.get(module.id) ?? module.defaultEnabled,
         defaultEnabled: module.defaultEnabled,
         estimatedTokens: module.estimatedTokens,
+        ...(module.settings ? { hasSettings: true } : {}),
+        ...(module.settings?.ui?.slot === "module_detail" ? { settingsUi: true } : {}),
       })),
       ...this.discoverSkills().map((skill) => {
         const id = skillModuleId(skill);
@@ -711,6 +725,22 @@ export class AgentModuleCatalog {
       ON CONFLICT(module_id) DO UPDATE SET enabled = excluded.enabled, updated_at = excluded.updated_at
     `).run(moduleId, enabled ? 1 : 0, this.clock.now().toISOString());
     return { ...module, enabled };
+  }
+
+  getProviderSettings(moduleId: string) {
+    const module = this.requireProviderSettingsModule(moduleId);
+    return this.providerSettings.snapshot(moduleId, module.settings!);
+  }
+
+  patchProviderSettings(moduleId: string, patch: AgentModuleSettingsPatch) {
+    const module = this.requireProviderSettingsModule(moduleId);
+    return this.providerSettings.patch(moduleId, module.settings!, patch);
+  }
+
+  resolvedProviderSettings(moduleId: string) {
+    const module = this.mcpModulesById.get(moduleId);
+    if (!module?.settings) return Object.freeze({});
+    return this.providerSettings.resolvedValues(moduleId, module.settings);
   }
 
   setSkillEnabledSpaces(moduleId: string, spaces: readonly ConversationSpace[]): AgentModule {
@@ -814,6 +844,12 @@ export class AgentModuleCatalog {
         : "Conversation space: normal.",
       ...contributedStatuses,
     ].join("\n");
+  }
+
+  private requireProviderSettingsModule(moduleId: string): AgentMcpModuleContribution {
+    const module = this.mcpModulesById.get(moduleId);
+    if (!module?.settings) throw new AgentModuleSettingsUnavailableError(moduleId);
+    return module;
   }
 
   private discoverSkills(): Skill[] {

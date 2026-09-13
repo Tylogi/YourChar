@@ -374,9 +374,8 @@ still enforce its own admission policy. Additional capabilities are not inherite
 by disposable incognito child kernels, cannot shadow a built-in module or any
 tool, and are closed when the handle is rebuilt, deleted, or disposed. This is a
 programmatic P1 seam, not an HTTP or directory-based executable package
-installer. The hardened profile and reload layer is described below; remaining
-provider-specific settings work is tracked in
-[`agent-runtime-modernization-plan.md`](agent-runtime-modernization-plan.md).
+installer. The hardened profile, reload, and provider-settings layers are
+described below.
 
 ### Runtime profiles and trusted capability packages
 
@@ -407,5 +406,38 @@ capability cleanup before a replacement handle mounts. Adding, updating, or
 removing a package is therefore the same reversible full-configuration reload.
 
 This slice does not accept executable package bodies over HTTP and does not scan
-arbitrary directories for code. Provider-specific settings schemas and extension
-UI slots remain the final P1c slice.
+arbitrary directories for code.
+
+### Declarative provider settings
+
+An MCP module contribution may declare a versioned `settings` schema. The
+supported host-owned field vocabulary is intentionally small: text, write-only
+secret, integer, number, boolean, and fixed select. Fields have bounded labels,
+descriptions, defaults, ranges, lengths, and options. A declaration cannot carry
+callbacks, arbitrary JSON Schema keywords, HTML, or JavaScript. Secret fields
+cannot declare defaults.
+
+Settings are persisted under the module's namespace in schema 59 and use a
+compare-and-swap data revision plus the declared schema version, so a form from
+before a package reload cannot overwrite the new shape.
+`GET /api/v1/agent-modules/{id}/settings` returns the
+normalized schema, non-secret effective values, and only a fixed mask plus a
+configured flag for each secret. Same-origin local control is required for
+`PATCH /api/v1/agent-modules/{id}/settings`; its payload may patch values or
+explicitly clear keys. Audit records contain only module ID, field names,
+revision, and completeness, never values.
+
+At handle construction, the registry resolves the current values and gives a
+capability only the settings for its own bound module through
+`context.settings`. A committed change invalidates idle handles, and the normal
+cleanup barrier closes the old mount before the replacement observes new
+values. Packages may opt into the generic `module_detail` UI slot; the host
+renders native controls from the normalized declaration, so package code never
+runs in the browser. Omitting the UI declaration keeps the namespace available
+through the host API and mount context without creating browser controls.
+
+Write-only secret values live in the primary application database and are
+therefore included in normal state backups; backups must be protected like the
+main state directory. They are removed by full user-data deletion and are
+physically purged from disposable incognito snapshots. Central credential
+references and rotation remain a P4 concern.

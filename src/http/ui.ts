@@ -1526,7 +1526,8 @@ export function renderAppHtml(): string {
       gap: 10px 12px;
     }
     .subagent-settings-field { min-width: 0; display: grid; gap: 5px; color: var(--muted); font-size: 11px; }
-    .subagent-settings-field input { width: 100%; min-width: 0; }
+    .subagent-settings-field > input,
+    .subagent-settings-field > select { width: 100%; min-width: 0; }
     .subagent-settings-field small { color: var(--muted); font-size: 10px; line-height: 1.4; }
     .subagent-settings-runtime {
       padding: 10px 11px;
@@ -7689,6 +7690,7 @@ export function renderAppHtml(): string {
       if (event.target === nodes.moduleDetailDialog) closeModuleDetail();
     });
     nodes.moduleDetailContent.addEventListener("submit", saveSubagentSettings);
+    nodes.moduleDetailContent.addEventListener("submit", saveProviderSettings);
     nodes.closeWorkspaceFilePreviewBtn.addEventListener("click", () => nodes.workspaceFilePreviewDialog.close());
     nodes.workspaceFilePreviewDialog.addEventListener("cancel", (event) => { event.preventDefault(); nodes.workspaceFilePreviewDialog.close(); });
     nodes.closeChatImageBtn.addEventListener("click", closeChatImagePreview);
@@ -16183,6 +16185,7 @@ export function renderAppHtml(): string {
         const body = await response.json();
         if (!response.ok) throw new Error(body.error || "运行配置切换失败");
         state.agentRuntimeConfiguration = body.configuration || null;
+        if (nodes.moduleDetailDialog.open) closeModuleDetail();
         await loadAgentModules();
         setStatus("Agent 运行配置已切换");
       } catch (error) {
@@ -16319,6 +16322,7 @@ export function renderAppHtml(): string {
           '<div><div class="module-name">' + escapeHtml(module.name) + '</div>' +
             '<div class="module-description">' + escapeHtml(module.description || "") + '</div>' +
             '<div class="module-metadata"><span class="module-source">' + escapeHtml(module.source || "") + '</span>' +
+              (module.hasSettings ? '<span class="module-token">Provider 配置</span>' : '') +
               '<span class="module-token" title="基于当前提示词和 schema 的近似值；实际值取决于模型 tokenizer">' +
                 escapeHtml(module.type === "mcp"
                   ? "约 " + Number(module.estimatedTokens || 0).toLocaleString() + " tokens/轮"
@@ -16383,7 +16387,8 @@ export function renderAppHtml(): string {
       if (!nodes.moduleDetailDialog.open) nodes.moduleDetailDialog.showModal();
       button.disabled = true;
       try {
-        const [detailResponse, settingsResponse] = await Promise.all([
+        const moduleSummary = state.agentModules.find((module) => module.id === scope.moduleId);
+        const [detailResponse, settingsResponse, providerSettingsResponse] = await Promise.all([
           fetch(withConversationSpace(
             "/api/v1/agent-modules/" + encodeURIComponent(scope.moduleId),
             scope.conversationSpace,
@@ -16391,21 +16396,29 @@ export function renderAppHtml(): string {
           )),
           scope.moduleId === "mcp:subagent"
             ? fetch("/api/v1/subagent-settings")
+            : Promise.resolve(null),
+          moduleSummary?.settingsUi
+            ? fetch("/api/v1/agent-modules/" + encodeURIComponent(scope.moduleId) + "/settings")
             : Promise.resolve(null)
         ]);
-        const [detailBody, settingsBody] = await Promise.all([
+        const [detailBody, settingsBody, providerSettingsBody] = await Promise.all([
           detailResponse.json(),
-          settingsResponse ? settingsResponse.json() : Promise.resolve(null)
+          settingsResponse ? settingsResponse.json() : Promise.resolve(null),
+          providerSettingsResponse ? providerSettingsResponse.json() : Promise.resolve(null)
         ]);
         if (!moduleDetailScopeIsCurrent(scope)) return;
         if (!detailResponse.ok) throw new Error(detailBody.error || "模块详情加载失败");
         if (settingsResponse && !settingsResponse.ok) {
           throw new Error(settingsBody?.error || "Subagent 设置加载失败");
         }
+        if (providerSettingsResponse && !providerSettingsResponse.ok) {
+          throw new Error(providerSettingsBody?.error || "Provider 配置加载失败");
+        }
         state.moduleDetailData = {
           scope,
           detail: detailBody.detail || {},
-          subagentSettings: settingsBody?.settings || null
+          subagentSettings: settingsBody?.settings || null,
+          providerSettings: providerSettingsBody?.settings || null
         };
         renderModuleDetail();
       } catch (error) {
@@ -16420,7 +16433,12 @@ export function renderAppHtml(): string {
       }
     }
 
-    function renderModuleDetail(subagentStateMessage = "", subagentStateError = false) {
+    function renderModuleDetail(
+      subagentStateMessage = "",
+      subagentStateError = false,
+      providerStateMessage = "",
+      providerStateError = false
+    ) {
       const record = state.moduleDetailData;
       if (!record || !moduleDetailScopeIsCurrent(record.scope)) return;
       const detail = record.detail || {};
@@ -16432,10 +16450,191 @@ export function renderAppHtml(): string {
           detail.module?.enabled ? "已启用" : "已关闭"
         ].filter(Boolean).join(" · ")) +
         '</div><div class="markdown-body">' + renderMarkdown(detail.content || "暂无详情") + '</div>' +
+        (record.providerSettings
+          ? providerSettingsFormHtml(
+              record.providerSettings,
+              providerStateMessage,
+              providerStateError
+            )
+          : "") +
         (record.scope.moduleId === "mcp:subagent" && record.subagentSettings
           ? subagentSettingsFormHtml(record.subagentSettings, subagentStateMessage, subagentStateError)
           : "");
       refreshIcons();
+    }
+
+    function providerSettingsFormHtml(settings, stateMessage = "", stateError = false) {
+      const schema = settings.schema || {};
+      const fields = Array.isArray(schema.fields) ? schema.fields : [];
+      const ui = schema.ui || {};
+      const values = settings.values || {};
+      const secrets = settings.secrets || {};
+      return '<form id="providerSettingsForm" class="subagent-settings">' +
+        '<div class="subagent-settings-head"><h3>' +
+          escapeHtml(ui.title || "Provider 配置") + '</h3>' +
+          (ui.description ? '<p>' + escapeHtml(ui.description) + '</p>' : '') +
+        '</div><div class="subagent-settings-grid">' +
+          fields.map((field) => providerSettingsFieldHtml(field, values, secrets)).join("") +
+        '</div><div class="subagent-settings-actions"><span id="providerSettingsState" class="subagent-settings-state' +
+          (stateError ? ' error' : '') + '" role="status" aria-live="polite">' +
+          escapeHtml(stateMessage || (settings.updatedAt
+            ? "更新于 " + formatTraceTime(settings.updatedAt)
+            : settings.complete ? "使用声明的默认值" : "尚有必填项未配置")) +
+          '</span><button id="saveProviderSettingsBtn" class="primary" type="submit">' +
+          escapeHtml(ui.submitLabel || "保存 Provider 配置") + '</button></div>' +
+      '</form>';
+    }
+
+    function providerSettingsFieldHtml(field, values, secrets) {
+      const key = String(field.key || "");
+      const label = String(field.label || key) + (field.required ? " *" : "");
+      const description = field.description
+        ? '<small>' + escapeHtml(field.description) + '</small>'
+        : '';
+      const attributes = ' data-provider-setting-key="' + escapeHtml(key) + '"' +
+        ' aria-label="' + escapeHtml(label) + '"' +
+        (field.required ? ' data-provider-setting-required="true"' : '');
+      let control = "";
+      if (field.kind === "boolean") {
+        control = '<label class="toggle"><span>' +
+          (values[key] ? "已启用" : "已关闭") + '</span><input type="checkbox"' + attributes +
+          (values[key] ? ' checked' : '') + ' /></label>';
+      } else if (field.kind === "select") {
+        const options = Array.isArray(field.options) ? field.options : [];
+        control = '<select' + attributes + '><option value="">未配置</option>' + options.map((option) =>
+          '<option value="' + escapeHtml(option.value) + '"' +
+            (values[key] === option.value ? ' selected' : '') + '>' +
+            escapeHtml(option.label || option.value) + '</option>'
+        ).join("") + '</select>';
+      } else if (field.kind === "integer" || field.kind === "number") {
+        control = '<input type="number"' + attributes +
+          (field.kind === "integer" ? ' step="1"' : field.step ? ' step="' + escapeHtml(field.step) + '"' : ' step="any"') +
+          (field.minimum === undefined ? '' : ' min="' + escapeHtml(field.minimum) + '"') +
+          (field.maximum === undefined ? '' : ' max="' + escapeHtml(field.maximum) + '"') +
+          ' value="' + escapeHtml(values[key] ?? "") + '" />';
+      } else if (field.kind === "secret") {
+        const configured = Boolean(secrets[key]?.configured);
+        control = '<input type="password" autocomplete="new-password"' + attributes +
+          (field.minLength === undefined ? '' : ' minlength="' + escapeHtml(field.minLength) + '"') +
+          (field.maxLength === undefined ? '' : ' maxlength="' + escapeHtml(field.maxLength) + '"') +
+          ' placeholder="' + escapeHtml(configured ? "已保存；留空保持不变" : field.placeholder || "") + '" />' +
+          (configured
+            ? '<label class="toggle"><span>清除已保存值</span><input type="checkbox" data-provider-setting-clear="' +
+                escapeHtml(key) + '" /></label>'
+            : '');
+      } else {
+        control = '<input type="text"' + attributes +
+          (field.minLength === undefined ? '' : ' minlength="' + escapeHtml(field.minLength) + '"') +
+          (field.maxLength === undefined ? '' : ' maxlength="' + escapeHtml(field.maxLength) + '"') +
+          ' placeholder="' + escapeHtml(field.placeholder || "") + '" value="' +
+          escapeHtml(values[key] ?? "") + '" />';
+      }
+      return '<div class="subagent-settings-field"><span>' + escapeHtml(label) + '</span>' +
+        control + description + '</div>';
+    }
+
+    async function saveProviderSettings(event) {
+      const form = event.target.closest("#providerSettingsForm");
+      if (!form) return;
+      event.preventDefault();
+      const record = state.moduleDetailData;
+      if (!record?.providerSettings) return;
+      const fields = Array.isArray(record.providerSettings.schema?.fields)
+        ? record.providerSettings.schema.fields
+        : [];
+      const values = {};
+      const clear = [];
+      for (const field of fields) {
+        const control = [...form.querySelectorAll("[data-provider-setting-key]")]
+          .find((entry) => entry.dataset.providerSettingKey === field.key);
+        if (!control) continue;
+        const clearControl = [...form.querySelectorAll("[data-provider-setting-clear]")]
+          .find((entry) => entry.dataset.providerSettingClear === field.key);
+        if (clearControl?.checked) {
+          clear.push(field.key);
+          continue;
+        }
+        if (field.kind === "secret") {
+          if (control.value !== "") values[field.key] = control.value;
+        } else if (field.kind === "boolean") {
+          values[field.key] = control.checked;
+        } else if (field.kind === "integer" || field.kind === "number") {
+          if (control.value === "") {
+            clear.push(field.key);
+          } else {
+            const value = Number(control.value);
+            if (!Number.isFinite(value) || (field.kind === "integer" && !Number.isSafeInteger(value))) {
+              const status = form.querySelector("#providerSettingsState");
+              status.textContent = field.label + " 必须是" + (field.kind === "integer" ? "整数" : "有限数字") + "。";
+              status.classList.add("error");
+              control.focus();
+              return;
+            }
+            values[field.key] = value;
+          }
+        } else if (control.value === "") {
+          clear.push(field.key);
+        } else {
+          values[field.key] = control.value;
+        }
+      }
+      const requestId = ++state.moduleDetailRequestId;
+      const scope = { ...record.scope, requestId };
+      state.moduleDetailData = { ...record, scope };
+      setProviderSettingsBusy(true);
+      const status = form.querySelector("#providerSettingsState");
+      status.textContent = "正在保存 Provider 配置...";
+      status.classList.remove("error");
+      try {
+        const response = await controlPlaneFetch(
+          "/api/v1/agent-modules/" + encodeURIComponent(record.scope.moduleId) + "/settings",
+          {
+            method: "PATCH",
+            body: JSON.stringify({
+              expectedSchemaVersion: record.providerSettings.schema.version,
+              expectedRevision: record.providerSettings.revision,
+              values,
+              clear
+            })
+          }
+        );
+        const body = await response.json();
+        if (!moduleDetailScopeIsCurrent(scope)) return;
+        if (!response.ok) {
+          if (body.code === "CONTROL_PLANE_BUSY") {
+            throw new Error("当前有角色回合正在运行，请等待结束后再保存。");
+          }
+          if (body.code === "AGENT_MODULE_SETTINGS_CONFLICT") {
+            throw new Error("配置已被其他窗口更新，请重新打开模块详情后再保存。");
+          }
+          if (body.code === "AGENT_MODULE_SETTINGS_SCHEMA_CONFLICT") {
+            throw new Error("Provider 配置结构已经更新，请重新打开模块详情后再保存。");
+          }
+          throw new Error(body.error || "Provider 配置保存失败");
+        }
+        state.moduleDetailData = { ...state.moduleDetailData, providerSettings: body.settings };
+        renderModuleDetail("", false, body.settings?.complete
+          ? "已保存 · 之后创建的 Agent handle 生效"
+          : "已保存 · 尚有必填项未配置");
+        setStatus("Provider 配置已更新");
+      } catch (error) {
+        if (!moduleDetailScopeIsCurrent(scope)) return;
+        const currentStatus = nodes.moduleDetailContent.querySelector("#providerSettingsState");
+        if (currentStatus) {
+          currentStatus.textContent = error.message || String(error);
+          currentStatus.classList.add("error");
+        }
+        setProviderSettingsBusy(false);
+        setStatus(error.message || String(error), true);
+      }
+    }
+
+    function setProviderSettingsBusy(busy) {
+      nodes.moduleDetailContent.querySelectorAll(
+        "#providerSettingsForm input, #providerSettingsForm select, #providerSettingsForm button"
+      ).forEach((control) => {
+        control.disabled = busy;
+      });
     }
 
     function subagentSettingsFormHtml(settings, stateMessage = "", stateError = false) {

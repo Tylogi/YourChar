@@ -1612,6 +1612,16 @@ test("server serves chat UI and debug model traces", async () => {
     assert.match(moduleDetailScript, /设置已被其他窗口更新，请重新打开模块详情/);
     assert.match(moduleDetailScript, /SUBAGENT_SETTINGS_INVALID/);
     assert.match(moduleDetailScript, /请输入 .* 之间的整数/);
+    assert.match(moduleDetailScript, /moduleSummary\?\.settingsUi/);
+    assert.match(moduleDetailScript, /encodeURIComponent\(scope\.moduleId\) \+ "\/settings"/);
+    assert.match(moduleDetailScript, /id="providerSettingsForm"/);
+    assert.match(moduleDetailScript, /type="password" autocomplete="new-password"/);
+    assert.match(moduleDetailScript, /data-provider-setting-clear/);
+    assert.match(moduleDetailScript, /expectedSchemaVersion: record\.providerSettings\.schema\.version/);
+    assert.match(moduleDetailScript, /expectedRevision: record\.providerSettings\.revision/);
+    assert.match(moduleDetailScript, /AGENT_MODULE_SETTINGS_CONFLICT/);
+    assert.match(moduleDetailScript, /AGENT_MODULE_SETTINGS_SCHEMA_CONFLICT/);
+    assert.match(moduleDetailScript, /之后创建的 Agent handle 生效/);
     const moduleDetailScopeScript = inlineScript.match(
       /function captureModuleDetailScope[\s\S]*?(?=\n    function closeModuleDetail)/,
     )?.[0] ?? "";

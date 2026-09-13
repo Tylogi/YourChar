@@ -69,7 +69,8 @@ not a prerequisite, and the product must remain runnable at every milestone.
 - [x] Implement trusted-host install/uninstall/reload by replacing preloaded
   packages at an idle boundary, with validation and rollback before handle
   invalidation.
-- Add declared provider-specific settings schemas and optional UI slots.
+- [x] Add declared provider-specific settings schemas, module-scoped mount
+  values, revision-safe persistence, and an optional host-rendered detail slot.
 - [x] Keep third-party code inactive by default and require an explicit trust
   flag, reviewed artifact SHA-256, and profile selection before activation.
 
@@ -125,8 +126,7 @@ feature counts must not be reported as task-success improvements.
 - [x] Baseline work isolated on `refactor/agent-runtime-capabilities`.
 - [x] P1a session capability lifecycle.
 - [x] P1b declarative product contributions.
-- [ ] P1c profiles and reload (profile/snapshot/reload core complete; declared
-  provider settings remain).
+- [x] P1c profiles, reload, and declarative provider settings.
 - [ ] P2 continuable jobs and subagents.
 - [ ] P3 general execution.
 - [ ] P4 provider and host seams.

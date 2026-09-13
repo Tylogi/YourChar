@@ -7,6 +7,12 @@ import { defineTool } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 import { VirtualClock } from "../src/app/clock.js";
 import { createHttpServer } from "../src/http/router.js";
+import {
+  AgentModuleSettingsConflictError,
+  AgentModuleSettingsSchemaConflictError,
+  AgentModuleSettingsValidationError,
+  normalizeAgentModuleSettingsSchema,
+} from "../src/modules/provider-settings.js";
 import type {
   AgentCapabilityPackage,
   AgentRuntimeProfileDefinition,
@@ -18,8 +24,9 @@ import { createTestRuntime } from "../src/testing/runtime.js";
 const moduleId = "mcp:profile-probe";
 const capabilityId = "test:profile-probe";
 const toolName = "profile_probe";
+const providerSettingsModuleId = "mcp:provider-settings-probe";
 
-test("schema 58 adds the derived runtime snapshot without changing older settings", () => {
+test("schemas 58 and 59 add runtime snapshots and provider settings without changing older settings", () => {
   const directory = mkdtempSync(join(tmpdir(), "yourchar-runtime-schema-"));
   const path = join(directory, "state.sqlite");
   try {
@@ -36,7 +43,7 @@ test("schema 58 adds the derived runtime snapshot without changing older setting
         Number((upgraded.connection.prepare(
           "SELECT MAX(version) AS version FROM schema_migrations",
         ).get() as { version: number }).version),
-        58,
+        59,
       );
       const manager = new AgentRuntimeConfigurationManager(
         upgraded,
@@ -49,6 +56,10 @@ test("schema 58 adds the derived runtime snapshot without changing older setting
         ).get() as { enabled: number }).enabled),
         1,
       );
+      upgraded.connection.prepare(`
+        INSERT INTO agent_module_provider_settings(module_id, revision, values_json, updated_at)
+        VALUES ('mcp:migration-probe', 1, '{}', '2026-09-13T00:00:00.000Z')
+      `).run();
     } finally {
       upgraded.close();
     }
@@ -101,6 +112,288 @@ test("an untrusted package is inventoried but remains inactive by default", () =
     assert.equal(runtime.kernel.listAgentModules().some((entry) => entry.id === moduleId), false);
   } finally {
     runtime.dispose();
+  }
+});
+
+test("provider settings schemas reject executable or unsafe declarations", () => {
+  assert.throws(
+    () => normalizeAgentModuleSettingsSchema({
+      version: 1,
+      fields: [{
+        key: "apiToken",
+        kind: "secret",
+        label: "API Token",
+        defaultValue: "a secret must never be embedded in an inspectable schema",
+      }],
+    }, providerSettingsModuleId),
+    (error) => error instanceof AgentModuleSettingsValidationError &&
+      /secret field apiToken cannot declare a default/u.test(error.message),
+  );
+  assert.throws(
+    () => normalizeAgentModuleSettingsSchema({
+      version: 1,
+      fields: [{ key: "region", kind: "text", label: "Region" }],
+      ui: { slot: "arbitrary_html" as never },
+    }, providerSettingsModuleId),
+    /UI slot must be module_detail/u,
+  );
+  assert.throws(
+    () => normalizeAgentModuleSettingsSchema({
+      version: 1,
+      fields: [{ key: "toString", kind: "text", label: "Prototype key" }],
+    }, providerSettingsModuleId),
+    /invalid field key toString/u,
+  );
+});
+
+test("declared provider settings are revisioned, redacted, mount-scoped, and locally controlled", async () => {
+  const mounts: Array<Record<string, unknown>> = [];
+  const runtime = createTestRuntime({
+    seed: "runtime-provider-settings",
+    agentCapabilityPackages: [providerSettingsPackage(mounts)],
+    agentRuntimeProfiles: [{
+      id: "default",
+      name: "Configured provider",
+      description: "Loads one provider-settings fixture.",
+      packageIds: ["provider-settings-fixture"],
+    }],
+  });
+  const server = createHttpServer({ kernel: runtime.kernel });
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  try {
+    const module = runtime.kernel.listAgentModules()
+      .find((entry) => entry.id === providerSettingsModuleId);
+    assert.equal(module?.hasSettings, true);
+    assert.equal(module?.settingsUi, true);
+    const initial = runtime.kernel.getAgentModuleProviderSettings(providerSettingsModuleId);
+    assert.equal(initial.revision, 0);
+    assert.equal(initial.complete, false);
+    assert.deepEqual(initial.values, {
+      retries: 2,
+      region: "global",
+      telemetry: false,
+    });
+    assert.deepEqual(initial.secrets, {
+      apiToken: { configured: false, masked: "" },
+    });
+
+    runtime.model.enqueue([{ kind: "assistant_text", text: "默认配置。" }]);
+    await runtime.kernel.sendMessage("provider-settings", { mode: "sms", text: "检查默认值。" });
+    assert.deepEqual(mounts, [{ retries: 2, region: "global", telemetry: false }]);
+
+    const address = server.address();
+    assert.ok(address && typeof address === "object");
+    const baseUrl = `http://127.0.0.1:${address.port}`;
+    const settingsPath = `/api/v1/agent-modules/${encodeURIComponent(providerSettingsModuleId)}/settings`;
+    const rejected = await fetch(`${baseUrl}${settingsPath}`, {
+      method: "PATCH",
+      headers: {
+        "content-type": "application/json",
+        origin: "https://untrusted.example",
+      },
+      body: JSON.stringify({
+        expectedSchemaVersion: 1,
+        expectedRevision: 0,
+        values: { apiToken: "REJECTED_PROVIDER_TOKEN" },
+      }),
+    });
+    assert.equal(rejected.status, 403);
+
+    const bootstrap = await fetch(`${baseUrl}/`);
+    const cookie = bootstrap.headers.get("set-cookie")?.split(";", 1)[0];
+    assert.ok(cookie);
+    const providerToken = "PRIVATE_PROVIDER_TOKEN_SENTINEL";
+    const accepted = await fetch(`${baseUrl}${settingsPath}`, {
+      method: "PATCH",
+      headers: {
+        "content-type": "application/json",
+        cookie,
+        origin: baseUrl,
+      },
+      body: JSON.stringify({
+        expectedSchemaVersion: 1,
+        expectedRevision: 0,
+        values: {
+          endpoint: "https://provider.example/v1",
+          apiToken: providerToken,
+          retries: 4,
+          region: "eu",
+          telemetry: true,
+        },
+      }),
+    });
+    assert.equal(accepted.status, 200);
+    const acceptedBody = await accepted.json() as {
+      settings: { revision: number; complete: boolean; secrets: Record<string, unknown> };
+    };
+    assert.equal(acceptedBody.settings.revision, 1);
+    assert.equal(acceptedBody.settings.complete, true);
+    assert.deepEqual(acceptedBody.settings.secrets, {
+      apiToken: { configured: true, masked: "••••••••" },
+    });
+    assert.doesNotMatch(JSON.stringify(acceptedBody), new RegExp(providerToken, "u"));
+    const settingsAudit = runtime.kernel.store.actions.at(-1);
+    assert.equal(settingsAudit?.actionType, "set_agent_module_provider_settings");
+    assert.deepEqual(settingsAudit?.payload.changedKeys, [
+      "apiToken",
+      "endpoint",
+      "region",
+      "retries",
+      "telemetry",
+    ]);
+    assert.doesNotMatch(JSON.stringify(settingsAudit), new RegExp(providerToken, "u"));
+    assert.doesNotMatch(
+      JSON.stringify(runtime.kernel.getAgentRuntimeConfiguration()),
+      new RegExp(providerToken, "u"),
+    );
+    const projected = await fetch(`${baseUrl}${settingsPath}`);
+    assert.equal(projected.status, 200);
+    const projectedText = await projected.text();
+    assert.doesNotMatch(projectedText, new RegExp(providerToken, "u"));
+    assert.doesNotMatch(projectedText, /"apiToken"\s*:\s*"PRIVATE/u);
+
+    runtime.model.enqueue([{ kind: "assistant_text", text: "已使用新配置。" }]);
+    await runtime.kernel.sendMessage("provider-settings", { mode: "sms", text: "重新检查。" });
+    assert.deepEqual(mounts.at(-1), {
+      endpoint: "https://provider.example/v1",
+      apiToken: providerToken,
+      retries: 4,
+      region: "eu",
+      telemetry: true,
+    });
+
+    const stale = await fetch(`${baseUrl}${settingsPath}`, {
+      method: "PATCH",
+      headers: { "content-type": "application/json", cookie, origin: baseUrl },
+      body: JSON.stringify({
+        expectedSchemaVersion: 1,
+        expectedRevision: 0,
+        values: { retries: 3 },
+      }),
+    });
+    assert.equal(stale.status, 409);
+    const staleBody = await stale.json() as { code: string; actualRevision: number };
+    assert.equal(staleBody.code, "AGENT_MODULE_SETTINGS_CONFLICT");
+    assert.equal(staleBody.actualRevision, 1);
+    assert.throws(
+      () => runtime.kernel.patchAgentModuleProviderSettings(providerSettingsModuleId, {
+        expectedSchemaVersion: 1,
+        expectedRevision: 1,
+        values: { retries: 99 },
+      }),
+      AgentModuleSettingsValidationError,
+    );
+    assert.throws(
+      () => runtime.kernel.patchAgentModuleProviderSettings(providerSettingsModuleId, {
+        expectedSchemaVersion: 2,
+        expectedRevision: 1,
+        values: { retries: 3 },
+      }),
+      AgentModuleSettingsSchemaConflictError,
+    );
+
+    const cleared = runtime.kernel.patchAgentModuleProviderSettings(providerSettingsModuleId, {
+      expectedSchemaVersion: 1,
+      expectedRevision: 1,
+      values: { endpoint: "https://provider.example/v2" },
+      clear: ["apiToken"],
+    });
+    assert.equal(cleared.revision, 2);
+    assert.equal(cleared.complete, false);
+    assert.equal(cleared.secrets.apiToken?.configured, false);
+    assert.doesNotMatch(JSON.stringify(cleared), new RegExp(providerToken, "u"));
+    runtime.model.enqueue([{ kind: "assistant_text", text: "密钥已清除。" }]);
+    await runtime.kernel.sendMessage("provider-settings", { mode: "sms", text: "确认清除。" });
+    assert.deepEqual(mounts.at(-1), {
+      endpoint: "https://provider.example/v2",
+      retries: 4,
+      region: "eu",
+      telemetry: true,
+    });
+
+    assert.throws(
+      () => runtime.kernel.patchAgentModuleProviderSettings(providerSettingsModuleId, {
+        expectedSchemaVersion: 1,
+        expectedRevision: 1,
+        values: { retries: 3 },
+      }),
+      AgentModuleSettingsConflictError,
+    );
+    await runtime.kernel.deleteAllUserData();
+    assert.equal(
+      Number((runtime.kernel.database.connection.prepare(
+        "SELECT COUNT(*) AS count FROM agent_module_provider_settings",
+      ).get() as { count: number }).count),
+      0,
+    );
+  } finally {
+    await new Promise<void>((resolve, reject) =>
+      server.close((error) => error ? reject(error) : resolve())
+    );
+    runtime.dispose();
+  }
+});
+
+test("provider settings survive restart while secret values remain write-only", async () => {
+  const stateDir = mkdtempSync(join(tmpdir(), "yourchar-provider-settings-restart-"));
+  const mounts: Array<Record<string, unknown>> = [];
+  const options = {
+    stateDir,
+    agentCapabilityPackages: [providerSettingsPackage(mounts)],
+    agentRuntimeProfiles: [{
+      id: "default",
+      name: "Configured provider",
+      description: "Loads one provider-settings fixture.",
+      packageIds: ["provider-settings-fixture"],
+    }],
+  } as const;
+  let first: ReturnType<typeof createTestRuntime> | undefined = createTestRuntime({
+    ...options,
+    seed: "provider-settings-restart-first",
+  });
+  const providerToken = "RESTARTED_PROVIDER_TOKEN_SENTINEL";
+  try {
+    const saved = first.kernel.patchAgentModuleProviderSettings(providerSettingsModuleId, {
+      expectedSchemaVersion: 1,
+      expectedRevision: 0,
+      values: {
+        endpoint: "https://restart.example/v1",
+        apiToken: providerToken,
+      },
+    });
+    assert.equal(saved.revision, 1);
+    first.dispose();
+    first = undefined;
+
+    const second = createTestRuntime({
+      ...options,
+      seed: "provider-settings-restart-second",
+    });
+    try {
+      const restored = second.kernel.getAgentModuleProviderSettings(providerSettingsModuleId);
+      assert.equal(restored.revision, 1);
+      assert.equal(restored.complete, true);
+      assert.equal(restored.values.endpoint, "https://restart.example/v1");
+      assert.equal(restored.secrets.apiToken?.configured, true);
+      assert.doesNotMatch(JSON.stringify(restored), new RegExp(providerToken, "u"));
+      second.model.enqueue([{ kind: "assistant_text", text: "已恢复配置。" }]);
+      await second.kernel.sendMessage("provider-settings-restart", {
+        mode: "sms",
+        text: "检查重启后的配置。",
+      });
+      assert.deepEqual(mounts.at(-1), {
+        endpoint: "https://restart.example/v1",
+        apiToken: providerToken,
+        retries: 2,
+        region: "global",
+        telemetry: false,
+      });
+    } finally {
+      second.dispose();
+    }
+  } finally {
+    first?.dispose();
+    rmSync(stateDir, { recursive: true, force: true });
   }
 });
 
@@ -358,6 +651,80 @@ function runtimeProfiles(): readonly AgentRuntimeProfileDefinition[] {
     description: "Adds the reviewed probe package.",
     packageIds: ["test-probes"],
   }];
+}
+
+function providerSettingsPackage(
+  mounts: Array<Record<string, unknown>>,
+): AgentCapabilityPackage {
+  return {
+    id: "provider-settings-fixture",
+    name: "Provider Settings Fixture",
+    version: "1",
+    contentDigest: "f".repeat(64),
+    source: "test fixture",
+    trusted: true,
+    capabilities: [{
+      id: "test:provider-settings",
+      moduleContribution: {
+        id: providerSettingsModuleId,
+        name: "Provider Settings Probe MCP",
+        description: "A test-only provider configuration surface.",
+        source: "test",
+        defaultEnabled: true,
+        estimatedTokens: 1,
+        detail: "# Provider Settings Probe MCP\n\nExercises declarative settings.\n",
+        settings: {
+          version: 1,
+          fields: [{
+            key: "endpoint",
+            kind: "text",
+            label: "Endpoint",
+            required: true,
+            maxLength: 300,
+            placeholder: "https://provider.example/v1",
+          }, {
+            key: "apiToken",
+            kind: "secret",
+            label: "API Token",
+            required: true,
+            minLength: 8,
+            maxLength: 200,
+          }, {
+            key: "retries",
+            kind: "integer",
+            label: "Retries",
+            defaultValue: 2,
+            minimum: 0,
+            maximum: 5,
+          }, {
+            key: "region",
+            kind: "select",
+            label: "Region",
+            defaultValue: "global",
+            options: [
+              { value: "global", label: "Global" },
+              { value: "eu", label: "Europe" },
+            ],
+          }, {
+            key: "telemetry",
+            kind: "boolean",
+            label: "Telemetry",
+            defaultValue: false,
+          }],
+          ui: {
+            slot: "module_detail",
+            title: "Provider connection",
+            description: "Values are scoped to this module.",
+            submitLabel: "Save provider",
+          },
+        },
+      },
+      async mount(context) {
+        mounts.push({ ...context.settings });
+        return { tools: [] };
+      },
+    }],
+  };
 }
 
 function probePackage(
