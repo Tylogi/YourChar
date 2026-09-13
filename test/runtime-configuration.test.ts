@@ -26,7 +26,7 @@ const capabilityId = "test:profile-probe";
 const toolName = "profile_probe";
 const providerSettingsModuleId = "mcp:provider-settings-probe";
 
-test("schemas 58-65 add runtime, provider settings, and durable Subagent execution without changing older settings", () => {
+test("schemas 58-66 add runtime, provider settings, and durable execution without changing older settings", () => {
   const directory = mkdtempSync(join(tmpdir(), "yourchar-runtime-schema-"));
   const path = join(directory, "state.sqlite");
   try {
@@ -43,7 +43,7 @@ test("schemas 58-65 add runtime, provider settings, and durable Subagent executi
         Number((upgraded.connection.prepare(
           "SELECT MAX(version) AS version FROM schema_migrations",
         ).get() as { version: number }).version),
-        65,
+        66,
       );
       const manager = new AgentRuntimeConfigurationManager(
         upgraded,
@@ -139,6 +139,31 @@ test("schemas 58-65 add runtime, provider settings, and durable Subagent executi
       ]) {
         assert.equal(toolJournalColumns.has(column), true, `${column} must be migrated`);
       }
+      const executionJobColumns = new Set(
+        (upgraded.connection.prepare("PRAGMA table_info(execution_jobs)").all() as Array<{
+          name: string;
+        }>).map((column) => column.name),
+      );
+      for (const column of [
+        "parent_session_id",
+        "command_text",
+        "command_sha256",
+        "conversation_space",
+        "workspace_dir",
+        "workspace_access",
+        "network_enabled",
+        "timeout_seconds",
+        "max_output_bytes",
+        "current_attempt",
+      ]) {
+        assert.equal(executionJobColumns.has(column), true, `${column} must be migrated`);
+      }
+      assert.ok(upgraded.connection.prepare(
+        "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'execution_job_runs'",
+      ).get());
+      assert.ok(upgraded.connection.prepare(
+        "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'execution_job_output_chunks'",
+      ).get());
     } finally {
       upgraded.close();
     }
@@ -159,8 +184,8 @@ test("default runtime configuration is inspectable, bounded, and persisted witho
       snapshot.packages.map((entry) => [entry.id, entry.trust, entry.active]),
       [["builtin-core", "built_in", true]],
     );
-    assert.equal(snapshot.activeCapabilities.length, 14);
-    assert.equal(new Set(snapshot.activeCapabilities.map((entry) => entry.id)).size, 14);
+    assert.equal(snapshot.activeCapabilities.length, 15);
+    assert.equal(new Set(snapshot.activeCapabilities.map((entry) => entry.id)).size, 15);
 
     const row = runtime.kernel.database.connection.prepare(`
       SELECT revision, digest, snapshot_json

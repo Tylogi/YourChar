@@ -32,7 +32,7 @@ another space's Workspace.
 | Permission | Default | Effect |
 |---|---|---|
 | Workspace access | Off | `off`, `read_only`, or `read_write` |
-| Sandboxed shell | Off | Registers `bash` using Bubblewrap |
+| Sandboxed shell | Off | Registers blocking `bash` plus durable background execution tools using Bubblewrap |
 | Shell network | Off | With explicit user authorization, shares the host network namespace for sandboxed Shell commands |
 | User Profile auto-edit | On | Registers `update_user_profile` while User Profile MCP is enabled |
 | Character SOUL auto-edit | Off | Registers the character-bound SOUL MCP in RP sessions |
@@ -122,9 +122,27 @@ Linux shell execution requires `/usr/bin/bwrap`. The sandbox:
 - clears environment variables and supplies only `PATH`, `HOME`, and `LANG`;
 - keeps network isolated unless the separate network switch is explicitly
   enabled by the user;
-- limits runtime to 120 seconds and captured output to 64 KiB;
+- limits blocking `bash` runtime to 120 seconds and captured output to 64 KiB;
 - records a command hash and length, exit status, duration, timeout, truncation,
   and network mode in the action audit without retaining command text.
+
+When Shell is enabled outside incognito, the same handle also receives
+`start_shell_job`, `list_execution_jobs`, `get_execution_job`, and
+`interrupt_execution_job`. A background job is owned by its parent conversation
+but not by that conversation's in-memory Pi handle, so handle rebuilds do not
+stop it. Admission freezes its Workspace and network grant. At most four jobs
+may run per conversation and eight process-wide; each attempt is limited to one
+hour, each job to three explicit attempts, and each attempt retains at most 8
+MiB of combined stdout/stderr.
+
+Command bodies, Workspace host paths, and output bodies are private SQLite
+execution artifacts. Ordinary list/detail responses and action audits contain
+only command hash/length and lifecycle metadata. Output enters model context
+only through `get_execution_job`, one cursor page at a time (16 KiB by default,
+64 KiB maximum). Process shutdown never silently replays a command: the durable
+job becomes `idle`, its interrupted run becomes `abandoned`, and only the
+trusted local control plane may retry it. A retry intersects the original grant
+with current permissions, so access can narrow but never widen.
 
 This boundary controls host filesystem mounts but does not make untrusted code
 harmless to files in a read-write Workspace. When Shell network is enabled,
@@ -157,6 +175,11 @@ are registered in SMS or an unbound RP session.
 | PATCH | `/api/v1/agent-permissions` | Replace one or more permission fields |
 | GET | `/api/v1/workspace/files/preview` | Return a bounded preview descriptor |
 | GET | `/api/v1/workspace/files/content` | Stream an inline-safe asset or attachment download |
+| GET/POST | `/api/v1/sessions/{id}/execution-jobs` | List or start conversation-owned background shell jobs |
+| GET | `/api/v1/sessions/{id}/execution-jobs/{jobId}` | Read redacted job/run metadata |
+| GET | `/api/v1/sessions/{id}/execution-jobs/{jobId}/output` | Read a bounded output page |
+| POST | `/api/v1/sessions/{id}/execution-jobs/{jobId}/interrupt` | Interrupt a non-terminal job |
+| POST | `/api/v1/sessions/{id}/execution-jobs/{jobId}/retry` | Explicitly retry with no wider grant |
 
 Example:
 

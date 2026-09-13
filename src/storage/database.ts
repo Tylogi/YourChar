@@ -3378,6 +3378,139 @@ const migrations: Migration[] = [
         CHECK (length(timezone) BETWEEN 1 AND 200 AND trim(timezone) = timezone);
     `,
   },
+  {
+    version: 66,
+    sql: `
+      CREATE TABLE execution_jobs (
+        id TEXT PRIMARY KEY CHECK (length(id) BETWEEN 1 AND 256),
+        parent_session_id TEXT NOT NULL
+          CHECK (length(parent_session_id) BETWEEN 1 AND 256),
+        status TEXT NOT NULL CHECK (
+          status IN ('queued', 'running', 'idle', 'completed', 'failed', 'cancelled')
+        ),
+        revision INTEGER NOT NULL DEFAULT 1 CHECK (revision >= 1),
+        command_text TEXT NOT NULL,
+        command_sha256 TEXT NOT NULL CHECK (
+          length(command_sha256) = 64 AND command_sha256 NOT GLOB '*[^a-f0-9]*'
+        ),
+        command_characters INTEGER NOT NULL
+          CHECK (command_characters BETWEEN 1 AND 32768),
+        mode TEXT NOT NULL CHECK (mode IN ('sms', 'rp')),
+        conversation_space TEXT NOT NULL
+          CHECK (conversation_space IN ('normal', 'secret')),
+        character_id TEXT,
+        secret_owner_character_id TEXT,
+        workspace_key TEXT NOT NULL
+          CHECK (length(workspace_key) BETWEEN 1 AND 256),
+        workspace_dir TEXT NOT NULL
+          CHECK (length(workspace_dir) BETWEEN 1 AND 4096),
+        workspace_access TEXT NOT NULL
+          CHECK (workspace_access IN ('off', 'read_only', 'read_write')),
+        network_enabled INTEGER NOT NULL CHECK (network_enabled IN (0, 1)),
+        timeout_seconds INTEGER NOT NULL CHECK (timeout_seconds BETWEEN 1 AND 3600),
+        max_output_bytes INTEGER NOT NULL
+          CHECK (max_output_bytes BETWEEN 65536 AND 8388608),
+        current_attempt INTEGER NOT NULL DEFAULT 0
+          CHECK (current_attempt BETWEEN 0 AND 3),
+        created_at TEXT NOT NULL,
+        started_at TEXT,
+        finished_at TEXT,
+        updated_at TEXT NOT NULL,
+        CHECK (
+          (conversation_space = 'normal' AND secret_owner_character_id IS NULL)
+          OR
+          (conversation_space = 'secret' AND character_id IS NOT NULL
+            AND secret_owner_character_id = character_id)
+        ),
+        CHECK (
+          (status = 'queued' AND current_attempt = 0 AND finished_at IS NULL)
+          OR
+          (status = 'running' AND current_attempt >= 1 AND started_at IS NOT NULL
+            AND finished_at IS NULL)
+          OR
+          (status = 'idle' AND finished_at IS NULL)
+          OR
+          (status IN ('completed', 'failed')
+            AND current_attempt >= 1 AND started_at IS NOT NULL AND finished_at IS NOT NULL)
+          OR
+          (status = 'cancelled' AND finished_at IS NOT NULL
+            AND ((current_attempt = 0 AND started_at IS NULL)
+              OR (current_attempt >= 1 AND started_at IS NOT NULL)))
+        )
+      );
+      CREATE INDEX execution_jobs_parent_recent_idx
+        ON execution_jobs(parent_session_id, updated_at DESC, id DESC);
+      CREATE INDEX execution_jobs_recovery_idx
+        ON execution_jobs(status, updated_at, id);
+
+      CREATE TABLE execution_job_runs (
+        job_id TEXT NOT NULL REFERENCES execution_jobs(id) ON DELETE CASCADE,
+        attempt INTEGER NOT NULL CHECK (attempt BETWEEN 1 AND 3),
+        status TEXT NOT NULL CHECK (
+          status IN ('running', 'abandoned', 'completed', 'failed', 'cancelled')
+        ),
+        owner_id TEXT,
+        claim_token TEXT,
+        workspace_access TEXT NOT NULL
+          CHECK (workspace_access IN ('off', 'read_only', 'read_write')),
+        network_enabled INTEGER NOT NULL CHECK (network_enabled IN (0, 1)),
+        output_bytes INTEGER NOT NULL DEFAULT 0
+          CHECK (output_bytes BETWEEN 0 AND 8388608),
+        output_truncated INTEGER NOT NULL DEFAULT 0
+          CHECK (output_truncated IN (0, 1)),
+        exit_code INTEGER,
+        timed_out INTEGER NOT NULL DEFAULT 0 CHECK (timed_out IN (0, 1)),
+        failure_reason TEXT CHECK (
+          failure_reason IS NULL OR failure_reason IN (
+            'process_restarted', 'runtime_shutdown', 'spawn_error',
+            'exit_nonzero', 'timeout', 'interrupted', 'runtime_error'
+          )
+        ),
+        started_at TEXT NOT NULL,
+        finished_at TEXT,
+        updated_at TEXT NOT NULL,
+        PRIMARY KEY (job_id, attempt),
+        CHECK (
+          (status = 'running' AND owner_id IS NOT NULL AND claim_token IS NOT NULL
+            AND exit_code IS NULL AND timed_out = 0 AND failure_reason IS NULL
+            AND finished_at IS NULL)
+          OR
+          (status = 'abandoned' AND owner_id IS NULL AND claim_token IS NULL
+            AND exit_code IS NULL AND timed_out = 0
+            AND failure_reason IN ('process_restarted', 'runtime_shutdown')
+            AND finished_at IS NOT NULL)
+          OR
+          (status = 'completed' AND owner_id IS NULL AND claim_token IS NULL
+            AND exit_code = 0 AND timed_out = 0 AND failure_reason IS NULL
+            AND finished_at IS NOT NULL)
+          OR
+          (status = 'failed' AND owner_id IS NULL AND claim_token IS NULL
+            AND failure_reason IN ('spawn_error', 'exit_nonzero', 'timeout', 'runtime_error')
+            AND finished_at IS NOT NULL)
+          OR
+          (status = 'cancelled' AND owner_id IS NULL AND claim_token IS NULL
+            AND timed_out = 0 AND failure_reason = 'interrupted'
+            AND finished_at IS NOT NULL)
+        )
+      );
+      CREATE INDEX execution_job_runs_status_idx
+        ON execution_job_runs(status, updated_at, job_id, attempt);
+
+      CREATE TABLE execution_job_output_chunks (
+        job_id TEXT NOT NULL,
+        attempt INTEGER NOT NULL,
+        sequence INTEGER NOT NULL CHECK (sequence BETWEEN 0 AND 8388607),
+        stream TEXT NOT NULL CHECK (stream IN ('stdout', 'stderr')),
+        content BLOB NOT NULL CHECK (length(content) BETWEEN 1 AND 4096),
+        bytes INTEGER NOT NULL CHECK (bytes BETWEEN 1 AND 4096),
+        created_at TEXT NOT NULL,
+        PRIMARY KEY (job_id, attempt, sequence),
+        FOREIGN KEY (job_id, attempt)
+          REFERENCES execution_job_runs(job_id, attempt) ON DELETE CASCADE,
+        CHECK (bytes = length(content))
+      );
+    `,
+  },
 ];
 
 export class AppDatabase {

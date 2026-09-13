@@ -21,6 +21,7 @@ import type { MemoryLifecycleService } from "../memory-coordinator/lifecycle.js"
 import type { AgentModuleCatalog } from "../modules/catalog.js";
 import type { AgentPermissions } from "../modules/types.js";
 import type { SubagentJobDetail, SubagentJobSummary } from "../modules/subagent-jobs.js";
+import { executionJobCapabilityDescriptor } from "../execution/index.js";
 import type { ScopedWorkspace } from "../workspace/scope.js";
 import {
   gitMcpModuleId,
@@ -72,6 +73,7 @@ export const builtinSessionCapabilityDescriptors = Object.freeze({
   mineru: descriptor("builtin:mcp:mineru", 600, mineruMcpModuleId),
   git: descriptor("builtin:mcp:git", 700, gitMcpModuleId),
   subagent: descriptor("builtin:mcp:subagent", 800, subagentMcpModuleId),
+  executionJobs: executionJobCapabilityDescriptor,
   relationshipState: descriptor(
     "builtin:mcp:relationship-state",
     900,

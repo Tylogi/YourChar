@@ -102,6 +102,13 @@ import { AppDatabase } from "../storage/database.js";
 import { DataManagementRepository } from "../storage/data-management.js";
 import { ObservabilityRepository } from "../storage/observability.js";
 import {
+  createExecutionJobCapability,
+  ExecutionJobNotFoundError,
+  ExecutionJobService,
+  ExecutionJobStateError,
+  type ExecutionJobSummary,
+} from "../execution/index.js";
+import {
   AgentModuleCatalog,
   agentSkillDiscoveryRoots,
   scheduleMcpModuleId,
@@ -555,6 +562,7 @@ export class CompanionKernel {
   readonly store: CompanionStore;
   readonly sessionRuntime: PiSessionRuntime;
   private readonly agentRuntimeConfiguration: AgentRuntimeConfigurationManager;
+  private readonly executionJobCapability: SessionCapability;
   readonly database: AppDatabase;
   readonly scheduleService: ScheduleService;
   readonly rpService: RpService;
@@ -567,6 +575,8 @@ export class CompanionKernel {
   readonly subagentSettingsService: SubagentSettingsService;
   /** Durable Subagent identities and lifecycle records; raw prompts stay out of audits. */
   readonly subagentJobs: SubagentJobService;
+  /** Durable background commands and bounded output artifacts; raw bodies stay private. */
+  readonly executionJobs: ExecutionJobService;
   readonly profileService: UserProfileService;
   readonly avatarService: AvatarService;
   readonly systemPromptService: SystemPromptService;
@@ -621,6 +631,7 @@ export class CompanionKernel {
   private readonly subagentDeliveryTimers = new Map<string, NodeJS.Timeout>();
   private readonly subagentDeliveryRuns = new Map<string, Promise<boolean>>();
   private subagentDeliveryDisposed = false;
+  private readonly deletingConversationIds = new Set<string>();
   private deleteAllUserDataOperation?: Promise<void>;
   private readonly ownsDatabase: boolean;
   private readonly dataManagement: DataManagementRepository;
@@ -676,6 +687,42 @@ export class CompanionKernel {
       this.clock,
       this.store.idGenerator,
     );
+    this.executionJobs = new ExecutionJobService(
+      this.database,
+      this.clock,
+      this.store.idGenerator,
+      (job) => {
+        this.store.addAction(
+          "shell_job_terminal",
+          job.status === "completed" ? "completed" : "failed",
+          {
+            jobId: job.id,
+            parentSessionId: job.parentSessionId,
+            status: job.status,
+            revision: job.revision,
+            commandSha256: job.commandSha256,
+            commandCharacters: job.commandCharacters,
+            attempt: job.currentAttempt,
+            outputBytes: job.run?.outputBytes ?? 0,
+            outputTruncated: job.run?.outputTruncated ?? false,
+            exitCode: job.run?.exitCode ?? null,
+            timedOut: job.run?.timedOut ?? false,
+            failureReason: job.run?.failureReason ?? null,
+            networkEnabled: job.run?.networkEnabled ?? job.grants.networkEnabled,
+          },
+          job.conversationSpace === "secret" && job.secretOwnerCharacterId
+            ? {
+                conversationSpace: "secret",
+                secretOwnerCharacterId: job.secretOwnerCharacterId,
+              }
+            : { conversationSpace: "normal" },
+        );
+      },
+    );
+    this.executionJobCapability = createExecutionJobCapability({
+      service: this.executionJobs,
+      store: this.store,
+    });
     this.imIntegrations = new ImIntegrationService(
       new ImRepository(this.database),
       this.incognitoChild || normalizedOptions.imGateway === false
@@ -1098,7 +1145,10 @@ export class CompanionKernel {
         subagentTimeoutMs: normalizedOptions.subagentTimeoutMs,
         subagentSettings: () => this.subagentSettingsService.snapshot(),
         subagentJobs: this.subagentJobs,
-        additionalSessionCapabilities: this.agentRuntimeConfiguration.activeCapabilities(),
+        additionalSessionCapabilities: [
+          this.executionJobCapability,
+          ...this.agentRuntimeConfiguration.activeCapabilities(),
+        ],
         incognitoChild: this.incognitoChild,
         providerPayloadOptions: (appSessionId) => {
           const binding = this.modelBindingForSession(appSessionId);
@@ -1153,7 +1203,10 @@ export class CompanionKernel {
       });
     if (normalizedOptions.sessionRuntime) {
       this.sessionRuntime.replaceAdditionalSessionCapabilities(
-        this.agentRuntimeConfiguration.activeCapabilities(),
+        [
+          this.executionJobCapability,
+          ...this.agentRuntimeConfiguration.activeCapabilities(),
+        ],
       );
     }
     this.sessionRuntime.setSubagentJobTerminalListener((jobId) => {
@@ -1807,6 +1860,9 @@ export class CompanionKernel {
     this.assertKnownIncognitoSessionId(sessionId);
     this.incognitoSessions?.assertUnsupported(sessionId, "archiving");
     this.assertPrivateInboxIdle(sessionId);
+    if (this.executionJobs.hasActiveJob(sessionId)) {
+      throw new ControlPlaneBusyError("此会话仍有后台命令正在执行，请先中断或等待完成。");
+    }
     return this.sessionRuntime.archiveConversation(sessionId);
   }
 
@@ -1819,25 +1875,35 @@ export class CompanionKernel {
   async deleteConversation(sessionId: string, confirmation: string) {
     this.assertKnownIncognitoSessionId(sessionId);
     this.incognitoSessions?.assertUnsupported(sessionId, "persistent deletion");
-    return this.executionQueue.run(sessionId, async () => {
-      this.assertPrivateInboxIdle(sessionId);
-      this.sessionRuntime.assertConversationDeletable(sessionId, confirmation);
-      const session = await this.sessionRuntime.deleteConversation(sessionId, confirmation);
-      const characterCollaborationLinks = this.characterChannels.unlinkSession(sessionId);
-      const rp = this.rpService.deleteSessionData(sessionId);
-      const observability = this.dataManagement.deleteSessionObservability(sessionId);
-      this.store.deleteSessionRuntimeData(sessionId);
-      return {
-        session,
-        cleanup: { ...rp, ...observability, characterCollaborationLinks },
-      };
-    });
+    if (this.deletingConversationIds.has(sessionId)) {
+      throw new ControlPlaneBusyError("此会话正在删除。");
+    }
+    this.deletingConversationIds.add(sessionId);
+    try {
+      return await this.executionQueue.run(sessionId, async () => {
+        this.assertPrivateInboxIdle(sessionId);
+        this.assertConversationExecutionIdle(sessionId);
+        this.sessionRuntime.assertConversationDeletable(sessionId, confirmation);
+        const session = await this.sessionRuntime.deleteConversation(sessionId, confirmation);
+        const characterCollaborationLinks = this.characterChannels.unlinkSession(sessionId);
+        const rp = this.rpService.deleteSessionData(sessionId);
+        const observability = this.dataManagement.deleteSessionObservability(sessionId);
+        this.store.deleteSessionRuntimeData(sessionId);
+        return {
+          session,
+          cleanup: { ...rp, ...observability, characterCollaborationLinks },
+        };
+      });
+    } finally {
+      this.deletingConversationIds.delete(sessionId);
+    }
   }
 
   assertConversationDeletable(sessionId: string, confirmation: string) {
     this.assertKnownIncognitoSessionId(sessionId);
     this.incognitoSessions?.assertUnsupported(sessionId, "persistent deletion");
     this.assertPrivateInboxIdle(sessionId);
+    this.assertConversationExecutionIdle(sessionId);
     this.sessionRuntime.assertConversationDeletable(sessionId, confirmation);
   }
 
@@ -3584,7 +3650,10 @@ export class CompanionKernel {
     const previousContributions = this.agentRuntimeConfiguration.activeModuleContributions();
     this.moduleCatalog.replaceAdditionalMcpModules(prepared.activeModuleContributions);
     try {
-      this.sessionRuntime.replaceAdditionalSessionCapabilities(prepared.activeCapabilities);
+      this.sessionRuntime.replaceAdditionalSessionCapabilities([
+        this.executionJobCapability,
+        ...prepared.activeCapabilities,
+      ]);
     } catch (error) {
       this.moduleCatalog.replaceAdditionalMcpModules(previousContributions);
       throw error;
@@ -3593,7 +3662,10 @@ export class CompanionKernel {
     try {
       snapshot = this.agentRuntimeConfiguration.commit(prepared);
     } catch (error) {
-      this.sessionRuntime.replaceAdditionalSessionCapabilities(previousCapabilities);
+      this.sessionRuntime.replaceAdditionalSessionCapabilities([
+        this.executionJobCapability,
+        ...previousCapabilities,
+      ]);
       this.moduleCatalog.replaceAdditionalMcpModules(previousContributions);
       throw error;
     }
@@ -3610,6 +3682,112 @@ export class CompanionKernel {
 
   getSubagentSettings() {
     return this.subagentSettingsService.get();
+  }
+
+  listExecutionJobs(parentSessionId: string, limit = 20) {
+    const metadata = this.requireExecutionParentSession(parentSessionId);
+    return this.executionJobs.list(metadata.id, limit);
+  }
+
+  getExecutionJob(parentSessionId: string, jobId: string) {
+    const metadata = this.requireExecutionParentSession(parentSessionId);
+    const job = this.executionJobs.get(metadata.id, jobId);
+    if (!job) throw new ExecutionJobNotFoundError(jobId);
+    return job;
+  }
+
+  getExecutionJobOutput(
+    parentSessionId: string,
+    jobId: string,
+    options: { attempt?: number; cursor?: number; limitBytes?: number } = {},
+  ) {
+    const metadata = this.requireExecutionParentSession(parentSessionId);
+    return this.executionJobs.output(metadata.id, jobId, options);
+  }
+
+  startExecutionJob(
+    parentSessionId: string,
+    input: { command: string; timeoutSeconds?: number },
+  ) {
+    const metadata = this.requireExecutionParentSession(parentSessionId);
+    this.sessionRuntime.assertConversationActive(metadata.id);
+    const permissions = this.permissionCatalog.get();
+    if (!permissions.shellEnabled || !permissions.shellAvailable) {
+      throw new ExecutionJobStateError("runtime", "authorized for shell execution");
+    }
+    const workspace = this.workspaceRegistry.resolve(metadata);
+    const job = this.executionJobs.start({
+      parentSessionId: metadata.id,
+      command: input.command,
+      mode: metadata.mode,
+      conversationSpace: metadata.conversationSpace,
+      ...(metadata.characterId ? { characterId: metadata.characterId } : {}),
+      ...(metadata.conversationSpace === "secret" && metadata.characterId
+        ? { secretOwnerCharacterId: metadata.characterId }
+        : {}),
+      workspaceKey: workspace.key,
+      workspaceDir: workspace.dir,
+      workspaceAccess: permissions.workspaceAccess,
+      networkEnabled: permissions.networkEnabled,
+      ...(input.timeoutSeconds === undefined
+        ? {}
+        : { timeoutSeconds: input.timeoutSeconds }),
+    });
+    this.store.addAction("start_shell_job", "completed", {
+      transport: "http",
+      sessionId: parentSessionId,
+      jobId: job.id,
+      status: job.status,
+      revision: job.revision,
+      commandSha256: job.commandSha256,
+      commandCharacters: job.commandCharacters,
+      timeoutSeconds: job.timeoutSeconds,
+      workspaceAccess: job.grants.workspaceAccess,
+      networkEnabled: job.grants.networkEnabled,
+    }, conversationActionScope(metadata));
+    return job;
+  }
+
+  async interruptExecutionJob(parentSessionId: string, jobId: string) {
+    const metadata = this.requireExecutionParentSession(parentSessionId);
+    const job = await this.executionJobs.interrupt(metadata.id, jobId);
+    this.store.addAction("interrupt_shell_job", "completed", {
+      transport: "http",
+      sessionId: parentSessionId,
+      jobId: job.id,
+      status: job.status,
+      revision: job.revision,
+    }, conversationActionScope(metadata));
+    return job;
+  }
+
+  retryExecutionJob(parentSessionId: string, jobId: string): ExecutionJobSummary {
+    const metadata = this.requireExecutionParentSession(parentSessionId);
+    this.sessionRuntime.assertConversationActive(metadata.id);
+    const permissions = this.permissionCatalog.get();
+    if (!permissions.shellEnabled || !permissions.shellAvailable) {
+      throw new ExecutionJobStateError(jobId, "authorized for shell execution");
+    }
+    const workspace = this.workspaceRegistry.resolve(metadata);
+    const job = this.executionJobs.retry({
+      parentSessionId: metadata.id,
+      jobId,
+      workspaceKey: workspace.key,
+      workspaceDir: workspace.dir,
+      workspaceAccess: permissions.workspaceAccess,
+      networkEnabled: permissions.networkEnabled,
+    });
+    this.store.addAction("retry_shell_job", "completed", {
+      transport: "http",
+      sessionId: parentSessionId,
+      jobId: job.id,
+      status: job.status,
+      revision: job.revision,
+      attempt: job.currentAttempt,
+      workspaceAccess: job.run?.workspaceAccess ?? job.grants.workspaceAccess,
+      networkEnabled: job.run?.networkEnabled ?? job.grants.networkEnabled,
+    }, conversationActionScope(metadata));
+    return job;
   }
 
   listSubagentJobs(parentSessionId: string, limit = 20) {
@@ -3905,6 +4083,27 @@ export class CompanionKernel {
     return metadata;
   }
 
+  private requireExecutionParentSession(sessionId: string) {
+    if (this.incognitoChild) {
+      throw new ExecutionJobStateError("runtime", "persistent");
+    }
+    if (this.deleteAllUserDataOperation || this.deletingConversationIds.has(sessionId)) {
+      throw new ControlPlaneBusyError("此会话正在清理，不能启动或访问后台命令。");
+    }
+    this.assertKnownIncognitoSessionId(sessionId);
+    this.incognitoSessions?.assertUnsupported(sessionId, "background execution job access");
+    const metadata = this.sessionRuntime.getConversationMetadata()
+      .find((entry) => entry.id === sessionId);
+    if (!metadata) throw new ConversationNotFoundError(sessionId);
+    return metadata;
+  }
+
+  private assertConversationExecutionIdle(sessionId: string): void {
+    if (this.executionJobs.hasActiveJob(sessionId)) {
+      throw new ControlPlaneBusyError(`Session ${sessionId} is busy and cannot be deleted`);
+    }
+  }
+
   private withSessionActionScope<T>(sessionId: string, operation: () => T): T {
     const metadata = this.sessionRuntime.getConversationMetadata()
       .find((entry) => entry.id === sessionId);
@@ -4134,6 +4333,9 @@ export class CompanionKernel {
   }
 
   assertControlPlaneIdle(): void {
+    if (this.executionJobs.isBusy) {
+      throw new ControlPlaneBusyError("仍有后台命令正在执行，请先中断或等待完成。");
+    }
     try {
       this.sessionRuntime.assertCapabilitiesIdle();
     } catch {
@@ -4767,6 +4969,7 @@ export class CompanionKernel {
     this.postTurnCoordinator.dispose();
     this.characterInteractionCoordinator.dispose();
     this.characterCapabilities.dispose();
+    this.executionJobs.dispose();
     this.sessionRuntime.dispose();
     this.documentService.clearCache();
     this.mineruService.dispose();

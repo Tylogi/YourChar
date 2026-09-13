@@ -135,7 +135,53 @@ Required invariants:
 - [x] Keep continuation depth, run attempts, elapsed time, tokens, result size,
   and capability grants durably bounded across process restarts.
 
-## 6. Verification strategy
+## 6. P3 implementation slices
+
+### P3a — Durable background shell and result spill
+
+- [x] Add host-owned background shell jobs whose process lifecycle is
+  independent of a conversation handle.
+- [x] Freeze the admitted Workspace/network grant, bound concurrency, runtime,
+  attempts, and captured output, and retain commands only as private execution
+  material with public hash/length projections.
+- [x] Store stdout/stderr in bounded SQLite chunks and expose only explicit,
+  cursor-based pages to the Agent and local HTTP control plane.
+- [x] Add same-session start/list/get/interrupt tools plus trusted local
+  start/interrupt/retry and output endpoints.
+- [x] Fence deletion and permission changes while a process is active; keep
+  secret scope isolation and remove all durable artifacts with their owner.
+- [x] On shutdown/restart, terminate or stage non-terminal commands as `idle`;
+  never replay a shell command until the trusted local control plane explicitly
+  retries it, and never widen its original grant.
+
+### P3b — General goals, plans, and todos
+
+- [ ] Add session-scoped durable goals with explicit success criteria, status,
+  priority, dependencies, and bounded notes.
+- [ ] Expose plan/todo mutation tools without allowing model-visible state to
+  bypass normal/secret/incognito ownership.
+- [ ] Record progress as typed transitions so a restarted turn can reconstruct
+  what remains without replaying completed work.
+
+### P3c — Workflow fan-out and orchestration
+
+- [ ] Add a bounded DAG executor over existing Subagent and execution-job
+  primitives, with dependency validation and per-workflow concurrency budgets.
+- [ ] Propagate cancellation, deadlines, and least-privilege grants through all
+  descendants; make aggregation consume references rather than full outputs.
+- [ ] Require explicit replay decisions for nodes with ambiguous external
+  effects and make workflow completion idempotent across restart.
+
+### P3d — Optional code intelligence
+
+- [ ] Define deployment-trusted code-orchestration and LSP capability packages
+  behind explicit modules and permissions.
+- [ ] Scope language servers to the owning Workspace, bound diagnostics and
+  symbol results, and keep server processes inside the capability lifecycle.
+- [ ] Preserve the blocking `bash` compatibility path while Task Bench evidence
+  determines which code-specific primitives materially improve outcomes.
+
+## 7. Verification strategy
 
 Each slice must run, at minimum:
 
@@ -150,7 +196,7 @@ For DSH comparisons, use the Task Bench with the same model, context window,
 task fixtures, tool permissions, timeout, and repetition count. Architectural
 feature counts must not be reported as task-success improvements.
 
-## 7. Rollout and rollback
+## 8. Rollout and rollback
 
 - Land every slice as a small commit on a dedicated branch.
 - Preserve the old public tool names and module IDs during P1.
@@ -159,7 +205,7 @@ feature counts must not be reported as task-success improvements.
   capability extraction.
 - A slice is rollback-safe when reverting it requires no user-data migration.
 
-## 8. Current progress
+## 9. Current progress
 
 - [x] Baseline work isolated on `refactor/agent-runtime-capabilities`.
 - [x] P1a session capability lifecycle.
@@ -167,6 +213,7 @@ feature counts must not be reported as task-success improvements.
 - [x] P1c profiles, reload, and declarative provider settings.
 - [x] P2 continuable jobs and subagents, including fenced checkpoint recovery,
   committed-result reconciliation, and explicit replay decisions.
+- [x] P3a durable background shell jobs and bounded result spill.
 - [ ] P3 general execution.
 - [ ] P4 provider and host seams.
 - [ ] P5 event-sourced runtime state.

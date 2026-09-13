@@ -455,7 +455,7 @@ test("backup v3 preserves Vault v4 secret memories and staged restore rejects co
     sourceAfterBackup.dispose();
     const manifest = JSON.parse(readFileSync(join(backupDir, "backup-manifest.json"), "utf8"));
     assert.equal(manifest.schemaVersion, 3);
-    assert.equal(manifest.database.schemaVersion, 65);
+    assert.equal(manifest.database.schemaVersion, 66);
     assert.equal(manifest.database.integrityCheck, "ok");
     assert.equal(manifest.vault.projectionConsistent, true);
     assert.equal(manifest.containsMemoryVaultHistory, true);

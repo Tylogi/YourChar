@@ -136,6 +136,10 @@ test("incognito inherits a stable transcript, supports meetings, and leaves pare
       "tavily_search",
       "read_web_page",
       "delegate_task",
+      "start_shell_job",
+      "list_execution_jobs",
+      "get_execution_job",
+      "interrupt_execution_job",
       "share_workspace_file",
     ]) {
       assert.equal(childTools.includes(blocked), false, `${blocked} must be unavailable in incognito`);

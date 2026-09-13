@@ -114,6 +114,13 @@ import { browserAsset } from "./browser-assets.js";
 import type { AgentMessage } from "@earendil-works/pi-agent-core";
 import { MemoryVaultError } from "../memory-vault/errors.js";
 import { MemoryLifecycleError } from "../memory-coordinator/lifecycle.js";
+import {
+  ExecutionJobCapacityError,
+  ExecutionJobNotFoundError,
+  ExecutionJobStateError,
+  ExecutionJobValidationError,
+  maximumExecutionOutputPageBytes,
+} from "../execution/index.js";
 import type { MemoryControlPlaneEdit } from "../memory-coordinator/types.js";
 import { UserInsightControlError } from "../user-insight/index.js";
 import {
@@ -382,6 +389,15 @@ export function createHttpServer(options: HttpServerOptions = {}) {
         });
       } else if (error instanceof AgentModuleSettingsUnavailableError) {
         sendJson(response, 404, { code: error.code, error: error.message });
+      } else if (error instanceof ExecutionJobNotFoundError) {
+        sendJson(response, 404, { code: error.code, error: error.message });
+      } else if (error instanceof ExecutionJobValidationError) {
+        sendJson(response, 400, { code: error.code, error: error.message });
+      } else if (
+        error instanceof ExecutionJobStateError ||
+        error instanceof ExecutionJobCapacityError
+      ) {
+        sendJson(response, 409, { code: error.code, error: error.message });
       } else if (error instanceof SubagentJobNotFoundError) {
         sendJson(response, 404, { code: error.code, error: error.message });
       } else if (error instanceof SubagentJobStateError) {
@@ -646,6 +662,8 @@ async function route(input: {
       compactContext: "POST /api/v1/sessions/{id}/compact",
       subagentJobs:
         "GET/POST /api/v1/sessions/{id}/subagent-jobs; GET /api/v1/sessions/{id}/subagent-jobs/{jobId}; POST /api/v1/sessions/{id}/subagent-jobs/{jobId}/{messages|interrupt|retry}",
+      executionJobs:
+        "GET/POST /api/v1/sessions/{id}/execution-jobs; GET /api/v1/sessions/{id}/execution-jobs/{jobId}[/output]; POST /api/v1/sessions/{id}/execution-jobs/{jobId}/{interrupt|retry}",
       imChannels: "GET /api/v1/im/channels",
       imSettings: "GET/PATCH /api/v1/im/settings",
       imBindingQr: "POST /api/v1/im/bindings/{provider}/qr",
@@ -937,6 +955,103 @@ async function route(input: {
         updatedAt: record.updatedAt,
       })),
     });
+    return;
+  }
+
+  const executionJobRetryMatch = pathname.match(
+    /^\/api\/v1\/sessions\/([^/]+)\/execution-jobs\/([^/]+)\/retry$/,
+  );
+  if (executionJobRetryMatch && method === "POST") {
+    assertLocalControlPlaneMutation(input.request);
+    const body = asRecord(await readJson(input.request));
+    assertOnlyKeys(body, [], "Execution job retry");
+    const job = kernel.retryExecutionJob(
+      decodeURIComponent(executionJobRetryMatch[1]),
+      decodeURIComponent(executionJobRetryMatch[2]),
+    );
+    sendJson(input.response, 202, { job });
+    return;
+  }
+
+  const executionJobInterruptMatch = pathname.match(
+    /^\/api\/v1\/sessions\/([^/]+)\/execution-jobs\/([^/]+)\/interrupt$/,
+  );
+  if (executionJobInterruptMatch && method === "POST") {
+    assertLocalControlPlaneMutation(input.request);
+    const body = asRecord(await readJson(input.request));
+    assertOnlyKeys(body, [], "Execution job interruption");
+    const job = await kernel.interruptExecutionJob(
+      decodeURIComponent(executionJobInterruptMatch[1]),
+      decodeURIComponent(executionJobInterruptMatch[2]),
+    );
+    sendJson(input.response, 200, { job });
+    return;
+  }
+
+  const executionJobOutputMatch = pathname.match(
+    /^\/api\/v1\/sessions\/([^/]+)\/execution-jobs\/([^/]+)\/output$/,
+  );
+  if (executionJobOutputMatch && method === "GET") {
+    const attempt = optionalQueryInteger(url.searchParams.get("attempt"), "attempt", 1);
+    const cursor = optionalQueryInteger(url.searchParams.get("cursor"), "cursor", 0);
+    const limitBytes = optionalQueryInteger(
+      url.searchParams.get("limitBytes"),
+      "limitBytes",
+      4 * 1_024,
+    );
+    if (limitBytes !== undefined && limitBytes > maximumExecutionOutputPageBytes) {
+      throw new SyntaxError(`limitBytes must not exceed ${maximumExecutionOutputPageBytes}`);
+    }
+    sendJson(input.response, 200, {
+      output: kernel.getExecutionJobOutput(
+        decodeURIComponent(executionJobOutputMatch[1]),
+        decodeURIComponent(executionJobOutputMatch[2]),
+        {
+          ...(attempt === undefined ? {} : { attempt }),
+          ...(cursor === undefined ? {} : { cursor }),
+          ...(limitBytes === undefined ? {} : { limitBytes }),
+        },
+      ),
+    });
+    return;
+  }
+
+  const executionJobsMatch = pathname.match(
+    /^\/api\/v1\/sessions\/([^/]+)\/execution-jobs(?:\/([^/]+))?$/,
+  );
+  if (executionJobsMatch && method === "GET") {
+    const parentSessionId = decodeURIComponent(executionJobsMatch[1]);
+    if (executionJobsMatch[2] !== undefined) {
+      sendJson(input.response, 200, {
+        job: kernel.getExecutionJob(
+          parentSessionId,
+          decodeURIComponent(executionJobsMatch[2]),
+        ),
+      });
+      return;
+    }
+    const limit = optionalQueryInteger(url.searchParams.get("limit"), "limit", 1) ?? 20;
+    if (limit > 100) throw new SyntaxError("limit must not exceed 100");
+    sendJson(input.response, 200, {
+      jobs: kernel.listExecutionJobs(parentSessionId, limit),
+    });
+    return;
+  }
+  if (executionJobsMatch && method === "POST" && executionJobsMatch[2] === undefined) {
+    assertLocalControlPlaneMutation(input.request);
+    const body = asRecord(await readJson(input.request));
+    assertOnlyKeys(body, ["command", "timeoutSeconds"], "Execution job request");
+    const timeoutSeconds = body.timeoutSeconds === undefined
+      ? undefined
+      : requiredPositiveInteger(body.timeoutSeconds, "timeoutSeconds");
+    const job = kernel.startExecutionJob(
+      decodeURIComponent(executionJobsMatch[1]),
+      {
+        command: requiredExecutionCommand(body.command),
+        ...(timeoutSeconds === undefined ? {} : { timeoutSeconds }),
+      },
+    );
+    sendJson(input.response, 202, { job });
     return;
   }
 
@@ -4818,6 +4933,12 @@ function requiredStringValue(value: unknown, field: string, allowEmpty = false):
   return normalized;
 }
 
+function requiredExecutionCommand(value: unknown): string {
+  if (typeof value !== "string") throw new SyntaxError("command must be a string");
+  if (!value.trim()) throw new SyntaxError("command is required");
+  return value;
+}
+
 function requiredGitProxyMode(value: unknown): "direct" | "hclient" {
   if (value !== "direct" && value !== "hclient") {
     throw new SyntaxError("proxyMode must be direct or hclient");
@@ -5228,6 +5349,19 @@ function optionalPositiveInteger(value: unknown): number | undefined {
   if (value === undefined || value === null || value === "") return undefined;
   const number = Number(value);
   return Number.isInteger(number) && number > 0 ? number : undefined;
+}
+
+function optionalQueryInteger(
+  value: string | null,
+  field: string,
+  minimum: number,
+): number | undefined {
+  if (value === null || value === "") return undefined;
+  const parsed = Number(value);
+  if (!Number.isInteger(parsed) || parsed < minimum) {
+    throw new SyntaxError(`${field} must be an integer greater than or equal to ${minimum}`);
+  }
+  return parsed;
 }
 
 function optionalProactiveMessageStatus(value: unknown): ProactiveMessageStatus | undefined {

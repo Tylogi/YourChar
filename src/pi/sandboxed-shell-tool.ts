@@ -7,7 +7,7 @@ import type { CompanionStore } from "../domain/store.js";
 import type { ActionRecord } from "../domain/types.js";
 import type { WorkspaceAccess } from "../modules/types.js";
 
-const bubblewrapPath = "/usr/bin/bwrap";
+export const bubblewrapPath = "/usr/bin/bwrap";
 const maxOutputBytes = 64 * 1024;
 const defaultTimeoutMs = 30_000;
 
@@ -24,6 +24,11 @@ export type SandboxedShellContext = {
   sessionId: string;
   actions: () => ActionRecord[];
 };
+
+export type SandboxedShellPolicy = Pick<
+  SandboxedShellContext,
+  "workspaceDir" | "workspaceAccess" | "networkEnabled"
+>;
 
 export function createSandboxedShellTool(
   context: SandboxedShellContext,
@@ -146,8 +151,8 @@ async function runSandboxedCommand(
   }
 }
 
-function sandboxArguments(
-  context: SandboxedShellContext,
+export function sandboxArguments(
+  context: SandboxedShellPolicy,
   command: string,
   networkEnabled = effectiveNetworkEnabled(context),
 ): string[] {
@@ -197,6 +202,6 @@ function sandboxArguments(
   return args;
 }
 
-function effectiveNetworkEnabled(context: SandboxedShellContext): boolean {
+function effectiveNetworkEnabled(context: SandboxedShellPolicy): boolean {
   return context.networkEnabled;
 }
