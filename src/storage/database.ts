@@ -3173,6 +3173,42 @@ const migrations: Migration[] = [
         CHECK (followup_count BETWEEN 0 AND 8);
     `,
   },
+  {
+    version: 62,
+    sql: `
+      CREATE TABLE subagent_job_deliveries (
+        job_id TEXT NOT NULL REFERENCES subagent_jobs(id) ON DELETE CASCADE,
+        generation INTEGER NOT NULL CHECK (generation BETWEEN 1 AND 9),
+        status TEXT NOT NULL CHECK (
+          status IN ('waiting', 'pending', 'delivered', 'discarded')
+        ),
+        outcome_status TEXT CHECK (
+          outcome_status IS NULL OR outcome_status IN ('completed', 'failed', 'cancelled')
+        ),
+        job_revision INTEGER CHECK (job_revision IS NULL OR job_revision >= 1),
+        attempts INTEGER NOT NULL DEFAULT 0 CHECK (attempts BETWEEN 0 AND 8),
+        created_at TEXT NOT NULL,
+        delivered_at TEXT,
+        discarded_at TEXT,
+        updated_at TEXT NOT NULL,
+        PRIMARY KEY (job_id, generation),
+        CHECK (
+          (status = 'waiting' AND outcome_status IS NULL AND job_revision IS NULL
+            AND delivered_at IS NULL AND discarded_at IS NULL)
+          OR
+          (status = 'pending' AND outcome_status IS NOT NULL AND job_revision IS NOT NULL
+            AND delivered_at IS NULL AND discarded_at IS NULL)
+          OR
+          (status = 'delivered' AND outcome_status IS NOT NULL AND job_revision IS NOT NULL
+            AND delivered_at IS NOT NULL AND discarded_at IS NULL)
+          OR
+          (status = 'discarded' AND delivered_at IS NULL AND discarded_at IS NOT NULL)
+        )
+      );
+      CREATE INDEX subagent_job_deliveries_pending_idx
+        ON subagent_job_deliveries(status, created_at, job_id, generation);
+    `,
+  },
 ];
 
 export class AppDatabase {

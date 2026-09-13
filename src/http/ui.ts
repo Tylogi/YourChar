@@ -18740,7 +18740,9 @@ export function renderAppHtml(): string {
         ? mergeMessageAttachments(presentation.attachments, explicitAttachments)
         : message.role === "assistant" ? explicitAttachments : [];
       if (!presentation.text && !attachments.length) return null;
-      const isSystemEvent = message.role === "custom" && message.customType === "rp-agent/system_event";
+      const isSystemEvent = message.role === "custom" &&
+        (message.customType === "rp-agent/system_event" ||
+          message.customType === "rp-agent/subagent_job_result");
       const isLegacySystemReply = message.role === "assistant" &&
         (message.api === "rp-agent" || message.provider === "rp-agent" || message.model === "rp-agent");
       const role = isSystemEvent || isLegacySystemReply || message.errorMessage

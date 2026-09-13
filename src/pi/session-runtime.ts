@@ -397,6 +397,7 @@ type SubagentRunInput = {
   signal?: AbortSignal;
   followupPrompt?: string;
   restoredMessages?: readonly AgentMessage[];
+  notifyParent?: boolean;
 };
 
 type SubagentRunAdmission = Readonly<{
@@ -465,6 +466,8 @@ export type PiSessionRuntimeOptions = {
   subagentSettings?: () => SubagentSettingsValues;
   /** Host-owned durable identity and lifecycle ledger for delegated work. */
   subagentJobs: SubagentJobService;
+  /** Host callback fired after a background job reaches a durable terminal state. */
+  onSubagentJobTerminal?: (jobId: string) => void;
   /** Deployment-trusted handle-scoped capabilities composed with the built-ins. */
   additionalSessionCapabilities?: readonly SessionCapability[];
   /**
@@ -605,6 +608,7 @@ export class PiSessionRuntime {
   private readonly subagentTimeoutMsOverride?: number;
   private readonly subagentSettings: () => SubagentSettingsValues;
   private readonly subagentJobs: SubagentJobService;
+  private subagentJobTerminalListener?: (jobId: string) => void;
   private readonly incognitoChild: boolean;
   private readonly conversationCheckpointSummarizer?: ConversationCheckpointSummarizer;
   private readonly checkpointControllers = new Set<AbortController>();
@@ -656,6 +660,7 @@ export class PiSessionRuntime {
       : normalizeSubagentTimeoutMs(options.subagentTimeoutMs);
     this.subagentSettings = options.subagentSettings ?? (() => defaultSubagentSettings);
     this.subagentJobs = options.subagentJobs;
+    this.subagentJobTerminalListener = options.onSubagentJobTerminal;
     this.additionalSessionCapabilities = normalizeAdditionalSessionCapabilities(
       options.additionalSessionCapabilities ?? [],
     );
@@ -667,6 +672,10 @@ export class PiSessionRuntime {
       ? join(this.stateDir, "pi-agent")
       : join(this.cwd, EPHEMERAL_STATE_DIRECTORY_NAME);
     this.loadConversationIndex();
+  }
+
+  setSubagentJobTerminalListener(listener?: (jobId: string) => void): void {
+    this.subagentJobTerminalListener = listener;
   }
 
   async getOrCreate(
@@ -2054,6 +2063,7 @@ export class PiSessionRuntime {
       timezone,
       actions: [],
       signal: controller.signal,
+      notifyParent: true,
     };
     const admission = this.admitSubagent(input);
     return this.launchBackgroundSubagent(input, admission, controller);
@@ -2162,11 +2172,19 @@ export class PiSessionRuntime {
     const execution = this.executeSubagent(input, admission);
     const observed = execution.then(
       (result) => {
-        this.recordBackgroundSubagentOutcome(input, result);
+        try {
+          this.recordBackgroundSubagentOutcome(input, result);
+        } finally {
+          this.notifySubagentJobTerminal(result.jobId);
+        }
         return result;
       },
       (error: unknown) => {
-        this.recordBackgroundSubagentOutcome(input, error);
+        try {
+          this.recordBackgroundSubagentOutcome(input, error);
+        } finally {
+          this.notifySubagentJobTerminal(admission.job.id);
+        }
         throw error;
       },
     );
@@ -2180,6 +2198,14 @@ export class PiSessionRuntime {
     });
     void tracked.catch(() => undefined);
     return this.subagentJobs.get(input.parentSessionId, admission.job.id) ?? admission.job;
+  }
+
+  private notifySubagentJobTerminal(jobId: string): void {
+    try {
+      this.subagentJobTerminalListener?.(jobId);
+    } catch {
+      // The durable delivery outbox remains pending for startup reconciliation.
+    }
   }
 
   async interruptSubagentJob(
@@ -2196,10 +2222,12 @@ export class PiSessionRuntime {
       if (this.activeSubagentJobIds.has(jobId)) {
         throw new SubagentJobStateError(jobId, "an interruptible background job");
       }
-      return this.subagentJobs.fail(
+      const interrupted = this.subagentJobs.fail(
         jobId,
         emptySubagentFailureDiagnostic("interrupted", true),
       );
+      this.notifySubagentJobTerminal(jobId);
+      return interrupted;
     }
     active.controller.abort();
     await active.promise.catch(() => undefined);
@@ -2317,6 +2345,7 @@ export class PiSessionRuntime {
         : {}),
       budgets: subagentSettings,
       grants: admittedGrants,
+      notifyParent: input.notifyParent === true,
     });
     this.activeSubagentCounts.set(input.parentSessionId, active + 1);
     this.activeSubagentJobIds.add(job.id);

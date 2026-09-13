@@ -130,6 +130,13 @@ test("legacy delegation records a durable, redacted job and exposes scoped list/
     const finalProviderPayload = JSON.stringify(runtime.model.requests.at(-1)?.providerPayload);
     assert.match(finalProviderPayload, /DURABLE_SUBAGENT_RESULT_SENTINEL/u);
     assert.match(finalProviderPayload, new RegExp(job.id, "u"));
+    assert.equal(
+      Number((runtime.kernel.database.connection.prepare(`
+        SELECT COUNT(*) AS count FROM subagent_job_deliveries WHERE job_id = ?
+      `).get(job.id) as { count: number }).count),
+      0,
+      "blocking delegation already returns its result inline and must not enqueue a second delivery",
+    );
 
     const metadata = runtime.kernel.listConversationMetadata()
       .find((entry) => entry.id === "durable-subagent-parent");
@@ -217,6 +224,253 @@ test("a background Subagent job survives parent handle eviction and completes du
   }
 });
 
+test("background Subagent result delivery persists one reference and reconciles the post-append crash window", async () => {
+  const stateDir = mkdtempSync(join(tmpdir(), "yourchar-subagent-delivery-"));
+  const parentSessionId = "background-subagent-delivery-parent";
+  const task = "DELIVERY_PRIVATE_TASK_SENTINEL";
+  const output = "DELIVERY_PRIVATE_RESULT_SENTINEL";
+  let first: ReturnType<typeof createTestRuntime> | undefined = createTestRuntime({
+    stateDir,
+    seed: "subagent-delivery-first",
+  });
+  try {
+    first.kernel.setAgentModuleEnabled("mcp:subagent", true);
+    first.model.enqueue([{ kind: "assistant_text", text: "父会话已建立。" }]);
+    await first.kernel.sendMessage(parentSessionId, {
+      mode: "sms",
+      text: "建立结果投递父会话。",
+    });
+    first.model.enqueue([{ kind: "assistant_text", text: output }]);
+    const admitted = first.kernel.startSubagentJob(parentSessionId, {
+      role: "worker",
+      task,
+    });
+    await waitFor(() =>
+      first?.kernel.getSubagentJob(parentSessionId, admitted.id).status === "completed"
+    );
+    await first.kernel.flushSubagentJobDeliveries(admitted.id);
+    await waitFor(() => subagentDeliveryState(first!, admitted.id).status === "delivered");
+
+    const delivered = await first.kernel.getSession(parentSessionId);
+    const markers = subagentDeliveryMarkers(delivered.messages, admitted.id);
+    assert.equal(markers.length, 1);
+    assert.match(String(markers[0].content), new RegExp(admitted.id, "u"));
+    assert.match(String(markers[0].content), /get_subagent_job/u);
+    assert.doesNotMatch(String(markers[0].content), /DELIVERY_PRIVATE_(?:TASK|RESULT)_SENTINEL/u);
+    assert.equal(
+      first.kernel.store.allActions().filter((action) =>
+        action.actionType === "deliver_subagent_job_result" &&
+        action.payload.jobId === admitted.id
+      ).length,
+      1,
+    );
+    first.model.enqueue([{ kind: "assistant_text", text: "父 Agent 已收到结果引用。" }]);
+    await first.kernel.sendMessage(parentSessionId, {
+      mode: "sms",
+      text: "检查刚才后台任务的状态。",
+    });
+    const nextParentRequest = first.model.requests.at(-1);
+    assert.ok(nextParentRequest);
+    assert.match(JSON.stringify(nextParentRequest.messages), new RegExp(admitted.id, "u"));
+    assert.equal(nextParentRequest.toolNames.includes("get_subagent_job"), true);
+    assert.doesNotMatch(
+      JSON.stringify(nextParentRequest.messages),
+      /DELIVERY_PRIVATE_(?:TASK|RESULT)_SENTINEL/u,
+    );
+
+    // Simulate a process loss after the Pi session append and audit commit but
+    // before the delivery ACK reaches SQLite.
+    first.kernel.database.connection.prepare(`
+      UPDATE subagent_job_deliveries
+      SET status = 'pending', delivered_at = NULL, updated_at = ?
+      WHERE job_id = ? AND generation = 1
+    `).run("2026-09-14T00:00:00.000Z", admitted.id);
+    first.dispose();
+    first = undefined;
+
+    const second = createTestRuntime({
+      stateDir,
+      seed: "subagent-delivery-second",
+    });
+    try {
+      await second.kernel.flushSubagentJobDeliveries(admitted.id);
+      await waitFor(() => subagentDeliveryState(second, admitted.id).status === "delivered");
+      const reconciled = await second.kernel.getSession(parentSessionId);
+      assert.equal(subagentDeliveryMarkers(reconciled.messages, admitted.id).length, 1);
+      assert.equal(
+        second.kernel.store.allActions().filter((action) =>
+          action.actionType === "deliver_subagent_job_result" &&
+          action.payload.jobId === admitted.id
+        ).length,
+        1,
+      );
+      assert.doesNotMatch(
+        JSON.stringify(second.kernel.store.allActions()),
+        /DELIVERY_PRIVATE_(?:TASK|RESULT)_SENTINEL/u,
+      );
+    } finally {
+      second.dispose();
+    }
+  } finally {
+    first?.dispose();
+    rmSync(stateDir, { recursive: true, force: true });
+  }
+});
+
+test("a failed Subagent result append stays pending and retries without leaking diagnostics", async () => {
+  const runtime = createTestRuntime({ seed: "subagent-delivery-retry" });
+  const parentSessionId = "background-subagent-delivery-retry-parent";
+  const privateOutput = "DELIVERY_RETRY_PRIVATE_RESULT_SENTINEL";
+  const privateAppendError = "DELIVERY_RETRY_PRIVATE_APPEND_ERROR_SENTINEL";
+  const sessionRuntime = runtime.kernel.sessionRuntime;
+  const originalAppend = sessionRuntime.appendMessages.bind(sessionRuntime);
+  try {
+    runtime.kernel.setAgentModuleEnabled("mcp:subagent", true);
+    runtime.model.enqueue([{ kind: "assistant_text", text: "父会话已建立。" }]);
+    await runtime.kernel.sendMessage(parentSessionId, {
+      mode: "sms",
+      text: "建立投递重试父会话。",
+    });
+    let rejectedOnce = false;
+    sessionRuntime.appendMessages = ((handle, messages) => {
+      if (!rejectedOnce && messages.some((message) =>
+        message.role === "custom" && message.customType === "rp-agent/subagent_job_result"
+      )) {
+        rejectedOnce = true;
+        throw new Error(privateAppendError);
+      }
+      originalAppend(handle, messages);
+    }) as typeof sessionRuntime.appendMessages;
+    runtime.model.enqueue([{ kind: "assistant_text", text: privateOutput }]);
+    const admitted = runtime.kernel.startSubagentJob(parentSessionId, {
+      role: "worker",
+      task: "Run the private delivery retry fixture.",
+    });
+    await waitFor(() =>
+      runtime.kernel.getSubagentJob(parentSessionId, admitted.id).status === "completed"
+    );
+    await waitFor(() => subagentDeliveryState(runtime, admitted.id).attempts >= 1);
+    assert.equal(subagentDeliveryState(runtime, admitted.id).status, "pending");
+
+    sessionRuntime.appendMessages = originalAppend;
+    await runtime.kernel.flushSubagentJobDeliveries(admitted.id);
+    await waitFor(() => subagentDeliveryState(runtime, admitted.id).status === "delivered");
+    const parent = await runtime.kernel.getSession(parentSessionId);
+    assert.equal(subagentDeliveryMarkers(parent.messages, admitted.id).length, 1);
+    const audit = JSON.stringify(runtime.kernel.store.allActions());
+    assert.match(audit, /deliver_subagent_job_result/u);
+    assert.doesNotMatch(
+      audit,
+      /DELIVERY_RETRY_PRIVATE_(?:RESULT|APPEND_ERROR)_SENTINEL/u,
+    );
+  } finally {
+    sessionRuntime.appendMessages = originalAppend;
+    runtime.dispose();
+  }
+});
+
+test("Subagent delivery rechecks the parent after loading its transcript", async () => {
+  const runtime = createTestRuntime({ seed: "subagent-delivery-archive-race" });
+  const parentSessionId = "background-subagent-delivery-archive-parent";
+  const sessionRuntime = runtime.kernel.sessionRuntime;
+  const originalTranscript = sessionRuntime.getConversationTranscript.bind(sessionRuntime);
+  let archivedDuringRead = false;
+  try {
+    runtime.kernel.setAgentModuleEnabled("mcp:subagent", true);
+    runtime.model.enqueue([{ kind: "assistant_text", text: "父会话已建立。" }]);
+    await runtime.kernel.sendMessage(parentSessionId, {
+      mode: "sms",
+      text: "建立归档竞态父会话。",
+    });
+    sessionRuntime.getConversationTranscript = (async (sessionId) => {
+      const transcript = await originalTranscript(sessionId);
+      if (sessionId === parentSessionId && !archivedDuringRead) {
+        archivedDuringRead = true;
+        runtime.kernel.archiveConversation(parentSessionId);
+      }
+      return transcript;
+    }) as typeof sessionRuntime.getConversationTranscript;
+    runtime.model.enqueue([{ kind: "assistant_text", text: "ARCHIVED_PRIVATE_RESULT_SENTINEL" }]);
+    const admitted = runtime.kernel.startSubagentJob(parentSessionId, {
+      role: "worker",
+      task: "Complete the archive-race fixture.",
+    });
+    await waitFor(() =>
+      runtime.kernel.getSubagentJob(parentSessionId, admitted.id).status === "completed"
+    );
+    await waitFor(() => subagentDeliveryState(runtime, admitted.id).status === "discarded");
+    assert.equal(archivedDuringRead, true);
+    assert.equal(
+      subagentDeliveryMarkers(await originalTranscript(parentSessionId), admitted.id).length,
+      0,
+    );
+  } finally {
+    sessionRuntime.getConversationTranscript = originalTranscript;
+    runtime.dispose();
+  }
+});
+
+test("startup-style Subagent delivery drains more than one outbox page", async () => {
+  const runtime = createTestRuntime({ seed: "subagent-delivery-pagination" });
+  const parentSessionId = "background-subagent-delivery-pagination-parent";
+  try {
+    runtime.model.enqueue([{ kind: "assistant_text", text: "父会话已建立。" }]);
+    await runtime.kernel.sendMessage(parentSessionId, {
+      mode: "sms",
+      text: "建立积压投递父会话。",
+    });
+    const settings = runtime.kernel.getSubagentSettings();
+    const budgets = {
+      maxConcurrentTasks: settings.maxConcurrentTasks,
+      maxWorkModelCalls: settings.maxWorkModelCalls,
+      maxOutputTokens: settings.maxOutputTokens,
+      maxResultCharacters: settings.maxResultCharacters,
+      timeoutSeconds: settings.timeoutSeconds,
+      timeoutMs: settings.timeoutSeconds * 1_000,
+    };
+    const grants = {
+      workspaceAccess: "off" as const,
+      moduleIds: [] as string[],
+      skillNames: [] as string[],
+      toolNames: [] as string[],
+    };
+    const jobIds: string[] = [];
+    for (let index = 0; index < 101; index += 1) {
+      const job = runtime.kernel.subagentJobs.create({
+        parentSessionId,
+        role: "worker",
+        task: `Drain fixture ${index}`,
+        mode: "sms",
+        conversationSpace: "normal",
+        budgets,
+        grants,
+        notifyParent: true,
+      });
+      runtime.kernel.subagentJobs.start(job.id, grants);
+      runtime.kernel.subagentJobs.complete(job.id, subagentCompletion(`result ${index}`));
+      jobIds.push(job.id);
+    }
+
+    assert.equal(await runtime.kernel.flushSubagentJobDeliveries(), 101);
+    const counts = runtime.kernel.database.connection.prepare(`
+      SELECT status, COUNT(*) AS count FROM subagent_job_deliveries GROUP BY status
+    `).all() as Array<{ status: string; count: number }>;
+    assert.deepEqual(
+      counts.map((row) => ({ status: row.status, count: row.count })),
+      [{ status: "delivered", count: 101 }],
+    );
+    const transcript = await runtime.kernel.getSession(parentSessionId);
+    assert.equal(
+      transcript.messages.filter((message) =>
+        message.role === "custom" && message.customType === "rp-agent/subagent_job_result"
+      ).length,
+      jobIds.length,
+    );
+  } finally {
+    runtime.dispose();
+  }
+});
+
 test("interrupting a background Subagent job propagates cancellation and is idempotent", async () => {
   const runtime = createTestRuntime({ seed: "subagent-background-interrupt" });
   const parentSessionId = "interrupt-subagent-parent";
@@ -249,6 +503,13 @@ test("interrupting a background Subagent job propagates cancellation and is idem
     const repeated = await runtime.kernel.interruptSubagentJob(parentSessionId, admitted.id);
     assert.equal(repeated.status, "cancelled");
     assert.equal(repeated.revision, cancelled.revision);
+    await runtime.kernel.flushSubagentJobDeliveries(admitted.id);
+    await waitFor(() => subagentDeliveryState(runtime, admitted.id).status === "delivered");
+    const parent = await runtime.kernel.getSession(parentSessionId);
+    const delivery = subagentDeliveryMarkers(parent.messages, admitted.id);
+    assert.equal(delivery.length, 1);
+    assert.match(String(delivery[0].content), /已取消/u);
+    assert.doesNotMatch(String(delivery[0].content), /INTERRUPTED_BACKGROUND_RESULT_MUST_NOT_PERSIST/u);
 
     const backgroundAudit = runtime.kernel.store.actions.find((action) =>
       action.actionType === "background_subagent_job" && action.payload.jobId === admitted.id
@@ -592,6 +853,19 @@ test("Subagent continuation is CAS-bounded, cannot widen grants, and degrades sa
     assert.equal(completedWithoutTranscript.output, "bounded result remains available");
     assert.equal(completedWithoutTranscript.continuation.transcriptStored, false);
     assert.equal(completedWithoutTranscript.continuation.available, false);
+    const deliveries = runtime.kernel.database.connection.prepare(`
+      SELECT generation, status FROM subagent_job_deliveries
+      WHERE job_id = ? ORDER BY generation
+    `).all(created.id) as Array<{ generation: number; status: string }>;
+    assert.equal(deliveries.length, maximumSubagentFollowupTurns);
+    assert.deepEqual(
+      deliveries.map((delivery) => delivery.generation),
+      Array.from({ length: maximumSubagentFollowupTurns }, (_, index) => index + 1),
+    );
+    assert.deepEqual(
+      deliveries.map((delivery) => delivery.status),
+      [...Array(maximumSubagentFollowupTurns - 1).fill("discarded"), "pending"],
+    );
   } finally {
     runtime.dispose();
   }
@@ -760,4 +1034,27 @@ function subagentCompletion(output: string) {
     forcedFinalization: false,
     maxResultCharacters: 64_000,
   };
+}
+
+function subagentDeliveryState(
+  runtime: ReturnType<typeof createTestRuntime>,
+  jobId: string,
+): { status: string; attempts: number } {
+  return runtime.kernel.database.connection.prepare(`
+    SELECT status, attempts FROM subagent_job_deliveries
+    WHERE job_id = ? ORDER BY generation DESC LIMIT 1
+  `).get(jobId) as { status: string; attempts: number };
+}
+
+function subagentDeliveryMarkers(messages: readonly unknown[], jobId: string): Array<{
+  content: unknown;
+}> {
+  return messages.filter((message): message is { content: unknown } => {
+    if (!message || typeof message !== "object" || Array.isArray(message)) return false;
+    const record = message as Record<string, unknown>;
+    if (record.role !== "custom" || record.customType !== "rp-agent/subagent_job_result") return false;
+    const details = record.details;
+    return Boolean(details && typeof details === "object" && !Array.isArray(details) &&
+      (details as Record<string, unknown>).subagentJobId === jobId);
+  });
 }

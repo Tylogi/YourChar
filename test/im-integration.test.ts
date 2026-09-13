@@ -102,7 +102,7 @@ test("current schema contains character-routed IM tables and scoped interaction 
     const version = database.connection.prepare(
       "SELECT MAX(version) AS version FROM schema_migrations",
     ).get() as { version: number };
-    assert.equal(Number(version.version), 61);
+    assert.equal(Number(version.version), 62);
     const tables = database.connection.prepare(`
       SELECT name FROM sqlite_master
       WHERE type = 'table' AND name LIKE 'im_%'

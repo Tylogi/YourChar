@@ -1,6 +1,6 @@
 # Private-Chat Subagent Delegation
 
-Status: P2 durable background continuation implemented; automatic recovery remains
+Status: P2 durable background continuation and result delivery implemented; automatic recovery remains
 
 ## Product boundary
 
@@ -99,7 +99,8 @@ Parent cancellation propagates to a blocking child, while
 `interrupt_subagent_job` propagates an explicit cancellation to a background
 child's model and provider transport. Schema 60 introduced the host-owned job
 record; schema 61 adds its bounded private transcript, pending follow-up, and
-continuation counter. The record retains stable job/child IDs, frozen budgets,
+continuation counter. Schema 62 adds a durable per-run delivery outbox. The
+record retains stable job/child IDs, frozen budgets,
 the explicit read-only module/Skill/tool grant, lifecycle timestamps, bounded
 result, and safe failure diagnostic. Raw task/context/follow-up text and the
 child transcript remain private table fields and never appear in ordinary
@@ -116,6 +117,13 @@ transcript and returns immediately. It keeps the stable child ID across process
 restart, applies the original frozen budgets to the new turn, and intersects
 the old grant with current permissions/configuration so continuation can never
 gain a Workspace, module, Skill, or tool capability.
+Each background terminal state queues a small parent-conversation notification
+containing the stable job reference, never the raw task or result. The parent
+Agent can retrieve the bounded result with `get_subagent_job`. Delivery is
+serialized with parent turns and reconciles a persisted transcript marker with
+the schema-62 outbox, so a restart between transcript append and acknowledgement
+does not duplicate the notification. Starting a newer follow-up supersedes an
+older notification that has not yet been delivered.
 Cross-session lookup, continuation, or interruption returns not found. The same
 scope is available to the host through:
 
@@ -139,8 +147,8 @@ Application disposal aborts live children after synchronously marking their
 durable rows interrupted. If the application starts with a `queued` or
 `running` row, it likewise marks that row failed with the retryable
 `interrupted` diagnostic. It deliberately does not replay model/tool work:
-pending follow-up text is retained privately for diagnosis, but idempotent
-result delivery and bounded automatic recovery are later P2 slices.
+pending follow-up text is retained privately for diagnosis, while bounded
+automatic recovery is a later P2 slice.
 
 ## Observability and testing
 
@@ -159,6 +167,6 @@ Regression tests must preserve:
 - audit redaction, usage details, Trace persistence, cancellation, and limits;
 - durable identity, background start/send/interrupt, scoped list/get,
   handle-eviction and completed-transcript restart continuation, grant
-  non-expansion, terminal transitions, restart fail-closed, conversation
-  erasure, and incognito physical purge;
+  non-expansion, terminal transitions, idempotent result-reference delivery,
+  restart fail-closed, conversation erasure, and incognito physical purge;
 - management-page detail and token-estimate rendering.

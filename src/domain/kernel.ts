@@ -140,6 +140,8 @@ import {
 import {
   SubagentJobNotFoundError,
   SubagentJobService,
+  type SubagentJobDelivery,
+  type SubagentJobDeliveryCursor,
 } from "../modules/subagent-jobs.js";
 import type { SubagentRequest } from "../mcp/subagent-server.js";
 import {
@@ -424,6 +426,7 @@ const WORLD_NARRATIVE_CONTEXT_SOFT_TOKENS = 32_000;
 const WORLD_NARRATIVE_INITIAL_PARTICIPANT_LIMIT = 6;
 const CONVERSATION_WAKE_FALLBACK_TEXT = "我睡醒了，现在又可以继续陪你啦。";
 const DEFAULT_CONVERSATION_WAKE_RETRY_DELAYS_MS = [5_000, 30_000] as const;
+const SUBAGENT_DELIVERY_RETRY_DELAYS_MS = [250, 1_000, 5_000] as const;
 
 type SystemExchangeOptions = {
   status: TurnStatus;
@@ -614,6 +617,9 @@ export class CompanionKernel {
   private readonly conversationWakeControllers = new Map<string, AbortController>();
   private readonly conversationWakeForegroundIntents = new Map<string, number>();
   private conversationWakeDisposed = false;
+  private readonly subagentDeliveryTimers = new Map<string, NodeJS.Timeout>();
+  private readonly subagentDeliveryRuns = new Map<string, Promise<boolean>>();
+  private subagentDeliveryDisposed = false;
   private deleteAllUserDataOperation?: Promise<void>;
   private readonly ownsDatabase: boolean;
   private readonly dataManagement: DataManagementRepository;
@@ -1149,6 +1155,9 @@ export class CompanionKernel {
         this.agentRuntimeConfiguration.activeCapabilities(),
       );
     }
+    this.sessionRuntime.setSubagentJobTerminalListener((jobId) => {
+      this.scheduleSubagentJobDeliveries(jobId);
+    });
     const privateInboxRepository = new PrivateInboxRepository(this.database);
     this.creator = new CreatorService(this.database, this.clock, this.store.idGenerator,
       createCreatorPort(this, () => {
@@ -1264,6 +1273,7 @@ export class CompanionKernel {
       for (const notification of this.sessionRuntime.listPendingConversationWakeNotifications()) {
         this.scheduleConversationWakeNotification(notification.sessionId);
       }
+      this.scheduleSubagentJobDeliveries();
     }
   }
 
@@ -3636,6 +3646,222 @@ export class CompanionKernel {
     return this.sessionRuntime.sendSubagentMessage(parentSessionId, jobId, prompt, timezone);
   }
 
+  async flushSubagentJobDeliveries(jobId?: string): Promise<number> {
+    if (this.subagentDeliveryDisposed || this.incognitoChild) return 0;
+    let delivered = 0;
+    let cursor: SubagentJobDeliveryCursor | undefined;
+    do {
+      const deliveries = this.subagentJobs.listPendingDeliveries(jobId, 100, cursor);
+      if (deliveries.length === 0) break;
+      const results = await Promise.all(deliveries.map((delivery) =>
+        this.runSubagentJobDelivery(delivery)
+      ));
+      delivered += results.filter(Boolean).length;
+      if (jobId !== undefined || deliveries.length < 100) break;
+      const last = deliveries[deliveries.length - 1]!;
+      cursor = {
+        createdAt: last.createdAt,
+        jobId: last.jobId,
+        generation: last.generation,
+      };
+    } while (!this.subagentDeliveryDisposed);
+    return delivered;
+  }
+
+  private scheduleSubagentJobDeliveries(jobId?: string): void {
+    if (this.subagentDeliveryDisposed || this.incognitoChild) return;
+    queueMicrotask(() => {
+      if (this.subagentDeliveryDisposed) return;
+      void this.flushSubagentJobDeliveries(jobId).catch(() => undefined);
+    });
+  }
+
+  private runSubagentJobDelivery(delivery: SubagentJobDelivery): Promise<boolean> {
+    const existing = this.subagentDeliveryRuns.get(delivery.id);
+    if (existing) return existing;
+    const operation = this.executionQueue.run(delivery.parentSessionId, async () =>
+      this.deliverSubagentJobResult(delivery)
+    ).catch(() => {
+      let failed: SubagentJobDelivery | undefined;
+      try {
+        failed = this.subagentJobs.recordDeliveryFailure(
+          delivery.jobId,
+          delivery.generation,
+        );
+      } catch {
+        return false;
+      }
+      try {
+        this.store.addAction("deliver_subagent_job_result", "failed", {
+          deliveryId: delivery.id,
+          jobId: delivery.jobId,
+          childSessionId: delivery.childSessionId,
+          generation: delivery.generation,
+          attempt: failed?.attempts ?? delivery.attempts + 1,
+          retryScheduled: Boolean(
+            failed && SUBAGENT_DELIVERY_RETRY_DELAYS_MS[failed.attempts - 1] !== undefined
+          ),
+        }, {
+          conversationSpace: delivery.conversationSpace,
+          ...(delivery.secretOwnerCharacterId
+            ? { secretOwnerCharacterId: delivery.secretOwnerCharacterId }
+            : {}),
+        });
+      } catch {
+        // Observability failure cannot consume or acknowledge the durable outbox.
+      }
+      if (failed) this.scheduleSubagentJobDeliveryRetry(failed);
+      return false;
+    }).finally(() => {
+      if (this.subagentDeliveryRuns.get(delivery.id) === operation) {
+        this.subagentDeliveryRuns.delete(delivery.id);
+      }
+    });
+    this.subagentDeliveryRuns.set(delivery.id, operation);
+    return operation;
+  }
+
+  private scheduleSubagentJobDeliveryRetry(delivery: SubagentJobDelivery): void {
+    if (this.subagentDeliveryDisposed || delivery.status !== "pending") return;
+    const delayMs = SUBAGENT_DELIVERY_RETRY_DELAYS_MS[delivery.attempts - 1];
+    if (delayMs === undefined || this.subagentDeliveryTimers.has(delivery.id)) return;
+    const timer = setTimeout(() => {
+      this.subagentDeliveryTimers.delete(delivery.id);
+      this.scheduleSubagentJobDeliveries(delivery.jobId);
+    }, delayMs);
+    timer.unref?.();
+    this.subagentDeliveryTimers.set(delivery.id, timer);
+  }
+
+  private stopSubagentJobDeliveries(): void {
+    this.subagentDeliveryDisposed = true;
+    this.sessionRuntime.setSubagentJobTerminalListener(undefined);
+    for (const timer of this.subagentDeliveryTimers.values()) clearTimeout(timer);
+    this.subagentDeliveryTimers.clear();
+  }
+
+  private async deliverSubagentJobResult(delivery: SubagentJobDelivery): Promise<boolean> {
+    if (this.subagentDeliveryDisposed) return false;
+    let current = this.subagentJobs.getDelivery(delivery.jobId, delivery.generation);
+    if (!current || current.status !== "pending" || !current.outcomeStatus ||
+        current.jobRevision === undefined) return false;
+    if (!this.isCurrentSubagentDeliveryParent(current)) {
+      this.subagentJobs.discardDelivery(current.jobId, current.generation);
+      return false;
+    }
+    const handle = await this.sessionRuntime.getOrCreate(
+      current.parentSessionId,
+      current.mode,
+      current.characterId,
+      current.conversationSpace,
+    );
+    if (this.subagentDeliveryDisposed) return false;
+    const transcript = await this.sessionRuntime.getConversationTranscript(current.parentSessionId);
+    if (this.subagentDeliveryDisposed) return false;
+    current = this.subagentJobs.getDelivery(current.jobId, current.generation);
+    if (!current || current.status !== "pending" || !current.outcomeStatus ||
+        current.jobRevision === undefined) return false;
+    const job = this.subagentJobs.get(current.parentSessionId, current.jobId);
+    if (!job || job.revision !== current.jobRevision || job.status !== current.outcomeStatus) {
+      this.subagentJobs.discardDelivery(current.jobId, current.generation);
+      return false;
+    }
+    if (!this.isCurrentSubagentDeliveryParent(current)) {
+      this.subagentJobs.discardDelivery(current.jobId, current.generation);
+      return false;
+    }
+    const existingMarker = transcript.find((message) =>
+      isSubagentJobDeliveryMarkerFor(message, current!.id)
+    );
+    const deliveredAt = existingMarker
+      ? messageTimestampIso(existingMarker, this.clock.now())
+      : this.clock.now().toISOString();
+    if (!existingMarker) {
+      const timestamp = new Date(deliveredAt).getTime();
+      const message: AgentMessage = {
+        role: "custom",
+        customType: "rp-agent/subagent_job_result",
+        content: subagentJobDeliveryText(current),
+        display: true,
+        details: {
+          eventType: current.outcomeStatus === "completed"
+            ? "operation_completed"
+            : current.outcomeStatus === "cancelled"
+              ? "cancelled"
+              : "operation_failed",
+          status: current.outcomeStatus === "completed"
+            ? "completed"
+            : current.outcomeStatus === "cancelled"
+              ? "cancelled"
+              : "failed",
+          canRetry: job.failure?.retryable ?? false,
+          subagentJobDeliveryId: current.id,
+          subagentJobId: current.jobId,
+          childSessionId: current.childSessionId,
+          generation: current.generation,
+          followupCount: current.followupCount,
+        },
+        timestamp,
+      };
+      try {
+        this.sessionRuntime.appendMessages(handle, [message]);
+      } catch (error) {
+        // Pi mutates its in-memory branch before the synchronous file append.
+        // Reload from the durable transcript before retrying so an unpersisted
+        // in-memory marker can never be mistaken for a delivered notification.
+        try {
+          this.sessionRuntime.invalidateSessionCapabilities(
+            current.parentSessionId,
+            "subagent_delivery_append_failed",
+          );
+        } catch {
+          // The outbox remains pending and startup reconciliation still wins.
+        }
+        throw error;
+      }
+    }
+    const completedActionExists = this.store.allActions().some((action) =>
+      action.actionType === "deliver_subagent_job_result" &&
+      action.status === "completed" &&
+      action.payload.deliveryId === current!.id
+    );
+    if (!completedActionExists) {
+      this.store.addAction("deliver_subagent_job_result", "completed", {
+        deliveryId: current.id,
+        jobId: current.jobId,
+        childSessionId: current.childSessionId,
+        generation: current.generation,
+        followupCount: current.followupCount,
+        jobStatus: current.outcomeStatus,
+        reconciled: Boolean(existingMarker),
+      }, {
+        conversationSpace: current.conversationSpace,
+        ...(current.secretOwnerCharacterId
+          ? { secretOwnerCharacterId: current.secretOwnerCharacterId }
+          : {}),
+      });
+    }
+    return this.subagentJobs.markDeliveryDelivered(
+      current.jobId,
+      current.generation,
+      deliveredAt,
+    ) || this.subagentJobs.getDelivery(current.jobId, current.generation)?.status === "delivered";
+  }
+
+  private isCurrentSubagentDeliveryParent(delivery: SubagentJobDelivery): boolean {
+    const metadata = this.sessionRuntime.getConversationMetadata()
+      .find((entry) => entry.id === delivery.parentSessionId);
+    return Boolean(
+      metadata &&
+      !metadata.archivedAt &&
+      metadata.mode === delivery.mode &&
+      metadata.conversationSpace === delivery.conversationSpace &&
+      metadata.characterId === delivery.characterId &&
+      (delivery.conversationSpace !== "secret" ||
+        metadata.characterId === delivery.secretOwnerCharacterId)
+    );
+  }
+
   patchSubagentSettings(patch: SubagentSettingsPatch, expectedRevision: number) {
     this.assertControlPlaneIdle();
     const settings = this.subagentSettingsService.patch(patch, expectedRevision);
@@ -4516,6 +4742,7 @@ export class CompanionKernel {
   dispose(): void {
     this.creator.dispose();
     this.stopConversationWakeNotifications();
+    this.stopSubagentJobDeliveries();
     this.incognitoSessions?.dispose();
     this.privateInbox.stop();
     this.scheduler.stop();
@@ -10280,6 +10507,27 @@ function isCharacterCollaborationReportMarkerFor(
     return false;
   }
   return (message.details as Record<string, unknown>).episodeId === episodeId;
+}
+
+function isSubagentJobDeliveryMarkerFor(message: AgentMessage, deliveryId: string): boolean {
+  if (
+    message.role !== "custom" ||
+    message.customType !== "rp-agent/subagent_job_result" ||
+    !message.details ||
+    typeof message.details !== "object" ||
+    Array.isArray(message.details)
+  ) return false;
+  return (message.details as Record<string, unknown>).subagentJobDeliveryId === deliveryId;
+}
+
+function subagentJobDeliveryText(delivery: SubagentJobDelivery): string {
+  if (delivery.outcomeStatus === "completed") {
+    return `【可信运行时通知，非用户输入】后台子 Agent 任务已完成（任务 ID：${delivery.jobId}）。结果已就绪，可使用 get_subagent_job 获取。`;
+  }
+  if (delivery.outcomeStatus === "cancelled") {
+    return `【可信运行时通知，非用户输入】后台子 Agent 任务已取消（任务 ID：${delivery.jobId}）。可使用 get_subagent_job 查看状态。`;
+  }
+  return `【可信运行时通知，非用户输入】后台子 Agent 任务未完成（任务 ID：${delivery.jobId}）。可使用 get_subagent_job 查看状态和可重试信息。`;
 }
 
 function fallbackCharacterCollaborationReport(

@@ -117,7 +117,7 @@ Required invariants:
   transports into one durable cancelled state.
 - [x] Persist bounded child Pi transcripts and add parent-scoped follow-up/send
   turns that preserve the stable child identity across restart.
-- [ ] Make completion notification/result delivery idempotent across process
+- [x] Make completion notification/result delivery idempotent across process
   restart.
 
 ### P2c — Recovery and side-effect checkpoints
@@ -158,9 +158,8 @@ feature counts must not be reported as task-success improvements.
 - [x] P1a session capability lifecycle.
 - [x] P1b declarative product contributions.
 - [x] P1c profiles, reload, and declarative provider settings.
-- [ ] P2 continuable jobs and subagents (P2a complete; P2b background controls
-  and continuation implemented, idempotent result delivery and P2c recovery
-  remain).
+- [ ] P2 continuable jobs and subagents (P2a and P2b complete; P2c recovery and
+  side-effect checkpoints remain).
 - [ ] P3 general execution.
 - [ ] P4 provider and host seams.
 - [ ] P5 event-sourced runtime state.
