@@ -97,6 +97,33 @@ Required invariants:
 - raw delegated prompts remain out of ordinary audit records;
 - restart recovery never repeats a committed external side effect silently.
 
+### P2a — Durable identity and lifecycle ledger
+
+- [x] Persist a stable job ID and child-session ID before delegated model work.
+- [x] Record queued/running/completed/failed/cancelled transitions with frozen
+  budgets and explicit read-only grants.
+- [x] Add parent-session-scoped list/status/result tools and host GET endpoints
+  without exposing task/context bodies in list or audit projections.
+- [x] Fail interrupted non-terminal work closed on startup instead of silently
+  replaying it; purge private job bodies from incognito and deletion flows.
+
+### P2b — Background control and continuation
+
+- [ ] Add non-blocking start plus status/list/send/interrupt operations while
+  retaining the blocking `delegate_task` compatibility path.
+- [ ] Persist child Pi transcripts and bounded follow-up turns so handle
+  eviction does not terminate admitted work.
+- [ ] Propagate cancellation through model, tool, and provider transports and
+  make completion/result delivery idempotent.
+
+### P2c — Recovery and side-effect checkpoints
+
+- [ ] Recover leased queued/running work from persistent child checkpoints.
+- [ ] Journal tool commits so recovery cannot repeat an external side effect
+  without an explicit retry decision.
+- [ ] Bound continuation depth, attempts, elapsed time, tokens, result size,
+  and capability grants across restarts.
+
 ## 6. Verification strategy
 
 Each slice must run, at minimum:
@@ -127,7 +154,7 @@ feature counts must not be reported as task-success improvements.
 - [x] P1a session capability lifecycle.
 - [x] P1b declarative product contributions.
 - [x] P1c profiles, reload, and declarative provider settings.
-- [ ] P2 continuable jobs and subagents.
+- [ ] P2 continuable jobs and subagents (P2a durable ledger complete; P2b/P2c remain).
 - [ ] P3 general execution.
 - [ ] P4 provider and host seams.
 - [ ] P5 event-sourced runtime state.

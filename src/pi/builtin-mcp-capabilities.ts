@@ -20,6 +20,7 @@ import type { CharacterAgentSkillPackageService } from "../modules/character-ski
 import type { MemoryLifecycleService } from "../memory-coordinator/lifecycle.js";
 import type { AgentModuleCatalog } from "../modules/catalog.js";
 import type { AgentPermissions } from "../modules/types.js";
+import type { SubagentJobDetail, SubagentJobSummary } from "../modules/subagent-jobs.js";
 import type { ScopedWorkspace } from "../workspace/scope.js";
 import {
   gitMcpModuleId,
@@ -121,6 +122,8 @@ export type BuiltinMcpCapabilityOptions = Readonly<{
   incognitoChild: boolean;
   subagentRuntimeTimeoutMs: () => number;
   runSubagent: (request: SubagentRequest, signal?: AbortSignal) => Promise<SubagentResult>;
+  listSubagentJobs: (limit: number) => readonly SubagentJobSummary[];
+  getSubagentJob: (jobId: string) => SubagentJobDetail | undefined;
   requestCharacterSkillCapabilityRefresh: () => void;
 }>;
 
@@ -252,6 +255,8 @@ export function createBuiltinMcpCapabilities(
         runtimeTimeoutMs: options.subagentRuntimeTimeoutMs(),
         actions,
         run: options.runSubagent,
+        listJobs: options.listSubagentJobs,
+        getJob: options.getSubagentJob,
       });
     }),
     defineCapability(builtinSessionCapabilityDescriptors.relationshipState, async () => {

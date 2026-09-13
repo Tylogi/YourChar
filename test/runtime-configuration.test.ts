@@ -26,7 +26,7 @@ const capabilityId = "test:profile-probe";
 const toolName = "profile_probe";
 const providerSettingsModuleId = "mcp:provider-settings-probe";
 
-test("schemas 58 and 59 add runtime snapshots and provider settings without changing older settings", () => {
+test("schemas 58-60 add runtime, provider settings, and Subagent jobs without changing older settings", () => {
   const directory = mkdtempSync(join(tmpdir(), "yourchar-runtime-schema-"));
   const path = join(directory, "state.sqlite");
   try {
@@ -43,7 +43,7 @@ test("schemas 58 and 59 add runtime snapshots and provider settings without chan
         Number((upgraded.connection.prepare(
           "SELECT MAX(version) AS version FROM schema_migrations",
         ).get() as { version: number }).version),
-        59,
+        60,
       );
       const manager = new AgentRuntimeConfigurationManager(
         upgraded,

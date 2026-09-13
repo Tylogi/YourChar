@@ -3,9 +3,14 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import * as z from "zod/v4";
 import type { CompanionStore } from "../domain/store.js";
 import type { ActionRecord } from "../domain/types.js";
+import type { SubagentJobDetail, SubagentJobSummary } from "../modules/subagent-jobs.js";
 import { connectMcpServerToPi, type McpPiBridge } from "./pi-adapter.js";
 
-export const subagentMcpToolNames = ["delegate_task"] as const;
+export const subagentMcpToolNames = [
+  "delegate_task",
+  "list_subagent_jobs",
+  "get_subagent_job",
+] as const;
 const subagentBridgeTimeoutGraceMs = 30_000;
 const maximumNodeTimerMs = 2_147_483_647;
 export const maximumSubagentRuntimeTimeoutMs = maximumNodeTimerMs - subagentBridgeTimeoutGraceMs;
@@ -20,6 +25,8 @@ export type SubagentRequest = {
 };
 
 export type SubagentResult = {
+  jobId: string;
+  childSessionId: string;
   role: SubagentRole;
   output: string;
   modelCalls: number;
@@ -43,6 +50,7 @@ export const subagentFailureKinds = [
   "empty_result",
   "output_guard",
   "runtime_error",
+  "interrupted",
 ] as const;
 export type SubagentFailureKind = typeof subagentFailureKinds[number];
 
@@ -59,11 +67,20 @@ export type SubagentFailureDiagnostic = {
 
 export class SubagentRunError extends Error {
   readonly diagnostic: SubagentFailureDiagnostic;
+  readonly jobId?: string;
+  readonly childSessionId?: string;
 
-  constructor(message: string, diagnostic: SubagentFailureDiagnostic, cause?: unknown) {
+  constructor(
+    message: string,
+    diagnostic: SubagentFailureDiagnostic,
+    cause?: unknown,
+    identity?: { jobId: string; childSessionId: string },
+  ) {
     super(message, cause === undefined ? undefined : { cause });
     this.name = "SubagentRunError";
     this.diagnostic = diagnostic;
+    this.jobId = identity?.jobId;
+    this.childSessionId = identity?.childSessionId;
   }
 }
 
@@ -73,6 +90,8 @@ export type SubagentMcpContext = {
   runtimeTimeoutMs: number;
   actions: () => ActionRecord[];
   run: (request: SubagentRequest, signal?: AbortSignal) => Promise<SubagentResult>;
+  listJobs: (limit: number) => readonly SubagentJobSummary[];
+  getJob: (jobId: string) => SubagentJobDetail | undefined;
 };
 
 export function createSubagentMcpServer(context: SubagentMcpContext): McpServer {
@@ -115,6 +134,8 @@ export function createSubagentMcpServer(context: SubagentMcpContext): McpServer 
         const result = await context.run(input, extra.signal);
         context.actions().push(context.store.addAction("delegate_subagent", "completed", {
           ...audit,
+          jobId: result.jobId,
+          childSessionId: result.childSessionId,
           modelCalls: result.modelCalls,
           toolCalls: result.toolCalls,
           inputTokens: result.inputTokens,
@@ -135,8 +156,10 @@ export function createSubagentMcpServer(context: SubagentMcpContext): McpServer 
         };
       } catch (error) {
         const failure = safeSubagentFailureDiagnostic(error);
+        const identity = subagentFailureIdentity(error);
         context.actions().push(context.store.addAction("delegate_subagent", "failed", {
           ...audit,
+          ...identity,
           ...failure,
         }));
         return {
@@ -148,10 +171,73 @@ export function createSubagentMcpServer(context: SubagentMcpContext): McpServer 
           structuredContent: {
             ok: false,
             role: input.role,
+            ...identity,
             failure,
           },
         };
       }
+    },
+  );
+
+  server.registerTool(
+    "list_subagent_jobs",
+    {
+      title: "List durable Subagent jobs",
+      description:
+        "List recent Subagent jobs owned by this parent session. The list contains durable identity, lifecycle, frozen budgets and grants, and usage metadata, but never delegated task/context text or result bodies.",
+      inputSchema: z.object({
+        limit: z.number().int().min(1).max(100).default(20),
+      }),
+      annotations: { readOnlyHint: true, openWorldHint: false },
+    },
+    async (input) => {
+      const jobs = context.listJobs(input.limit);
+      return {
+        content: [{
+          type: "text" as const,
+          text: jobs.length
+            ? jobs.map((job) => `${job.id} · ${job.role} · ${job.status} · revision ${job.revision}`).join("\n")
+            : "No Subagent jobs have been recorded for this session.",
+        }],
+        structuredContent: { jobs },
+      };
+    },
+  );
+
+  server.registerTool(
+    "get_subagent_job",
+    {
+      title: "Get durable Subagent job",
+      description:
+        "Read one Subagent job owned by this parent session. Delegated task/context text stays hidden. A completed result can be included explicitly; lifecycle and grant metadata are always returned.",
+      inputSchema: z.object({
+        jobId: z.string().min(1).max(256),
+        includeResult: z.boolean().default(true),
+      }),
+      annotations: { readOnlyHint: true, openWorldHint: false },
+    },
+    async (input) => {
+      const job = context.getJob(input.jobId);
+      if (!job) {
+        return {
+          isError: true,
+          content: [{ type: "text" as const, text: "Subagent job is unavailable in this session." }],
+          structuredContent: { ok: false, code: "SUBAGENT_JOB_NOT_FOUND" },
+        };
+      }
+      const { output, ...summary } = job;
+      const projected = input.includeResult && output !== undefined
+        ? { ...summary, output }
+        : summary;
+      return {
+        content: [{
+          type: "text" as const,
+          text: output !== undefined && input.includeResult
+            ? `Subagent job ${job.id} (${job.role}; ${job.status}):\n\n${output}`
+            : `Subagent job ${job.id} is ${job.status} (revision ${job.revision}).`,
+        }],
+        structuredContent: { job: projected },
+      };
     },
   );
 
@@ -198,6 +284,14 @@ export function safeSubagentFailureDiagnostic(error: unknown): SubagentFailureDi
   };
 }
 
+function subagentFailureIdentity(error: unknown): { jobId?: string; childSessionId?: string } {
+  if (!(error instanceof SubagentRunError)) return {};
+  return {
+    ...(error.jobId ? { jobId: error.jobId } : {}),
+    ...(error.childSessionId ? { childSessionId: error.childSessionId } : {}),
+  };
+}
+
 function publicSubagentFailureMessage(failure: SubagentFailureDiagnostic): string {
   const usage = `${failure.modelCalls} model call(s), ${failure.toolCalls} tool call(s), ` +
     `${failure.inputTokens + failure.outputTokens} tokens, ${failure.durationMs} ms`;
@@ -211,6 +305,7 @@ function publicSubagentFailureMessage(failure: SubagentFailureDiagnostic): strin
     empty_result: "The delegated model returned no usable final text.",
     output_guard: "The delegated result was blocked by the output safety guard.",
     runtime_error: "The delegated task failed inside its isolated runtime. A bounded retry may succeed.",
+    interrupted: "The application stopped before the durable job reached a terminal state. Review it before retrying.",
   }[failure.failureKind];
   return `Subagent failed (${failure.failureKind}; ${usage}). ${guidance}`;
 }

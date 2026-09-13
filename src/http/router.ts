@@ -90,6 +90,7 @@ import {
   AgentModuleSettingsSchemaConflictError,
   AgentModuleSettingsUnavailableError,
   AgentModuleSettingsValidationError,
+  SubagentJobNotFoundError,
   SubagentSettingsConflictError,
   SubagentSettingsValidationError,
   type SubagentSettingsPatch,
@@ -379,6 +380,8 @@ export function createHttpServer(options: HttpServerOptions = {}) {
         });
       } else if (error instanceof AgentModuleSettingsUnavailableError) {
         sendJson(response, 404, { code: error.code, error: error.message });
+      } else if (error instanceof SubagentJobNotFoundError) {
+        sendJson(response, 404, { code: error.code, error: error.message });
       } else if (error instanceof SubagentSettingsValidationError) {
         sendJson(response, 400, { code: error.code, error: error.message });
       } else if (error instanceof SubagentSettingsConflictError) {
@@ -637,6 +640,7 @@ async function route(input: {
       characterCollaborations: "GET /api/v1/sessions/{id}/character-collaborations",
       contextBudget: "GET /api/v1/sessions/{id}/context-budget",
       compactContext: "POST /api/v1/sessions/{id}/compact",
+      subagentJobs: "GET /api/v1/sessions/{id}/subagent-jobs[/{jobId}]",
       imChannels: "GET /api/v1/im/channels",
       imSettings: "GET/PATCH /api/v1/im/settings",
       imBindingQr: "POST /api/v1/im/bindings/{provider}/qr",
@@ -927,6 +931,28 @@ async function route(input: {
         createdAt: record.createdAt,
         updatedAt: record.updatedAt,
       })),
+    });
+    return;
+  }
+
+  const subagentJobsMatch = pathname.match(
+    /^\/api\/v1\/sessions\/([^/]+)\/subagent-jobs(?:\/([^/]+))?$/,
+  );
+  if (subagentJobsMatch && method === "GET") {
+    const parentSessionId = decodeURIComponent(subagentJobsMatch[1]);
+    if (subagentJobsMatch[2] !== undefined) {
+      sendJson(input.response, 200, {
+        job: kernel.getSubagentJob(
+          parentSessionId,
+          decodeURIComponent(subagentJobsMatch[2]),
+        ),
+      });
+      return;
+    }
+    const limit = optionalPositiveInteger(url.searchParams.get("limit")) ?? 20;
+    if (limit > 100) throw new SyntaxError("limit must not exceed 100");
+    sendJson(input.response, 200, {
+      jobs: kernel.listSubagentJobs(parentSessionId, limit),
     });
     return;
   }

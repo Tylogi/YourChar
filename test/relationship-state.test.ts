@@ -515,7 +515,7 @@ test("schema 43 folds legacy relationship axes into bond without losing semantic
     const version = migrated.connection.prepare(
       "SELECT MAX(version) AS version FROM schema_migrations",
     ).get() as { version: number };
-    assert.equal(Number(version.version), 59);
+    assert.equal(Number(version.version), 60);
     const columns = (migrated.connection.prepare(
       "PRAGMA table_info(character_relationship_states)",
     ).all() as Array<{ name: string }>).map((entry) => entry.name);

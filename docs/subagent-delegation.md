@@ -1,6 +1,6 @@
 # Private-Chat Subagent Delegation
 
-Status: implemented baseline
+Status: P2 durable-ledger foundation implemented; background continuation remains
 
 ## Product boundary
 
@@ -20,6 +20,7 @@ tool arguments.
 ```text
 Direct Pi AgentSession
   -> delegate_task MCP call
+  -> durable job + stable child-session identity
   -> temporary in-process Pi AgentSession
   -> optional read-only child tools
   -> bounded final result
@@ -88,10 +89,32 @@ parallel delegated results share that configured total. Provider context-window
 limits can still require compaction even though the full bounded result remains
 in the transcript.
 
-Parent cancellation propagates to the child. Child sessions are in-memory and
-disposed after the tool finishes; only the MCP result, audit metadata, and
-bounded provider Trace are retained. Audits store task length and SHA-256, not
-the raw delegated task.
+Parent cancellation propagates to the child. Child Pi transcripts are still
+in-memory and disposed after the tool finishes, but schema 60 now retains a
+host-owned job record with stable job/child IDs, frozen budgets, the explicit
+read-only module/Skill/tool grant, lifecycle timestamps, bounded result, and
+safe failure diagnostic. The private job table retains the raw task/context so
+a later continuation layer can resume it; those fields never appear in ordinary
+audits, list responses, or status projections. Normal state backups therefore
+need the same protection as the primary database.
+
+The legacy `delegate_task` result remains blocking and compatible. Two new
+read-only tools, `list_subagent_jobs` and `get_subagent_job`, expose jobs owned
+by the current parent session; cross-session lookup returns not found. The same
+scope is available to the host through:
+
+- `GET /api/v1/sessions/{parentSessionId}/subagent-jobs`
+- `GET /api/v1/sessions/{parentSessionId}/subagent-jobs/{jobId}`
+
+Lists omit task, context, and output bodies. Detail omits task/context and may
+return the completed output. Conversation deletion and full user-data deletion
+remove the corresponding rows, while incognito snapshots physically purge the
+entire table because the Subagent capability is unavailable there.
+
+If the application starts with a `queued` or `running` row, this first P2 slice
+marks it failed with the retryable `interrupted` diagnostic. It deliberately
+does not replay model/tool work: persistent child checkpoints, background
+start/send/interrupt, and bounded automatic recovery are later P2 slices.
 
 ## Observability and testing
 
@@ -108,4 +131,6 @@ Regression tests must preserve:
 - child read-only tool allowlist and no recursive delegation;
 - group actors receiving no subagent tool;
 - audit redaction, usage details, Trace persistence, cancellation, and limits;
+- durable identity, scoped list/get, terminal transitions, restart fail-closed,
+  conversation erasure, and incognito physical purge;
 - management-page detail and token-estimate rendering.

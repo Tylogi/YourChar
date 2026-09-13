@@ -3104,6 +3104,58 @@ const migrations: Migration[] = [
       );
     `,
   },
+  {
+    version: 60,
+    sql: `
+      CREATE TABLE subagent_jobs (
+        id TEXT PRIMARY KEY,
+        parent_session_id TEXT NOT NULL,
+        child_session_id TEXT NOT NULL UNIQUE,
+        role TEXT NOT NULL CHECK (role IN ('worker', 'researcher', 'planner', 'reviewer')),
+        status TEXT NOT NULL CHECK (
+          status IN ('queued', 'running', 'idle', 'completed', 'failed', 'cancelled')
+        ),
+        revision INTEGER NOT NULL CHECK (revision >= 1),
+        task_text TEXT NOT NULL,
+        context_text TEXT,
+        task_sha256 TEXT NOT NULL CHECK (
+          length(task_sha256) = 64 AND task_sha256 NOT GLOB '*[^a-f0-9]*'
+        ),
+        task_characters INTEGER NOT NULL CHECK (task_characters BETWEEN 1 AND 4000),
+        context_characters INTEGER NOT NULL CHECK (context_characters BETWEEN 0 AND 8000),
+        mode TEXT NOT NULL CHECK (mode IN ('sms', 'rp')),
+        conversation_space TEXT NOT NULL CHECK (conversation_space IN ('normal', 'secret')),
+        character_id TEXT,
+        secret_owner_character_id TEXT,
+        budgets_json TEXT NOT NULL CHECK (json_valid(budgets_json)),
+        grants_json TEXT NOT NULL CHECK (json_valid(grants_json)),
+        result_json TEXT CHECK (result_json IS NULL OR json_valid(result_json)),
+        failure_json TEXT CHECK (failure_json IS NULL OR json_valid(failure_json)),
+        recovery_count INTEGER NOT NULL DEFAULT 0 CHECK (recovery_count >= 0),
+        created_at TEXT NOT NULL,
+        started_at TEXT,
+        finished_at TEXT,
+        updated_at TEXT NOT NULL,
+        CHECK (
+          (conversation_space = 'normal' AND secret_owner_character_id IS NULL)
+          OR
+          (conversation_space = 'secret' AND character_id IS NOT NULL
+            AND secret_owner_character_id = character_id)
+        ),
+        CHECK (
+          (status = 'completed' AND result_json IS NOT NULL AND failure_json IS NULL)
+          OR
+          (status IN ('failed', 'cancelled') AND result_json IS NULL AND failure_json IS NOT NULL)
+          OR
+          (status IN ('queued', 'running', 'idle') AND result_json IS NULL AND failure_json IS NULL)
+        )
+      );
+      CREATE INDEX subagent_jobs_parent_recent_idx
+        ON subagent_jobs(parent_session_id, updated_at DESC, id DESC);
+      CREATE INDEX subagent_jobs_recovery_idx
+        ON subagent_jobs(status, updated_at, id);
+    `,
+  },
 ];
 
 export class AppDatabase {

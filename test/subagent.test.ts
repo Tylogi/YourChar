@@ -178,6 +178,10 @@ test("a short hard deadline times out a subagent without activity-based extensio
     assert.equal(delegations.filter((action) => action.status === "completed").length, 0);
     assert.equal(delegations[0].payload.failureKind, "timeout");
     assert.equal(delegations[0].payload.retryable, true);
+    const [job] = runtime.kernel.listSubagentJobs("subagent-hard-timeout");
+    assert.equal(job.status, "failed");
+    assert.equal(job.failure?.failureKind, "timeout");
+    assert.equal(job.id, delegations[0].payload.jobId);
     const childRequest = runtime.model.requests.find((request) =>
       request.systemPrompt.includes("isolated reviewer subagent")
     );
@@ -696,6 +700,10 @@ test("external cancellation takes precedence over the subagent hard deadline", a
       action.actionType === "delegate_subagent");
     assert.equal(delegations.filter((action) => action.status === "failed").length, 1);
     assert.equal(delegations.filter((action) => action.status === "completed").length, 0);
+    const [job] = runtime.kernel.listSubagentJobs("subagent-cancel-priority");
+    assert.equal(job.status, "cancelled");
+    assert.equal(job.failure?.failureKind, "cancelled");
+    assert.equal(job.id, delegations[0].payload.jobId);
   } finally {
     runtime.dispose();
   }

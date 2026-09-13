@@ -138,6 +138,10 @@ import {
   type SubagentSettingsPatch,
 } from "../modules/subagent-settings.js";
 import {
+  SubagentJobNotFoundError,
+  SubagentJobService,
+} from "../modules/subagent-jobs.js";
+import {
   CharacterCapabilityRepository,
   CharacterCapabilityService,
   characterSkillReflectionUserPrompt,
@@ -556,6 +560,8 @@ export class CompanionKernel {
   readonly permissionCatalog: AgentPermissionCatalog;
   /** Low-level persistent service; normal callers should use the guarded Kernel methods. */
   readonly subagentSettingsService: SubagentSettingsService;
+  /** Durable Subagent identities and lifecycle records; raw prompts stay out of audits. */
+  readonly subagentJobs: SubagentJobService;
   readonly profileService: UserProfileService;
   readonly avatarService: AvatarService;
   readonly systemPromptService: SystemPromptService;
@@ -657,6 +663,11 @@ export class CompanionKernel {
       },
     );
     this.subagentSettingsService = new SubagentSettingsService(this.database, this.clock);
+    this.subagentJobs = new SubagentJobService(
+      this.database,
+      this.clock,
+      this.store.idGenerator,
+    );
     this.imIntegrations = new ImIntegrationService(
       new ImRepository(this.database),
       this.incognitoChild || normalizedOptions.imGateway === false
@@ -1078,6 +1089,7 @@ export class CompanionKernel {
           ? undefined : normalizedOptions.conversationCheckpointSummarizer ?? this.summarizeConversationCheckpoint.bind(this),
         subagentTimeoutMs: normalizedOptions.subagentTimeoutMs,
         subagentSettings: () => this.subagentSettingsService.snapshot(),
+        subagentJobs: this.subagentJobs,
         additionalSessionCapabilities: this.agentRuntimeConfiguration.activeCapabilities(),
         incognitoChild: this.incognitoChild,
         providerPayloadOptions: (appSessionId) => {
@@ -3587,6 +3599,18 @@ export class CompanionKernel {
     return this.subagentSettingsService.get();
   }
 
+  listSubagentJobs(parentSessionId: string, limit = 20) {
+    this.requireSubagentParentSession(parentSessionId);
+    return this.subagentJobs.list(parentSessionId, limit);
+  }
+
+  getSubagentJob(parentSessionId: string, jobId: string) {
+    this.requireSubagentParentSession(parentSessionId);
+    const job = this.subagentJobs.get(parentSessionId, jobId);
+    if (!job) throw new SubagentJobNotFoundError(jobId);
+    return job;
+  }
+
   patchSubagentSettings(patch: SubagentSettingsPatch, expectedRevision: number) {
     this.assertControlPlaneIdle();
     const settings = this.subagentSettingsService.patch(patch, expectedRevision);
@@ -3608,6 +3632,15 @@ export class CompanionKernel {
     this.sessionRuntime.assertConversationActive(sessionId);
     const metadata = this.sessionRuntime.getConversationMetadata().find((entry) => entry.id === sessionId);
     if (!metadata) throw new MessageRevisionError("conversation does not exist");
+    return metadata;
+  }
+
+  private requireSubagentParentSession(sessionId: string) {
+    this.assertKnownIncognitoSessionId(sessionId);
+    this.incognitoSessions?.assertUnsupported(sessionId, "Subagent job access");
+    const metadata = this.sessionRuntime.getConversationMetadata()
+      .find((entry) => entry.id === sessionId);
+    if (!metadata) throw new ConversationNotFoundError(sessionId);
     return metadata;
   }
 

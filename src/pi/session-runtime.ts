@@ -79,6 +79,10 @@ import {
   type SubagentSettingsSnapshot,
   type SubagentSettingsValues,
 } from "../modules/subagent-settings.js";
+import type {
+  SubagentJobGrantSnapshot,
+  SubagentJobService,
+} from "../modules/subagent-jobs.js";
 import type { UserProfileService } from "../profile/service.js";
 import type { RpService } from "../rp/service.js";
 import type { ScheduleService } from "../schedule/service.js";
@@ -421,6 +425,8 @@ export type PiSessionRuntimeOptions = {
   subagentTimeoutMs?: number;
   /** Persistent settings provider. One immutable snapshot is taken per delegated task. */
   subagentSettings?: () => SubagentSettingsValues;
+  /** Host-owned durable identity and lifecycle ledger for delegated work. */
+  subagentJobs: SubagentJobService;
   /** Deployment-trusted handle-scoped capabilities composed with the built-ins. */
   additionalSessionCapabilities?: readonly SessionCapability[];
   /**
@@ -552,12 +558,14 @@ export class PiSessionRuntime {
   private readonly pendingCapabilityRefreshes = new Set<string>();
   private readonly activeSubagentCounts = new Map<string, number>();
   private readonly activeSubagents = new Set<AgentSession>();
+  private readonly activeSubagentJobIds = new Set<string>();
   private activeCapabilityTurns = 0;
   private readonly canonicalDirectLoading = new Map<string, Promise<PiSessionHandle>>();
   private readonly legacyDirectMigrationTargets = new Map<string, string>();
   private readonly conversationLifecycleThresholds: Partial<ConversationLifecycleThresholds>;
   private readonly subagentTimeoutMsOverride?: number;
   private readonly subagentSettings: () => SubagentSettingsValues;
+  private readonly subagentJobs: SubagentJobService;
   private readonly incognitoChild: boolean;
   private readonly conversationCheckpointSummarizer?: ConversationCheckpointSummarizer;
   private readonly checkpointControllers = new Set<AbortController>();
@@ -608,6 +616,7 @@ export class PiSessionRuntime {
       ? undefined
       : normalizeSubagentTimeoutMs(options.subagentTimeoutMs);
     this.subagentSettings = options.subagentSettings ?? (() => defaultSubagentSettings);
+    this.subagentJobs = options.subagentJobs;
     this.additionalSessionCapabilities = normalizeAdditionalSessionCapabilities(
       options.additionalSessionCapabilities ?? [],
     );
@@ -1549,6 +1558,13 @@ export class PiSessionRuntime {
 
   dispose(): void {
     for (const controller of this.checkpointControllers) controller.abort();
+    for (const jobId of this.activeSubagentJobIds) {
+      try {
+        this.subagentJobs.fail(jobId, emptySubagentFailureDiagnostic("interrupted", true));
+      } catch {
+        // Startup recovery will fail closed if the database is temporarily unavailable.
+      }
+    }
     this.closeHandles(false);
   }
 
@@ -1856,6 +1872,8 @@ export class PiSessionRuntime {
           actions: toolState.actions,
           signal,
         }),
+        listSubagentJobs: (limit) => this.subagentJobs.list(metadata.id, limit),
+        getSubagentJob: (jobId) => this.subagentJobs.get(metadata.id, jobId),
         requestCharacterSkillCapabilityRefresh: () =>
           this.requestCharacterSkillCapabilityRefresh(
             metadata.characterId!,
@@ -1989,23 +2007,57 @@ export class PiSessionRuntime {
         emptySubagentFailureDiagnostic("capacity", true),
       );
     }
+    const permissions = this.permissionCatalog.get();
+    const childWorkspaceAccess = permissions.workspaceAccess === "off" ? "off" : "read_only";
+    const enabledSkills = this.moduleCatalog.enabledSkills(
+      input.conversationSpace,
+      input.characterId,
+    );
+    const admittedModuleIds = [
+      this.moduleCatalog.isEnabled(tavilySearchMcpModuleId) && this.tavilyService.isConfigured()
+        ? tavilySearchMcpModuleId
+        : undefined,
+      this.moduleCatalog.isEnabled(webReaderMcpModuleId) ? webReaderMcpModuleId : undefined,
+      this.moduleCatalog.isEnabled(visionMcpModuleId) &&
+        this.visionService.isConfigured() && this.visionService.getConfig().mode !== "off"
+        ? visionMcpModuleId
+        : undefined,
+      childWorkspaceAccess !== "off" && this.moduleCatalog.isEnabled(mineruMcpModuleId) &&
+        this.mineruService.isConfigured()
+        ? mineruMcpModuleId
+        : undefined,
+    ].filter((moduleId): moduleId is string => moduleId !== undefined);
+    const admittedGrants: SubagentJobGrantSnapshot = Object.freeze({
+      workspaceAccess: childWorkspaceAccess,
+      moduleIds: Object.freeze(admittedModuleIds),
+      skillNames: Object.freeze(enabledSkills.map((skill) => skill.name)),
+      toolNames: Object.freeze([]),
+    });
+    const job = this.subagentJobs.create({
+      parentSessionId: input.parentSessionId,
+      role: input.request.role,
+      task: input.request.task,
+      ...(input.request.context === undefined ? {} : { context: input.request.context }),
+      mode: input.mode,
+      conversationSpace: input.conversationSpace,
+      ...(input.characterId ? { characterId: input.characterId } : {}),
+      ...(input.secretOwnerCharacterId
+        ? { secretOwnerCharacterId: input.secretOwnerCharacterId }
+        : {}),
+      budgets: subagentSettings,
+      grants: admittedGrants,
+    });
+    const childSessionId = job.childSessionId;
     this.activeSubagentCounts.set(input.parentSessionId, active + 1);
+    this.activeSubagentJobIds.add(job.id);
 
-    const childSessionId = `subagent:${input.parentSessionId}:${this.store.idGenerator.next("run")}`;
     const payloadOptions = this.providerPayloadOptions?.(input.parentSessionId) ?? {};
     const childPayloadOptions = payloadOptions.subagent ?? {};
-    const modelRuntime = await createInMemoryModelRuntime();
-    const settingsManager = SettingsManager.inMemory({
-      compaction: { enabled: false },
-      // The frozen Subagent wall-clock deadline owns cancellation. Pi maps 0
-      // to an effectively unbounded SDK request timeout instead of 300000 ms.
-      httpIdleTimeoutMs: subagentHttpIdleTimeoutMs,
-      thinkingBudgets: piThinkingBudgets(childPayloadOptions),
-    });
-    const sessionManager = SessionManager.inMemory(input.workspace.dir);
     let providerTransport: ReturnType<typeof createSubagentProviderHttpTransport> | undefined;
     const childBridges: McpPiBridge[] = [];
     let child: AgentSession | undefined;
+    let timeout: NodeJS.Timeout | undefined;
+    let jobSettled = false;
     let modelCalls = 0;
     let modelBudgetExceeded = false;
     let forcedFinalization = false;
@@ -2013,18 +2065,24 @@ export class PiSessionRuntime {
     let timedOut = false;
     const abort = () => void child?.abort();
     input.signal?.addEventListener("abort", abort, { once: true });
-    const timeout = setTimeout(() => {
-      timedOut = true;
-      void child?.abort();
-    }, subagentSettings.timeoutMs);
     try {
+      timeout = setTimeout(() => {
+        timedOut = true;
+        void child?.abort();
+      }, subagentSettings.timeoutMs);
+      const modelRuntime = await createInMemoryModelRuntime();
+      const settingsManager = SettingsManager.inMemory({
+        compaction: { enabled: false },
+        // The frozen Subagent wall-clock deadline owns cancellation. Pi maps 0
+        // to an effectively unbounded SDK request timeout instead of 300000 ms.
+        httpIdleTimeoutMs: subagentHttpIdleTimeoutMs,
+        thinkingBudgets: piThinkingBudgets(childPayloadOptions),
+      });
+      const sessionManager = SessionManager.inMemory(input.workspace.dir);
       const taskProviderTransport = createSubagentProviderHttpTransport();
       providerTransport = taskProviderTransport;
-      const permissions = this.permissionCatalog.get();
-      const childWorkspaceAccess = permissions.workspaceAccess === "off" ? "off" : "read_only";
       if (
-        this.moduleCatalog.isEnabled(tavilySearchMcpModuleId) &&
-        this.tavilyService.isConfigured()
+        admittedModuleIds.includes(tavilySearchMcpModuleId)
       ) {
         childBridges.push(await createTavilyMcpBridge({
           tavilyService: this.tavilyService,
@@ -2033,7 +2091,7 @@ export class PiSessionRuntime {
           actions: () => input.actions,
         }));
       }
-      if (this.moduleCatalog.isEnabled(webReaderMcpModuleId)) {
+      if (admittedModuleIds.includes(webReaderMcpModuleId)) {
         childBridges.push(await createWebReaderMcpBridge({
           webReaderService: this.webReaderService,
           store: this.store,
@@ -2042,9 +2100,7 @@ export class PiSessionRuntime {
         }));
       }
       if (
-        this.moduleCatalog.isEnabled(visionMcpModuleId) &&
-        this.visionService.isConfigured() &&
-        this.visionService.getConfig().mode !== "off"
+        admittedModuleIds.includes(visionMcpModuleId)
       ) {
         childBridges.push(await createVisionMcpBridge({
           visionService: this.visionService,
@@ -2056,9 +2112,7 @@ export class PiSessionRuntime {
         }));
       }
       if (
-        childWorkspaceAccess !== "off" &&
-        this.moduleCatalog.isEnabled(mineruMcpModuleId) &&
-        this.mineruService.isConfigured()
+        admittedModuleIds.includes(mineruMcpModuleId)
       ) {
         childBridges.push(await createMineruMcpBridge({
           mineruService: this.mineruService,
@@ -2070,10 +2124,6 @@ export class PiSessionRuntime {
         }));
       }
 
-      const enabledSkills = this.moduleCatalog.enabledSkills(
-        input.conversationSpace,
-        input.characterId,
-      );
       const skillReadTool = createSkillReadTool(
         enabledSkills,
         this.cwd,
@@ -2102,11 +2152,16 @@ export class PiSessionRuntime {
           actions: () => input.actions,
         }),
       ].map(preferStrictJsonSchemaSampling);
+      const childToolNames = childTools.map((tool) => tool.name);
+      this.subagentJobs.start(job.id, Object.freeze({
+        ...admittedGrants,
+        toolNames: Object.freeze(childToolNames),
+      }));
       const systemPrompt = subagentSystemPrompt(
         input.request.role,
         input.timezone,
         this.clock.now(),
-        childTools.map((tool) => tool.name),
+        childToolNames,
         this.moduleCatalog.skillContext(input.conversationSpace, input.characterId),
       );
       const extensionFactory: ExtensionFactory = (pi) => {
@@ -2271,8 +2326,7 @@ export class PiSessionRuntime {
           ).join("")}${truncationMarker}`
         : rawOutput;
       const stats = child.getSessionStats();
-      return {
-        role: input.request.role,
+      const completion = {
         output,
         modelCalls,
         toolCalls: stats.toolCalls,
@@ -2283,32 +2337,56 @@ export class PiSessionRuntime {
         forcedFinalization,
         maxResultCharacters: subagentSettings.maxResultCharacters,
       };
+      this.subagentJobs.complete(job.id, completion);
+      jobSettled = true;
+      return {
+        jobId: job.id,
+        childSessionId,
+        role: input.request.role,
+        ...completion,
+      };
     } catch (error) {
-      if (error instanceof SubagentRunError) throw error;
       const stats = child?.getSessionStats();
-      const failureKind = classifySubagentFailure({
-        error,
-        cancelled: input.signal?.aborted === true,
-        timedOut,
-        modelBudgetExceeded,
-        forcedFinalizationFailed,
-      });
+      const diagnostic = error instanceof SubagentRunError
+        ? error.diagnostic
+        : (() => {
+            const failureKind = classifySubagentFailure({
+              error,
+              cancelled: input.signal?.aborted === true,
+              timedOut,
+              modelBudgetExceeded,
+              forcedFinalizationFailed,
+            });
+            return {
+              failureKind,
+              modelCalls,
+              toolCalls: stats?.toolCalls ?? 0,
+              inputTokens: stats?.tokens.input ?? 0,
+              outputTokens: stats?.tokens.output ?? 0,
+              durationMs: Math.round(performance.now() - startedAt),
+              forcedFinalization,
+              retryable: subagentFailureIsRetryable(failureKind),
+            };
+          })();
+      if (!jobSettled) {
+        try {
+          this.subagentJobs.fail(job.id, diagnostic);
+          jobSettled = true;
+        } catch {
+          // A hard database failure is recovered from the non-terminal row on
+          // next startup; never replace the bounded public runtime diagnostic.
+        }
+      }
       throw new SubagentRunError(
-        `Subagent failed with ${failureKind}`,
-        {
-          failureKind,
-          modelCalls,
-          toolCalls: stats?.toolCalls ?? 0,
-          inputTokens: stats?.tokens.input ?? 0,
-          outputTokens: stats?.tokens.output ?? 0,
-          durationMs: Math.round(performance.now() - startedAt),
-          forcedFinalization,
-          retryable: subagentFailureIsRetryable(failureKind),
-        },
+        error instanceof SubagentRunError
+          ? error.message
+          : `Subagent failed with ${diagnostic.failureKind}`,
+        diagnostic,
         error,
+        { jobId: job.id, childSessionId },
       );
     } finally {
-      clearTimeout(timeout);
+      if (timeout) clearTimeout(timeout);
       input.signal?.removeEventListener("abort", abort);
       if (child) {
         this.activeSubagents.delete(child);
@@ -2321,6 +2399,7 @@ export class PiSessionRuntime {
       const remaining = (this.activeSubagentCounts.get(input.parentSessionId) ?? 1) - 1;
       if (remaining > 0) this.activeSubagentCounts.set(input.parentSessionId, remaining);
       else this.activeSubagentCounts.delete(input.parentSessionId);
+      this.activeSubagentJobIds.delete(job.id);
     }
   }
 
@@ -3352,7 +3431,8 @@ function compactProviderToolHistory(
   );
   const currentSubagentResultIndexes = currentResultIndexes.filter((index) => {
     const message = messages[index];
-    return message.role === "toolResult" && message.toolName === "delegate_task";
+    return message.role === "toolResult" &&
+      (message.toolName === "delegate_task" || message.toolName === "get_subagent_job");
   });
   const currentOrdinaryResultIndexes = currentResultIndexes.filter((index) =>
     !currentSubagentResultIndexes.includes(index)
@@ -3452,7 +3532,7 @@ function compactProviderToolHistory(
       const historical = index < latestUserIndex;
       const limit = historical
         ? historicalLimits.get(index)
-        : message.toolName === "delegate_task"
+        : message.toolName === "delegate_task" || message.toolName === "get_subagent_job"
           ? currentSubagentLimits.get(index)
           : currentOrdinaryLimits.get(index);
       if (limit === undefined) {
@@ -3515,9 +3595,14 @@ function compactProviderToolHistory(
 function subagentToolResultConfiguredContextLimit(
   message: Extract<AgentMessage, { role: "toolResult" }>,
 ): number {
-  const configured = isRecord(message.details) &&
-      Number.isSafeInteger(message.details.maxResultCharacters)
-    ? Number(message.details.maxResultCharacters)
+  const details = isRecord(message.details) ? message.details : {};
+  const job = isRecord(details.job) ? details.job : {};
+  const jobResult = isRecord(job.result) ? job.result : {};
+  const configuredCandidate = details.maxResultCharacters ??
+    jobResult.maxResultCharacters ??
+    (isRecord(job.budgets) ? job.budgets.maxResultCharacters : undefined);
+  const configured = Number.isSafeInteger(configuredCandidate)
+    ? Number(configuredCandidate)
     : defaultSubagentSettings.maxResultCharacters;
   return Math.min(
     maximumSubagentSettings.maxResultCharacters + subagentResultContextEnvelopeCharacters,
@@ -3867,6 +3952,7 @@ function subagentFailureIsRetryable(failureKind: SubagentFailureKind): boolean {
     failureKind === "timeout" ||
     failureKind === "model_unavailable" ||
     failureKind === "empty_result" ||
+    failureKind === "interrupted" ||
     failureKind === "runtime_error";
 }
 

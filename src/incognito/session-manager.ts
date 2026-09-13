@@ -1023,6 +1023,15 @@ function purgeSecretSnapshotState(database: DatabaseSync, secretSessionIds: stri
       // kernels, so neither are their provider settings or write-only secrets.
       database.prepare("DELETE FROM agent_module_provider_settings").run();
     }
+    const subagentJobsTable = database.prepare(`
+      SELECT 1 FROM sqlite_master
+      WHERE type = 'table' AND name = 'subagent_jobs'
+    `).get();
+    if (subagentJobsTable) {
+      // Raw delegated prompts/results belong to the persistent parent and the
+      // Subagent capability is absent from disposable incognito children.
+      database.prepare("DELETE FROM subagent_jobs").run();
+    }
     const auditRows = database.prepare("SELECT id, payload_json FROM audit_actions").all() as Array<{
       id: string;
       payload_json: string;

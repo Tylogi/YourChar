@@ -465,6 +465,30 @@ test("snapshot physically excludes private Vault data and secret-only Skill pack
       JSON.stringify({ apiToken: "PRIVATE_PROVIDER_CREDENTIAL_SENTINEL" }),
       new Date().toISOString(),
     );
+    const subagentSettings = runtime.kernel.getSubagentSettings();
+    runtime.kernel.subagentJobs.create({
+      parentSessionId: normal.id,
+      role: "researcher",
+      task: "PRIVATE_SUBAGENT_TASK_SENTINEL",
+      context: "PRIVATE_SUBAGENT_CONTEXT_SENTINEL",
+      mode: "sms",
+      conversationSpace: "normal",
+      characterId: character.id,
+      budgets: {
+        maxConcurrentTasks: subagentSettings.maxConcurrentTasks,
+        maxWorkModelCalls: subagentSettings.maxWorkModelCalls,
+        maxOutputTokens: subagentSettings.maxOutputTokens,
+        maxResultCharacters: subagentSettings.maxResultCharacters,
+        timeoutSeconds: subagentSettings.timeoutSeconds,
+        timeoutMs: subagentSettings.timeoutSeconds * 1_000,
+      },
+      grants: {
+        workspaceAccess: "off",
+        moduleIds: [],
+        skillNames: [],
+        toolNames: [],
+      },
+    });
     const secretPadding = join(stateDir, "memory-vault", "secret", "large-private-padding.bin");
     writeFileSync(secretPadding, "SECRET_PADDING_SENTINEL");
     truncateSync(secretPadding, 257 * 1024 * 1024);
@@ -485,11 +509,19 @@ test("snapshot physically excludes private Vault data and secret-only Skill pack
     assert.equal(snapshotContains(root, secretMemory.id), false);
     assert.equal(snapshotContains(root, "SECRET_PADDING_SENTINEL"), false);
     assert.equal(snapshotContains(root, "PRIVATE_PROVIDER_CREDENTIAL_SENTINEL"), false);
+    assert.equal(snapshotContains(root, "PRIVATE_SUBAGENT_TASK_SENTINEL"), false);
+    assert.equal(snapshotContains(root, "PRIVATE_SUBAGENT_CONTEXT_SENTINEL"), false);
     const snapshotDatabase = new DatabaseSync(join(root, "rp-agent.sqlite"), { readOnly: true });
     try {
       assert.equal(
         Number((snapshotDatabase.prepare(
           "SELECT COUNT(*) AS count FROM agent_module_provider_settings",
+        ).get() as { count: number }).count),
+        0,
+      );
+      assert.equal(
+        Number((snapshotDatabase.prepare(
+          "SELECT COUNT(*) AS count FROM subagent_jobs",
         ).get() as { count: number }).count),
         0,
       );

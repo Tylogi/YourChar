@@ -39,7 +39,7 @@ test("schema 48 and the character Skill management permission are durable and co
     const schema = database.connection.prepare(
       "SELECT MAX(version) AS version FROM schema_migrations",
     ).get() as { version: number };
-    assert.equal(Number(schema.version), 59);
+    assert.equal(Number(schema.version), 60);
     const columns = database.connection.prepare(
       "PRAGMA table_info(character_agent_skill_packages)",
     ).all() as Array<{ name: string }>;

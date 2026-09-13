@@ -112,7 +112,7 @@ test("schema 42 removes the legacy duty, capability and single-Skill tables", ()
     ).get() as {
       version: number;
     };
-    assert.equal(Number(version.version), 59);
+    assert.equal(Number(version.version), 60);
     const tables = new Set((runtime.kernel.database.connection.prepare(`
       SELECT name FROM sqlite_master WHERE type = 'table'
     `).all() as Array<{ name: string }>).map((row) => row.name));

@@ -61,7 +61,7 @@ const mcpEstimatedTokens = {
   [gitMcpModuleId]: 620,
   [userProfileMcpModuleId]: 270,
   [memoryCoordinatorMcpModuleId]: 430,
-  [subagentMcpModuleId]: 390,
+  [subagentMcpModuleId]: 650,
   [relationshipStateMcpModuleId]: 230,
   [worldStateMcpModuleId]: 960,
   [interactionStateMcpModuleId]: 650,
@@ -150,12 +150,16 @@ const mcpDetails: Record<string, string> = {
 ## Tools
 
 - \`delegate_task\`: run one bounded task through an isolated worker, researcher, planner, or reviewer subagent.
+- \`list_subagent_jobs\`: list recent durable jobs for the current parent session without task, context, or result bodies.
+- \`get_subagent_job\`: inspect one same-session job and optionally retrieve its completed result.
 
 ## Boundaries
 
 - Available only to direct SMS and RP conversations. Group chat actors do not receive this tool.
 - The subagent uses the current character's model binding but receives no private conversation transcript.
 - The parent must provide a self-contained task and only the supporting context the child needs.
+- Every admitted task receives a durable job ID and child-session ID. Queued, running, completed, failed, and cancelled transitions retain frozen budgets and the exact read-only grant set.
+- An interrupted non-terminal job fails closed on startup and is marked retryable; it is never silently replayed before resumable checkpoints exist.
 - Child tools are read-only: enabled Skill files, read-only Workspace and MarkItDown document conversion, configured Tavily Search, and configured Vision MCP.
 - The child cannot change schedules, memory, user profile, SOUL.md, scenes, or Workspace files and cannot create another subagent.
 - Budgets are persistent and configurable from this module's settings. Defaults are 32 work model calls plus one reserved no-tool finalization call, 30 minutes of hard wall-clock time, 16,384 output tokens per model call, and 64,000 final-result characters. At most four tasks run concurrently per private session by default. Activity does not extend the deadline.
