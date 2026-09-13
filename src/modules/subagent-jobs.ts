@@ -22,6 +22,8 @@ export const maximumSubagentRunAttempts = 3;
 const maximumSubagentTranscriptMessages = 2_048;
 const maximumSubagentDeliveryAttempts = 8;
 const maximumSubagentToolCallsPerModelCall = 16;
+const maximumSubagentToolArgumentsBytes = 65_536;
+const maximumSubagentToolJournalResultBytes = maximumSubagentTranscriptBytes;
 const maximumSubagentRunLeaseGraceMs = 30_000;
 // Matches Node's largest supported timer after the MCP deadline reserves the
 // same 30-second envelope. Production settings remain capped at 60 minutes;
@@ -43,6 +45,11 @@ const deliveryStatuses = new Set<SubagentJobDeliveryStatus>([
   "pending",
   "delivered",
   "discarded",
+]);
+const automaticallyReplayableSubagentTools = new Set([
+  "list_workspace",
+  "read",
+  "read_document",
 ]);
 
 export type SubagentJobStatus =
@@ -200,6 +207,21 @@ export type SubagentJobRunClaim = Readonly<{
   baseline: SubagentJobRunUsage;
 }>;
 
+export type SubagentToolReplayPolicy = "automatic" | "explicit";
+
+export type SubagentToolCallStart = Readonly<{
+  toolCallId: string;
+  toolName: string;
+  input: Readonly<Record<string, unknown>>;
+}>;
+
+export type SubagentToolCallResult = SubagentToolCallStart & Readonly<{
+  content: readonly unknown[];
+  details?: unknown;
+  usage?: unknown;
+  isError: boolean;
+}>;
+
 type SubagentJobRow = {
   id: string;
   parent_session_id: string;
@@ -271,6 +293,27 @@ type SubagentJobRunRow = {
   created_at: string;
   updated_at: string;
   finished_at: string | null;
+};
+
+type SubagentToolCallRow = {
+  job_id: string;
+  generation: number;
+  attempt: number;
+  model_call: number;
+  tool_call_id: string;
+  tool_name: string;
+  replay_policy: string;
+  status: string;
+  arguments_sha256: string;
+  arguments_bytes: number;
+  result_json: string | null;
+  result_sha256: string | null;
+  result_bytes: number | null;
+  is_error: number | null;
+  result_reason: string | null;
+  started_at: string;
+  finished_at: string | null;
+  updated_at: string;
 };
 
 export class SubagentJobNotFoundError extends Error {
@@ -440,39 +483,172 @@ export class SubagentJobService {
     return this.database.transaction(() => {
       const job = this.requireRow(claim.job.id);
       const run = this.requireClaimedRun(job, claim);
+      return this.persistRunCheckpoint(
+        job,
+        run,
+        claim,
+        progress,
+        transcriptJson,
+        updatedAt,
+      );
+    });
+  }
+
+  /** Persist a tool intent and its assistant-message checkpoint before execution. */
+  recordToolCallStart(
+    claim: SubagentJobRunClaim,
+    toolCall: SubagentToolCallStart,
+    progress: SubagentJobRunProgress,
+    transcript: readonly unknown[],
+  ): void {
+    validateRunProgress(progress);
+    const normalized = normalizeToolCallStart(toolCall);
+    const argumentsJson = boundedToolArgumentsJson(normalized.input);
+    const argumentsBytes = Buffer.byteLength(argumentsJson, "utf8");
+    const argumentsSha256 = createHash("sha256").update(argumentsJson).digest("hex");
+    const transcriptJson = boundedTranscriptJson(transcript);
+    if (transcriptJson === null) {
+      throw new SubagentJobStateError(
+        claim.job.id,
+        "a bounded transcript checkpoint before tool execution",
+      );
+    }
+    const updatedAt = this.clock.now().toISOString();
+    this.database.transaction(() => {
+      const job = this.requireRow(claim.job.id);
+      const run = this.requireClaimedRun(job, claim);
+      if (!parseGrants(job.grants_json).toolNames.includes(normalized.toolName)) {
+        throw new SubagentJobStateError(claim.job.id, "a tool inside the frozen run grant");
+      }
+      const attemptToolCalls = Number((this.database.connection.prepare(`
+        SELECT COUNT(*) + 1 AS count FROM subagent_job_tool_calls
+        WHERE job_id = ? AND generation = ? AND attempt = ?
+      `).get(claim.job.id, claim.generation, claim.attempt) as { count: number }).count);
       const usage = monotonicRunUsage(
         run,
-        claimedRunUsage(claim, progress, run.result_characters),
+        claimedRunUsage(
+          claim,
+          { ...progress, toolCalls: Math.max(progress.toolCalls, attemptToolCalls) },
+          run.result_characters,
+        ),
       );
       assertRunUsageWithinBudgets(claim.job.id, usage, parseBudgets(job.budgets_json));
-      const result = this.database.connection.prepare(`
-        UPDATE subagent_job_runs
-        SET model_calls = ?, tool_calls = ?, input_tokens = ?, output_tokens = ?,
-            duration_ms = ?, checkpoint_at = ?, updated_at = ?
-        WHERE job_id = ? AND generation = ? AND status = 'running'
-          AND attempt_count = ? AND owner_id = ? AND claim_token = ?
+      const callsInModelRequest = Number((this.database.connection.prepare(`
+        SELECT COUNT(*) AS count FROM subagent_job_tool_calls
+        WHERE job_id = ? AND generation = ? AND model_call = ?
+      `).get(claim.job.id, claim.generation, usage.modelCalls) as { count: number }).count);
+      if (callsInModelRequest >= maximumSubagentToolCallsPerModelCall) {
+        throw new SubagentJobStateError(
+          claim.job.id,
+          `fewer than ${maximumSubagentToolCallsPerModelCall + 1} tool calls per model request`,
+        );
+      }
+      const insert = this.database.connection.prepare(`
+        INSERT INTO subagent_job_tool_calls(
+          job_id, generation, attempt, model_call, tool_call_id, tool_name, replay_policy,
+          status, arguments_sha256, arguments_bytes, result_json, result_sha256,
+          result_bytes, is_error, result_reason, started_at, finished_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, 'started', ?, ?, NULL, NULL, NULL, NULL, NULL, ?, NULL, ?)
+        ON CONFLICT(job_id, generation, attempt, tool_call_id) DO NOTHING
       `).run(
+        claim.job.id,
+        claim.generation,
+        claim.attempt,
         usage.modelCalls,
-        usage.toolCalls,
-        usage.inputTokens,
-        usage.outputTokens,
-        usage.durationMs,
+        normalized.toolCallId,
+        normalized.toolName,
+        subagentToolReplayPolicy(normalized.toolName),
+        argumentsSha256,
+        argumentsBytes,
+        updatedAt,
+        updatedAt,
+      );
+      if (Number(insert.changes) !== 1) {
+        throw new SubagentJobStateError(
+          claim.job.id,
+          `a new fenced tool call ${normalized.toolCallId}`,
+        );
+      }
+      this.persistRunCheckpoint(
+        job,
+        run,
+        claim,
+        {
+          ...progress,
+          toolCalls: Math.max(progress.toolCalls, attemptToolCalls),
+        },
+        transcriptJson,
+        updatedAt,
+      );
+    });
+  }
+
+  /** Commit the exact private tool result before Pi publishes it to the transcript. */
+  recordToolCallResult(
+    claim: SubagentJobRunClaim,
+    toolCall: SubagentToolCallResult,
+  ): void {
+    const normalized = normalizeToolCallResult(toolCall);
+    const argumentsJson = boundedToolArgumentsJson(normalized.input);
+    const argumentsSha256 = createHash("sha256").update(argumentsJson).digest("hex");
+    const serialized = serializeToolResult(normalized);
+    const updatedAt = this.clock.now().toISOString();
+    this.database.transaction(() => {
+      const job = this.requireRow(claim.job.id);
+      this.requireClaimedRun(job, claim);
+      const row = this.requireToolCallRow(claim, normalized.toolCallId);
+      if (row.tool_name !== normalized.toolName || row.arguments_sha256 !== argumentsSha256) {
+        throw new SubagentJobStateError(claim.job.id, "the journaled tool call identity");
+      }
+      const storedBytes = Number((this.database.connection.prepare(`
+        SELECT COALESCE(SUM(result_bytes), 0) AS bytes
+        FROM subagent_job_tool_calls
+        WHERE job_id = ? AND generation = ? AND status = 'committed'
+          AND NOT (attempt = ? AND tool_call_id = ?)
+      `).get(
+        claim.job.id,
+        claim.generation,
+        claim.attempt,
+        normalized.toolCallId,
+      ) as { bytes: number }).bytes);
+      const disposition = serialized.kind === "unavailable"
+        ? { status: "result_unavailable", reason: "not_json" } as const
+        : serialized.bytes > maximumSubagentToolJournalResultBytes
+          ? { status: "result_unavailable", reason: "too_large" } as const
+          : storedBytes + serialized.bytes > maximumSubagentToolJournalResultBytes
+            ? { status: "result_unavailable", reason: "run_limit" } as const
+            : { status: "committed", reason: null } as const;
+      if (row.status !== "started") {
+        if (toolResultMatches(row, normalized, serialized, disposition)) return;
+        throw new SubagentJobStateError(claim.job.id, "one immutable tool result commit");
+      }
+      const result = this.database.connection.prepare(`
+        UPDATE subagent_job_tool_calls
+        SET status = ?, result_json = ?, result_sha256 = ?, result_bytes = ?,
+            is_error = ?, result_reason = ?, finished_at = ?, updated_at = ?
+        WHERE job_id = ? AND generation = ? AND attempt = ? AND tool_call_id = ?
+          AND status = 'started' AND tool_name = ? AND arguments_sha256 = ?
+      `).run(
+        disposition.status,
+        disposition.status === "committed" && serialized.kind === "json"
+          ? serialized.json
+          : null,
+        serialized.kind === "json" ? serialized.sha256 : null,
+        serialized.kind === "json" ? serialized.bytes : null,
+        normalized.isError ? 1 : 0,
+        disposition.reason,
         updatedAt,
         updatedAt,
         claim.job.id,
         claim.generation,
         claim.attempt,
-        claim.ownerId,
-        claim.claimToken,
+        normalized.toolCallId,
+        normalized.toolName,
+        argumentsSha256,
       );
       if (Number(result.changes) !== 1) {
-        throw new SubagentJobStateError(claim.job.id, "the active fenced run claim");
+        throw new SubagentJobStateError(claim.job.id, "the active tool result intent");
       }
-      this.database.connection.prepare(`
-        UPDATE subagent_jobs SET transcript_json = ?
-        WHERE id = ? AND status = 'running'
-      `).run(transcriptJson, claim.job.id);
-      return usage;
     });
   }
 
@@ -905,6 +1081,25 @@ export class SubagentJobService {
     return row;
   }
 
+  private requireToolCallRow(
+    claim: SubagentJobRunClaim,
+    toolCallId: string,
+  ): SubagentToolCallRow {
+    const row = this.database.connection.prepare(`
+      SELECT * FROM subagent_job_tool_calls
+      WHERE job_id = ? AND generation = ? AND attempt = ? AND tool_call_id = ?
+    `).get(
+      claim.job.id,
+      claim.generation,
+      claim.attempt,
+      toolCallId,
+    ) as SubagentToolCallRow | undefined;
+    if (!row) {
+      throw new SubagentJobStateError(claim.job.id, `journaled tool call ${toolCallId}`);
+    }
+    return row;
+  }
+
   private requireClaimedRun(
     job: SubagentJobRow,
     claim: SubagentJobRunClaim,
@@ -922,6 +1117,49 @@ export class SubagentJobService {
       throw new SubagentJobStateError(job.id, "the active fenced run claim");
     }
     return row;
+  }
+
+  private persistRunCheckpoint(
+    job: SubagentJobRow,
+    run: SubagentJobRunRow,
+    claim: SubagentJobRunClaim,
+    progress: SubagentJobRunProgress,
+    transcriptJson: string | null,
+    updatedAt: string,
+  ): SubagentJobRunUsage {
+    const usage = monotonicRunUsage(
+      run,
+      claimedRunUsage(claim, progress, run.result_characters),
+    );
+    assertRunUsageWithinBudgets(claim.job.id, usage, parseBudgets(job.budgets_json));
+    const result = this.database.connection.prepare(`
+      UPDATE subagent_job_runs
+      SET model_calls = ?, tool_calls = ?, input_tokens = ?, output_tokens = ?,
+          duration_ms = ?, checkpoint_at = ?, updated_at = ?
+      WHERE job_id = ? AND generation = ? AND status = 'running'
+        AND attempt_count = ? AND owner_id = ? AND claim_token = ?
+    `).run(
+      usage.modelCalls,
+      usage.toolCalls,
+      usage.inputTokens,
+      usage.outputTokens,
+      usage.durationMs,
+      updatedAt,
+      updatedAt,
+      claim.job.id,
+      claim.generation,
+      claim.attempt,
+      claim.ownerId,
+      claim.claimToken,
+    );
+    if (Number(result.changes) !== 1) {
+      throw new SubagentJobStateError(claim.job.id, "the active fenced run claim");
+    }
+    this.database.connection.prepare(`
+      UPDATE subagent_jobs SET transcript_json = ?
+      WHERE id = ? AND status = 'running'
+    `).run(transcriptJson, claim.job.id);
+    return usage;
   }
 
   private insertQueuedRun(jobId: string, generation: number, createdAt: string): void {
@@ -1281,6 +1519,109 @@ function clampRunUsageToBudgets(
     ),
     resultCharacters: Math.min(usage.resultCharacters, budgets.maxResultCharacters),
   });
+}
+
+export function subagentToolReplayPolicy(toolName: string): SubagentToolReplayPolicy {
+  validateToolIdentity("tool name", toolName, 128);
+  return automaticallyReplayableSubagentTools.has(toolName) ? "automatic" : "explicit";
+}
+
+function normalizeToolCallStart(input: SubagentToolCallStart): SubagentToolCallStart {
+  if (!input || typeof input !== "object" || Array.isArray(input)) {
+    throw new TypeError("Subagent tool call start must be an object");
+  }
+  validateToolIdentity("tool call ID", input.toolCallId, 512);
+  validateToolIdentity("tool name", input.toolName, 128);
+  if (!input.input || typeof input.input !== "object" || Array.isArray(input.input)) {
+    throw new TypeError("Subagent tool call input must be an object");
+  }
+  return Object.freeze({
+    toolCallId: input.toolCallId,
+    toolName: input.toolName,
+    input: input.input,
+  });
+}
+
+function normalizeToolCallResult(input: SubagentToolCallResult): SubagentToolCallResult {
+  const start = normalizeToolCallStart(input);
+  if (!Array.isArray(input.content)) {
+    throw new TypeError("Subagent tool result content must be an array");
+  }
+  if (typeof input.isError !== "boolean") {
+    throw new TypeError("Subagent tool result isError must be a boolean");
+  }
+  return Object.freeze({
+    ...start,
+    content: input.content,
+    ...(input.details === undefined ? {} : { details: input.details }),
+    ...(input.usage === undefined ? {} : { usage: input.usage }),
+    isError: input.isError,
+  });
+}
+
+function boundedToolArgumentsJson(input: Readonly<Record<string, unknown>>): string {
+  let json: string | undefined;
+  try {
+    json = JSON.stringify(input);
+  } catch {
+    throw new TypeError("Subagent tool call input must be JSON serializable");
+  }
+  if (json === undefined || Buffer.byteLength(json, "utf8") > maximumSubagentToolArgumentsBytes) {
+    throw new TypeError(
+      `Subagent tool call input must fit within ${maximumSubagentToolArgumentsBytes} bytes`,
+    );
+  }
+  return json;
+}
+
+type SerializedToolResult =
+  | Readonly<{ kind: "unavailable" }>
+  | Readonly<{ kind: "json"; json: string; sha256: string; bytes: number }>;
+
+type ToolResultDisposition = Readonly<{
+  status: "committed" | "result_unavailable";
+  reason: "not_json" | "too_large" | "run_limit" | null;
+}>;
+
+function serializeToolResult(input: SubagentToolCallResult): SerializedToolResult {
+  let json: string | undefined;
+  try {
+    json = JSON.stringify({
+      content: input.content,
+      ...(input.details === undefined ? {} : { details: input.details }),
+      ...(input.usage === undefined ? {} : { usage: input.usage }),
+      isError: input.isError,
+    });
+  } catch {
+    return Object.freeze({ kind: "unavailable" });
+  }
+  if (json === undefined) return Object.freeze({ kind: "unavailable" });
+  return Object.freeze({
+    kind: "json",
+    json,
+    sha256: createHash("sha256").update(json).digest("hex"),
+    bytes: Buffer.byteLength(json, "utf8"),
+  });
+}
+
+function toolResultMatches(
+  row: SubagentToolCallRow,
+  result: SubagentToolCallResult,
+  serialized: SerializedToolResult,
+  disposition: ToolResultDisposition,
+): boolean {
+  return row.status === disposition.status &&
+    row.result_reason === disposition.reason &&
+    row.result_sha256 === (serialized.kind === "json" ? serialized.sha256 : null) &&
+    row.result_bytes === (serialized.kind === "json" ? serialized.bytes : null) &&
+    row.is_error === (result.isError ? 1 : 0);
+}
+
+function validateToolIdentity(label: string, value: string, maximumCharacters: number): void {
+  if (typeof value !== "string" || !value.trim() || value !== value.trim() ||
+      [...value].length > maximumCharacters) {
+    throw new TypeError(`Subagent ${label} is invalid`);
+  }
 }
 
 function normalizeGrants(input: SubagentJobGrantSnapshot): SubagentJobGrantSnapshot {

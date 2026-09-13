@@ -133,6 +133,24 @@ test("private Pi session delegates to an isolated read-only subagent and resumes
     assert.equal(delegation.payload.modelCalls, 2);
     assert.equal(delegation.payload.toolCalls, 1);
     assert.equal("task" in delegation.payload, false);
+    const toolJournal = runtime.kernel.database.connection.prepare(`
+      SELECT attempt, model_call, tool_call_id, tool_name, replay_policy, status,
+        arguments_sha256, arguments_bytes, result_json, result_sha256,
+        result_bytes, is_error, result_reason
+      FROM subagent_job_tool_calls WHERE job_id = ? AND generation = 1
+    `).get(String(delegation.payload.jobId)) as Record<string, unknown>;
+    assert.equal(toolJournal.attempt, 1);
+    assert.equal(toolJournal.model_call, 1);
+    assert.equal(toolJournal.tool_name, "read");
+    assert.equal(toolJournal.replay_policy, "automatic");
+    assert.equal(toolJournal.status, "committed");
+    assert.match(String(toolJournal.arguments_sha256), /^[a-f0-9]{64}$/u);
+    assert.equal(Number(toolJournal.arguments_bytes) > 1, true);
+    assert.match(String(toolJournal.result_json), /workspace evidence: pine-17/u);
+    assert.match(String(toolJournal.result_sha256), /^[a-f0-9]{64}$/u);
+    assert.equal(Number(toolJournal.result_bytes) > 1, true);
+    assert.equal(toolJournal.is_error, 0);
+    assert.equal(toolJournal.result_reason, null);
     const traces = runtime.kernel.recentModelContextTraces(10);
     assert.ok(traces.some((trace) =>
       trace.turnKind === "subagent" && trace.sessionId.startsWith("subagent:subagent-private-session:")),

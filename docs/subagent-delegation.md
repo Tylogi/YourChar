@@ -1,6 +1,6 @@
 # Private-Chat Subagent Delegation
 
-Status: P2 durable background continuation, result delivery, and fenced run checkpoints implemented; automatic recovery and the tool side-effect journal remain
+Status: P2 durable background continuation, result delivery, fenced run checkpoints, and the tool side-effect journal implemented; recovery reconciliation and explicit replay decisions remain
 
 ## Product boundary
 
@@ -105,12 +105,24 @@ cumulative model-call, tool-call, token, and elapsed-time counters. Those
 counters, frozen limits, and the three-attempt ceiling do not reset when the
 process restarts.
 
+Schema 64 adds a write-ahead tool journal. Immediately before execution, the
+runtime atomically stores the assistant tool-call checkpoint, call identity,
+argument byte count, and argument SHA-256; raw arguments are not duplicated in
+the journal. Immediately after execution, it commits a bounded private result
+and digest before Pi publishes the result into the child transcript. Local
+Workspace/Skill/document reads are classified as automatically replayable;
+network, vision, MinerU, and any unknown tool require an explicit retry
+decision if execution is interrupted. Unserializable or over-budget results
+are recorded as unavailable and are never silently regenerated. Journal result
+bodies share a 4 MiB limit per run.
+
 Parent cancellation propagates to a blocking child, while
 `interrupt_subagent_job` propagates an explicit cancellation to a background
 child's model and provider transport. Schema 60 introduced the host-owned job
 record; schema 61 adds its bounded private transcript, pending follow-up, and
 continuation counter. Schema 62 adds a durable per-run delivery outbox. Schema
-63 adds fenced execution claims and cumulative run checkpoints. The
+63 adds fenced execution claims and cumulative run checkpoints, and schema 64
+adds the bounded private tool intent/result journal. The
 record retains stable job/child IDs, frozen budgets,
 the explicit read-only module/Skill/tool grant, lifecycle timestamps, bounded
 result, and safe failure diagnostic. Raw task/context/follow-up text and the
@@ -159,8 +171,9 @@ durable rows interrupted. If the application starts with a `queued` or
 `running` row, it likewise marks that row failed with the retryable
 `interrupted` diagnostic. It deliberately does not replay model/tool work:
 pending follow-up text, the latest bounded transcript checkpoint, and
-cumulative usage remain durable, while automatic replay stays disabled until
-the tool side-effect journal can make retry decisions explicit.
+cumulative usage remain durable. Automatic replay stays disabled until the
+next recovery slice can reconcile committed results and obtain an explicit
+decision for ambiguous external calls.
 
 ## Observability and testing
 
@@ -180,6 +193,7 @@ Regression tests must preserve:
 - durable identity, background start/send/interrupt, scoped list/get,
   handle-eviction and completed-transcript restart continuation, grant
   non-expansion, terminal transitions, idempotent result-reference delivery,
-  fenced run ownership, cumulative checkpoint accounting, restart fail-closed,
-  conversation erasure, and incognito physical purge;
+  fenced run ownership, cumulative checkpoint accounting, write-ahead tool
+  intent/result journaling, restart fail-closed, conversation erasure, and
+  incognito physical purge;
 - management-page detail and token-estimate rendering.

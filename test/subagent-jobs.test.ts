@@ -1074,6 +1074,219 @@ test("Subagent run claims fence stale writers and enforce cumulative frozen budg
   }
 });
 
+test("Subagent tool intents commit private results and make external replay explicit", () => {
+  const runtime = createTestRuntime({ seed: "subagent-tool-journal" });
+  try {
+    const grants = {
+      workspaceAccess: "off" as const,
+      moduleIds: ["mcp:tavily-search"],
+      skillNames: [] as string[],
+      toolNames: ["tavily_search"],
+    };
+    const settings = runtime.kernel.getSubagentSettings();
+    const created = runtime.kernel.subagentJobs.create({
+      parentSessionId: "tool-journal-parent",
+      role: "researcher",
+      task: "Exercise the private tool side-effect journal.",
+      mode: "sms",
+      conversationSpace: "normal",
+      budgets: {
+        maxConcurrentTasks: settings.maxConcurrentTasks,
+        maxWorkModelCalls: settings.maxWorkModelCalls,
+        maxOutputTokens: settings.maxOutputTokens,
+        maxResultCharacters: settings.maxResultCharacters,
+        timeoutSeconds: settings.timeoutSeconds,
+        timeoutMs: settings.timeoutSeconds * 1_000,
+      },
+      grants,
+    });
+    const claim = runtime.kernel.subagentJobs.claimRun(
+      created.id,
+      grants,
+      "tool-journal-test-owner",
+    );
+    assert.throws(
+      () => runtime.kernel.subagentJobs.recordToolCallStart(
+        claim,
+        { toolCallId: "ungranted-tool", toolName: "read", input: { path: "secret" } },
+        {
+          modelCalls: 1,
+          toolCalls: 1,
+          inputTokens: 0,
+          outputTokens: 0,
+          durationMs: 1,
+        },
+        [{ role: "assistant", content: [] }],
+      ),
+      /tool inside the frozen run grant/u,
+    );
+    const firstCall = {
+      toolCallId: "journal-tool-1",
+      toolName: "tavily_search",
+      input: { query: "PRIVATE_TOOL_ARGUMENT_SENTINEL" },
+    };
+    const firstTranscript = [{
+      role: "assistant",
+      content: [{
+        type: "toolCall",
+        id: firstCall.toolCallId,
+        name: firstCall.toolName,
+        arguments: firstCall.input,
+      }],
+    }];
+    runtime.kernel.subagentJobs.recordToolCallStart(
+      claim,
+      firstCall,
+      {
+        modelCalls: 1,
+        toolCalls: 1,
+        inputTokens: 10,
+        outputTokens: 20,
+        durationMs: 100,
+      },
+      firstTranscript,
+    );
+    const started = runtime.kernel.database.connection.prepare(`
+      SELECT status, replay_policy, result_json FROM subagent_job_tool_calls
+      WHERE job_id = ? AND generation = 1 AND attempt = 1 AND tool_call_id = ?
+    `).get(created.id, firstCall.toolCallId) as Record<string, unknown>;
+    assert.deepEqual({ ...started }, {
+      status: "started",
+      replay_policy: "explicit",
+      result_json: null,
+    });
+    const checkpoint = runtime.kernel.database.connection.prepare(`
+      SELECT transcript_json FROM subagent_jobs WHERE id = ?
+    `).get(created.id) as { transcript_json: string };
+    assert.match(checkpoint.transcript_json, /PRIVATE_TOOL_ARGUMENT_SENTINEL/u);
+    assert.throws(
+      () => runtime.kernel.subagentJobs.recordToolCallStart(
+        claim,
+        firstCall,
+        {
+          modelCalls: 1,
+          toolCalls: 1,
+          inputTokens: 10,
+          outputTokens: 20,
+          durationMs: 100,
+        },
+        firstTranscript,
+      ),
+      /new fenced tool call journal-tool-1/u,
+    );
+    const firstResult = {
+      ...firstCall,
+      content: [{ type: "text", text: "PRIVATE_TOOL_RESULT_SENTINEL" }],
+      details: { resultCount: 1 },
+      isError: false,
+    };
+    runtime.kernel.subagentJobs.recordToolCallResult(claim, firstResult);
+    runtime.kernel.subagentJobs.recordToolCallResult(claim, firstResult);
+    assert.throws(
+      () => runtime.kernel.subagentJobs.recordToolCallResult(claim, {
+        ...firstResult,
+        content: [{ type: "text", text: "a different result" }],
+      }),
+      /immutable tool result commit/u,
+    );
+
+    const secondCall = {
+      toolCallId: "journal-tool-2",
+      toolName: "tavily_search",
+      input: { query: "PRIVATE_UNSERIALIZABLE_ARGUMENT_CONTEXT" },
+    };
+    runtime.kernel.subagentJobs.recordToolCallStart(
+      claim,
+      secondCall,
+      {
+        modelCalls: 1,
+        toolCalls: 2,
+        inputTokens: 10,
+        outputTokens: 20,
+        durationMs: 120,
+      },
+      [{
+        role: "assistant",
+        content: [
+          ...firstTranscript[0].content,
+          {
+            type: "toolCall",
+            id: secondCall.toolCallId,
+            name: secondCall.toolName,
+            arguments: secondCall.input,
+          },
+        ],
+      }],
+    );
+    const circularDetails: Record<string, unknown> = {};
+    circularDetails.self = circularDetails;
+    runtime.kernel.subagentJobs.recordToolCallResult(claim, {
+      ...secondCall,
+      content: [{ type: "text", text: "PRIVATE_UNSTORED_TOOL_RESULT_SENTINEL" }],
+      details: circularDetails,
+      isError: true,
+    });
+
+    const rows = runtime.kernel.database.connection.prepare(`
+      SELECT model_call, tool_call_id, tool_name, replay_policy, status, arguments_sha256,
+        arguments_bytes, result_json, result_sha256, result_bytes, is_error,
+        result_reason
+      FROM subagent_job_tool_calls
+      WHERE job_id = ? AND generation = 1 ORDER BY tool_call_id
+    `).all(created.id) as Array<Record<string, unknown>>;
+    assert.equal(rows.length, 2);
+    assert.deepEqual({ ...rows[0] }, {
+      tool_call_id: "journal-tool-1",
+      model_call: 1,
+      tool_name: "tavily_search",
+      replay_policy: "explicit",
+      status: "committed",
+      arguments_sha256: rows[0].arguments_sha256,
+      arguments_bytes: rows[0].arguments_bytes,
+      result_json: rows[0].result_json,
+      result_sha256: rows[0].result_sha256,
+      result_bytes: rows[0].result_bytes,
+      is_error: 0,
+      result_reason: null,
+    });
+    assert.match(String(rows[0].arguments_sha256), /^[a-f0-9]{64}$/u);
+    assert.doesNotMatch(JSON.stringify(rows[0]), /PRIVATE_TOOL_ARGUMENT_SENTINEL/u);
+    assert.match(String(rows[0].result_json), /PRIVATE_TOOL_RESULT_SENTINEL/u);
+    assert.match(String(rows[0].result_sha256), /^[a-f0-9]{64}$/u);
+    assert.deepEqual({ ...rows[1] }, {
+      tool_call_id: "journal-tool-2",
+      model_call: 1,
+      tool_name: "tavily_search",
+      replay_policy: "explicit",
+      status: "result_unavailable",
+      arguments_sha256: rows[1].arguments_sha256,
+      arguments_bytes: rows[1].arguments_bytes,
+      result_json: null,
+      result_sha256: null,
+      result_bytes: null,
+      is_error: 1,
+      result_reason: "not_json",
+    });
+    assert.doesNotMatch(JSON.stringify(rows[1]), /PRIVATE_(?:UNSERIALIZABLE|UNSTORED)_/u);
+    assert.doesNotMatch(
+      JSON.stringify(runtime.kernel.subagentJobs.get(created.parentSessionId, created.id)),
+      /PRIVATE_TOOL_(?:ARGUMENT|RESULT)_SENTINEL/u,
+    );
+    runtime.kernel.subagentJobs.fail(created.id, {
+      failureKind: "runtime_error",
+      modelCalls: 1,
+      toolCalls: 2,
+      inputTokens: 10,
+      outputTokens: 20,
+      durationMs: 130,
+      forcedFinalization: false,
+      retryable: true,
+    }, claim);
+  } finally {
+    runtime.dispose();
+  }
+});
+
 test("startup recovery fails interrupted Subagent jobs closed without silently replaying work", async () => {
   const stateDir = mkdtempSync(join(tmpdir(), "yourchar-subagent-job-recovery-"));
   let first: ReturnType<typeof createTestRuntime> | undefined = createTestRuntime({

@@ -127,8 +127,11 @@ Required invariants:
   tool, token, elapsed-time, and result-size accounting.
 - [ ] Recover expired leased work from persistent child checkpoints without
   resetting its frozen budgets or three-attempt ceiling.
-- [ ] Journal tool commits so recovery cannot repeat an external side effect
-  without an explicit retry decision.
+- [x] Write-ahead journal every admitted tool call, store only its argument
+  digest plus a bounded private result, and classify external or metered calls
+  as requiring an explicit replay decision.
+- [ ] Reconcile committed tool results during recovery and expose an explicit
+  decision path for ambiguous external calls; never silently repeat them.
 - [x] Keep continuation depth, run attempts, elapsed time, tokens, result size,
   and capability grants durably bounded across process restarts.
 
@@ -162,8 +165,9 @@ feature counts must not be reported as task-success improvements.
 - [x] P1a session capability lifecycle.
 - [x] P1b declarative product contributions.
 - [x] P1c profiles, reload, and declarative provider settings.
-- [ ] P2 continuable jobs and subagents (P2a/P2b and the P2c fenced run ledger
-  are complete; automatic recovery and the tool side-effect journal remain).
+- [ ] P2 continuable jobs and subagents (P2a/P2b plus the P2c fenced run ledger
+  and tool journal are complete; recovery reconciliation and explicit replay
+  decisions remain).
 - [ ] P3 general execution.
 - [ ] P4 provider and host seams.
 - [ ] P5 event-sourced runtime state.

@@ -3309,6 +3309,68 @@ const migrations: Migration[] = [
       FROM subagent_jobs;
     `,
   },
+  {
+    version: 64,
+    sql: `
+      CREATE TABLE subagent_job_tool_calls (
+        job_id TEXT NOT NULL,
+        generation INTEGER NOT NULL CHECK (generation BETWEEN 1 AND 9),
+        attempt INTEGER NOT NULL CHECK (attempt BETWEEN 1 AND 3),
+        model_call INTEGER NOT NULL CHECK (model_call BETWEEN 1 AND 65),
+        tool_call_id TEXT NOT NULL CHECK (
+          length(tool_call_id) BETWEEN 1 AND 512 AND trim(tool_call_id) = tool_call_id
+        ),
+        tool_name TEXT NOT NULL CHECK (
+          length(tool_name) BETWEEN 1 AND 128 AND trim(tool_name) = tool_name
+        ),
+        replay_policy TEXT NOT NULL CHECK (replay_policy IN ('automatic', 'explicit')),
+        status TEXT NOT NULL CHECK (
+          status IN ('started', 'committed', 'result_unavailable')
+        ),
+        arguments_sha256 TEXT NOT NULL CHECK (
+          length(arguments_sha256) = 64 AND arguments_sha256 NOT GLOB '*[^a-f0-9]*'
+        ),
+        arguments_bytes INTEGER NOT NULL CHECK (arguments_bytes BETWEEN 2 AND 65536),
+        result_json TEXT CHECK (
+          result_json IS NULL OR (
+            json_valid(result_json) AND length(CAST(result_json AS BLOB)) <= 4194304
+          )
+        ),
+        result_sha256 TEXT CHECK (
+          result_sha256 IS NULL OR (
+            length(result_sha256) = 64 AND result_sha256 NOT GLOB '*[^a-f0-9]*'
+          )
+        ),
+        result_bytes INTEGER CHECK (result_bytes IS NULL OR result_bytes >= 2),
+        is_error INTEGER CHECK (is_error IS NULL OR is_error IN (0, 1)),
+        result_reason TEXT CHECK (
+          result_reason IS NULL OR result_reason IN ('not_json', 'too_large', 'run_limit')
+        ),
+        started_at TEXT NOT NULL,
+        finished_at TEXT,
+        updated_at TEXT NOT NULL,
+        PRIMARY KEY (job_id, generation, attempt, tool_call_id),
+        FOREIGN KEY (job_id, generation)
+          REFERENCES subagent_job_runs(job_id, generation) ON DELETE CASCADE,
+        CHECK (
+          (status = 'started' AND result_json IS NULL AND result_sha256 IS NULL
+            AND result_bytes IS NULL AND is_error IS NULL AND result_reason IS NULL
+            AND finished_at IS NULL)
+          OR
+          (status = 'committed' AND result_json IS NOT NULL AND result_sha256 IS NOT NULL
+            AND result_bytes IS NOT NULL AND is_error IS NOT NULL
+            AND result_reason IS NULL AND finished_at IS NOT NULL)
+          OR
+          (status = 'result_unavailable' AND result_json IS NULL AND is_error IS NOT NULL
+            AND result_reason IS NOT NULL AND finished_at IS NOT NULL
+            AND ((result_sha256 IS NULL AND result_bytes IS NULL)
+              OR (result_sha256 IS NOT NULL AND result_bytes IS NOT NULL)))
+        )
+      );
+      CREATE INDEX subagent_job_tool_calls_recovery_idx
+        ON subagent_job_tool_calls(job_id, generation, status, replay_policy, attempt, started_at);
+    `,
+  },
 ];
 
 export class AppDatabase {

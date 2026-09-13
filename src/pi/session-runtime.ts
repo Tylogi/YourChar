@@ -2404,6 +2404,9 @@ export class PiSessionRuntime {
     let jobSettled = false;
     let maxTotalModelCalls = configuredMaxTotalModelCalls;
     let modelCalls = 0;
+    let startedToolCalls = 0;
+    let toolJournalError: unknown;
+    const journaledToolCallIds = new Set<string>();
     let modelBudgetExceeded = false;
     let forcedFinalization = false;
     let forcedFinalizationFailed = false;
@@ -2415,7 +2418,10 @@ export class PiSessionRuntime {
       const stats = child?.getSessionStats();
       return {
         modelCalls,
-        toolCalls: Math.max(0, (stats?.toolCalls ?? 0) - baselineToolCalls),
+        toolCalls: Math.max(
+          startedToolCalls,
+          Math.max(0, (stats?.toolCalls ?? 0) - baselineToolCalls),
+        ),
         inputTokens: Math.max(0, (stats?.tokens.input ?? 0) - baselineInputTokens),
         outputTokens: Math.max(0, (stats?.tokens.output ?? 0) - baselineOutputTokens),
         durationMs: Math.max(0, Math.round(performance.now() - startedAt)),
@@ -2638,13 +2644,57 @@ export class PiSessionRuntime {
             },
           };
         });
-        pi.on("tool_call", () => {
-          if (!forcedFinalization) return undefined;
-          forcedFinalizationFailed = true;
-          return {
-            block: true,
-            reason: "Subagent tools are disabled during the reserved finalization call.",
-          };
+        pi.on("tool_call", (event) => {
+          if (forcedFinalization) {
+            forcedFinalizationFailed = true;
+            return {
+              block: true,
+              reason: "Subagent tools are disabled during the reserved finalization call.",
+            };
+          }
+          startedToolCalls += 1;
+          try {
+            if (!runClaim || !child) {
+              throw new Error("Subagent tool execution has no durable run claim");
+            }
+            this.subagentJobs.recordToolCallStart(
+              runClaim,
+              {
+                toolCallId: event.toolCallId,
+                toolName: event.toolName,
+                input: event.input,
+              },
+              currentRunProgress(),
+              child.messages,
+            );
+            journaledToolCallIds.add(event.toolCallId);
+          } catch (error) {
+            startedToolCalls -= 1;
+            toolJournalError = error;
+            void child?.abort();
+            throw error;
+          }
+          return undefined;
+        });
+        pi.on("tool_result", (event) => {
+          if (!journaledToolCallIds.has(event.toolCallId)) return undefined;
+          try {
+            if (!runClaim) throw new Error("Subagent tool result has no durable run claim");
+            this.subagentJobs.recordToolCallResult(runClaim, {
+              toolCallId: event.toolCallId,
+              toolName: event.toolName,
+              input: event.input,
+              content: event.content,
+              details: event.details,
+              usage: event.usage,
+              isError: event.isError,
+            });
+          } catch (error) {
+            toolJournalError = error;
+            void child?.abort();
+            throw error;
+          }
+          return undefined;
         });
         pi.on("turn_end", () => {
           checkpointRun();
@@ -2726,6 +2776,7 @@ export class PiSessionRuntime {
       if (timedOut) {
         throw new Error(`Subagent timed out after ${subagentSettings.timeoutMs / 1_000} seconds`);
       }
+      if (toolJournalError) throw toolJournalError;
       if (modelBudgetExceeded) {
         throw new Error(
           `Subagent exceeded the ${subagentSettings.maxWorkModelCalls}-call work budget and reserved finalization call`,

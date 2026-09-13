@@ -26,7 +26,7 @@ const capabilityId = "test:profile-probe";
 const toolName = "profile_probe";
 const providerSettingsModuleId = "mcp:provider-settings-probe";
 
-test("schemas 58-63 add runtime, provider settings, and durable Subagent execution without changing older settings", () => {
+test("schemas 58-64 add runtime, provider settings, and durable Subagent execution without changing older settings", () => {
   const directory = mkdtempSync(join(tmpdir(), "yourchar-runtime-schema-"));
   const path = join(directory, "state.sqlite");
   try {
@@ -43,7 +43,7 @@ test("schemas 58-63 add runtime, provider settings, and durable Subagent executi
         Number((upgraded.connection.prepare(
           "SELECT MAX(version) AS version FROM schema_migrations",
         ).get() as { version: number }).version),
-        63,
+        64,
       );
       const manager = new AgentRuntimeConfigurationManager(
         upgraded,
@@ -113,6 +113,30 @@ test("schemas 58-63 add runtime, provider settings, and durable Subagent executi
         "lease_expires_at",
       ]) {
         assert.equal(runColumns.has(column), true, `${column} must be migrated`);
+      }
+      const toolJournalColumns = new Set(
+        (upgraded.connection.prepare("PRAGMA table_info(subagent_job_tool_calls)").all() as Array<{
+          name: string;
+        }>).map((column) => column.name),
+      );
+      for (const column of [
+        "job_id",
+        "generation",
+        "attempt",
+        "model_call",
+        "tool_call_id",
+        "tool_name",
+        "replay_policy",
+        "status",
+        "arguments_sha256",
+        "arguments_bytes",
+        "result_json",
+        "result_sha256",
+        "result_bytes",
+        "is_error",
+        "result_reason",
+      ]) {
+        assert.equal(toolJournalColumns.has(column), true, `${column} must be migrated`);
       }
     } finally {
       upgraded.close();
