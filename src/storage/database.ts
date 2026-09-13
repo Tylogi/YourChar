@@ -3209,6 +3209,106 @@ const migrations: Migration[] = [
         ON subagent_job_deliveries(status, created_at, job_id, generation);
     `,
   },
+  {
+    version: 63,
+    sql: `
+      CREATE TABLE subagent_job_runs (
+        job_id TEXT NOT NULL REFERENCES subagent_jobs(id) ON DELETE CASCADE,
+        generation INTEGER NOT NULL CHECK (generation BETWEEN 1 AND 9),
+        status TEXT NOT NULL CHECK (
+          status IN ('queued', 'running', 'idle', 'completed', 'failed', 'cancelled')
+        ),
+        attempt_count INTEGER NOT NULL DEFAULT 0 CHECK (attempt_count BETWEEN 0 AND 3),
+        model_calls INTEGER NOT NULL DEFAULT 0 CHECK (model_calls BETWEEN 0 AND 65),
+        tool_calls INTEGER NOT NULL DEFAULT 0 CHECK (tool_calls BETWEEN 0 AND 1040),
+        input_tokens INTEGER NOT NULL DEFAULT 0 CHECK (input_tokens BETWEEN 0 AND 272629760),
+        output_tokens INTEGER NOT NULL DEFAULT 0 CHECK (output_tokens BETWEEN 0 AND 4259840),
+        duration_ms INTEGER NOT NULL DEFAULT 0 CHECK (duration_ms BETWEEN 0 AND 2147483647),
+        result_characters INTEGER NOT NULL DEFAULT 0
+          CHECK (result_characters BETWEEN 0 AND 200000),
+        checkpoint_at TEXT,
+        owner_id TEXT,
+        claim_token TEXT,
+        lease_expires_at TEXT,
+        attempt_started_at TEXT,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        finished_at TEXT,
+        PRIMARY KEY (job_id, generation),
+        CHECK (
+          (status IN ('queued', 'idle') AND owner_id IS NULL AND claim_token IS NULL
+            AND lease_expires_at IS NULL AND attempt_started_at IS NULL
+            AND finished_at IS NULL)
+          OR
+          (status = 'running' AND attempt_started_at IS NOT NULL AND finished_at IS NULL
+            AND (
+              (owner_id IS NULL AND claim_token IS NULL AND lease_expires_at IS NULL)
+              OR
+              (owner_id IS NOT NULL AND claim_token IS NOT NULL AND lease_expires_at IS NOT NULL)
+            ))
+          OR
+          (status IN ('completed', 'failed', 'cancelled') AND owner_id IS NULL
+            AND claim_token IS NULL AND lease_expires_at IS NULL
+            AND attempt_started_at IS NULL AND finished_at IS NOT NULL)
+        )
+      );
+      CREATE INDEX subagent_job_runs_recovery_idx
+        ON subagent_job_runs(status, lease_expires_at, updated_at, job_id, generation);
+
+      INSERT INTO subagent_job_runs(
+        job_id, generation, status, attempt_count,
+        model_calls, tool_calls, input_tokens, output_tokens, duration_ms,
+        result_characters, checkpoint_at, owner_id, claim_token, lease_expires_at,
+        attempt_started_at, created_at, updated_at, finished_at
+      )
+      SELECT
+        id,
+        followup_count + 1,
+        status,
+        CASE WHEN status IN ('queued', 'idle') THEN 0 ELSE 1 END,
+        MIN(65, COALESCE(
+          json_extract(result_json, '$.modelCalls'),
+          json_extract(failure_json, '$.modelCalls'),
+          0
+        )),
+        MIN(1040, COALESCE(
+          json_extract(result_json, '$.toolCalls'),
+          json_extract(failure_json, '$.toolCalls'),
+          0
+        )),
+        MIN(272629760, COALESCE(
+          json_extract(result_json, '$.inputTokens'),
+          json_extract(failure_json, '$.inputTokens'),
+          0
+        )),
+        MIN(4259840, COALESCE(
+          json_extract(result_json, '$.outputTokens'),
+          json_extract(failure_json, '$.outputTokens'),
+          0
+        )),
+        MIN(2147483647, COALESCE(
+          json_extract(result_json, '$.durationMs'),
+          json_extract(failure_json, '$.durationMs'),
+          0
+        )),
+        CASE WHEN status = 'completed'
+          THEN MIN(200000, length(COALESCE(json_extract(result_json, '$.output'), '')))
+          ELSE 0
+        END,
+        CASE WHEN transcript_json IS NOT NULL THEN updated_at ELSE NULL END,
+        NULL,
+        NULL,
+        NULL,
+        CASE WHEN status = 'running' THEN COALESCE(started_at, updated_at) ELSE NULL END,
+        created_at,
+        updated_at,
+        CASE WHEN status IN ('completed', 'failed', 'cancelled')
+          THEN COALESCE(finished_at, updated_at)
+          ELSE NULL
+        END
+      FROM subagent_jobs;
+    `,
+  },
 ];
 
 export class AppDatabase {

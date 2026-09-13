@@ -164,7 +164,7 @@ const mcpDetails: Record<string, string> = {
 - Every admitted task receives a durable job ID and child-session ID. Queued, running, completed, failed, and cancelled transitions retain frozen budgets and the exact read-only grant set.
 - Background jobs survive parent handle eviction and capability remounts. Conversation deletion and capability-setting changes are blocked while admitted work is active.
 - Completed child transcripts are retained privately up to 4 MiB and support at most eight 4,000-character follow-up turns, including after restart. Continuation reuses the stable child ID and can only retain or reduce its previous grants.
-- An interrupted non-terminal job fails closed on startup and is marked retryable; it is never silently replayed before resumable checkpoints exist.
+- Each initial or follow-up run persists a fenced owner claim, bounded transcript checkpoints, and cumulative usage under its frozen budgets. An interrupted non-terminal job still fails closed on startup and is marked retryable; automatic replay stays disabled until tool side effects can be journaled safely.
 - Child tools are read-only: enabled Skill files, read-only Workspace and MarkItDown document conversion, configured Tavily Search, and configured Vision MCP.
 - The child cannot change schedules, memory, user profile, SOUL.md, scenes, or Workspace files and cannot create another subagent.
 - Budgets are persistent and configurable from this module's settings. Defaults are 32 work model calls plus one reserved no-tool finalization call, 30 minutes of hard wall-clock time, 16,384 output tokens per model call, and 64,000 final-result characters. At most four tasks run concurrently per private session by default. Activity does not extend the deadline.

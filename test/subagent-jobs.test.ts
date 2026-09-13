@@ -210,6 +210,24 @@ test("a background Subagent job survives parent handle eviction and completes du
     assert.equal(completed.revision, 3);
     assert.equal(runtime.kernel.sessionRuntime.hasActiveSubagentJob(parentSessionId), false);
     assert.equal(runtime.model.pendingCount(), 0);
+    const durableRun = runtime.kernel.database.connection.prepare(`
+      SELECT status, attempt_count, model_calls, tool_calls, input_tokens,
+        output_tokens, duration_ms, result_characters, checkpoint_at,
+        owner_id, claim_token, lease_expires_at
+      FROM subagent_job_runs WHERE job_id = ? AND generation = 1
+    `).get(admitted.id) as Record<string, unknown>;
+    assert.equal(durableRun.status, "completed");
+    assert.equal(durableRun.attempt_count, 1);
+    assert.equal(durableRun.model_calls, completed.result?.modelCalls);
+    assert.equal(durableRun.tool_calls, completed.result?.toolCalls);
+    assert.equal(durableRun.input_tokens, completed.result?.inputTokens);
+    assert.equal(durableRun.output_tokens, completed.result?.outputTokens);
+    assert.equal(durableRun.duration_ms, completed.result?.durationMs);
+    assert.equal(durableRun.result_characters, [...output].length);
+    assert.equal(typeof durableRun.checkpoint_at, "string");
+    assert.equal(durableRun.owner_id, null);
+    assert.equal(durableRun.claim_token, null);
+    assert.equal(durableRun.lease_expires_at, null);
 
     const backgroundAudit = runtime.kernel.store.actions.find((action) =>
       action.actionType === "background_subagent_job" && action.payload.jobId === admitted.id
@@ -866,6 +884,191 @@ test("Subagent continuation is CAS-bounded, cannot widen grants, and degrades sa
       deliveries.map((delivery) => delivery.status),
       [...Array(maximumSubagentFollowupTurns - 1).fill("discarded"), "pending"],
     );
+    const runs = runtime.kernel.database.connection.prepare(`
+      SELECT generation, status, attempt_count FROM subagent_job_runs
+      WHERE job_id = ? ORDER BY generation
+    `).all(created.id) as Array<{
+      generation: number;
+      status: string;
+      attempt_count: number;
+    }>;
+    assert.deepEqual(
+      runs.map((run) => ({
+        generation: run.generation,
+        status: run.status,
+        attemptCount: run.attempt_count,
+      })),
+      Array.from({ length: maximumSubagentFollowupTurns + 1 }, (_, index) => ({
+        generation: index + 1,
+        status: "completed",
+        attemptCount: 1,
+      })),
+    );
+  } finally {
+    runtime.dispose();
+  }
+});
+
+test("Subagent run claims fence stale writers and enforce cumulative frozen budgets", () => {
+  const runtime = createTestRuntime({ seed: "subagent-run-claim-fencing" });
+  try {
+    const grants = {
+      workspaceAccess: "off" as const,
+      moduleIds: [] as string[],
+      skillNames: [] as string[],
+      toolNames: [] as string[],
+    };
+    const budgets = {
+      maxConcurrentTasks: 1,
+      maxWorkModelCalls: 1,
+      maxOutputTokens: 512,
+      maxResultCharacters: 1_000,
+      timeoutSeconds: 60,
+      timeoutMs: 60_000,
+    };
+    assert.throws(
+      () => runtime.kernel.subagentJobs.create({
+        parentSessionId: "invalid-budget-parent",
+        role: "worker",
+        task: "Reject a frozen budget beyond the configured ceiling.",
+        mode: "sms",
+        conversationSpace: "normal",
+        budgets: { ...budgets, maxWorkModelCalls: 65 },
+        grants,
+      }),
+      /budget maxWorkModelCalls is invalid/u,
+    );
+    const created = runtime.kernel.subagentJobs.create({
+      parentSessionId: "fenced-run-parent",
+      role: "worker",
+      task: "Exercise durable run fencing and cumulative budgets.",
+      mode: "sms",
+      conversationSpace: "normal",
+      budgets,
+      grants,
+    });
+    const claim = runtime.kernel.subagentJobs.claimRun(
+      created.id,
+      grants,
+      "test-run-owner",
+    );
+    assert.equal(claim.generation, 1);
+    assert.equal(claim.attempt, 1);
+    assert.deepEqual(claim.baseline, {
+      modelCalls: 0,
+      toolCalls: 0,
+      inputTokens: 0,
+      outputTokens: 0,
+      durationMs: 0,
+      resultCharacters: 0,
+    });
+
+    const checkpointTranscript = [{
+      role: "assistant",
+      content: [{ type: "text", text: "PRIVATE_RUN_CHECKPOINT_SENTINEL" }],
+    }];
+    const usage = runtime.kernel.subagentJobs.checkpointRun(
+      claim,
+      {
+        modelCalls: 1,
+        toolCalls: 0,
+        inputTokens: 10,
+        outputTokens: 20,
+        durationMs: 100,
+      },
+      checkpointTranscript,
+    );
+    assert.deepEqual(usage, {
+      modelCalls: 1,
+      toolCalls: 0,
+      inputTokens: 10,
+      outputTokens: 20,
+      durationMs: 100,
+      resultCharacters: 0,
+    });
+    const nonRegressingUsage = runtime.kernel.subagentJobs.checkpointRun(
+      claim,
+      {
+        modelCalls: 0,
+        toolCalls: 0,
+        inputTokens: 1,
+        outputTokens: 2,
+        durationMs: 50,
+      },
+      checkpointTranscript,
+    );
+    assert.deepEqual(nonRegressingUsage, usage);
+    assert.throws(
+      () => runtime.kernel.subagentJobs.checkpointRun(
+        claim,
+        {
+          modelCalls: 3,
+          toolCalls: 0,
+          inputTokens: 10,
+          outputTokens: 20,
+          durationMs: 100,
+        },
+        checkpointTranscript,
+      ),
+      /frozen cumulative run budget/u,
+    );
+    assert.throws(
+      () => runtime.kernel.subagentJobs.complete(
+        created.id,
+        subagentCompletion("bounded"),
+        checkpointTranscript,
+        claim,
+      ),
+      /frozen result-size budget/u,
+    );
+
+    const failed = runtime.kernel.subagentJobs.fail(
+      created.id,
+      {
+        failureKind: "runtime_error",
+        modelCalls: 1,
+        toolCalls: 0,
+        inputTokens: 5,
+        outputTokens: 10,
+        durationMs: 110,
+        forcedFinalization: false,
+        retryable: true,
+      },
+      claim,
+    );
+    assert.equal(failed.status, "failed");
+    assert.doesNotMatch(JSON.stringify(failed), /PRIVATE_RUN_CHECKPOINT_SENTINEL/u);
+    assert.throws(
+      () => runtime.kernel.subagentJobs.checkpointRun(
+        claim,
+        {
+          modelCalls: 1,
+          toolCalls: 0,
+          inputTokens: 10,
+          outputTokens: 20,
+          durationMs: 120,
+        },
+        checkpointTranscript,
+      ),
+      /active fenced run claim/u,
+    );
+
+    const persisted = runtime.kernel.database.connection.prepare(`
+      SELECT status, attempt_count, model_calls, tool_calls,
+        input_tokens, output_tokens, duration_ms, owner_id, claim_token
+      FROM subagent_job_runs WHERE job_id = ? AND generation = 1
+    `).get(created.id) as Record<string, unknown>;
+    assert.deepEqual({ ...persisted }, {
+      status: "failed",
+      attempt_count: 1,
+      model_calls: 1,
+      tool_calls: 0,
+      input_tokens: 10,
+      output_tokens: 20,
+      duration_ms: 110,
+      owner_id: null,
+      claim_token: null,
+    });
   } finally {
     runtime.dispose();
   }
@@ -950,6 +1153,25 @@ test("startup recovery fails interrupted Subagent jobs closed without silently r
       continuable.grants,
     );
     assert.equal(queuedFollowup.job.status, "queued");
+    const followupClaim = first.kernel.subagentJobs.claimRun(
+      continuable.id,
+      continuable.grants,
+      "recovery-test-owner",
+    );
+    first.kernel.subagentJobs.checkpointRun(
+      followupClaim,
+      {
+        modelCalls: 1,
+        toolCalls: 2,
+        inputTokens: 30,
+        outputTokens: 40,
+        durationMs: 500,
+      },
+      [
+        ...queuedFollowup.transcript,
+        { role: "user", content: queuedFollowup.prompt },
+      ],
+    );
     first.dispose();
     first = undefined;
 
@@ -1005,6 +1227,26 @@ test("startup recovery fails interrupted Subagent jobs closed without silently r
         rawFollowup.pending_input_text,
         "RECOVERED_SUBAGENT_PENDING_FOLLOWUP_SENTINEL",
       );
+      const recoveredRun = second.kernel.database.connection.prepare(`
+        SELECT status, attempt_count, model_calls, tool_calls,
+          input_tokens, output_tokens, duration_ms, checkpoint_at,
+          owner_id, claim_token, lease_expires_at
+        FROM subagent_job_runs WHERE job_id = ? AND generation = 2
+      `).get(continuable.id) as Record<string, unknown>;
+      assert.deepEqual({ ...recoveredRun }, {
+        status: "failed",
+        attempt_count: 1,
+        model_calls: 1,
+        tool_calls: 2,
+        input_tokens: 30,
+        output_tokens: 40,
+        duration_ms: 500,
+        checkpoint_at: recoveredRun.checkpoint_at,
+        owner_id: null,
+        claim_token: null,
+        lease_expires_at: null,
+      });
+      assert.equal(typeof recoveredRun.checkpoint_at, "string");
     } finally {
       second.dispose();
     }

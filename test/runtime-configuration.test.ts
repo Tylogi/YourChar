@@ -26,7 +26,7 @@ const capabilityId = "test:profile-probe";
 const toolName = "profile_probe";
 const providerSettingsModuleId = "mcp:provider-settings-probe";
 
-test("schemas 58-62 add runtime, provider settings, and durable Subagent delivery without changing older settings", () => {
+test("schemas 58-63 add runtime, provider settings, and durable Subagent execution without changing older settings", () => {
   const directory = mkdtempSync(join(tmpdir(), "yourchar-runtime-schema-"));
   const path = join(directory, "state.sqlite");
   try {
@@ -43,7 +43,7 @@ test("schemas 58-62 add runtime, provider settings, and durable Subagent deliver
         Number((upgraded.connection.prepare(
           "SELECT MAX(version) AS version FROM schema_migrations",
         ).get() as { version: number }).version),
-        62,
+        63,
       );
       const manager = new AgentRuntimeConfigurationManager(
         upgraded,
@@ -90,6 +90,29 @@ test("schemas 58-62 add runtime, provider settings, and durable Subagent deliver
         "discarded_at",
       ]) {
         assert.equal(deliveryColumns.has(column), true, `${column} must be migrated`);
+      }
+      const runColumns = new Set(
+        (upgraded.connection.prepare("PRAGMA table_info(subagent_job_runs)").all() as Array<{
+          name: string;
+        }>).map((column) => column.name),
+      );
+      for (const column of [
+        "job_id",
+        "generation",
+        "status",
+        "attempt_count",
+        "model_calls",
+        "tool_calls",
+        "input_tokens",
+        "output_tokens",
+        "duration_ms",
+        "result_characters",
+        "checkpoint_at",
+        "owner_id",
+        "claim_token",
+        "lease_expires_at",
+      ]) {
+        assert.equal(runColumns.has(column), true, `${column} must be migrated`);
       }
     } finally {
       upgraded.close();

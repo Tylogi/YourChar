@@ -122,11 +122,15 @@ Required invariants:
 
 ### P2c — Recovery and side-effect checkpoints
 
-- [ ] Recover leased queued/running work from persistent child checkpoints.
+- [x] Persist one fenced run ledger per initial/follow-up turn, including
+  attempt ownership, bounded transcript checkpoints, and cumulative model,
+  tool, token, elapsed-time, and result-size accounting.
+- [ ] Recover expired leased work from persistent child checkpoints without
+  resetting its frozen budgets or three-attempt ceiling.
 - [ ] Journal tool commits so recovery cannot repeat an external side effect
   without an explicit retry decision.
-- [ ] Bound continuation depth, attempts, elapsed time, tokens, result size,
-  and capability grants across restarts.
+- [x] Keep continuation depth, run attempts, elapsed time, tokens, result size,
+  and capability grants durably bounded across process restarts.
 
 ## 6. Verification strategy
 
@@ -158,8 +162,8 @@ feature counts must not be reported as task-success improvements.
 - [x] P1a session capability lifecycle.
 - [x] P1b declarative product contributions.
 - [x] P1c profiles, reload, and declarative provider settings.
-- [ ] P2 continuable jobs and subagents (P2a and P2b complete; P2c recovery and
-  side-effect checkpoints remain).
+- [ ] P2 continuable jobs and subagents (P2a/P2b and the P2c fenced run ledger
+  are complete; automatic recovery and the tool side-effect journal remain).
 - [ ] P3 general execution.
 - [ ] P4 provider and host seams.
 - [ ] P5 event-sourced runtime state.

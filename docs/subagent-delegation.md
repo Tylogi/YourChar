@@ -1,6 +1,6 @@
 # Private-Chat Subagent Delegation
 
-Status: P2 durable background continuation and result delivery implemented; automatic recovery remains
+Status: P2 durable background continuation, result delivery, and fenced run checkpoints implemented; automatic recovery and the tool side-effect journal remain
 
 ## Product boundary
 
@@ -70,9 +70,11 @@ runtime composes background reminder messages.
 - final output: 64,000 Unicode characters by default, configurable from 1,000 to 200,000;
 - per-call model output: 16,384 tokens by default, configurable from 512 to 65,536;
 - model calls: 32 work calls by default, configurable from 1 to 64, plus one reserved tool-free finalization call per child;
+- tool calls: at most 16 invocations per admitted model call;
 - hard wall time: 30 minutes by default, configurable from 60 to 3,600 seconds; model or tool activity never extends it;
 - concurrency: 4 children per parent session by default, configurable from 1 to 8.
 - continuation: at most 8 follow-up turns of 4,000 Unicode characters each;
+- recovery attempts: at most 3 claims for each initial or follow-up run;
 - private child transcript: retained up to 4 MiB, after which the completed
   result remains available but continuation is disabled.
 
@@ -95,11 +97,20 @@ parallel delegated results share that configured total. Provider context-window
 limits can still require compaction even though the full bounded result remains
 in the transcript.
 
+Each initial or follow-up turn owns a schema-63 run row. A claim carries a
+random fence token and lease; stale owners cannot checkpoint or commit a
+terminal result. Before each provider request and after each completed child
+turn, the runtime persists the bounded private transcript together with
+cumulative model-call, tool-call, token, and elapsed-time counters. Those
+counters, frozen limits, and the three-attempt ceiling do not reset when the
+process restarts.
+
 Parent cancellation propagates to a blocking child, while
 `interrupt_subagent_job` propagates an explicit cancellation to a background
 child's model and provider transport. Schema 60 introduced the host-owned job
 record; schema 61 adds its bounded private transcript, pending follow-up, and
-continuation counter. Schema 62 adds a durable per-run delivery outbox. The
+continuation counter. Schema 62 adds a durable per-run delivery outbox. Schema
+63 adds fenced execution claims and cumulative run checkpoints. The
 record retains stable job/child IDs, frozen budgets,
 the explicit read-only module/Skill/tool grant, lifecycle timestamps, bounded
 result, and safe failure diagnostic. Raw task/context/follow-up text and the
@@ -147,8 +158,9 @@ Application disposal aborts live children after synchronously marking their
 durable rows interrupted. If the application starts with a `queued` or
 `running` row, it likewise marks that row failed with the retryable
 `interrupted` diagnostic. It deliberately does not replay model/tool work:
-pending follow-up text is retained privately for diagnosis, while bounded
-automatic recovery is a later P2 slice.
+pending follow-up text, the latest bounded transcript checkpoint, and
+cumulative usage remain durable, while automatic replay stays disabled until
+the tool side-effect journal can make retry decisions explicit.
 
 ## Observability and testing
 
@@ -168,5 +180,6 @@ Regression tests must preserve:
 - durable identity, background start/send/interrupt, scoped list/get,
   handle-eviction and completed-transcript restart continuation, grant
   non-expansion, terminal transitions, idempotent result-reference delivery,
-  restart fail-closed, conversation erasure, and incognito physical purge;
+  fenced run ownership, cumulative checkpoint accounting, restart fail-closed,
+  conversation erasure, and incognito physical purge;
 - management-page detail and token-estimate rendering.

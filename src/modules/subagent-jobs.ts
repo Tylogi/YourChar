@@ -4,18 +4,31 @@ import type { IdGenerator } from "../app/id-generator.js";
 import type { ConversationSpace, Mode } from "../domain/types.js";
 import type { SubagentFailureDiagnostic, SubagentRole } from "../mcp/subagent-server.js";
 import type { AppDatabase } from "../storage/database.js";
+import {
+  maximumSubagentSettings,
+  minimumSubagentSettings,
+} from "./subagent-settings.js";
 import type { WorkspaceAccess } from "./types.js";
 
 const maximumParentSessionIdCharacters = 256;
 const maximumTaskCharacters = 4_000;
 const maximumContextCharacters = 8_000;
-const maximumResultCharacters = 200_000;
+const maximumResultCharacters = maximumSubagentSettings.maxResultCharacters;
 const maximumListLimit = 100;
 export const maximumSubagentFollowupCharacters = 4_000;
 export const maximumSubagentFollowupTurns = 8;
 export const maximumSubagentTranscriptBytes = 4 * 1_024 * 1_024;
+export const maximumSubagentRunAttempts = 3;
 const maximumSubagentTranscriptMessages = 2_048;
 const maximumSubagentDeliveryAttempts = 8;
+const maximumSubagentToolCallsPerModelCall = 16;
+const maximumSubagentRunLeaseGraceMs = 30_000;
+// Matches Node's largest supported timer after the MCP deadline reserves the
+// same 30-second envelope. Production settings remain capped at 60 minutes;
+// this wider ceiling preserves the existing host/test timeout override seam.
+const maximumSubagentRunDurationMs = 2_147_483_647;
+const maximumSubagentRunTimeoutMs =
+  maximumSubagentRunDurationMs - maximumSubagentRunLeaseGraceMs;
 const jobRoles = new Set<SubagentRole>(["worker", "researcher", "planner", "reviewer"]);
 const jobStatuses = new Set<SubagentJobStatus>([
   "queued",
@@ -163,6 +176,30 @@ export type SubagentJobDeliveryCursor = Readonly<{
   generation: number;
 }>;
 
+export type SubagentJobRunUsage = Readonly<{
+  modelCalls: number;
+  toolCalls: number;
+  inputTokens: number;
+  outputTokens: number;
+  durationMs: number;
+  resultCharacters: number;
+}>;
+
+export type SubagentJobRunProgress = Readonly<
+  Omit<SubagentJobRunUsage, "resultCharacters">
+>;
+
+/** Fenced ownership of one durable initial or follow-up run. */
+export type SubagentJobRunClaim = Readonly<{
+  job: SubagentJobSummary;
+  generation: number;
+  attempt: number;
+  ownerId: string;
+  claimToken: string;
+  leaseExpiresAt: string;
+  baseline: SubagentJobRunUsage;
+}>;
+
 type SubagentJobRow = {
   id: string;
   parent_session_id: string;
@@ -213,6 +250,27 @@ type SubagentJobDeliveryRow = {
   delivered_at: string | null;
   discarded_at: string | null;
   delivery_updated_at: string;
+};
+
+type SubagentJobRunRow = {
+  job_id: string;
+  generation: number;
+  status: string;
+  attempt_count: number;
+  model_calls: number;
+  tool_calls: number;
+  input_tokens: number;
+  output_tokens: number;
+  duration_ms: number;
+  result_characters: number;
+  checkpoint_at: string | null;
+  owner_id: string | null;
+  claim_token: string | null;
+  lease_expires_at: string | null;
+  attempt_started_at: string | null;
+  created_at: string;
+  updated_at: string;
+  finished_at: string | null;
 };
 
 export class SubagentJobNotFoundError extends Error {
@@ -281,6 +339,7 @@ export class SubagentJobService {
         createdAt,
         createdAt,
       );
+      this.insertQueuedRun(id, 1, createdAt);
       if (input.notifyParent === true) {
         this.insertWaitingDelivery(id, 1, createdAt);
       }
@@ -289,35 +348,207 @@ export class SubagentJobService {
   }
 
   start(jobId: string, grants: SubagentJobGrantSnapshot): SubagentJobSummary {
+    return this.claimRun(
+      jobId,
+      grants,
+      `direct:${this.idGenerator.next("subagent-run-owner")}`,
+    ).job;
+  }
+
+  claimRun(
+    jobId: string,
+    grants: SubagentJobGrantSnapshot,
+    ownerId: string,
+  ): SubagentJobRunClaim {
+    const normalizedGrants = normalizeGrants(grants);
+    validateRunOwnerId(ownerId);
+    const now = this.clock.now();
+    const updatedAt = now.toISOString();
+    return this.database.transaction(() => {
+      const row = this.requireRow(jobId);
+      if (row.status !== "queued") throw new SubagentJobStateError(jobId, "queued");
+      const previousGrants = parseGrants(row.grants_json);
+      const generation = currentRunGeneration(row);
+      const run = this.requireRunRow(jobId, generation);
+      const toolsCanInitialize = generation === 1 && Number(run.attempt_count) === 0 &&
+        previousGrants.toolNames.length === 0;
+      if (
+        !isGrantScopeSubset(normalizedGrants, previousGrants) ||
+        (!toolsCanInitialize && !toolNamesAreSubset(normalizedGrants, previousGrants))
+      ) {
+        throw new SubagentJobStateError(jobId, "a run grant no wider than its durable grant");
+      }
+      const budgets = parseBudgets(row.budgets_json);
+      assertRunCanStart(jobId, run, budgets);
+      const claimToken = this.idGenerator.next("subagent-run-claim");
+      const remainingDurationMs = Math.max(1, budgets.timeoutMs - Number(run.duration_ms));
+      const leaseExpiresAt = new Date(
+        now.getTime() + remainingDurationMs + maximumSubagentRunLeaseGraceMs,
+      ).toISOString();
+      const jobResult = this.database.connection.prepare(`
+        UPDATE subagent_jobs
+        SET status = 'running', revision = revision + 1, grants_json = ?,
+            started_at = COALESCE(started_at, ?), updated_at = ?
+        WHERE id = ? AND status = 'queued' AND revision = ?
+      `).run(
+        JSON.stringify(normalizedGrants),
+        updatedAt,
+        updatedAt,
+        jobId,
+        row.revision,
+      );
+      const runResult = this.database.connection.prepare(`
+        UPDATE subagent_job_runs
+        SET status = 'running', attempt_count = attempt_count + 1,
+            owner_id = ?, claim_token = ?, lease_expires_at = ?,
+            attempt_started_at = ?, finished_at = NULL, updated_at = ?
+        WHERE job_id = ? AND generation = ? AND status IN ('queued', 'idle')
+          AND attempt_count < ?
+      `).run(
+        ownerId,
+        claimToken,
+        leaseExpiresAt,
+        updatedAt,
+        updatedAt,
+        jobId,
+        generation,
+        maximumSubagentRunAttempts,
+      );
+      if (Number(jobResult.changes) !== 1 || Number(runResult.changes) !== 1) {
+        throw new SubagentJobStateError(jobId, "an available durable run attempt");
+      }
+      return Object.freeze({
+        job: mapSummary(this.requireRow(jobId)),
+        generation,
+        attempt: Number(run.attempt_count) + 1,
+        ownerId,
+        claimToken,
+        leaseExpiresAt,
+        baseline: mapRunUsage(run),
+      });
+    });
+  }
+
+  checkpointRun(
+    claim: SubagentJobRunClaim,
+    progress: SubagentJobRunProgress,
+    transcript: readonly unknown[],
+  ): SubagentJobRunUsage {
+    validateRunProgress(progress);
+    const transcriptJson = boundedTranscriptJson(transcript);
     const updatedAt = this.clock.now().toISOString();
-    const result = this.database.connection.prepare(`
-      UPDATE subagent_jobs
-      SET status = 'running', revision = revision + 1, grants_json = ?,
-          started_at = COALESCE(started_at, ?), updated_at = ?
-      WHERE id = ? AND status = 'queued'
-    `).run(JSON.stringify(normalizeGrants(grants)), updatedAt, updatedAt, jobId);
-    if (Number(result.changes) !== 1) throw new SubagentJobStateError(jobId, "queued");
-    return this.requireSummary(jobId);
+    return this.database.transaction(() => {
+      const job = this.requireRow(claim.job.id);
+      const run = this.requireClaimedRun(job, claim);
+      const usage = monotonicRunUsage(
+        run,
+        claimedRunUsage(claim, progress, run.result_characters),
+      );
+      assertRunUsageWithinBudgets(claim.job.id, usage, parseBudgets(job.budgets_json));
+      const result = this.database.connection.prepare(`
+        UPDATE subagent_job_runs
+        SET model_calls = ?, tool_calls = ?, input_tokens = ?, output_tokens = ?,
+            duration_ms = ?, checkpoint_at = ?, updated_at = ?
+        WHERE job_id = ? AND generation = ? AND status = 'running'
+          AND attempt_count = ? AND owner_id = ? AND claim_token = ?
+      `).run(
+        usage.modelCalls,
+        usage.toolCalls,
+        usage.inputTokens,
+        usage.outputTokens,
+        usage.durationMs,
+        updatedAt,
+        updatedAt,
+        claim.job.id,
+        claim.generation,
+        claim.attempt,
+        claim.ownerId,
+        claim.claimToken,
+      );
+      if (Number(result.changes) !== 1) {
+        throw new SubagentJobStateError(claim.job.id, "the active fenced run claim");
+      }
+      this.database.connection.prepare(`
+        UPDATE subagent_jobs SET transcript_json = ?
+        WHERE id = ? AND status = 'running'
+      `).run(transcriptJson, claim.job.id);
+      return usage;
+    });
   }
 
   complete(
     jobId: string,
     completion: SubagentJobCompletion,
     transcript?: readonly unknown[],
+    claim?: SubagentJobRunClaim,
   ): SubagentJobDetail {
     validateCompletion(completion);
     const transcriptJson = boundedTranscriptJson(transcript);
     const updatedAt = this.clock.now().toISOString();
     return this.database.transaction(() => {
-      const result = this.database.connection.prepare(`
+      const current = this.requireRow(jobId);
+      if (current.status !== "running") throw new SubagentJobStateError(jobId, "running");
+      const run = claim
+        ? this.requireClaimedRun(current, claim)
+        : this.requireRunRow(jobId, currentRunGeneration(current));
+      const outputCharacters = [...completion.output].length;
+      const usage = claim
+        ? monotonicRunUsage(
+            run,
+            claimedRunUsage(
+              claim,
+              completion,
+              safeUsageSum(claim.baseline.resultCharacters, outputCharacters),
+            ),
+          )
+        : forcedTerminalRunUsage(run, completion, outputCharacters);
+      const budgets = parseBudgets(current.budgets_json);
+      assertCompletionMatchesBudgets(jobId, completion, outputCharacters, budgets);
+      assertRunUsageWithinBudgets(jobId, usage, budgets);
+      const jobResult = this.database.connection.prepare(`
         UPDATE subagent_jobs
         SET status = 'completed', revision = revision + 1, result_json = ?,
             failure_json = NULL, transcript_json = ?, pending_input_text = NULL,
             pending_input_sha256 = NULL, pending_input_characters = 0,
             finished_at = ?, updated_at = ?
-        WHERE id = ? AND status = 'running'
-      `).run(JSON.stringify(completion), transcriptJson, updatedAt, updatedAt, jobId);
-      if (Number(result.changes) !== 1) throw new SubagentJobStateError(jobId, "running");
+        WHERE id = ? AND status = 'running' AND revision = ?
+      `).run(
+        JSON.stringify(completion),
+        transcriptJson,
+        updatedAt,
+        updatedAt,
+        jobId,
+        current.revision,
+      );
+      const runResult = this.database.connection.prepare(`
+        UPDATE subagent_job_runs
+        SET status = 'completed', model_calls = ?, tool_calls = ?, input_tokens = ?,
+            output_tokens = ?, duration_ms = ?, result_characters = ?,
+            checkpoint_at = ?, owner_id = NULL, claim_token = NULL,
+            lease_expires_at = NULL, attempt_started_at = NULL,
+            finished_at = ?, updated_at = ?
+        WHERE job_id = ? AND generation = ? AND status = 'running'
+          AND (? IS NULL OR (attempt_count = ? AND owner_id = ? AND claim_token = ?))
+      `).run(
+        usage.modelCalls,
+        usage.toolCalls,
+        usage.inputTokens,
+        usage.outputTokens,
+        usage.durationMs,
+        usage.resultCharacters,
+        transcriptJson === null ? null : updatedAt,
+        updatedAt,
+        updatedAt,
+        jobId,
+        Number(run.generation),
+        claim?.claimToken ?? null,
+        claim?.attempt ?? null,
+        claim?.ownerId ?? null,
+        claim?.claimToken ?? null,
+      );
+      if (Number(jobResult.changes) !== 1 || Number(runResult.changes) !== 1) {
+        throw new SubagentJobStateError(jobId, "the active durable run");
+      }
       const row = this.requireRow(jobId);
       this.readyWaitingDelivery(row, updatedAt);
       return mapDetail(row);
@@ -387,8 +618,10 @@ export class SubagentJobService {
         SELECT COALESCE(MAX(generation), 0) + 1 AS generation
         FROM subagent_job_deliveries WHERE job_id = ?
       `).get(jobId) as { generation: number }).generation);
+      const next = this.requireRow(jobId);
+      this.insertQueuedRun(jobId, currentRunGeneration(next), updatedAt);
       this.insertWaitingDelivery(jobId, generation, updatedAt);
-      return this.requireRow(jobId);
+      return next;
     });
     return Object.freeze({
       job: mapSummary(queued),
@@ -399,23 +632,76 @@ export class SubagentJobService {
     });
   }
 
-  fail(jobId: string, failure: SubagentFailureDiagnostic): SubagentJobSummary {
+  fail(
+    jobId: string,
+    failure: SubagentFailureDiagnostic,
+    claim?: SubagentJobRunClaim,
+  ): SubagentJobSummary {
     validateFailure(failure);
     const status: SubagentJobStatus = failure.failureKind === "cancelled"
       ? "cancelled"
       : "failed";
     const updatedAt = this.clock.now().toISOString();
     return this.database.transaction(() => {
-      const result = this.database.connection.prepare(`
+      const current = this.requireRow(jobId);
+      if (isTerminal(requiredStatus(current.status))) return mapSummary(current);
+      if (current.status !== "queued" && current.status !== "running") {
+        throw new SubagentJobStateError(jobId, "queued or running");
+      }
+      const run = claim
+        ? this.requireClaimedRun(current, claim)
+        : this.requireRunRow(jobId, currentRunGeneration(current));
+      const measuredUsage = claim
+        ? monotonicRunUsage(
+            run,
+            claimedRunUsage(claim, failure, claim.baseline.resultCharacters),
+          )
+        : forcedTerminalRunUsage(run, failure, 0);
+      const usage = clampRunUsageToBudgets(measuredUsage, parseBudgets(current.budgets_json));
+      const jobResult = this.database.connection.prepare(`
         UPDATE subagent_jobs
         SET status = ?, revision = revision + 1, failure_json = ?,
             result_json = NULL, finished_at = ?, updated_at = ?
-        WHERE id = ? AND status IN ('queued', 'running')
-      `).run(status, JSON.stringify(failure), updatedAt, updatedAt, jobId);
-      const row = this.requireRow(jobId);
-      if (Number(result.changes) !== 1 && !isTerminal(requiredStatus(row.status))) {
-        throw new SubagentJobStateError(jobId, "queued or running");
+        WHERE id = ? AND status IN ('queued', 'running') AND revision = ?
+      `).run(
+        status,
+        JSON.stringify(failure),
+        updatedAt,
+        updatedAt,
+        jobId,
+        current.revision,
+      );
+      const runResult = this.database.connection.prepare(`
+        UPDATE subagent_job_runs
+        SET status = ?, model_calls = ?, tool_calls = ?, input_tokens = ?,
+            output_tokens = ?, duration_ms = ?, result_characters = ?,
+            owner_id = NULL, claim_token = NULL, lease_expires_at = NULL,
+            attempt_started_at = NULL, finished_at = ?, updated_at = ?
+        WHERE job_id = ? AND generation = ? AND status IN ('queued', 'running')
+          AND (? IS NULL OR (
+            status = 'running' AND attempt_count = ? AND owner_id = ? AND claim_token = ?
+          ))
+      `).run(
+        status,
+        usage.modelCalls,
+        usage.toolCalls,
+        usage.inputTokens,
+        usage.outputTokens,
+        usage.durationMs,
+        usage.resultCharacters,
+        updatedAt,
+        updatedAt,
+        jobId,
+        Number(run.generation),
+        claim?.claimToken ?? null,
+        claim?.attempt ?? null,
+        claim?.ownerId ?? null,
+        claim?.claimToken ?? null,
+      );
+      if (Number(jobResult.changes) !== 1 || Number(runResult.changes) !== 1) {
+        throw new SubagentJobStateError(jobId, "the active durable run");
       }
+      const row = this.requireRow(jobId);
       this.readyWaitingDelivery(row, updatedAt);
       return mapSummary(row);
     });
@@ -557,6 +843,18 @@ export class SubagentJobService {
     };
     this.database.transaction(() => {
       this.database.connection.prepare(`
+        UPDATE subagent_job_runs
+        SET status = 'failed', owner_id = NULL, claim_token = NULL,
+            lease_expires_at = NULL, attempt_started_at = NULL,
+            finished_at = ?, updated_at = ?
+        WHERE status IN ('queued', 'running') AND EXISTS (
+          SELECT 1 FROM subagent_jobs j
+          WHERE j.id = subagent_job_runs.job_id
+            AND subagent_job_runs.generation = j.followup_count + 1
+            AND j.status IN ('queued', 'running')
+        )
+      `).run(updatedAt, updatedAt);
+      this.database.connection.prepare(`
         UPDATE subagent_jobs
         SET status = 'failed', revision = revision + 1, failure_json = ?,
             result_json = NULL, recovery_count = recovery_count + 1,
@@ -597,6 +895,45 @@ export class SubagentJobService {
     ).get(jobId) as SubagentJobRow | undefined;
     if (!row) throw new SubagentJobNotFoundError(jobId);
     return row;
+  }
+
+  private requireRunRow(jobId: string, generation: number): SubagentJobRunRow {
+    const row = this.database.connection.prepare(`
+      SELECT * FROM subagent_job_runs WHERE job_id = ? AND generation = ?
+    `).get(jobId, generation) as SubagentJobRunRow | undefined;
+    if (!row) throw new SubagentJobStateError(jobId, `durable run generation ${generation}`);
+    return row;
+  }
+
+  private requireClaimedRun(
+    job: SubagentJobRow,
+    claim: SubagentJobRunClaim,
+  ): SubagentJobRunRow {
+    if (claim.job.id !== job.id || claim.generation !== currentRunGeneration(job)) {
+      throw new SubagentJobStateError(job.id, "the current durable run claim");
+    }
+    const row = this.requireRunRow(job.id, claim.generation);
+    if (
+      row.status !== "running" ||
+      Number(row.attempt_count) !== claim.attempt ||
+      row.owner_id !== claim.ownerId ||
+      row.claim_token !== claim.claimToken
+    ) {
+      throw new SubagentJobStateError(job.id, "the active fenced run claim");
+    }
+    return row;
+  }
+
+  private insertQueuedRun(jobId: string, generation: number, createdAt: string): void {
+    this.database.connection.prepare(`
+      INSERT INTO subagent_job_runs(
+        job_id, generation, status, attempt_count,
+        model_calls, tool_calls, input_tokens, output_tokens, duration_ms,
+        result_characters, checkpoint_at, owner_id, claim_token, lease_expires_at,
+        attempt_started_at, created_at, updated_at, finished_at
+      ) VALUES (?, ?, 'queued', 0, 0, 0, 0, 0, 0, 0,
+        NULL, NULL, NULL, NULL, NULL, ?, ?, NULL)
+    `).run(jobId, generation, createdAt, createdAt);
   }
 
   private insertWaitingDelivery(jobId: string, generation: number, createdAt: string): void {
@@ -765,6 +1102,187 @@ function mapDelivery(row: SubagentJobDeliveryRow): SubagentJobDelivery {
   });
 }
 
+function currentRunGeneration(row: SubagentJobRow): number {
+  return requiredBoundedInteger(
+    Number(row.followup_count) + 1,
+    "run generation",
+    1,
+    maximumSubagentFollowupTurns + 1,
+  );
+}
+
+function mapRunUsage(row: SubagentJobRunRow): SubagentJobRunUsage {
+  return Object.freeze({
+    modelCalls: requiredBoundedInteger(row.model_calls, "run model calls", 0, 65),
+    toolCalls: requiredBoundedInteger(row.tool_calls, "run tool calls", 0, 1_040),
+    inputTokens: requiredBoundedInteger(
+      row.input_tokens,
+      "run input tokens",
+      0,
+      272_629_760,
+    ),
+    outputTokens: requiredBoundedInteger(
+      row.output_tokens,
+      "run output tokens",
+      0,
+      4_259_840,
+    ),
+    durationMs: requiredBoundedInteger(
+      row.duration_ms,
+      "run duration",
+      0,
+      maximumSubagentRunDurationMs,
+    ),
+    resultCharacters: requiredBoundedInteger(
+      row.result_characters,
+      "run result characters",
+      0,
+      maximumResultCharacters,
+    ),
+  });
+}
+
+function claimedRunUsage(
+  claim: SubagentJobRunClaim,
+  progress: SubagentJobRunProgress,
+  resultCharacters: number,
+): SubagentJobRunUsage {
+  return Object.freeze({
+    modelCalls: safeUsageSum(claim.baseline.modelCalls, progress.modelCalls),
+    toolCalls: safeUsageSum(claim.baseline.toolCalls, progress.toolCalls),
+    inputTokens: safeUsageSum(claim.baseline.inputTokens, progress.inputTokens),
+    outputTokens: safeUsageSum(claim.baseline.outputTokens, progress.outputTokens),
+    durationMs: safeUsageSum(claim.baseline.durationMs, progress.durationMs),
+    resultCharacters,
+  });
+}
+
+function forcedTerminalRunUsage(
+  row: SubagentJobRunRow,
+  progress: SubagentJobRunProgress,
+  additionalResultCharacters: number,
+): SubagentJobRunUsage {
+  const current = mapRunUsage(row);
+  return monotonicRunUsage(row, {
+    ...progress,
+    resultCharacters: safeUsageSum(current.resultCharacters, additionalResultCharacters),
+  });
+}
+
+function monotonicRunUsage(
+  row: SubagentJobRunRow,
+  candidate: SubagentJobRunUsage,
+): SubagentJobRunUsage {
+  const current = mapRunUsage(row);
+  return Object.freeze({
+    modelCalls: Math.max(current.modelCalls, candidate.modelCalls),
+    toolCalls: Math.max(current.toolCalls, candidate.toolCalls),
+    inputTokens: Math.max(current.inputTokens, candidate.inputTokens),
+    outputTokens: Math.max(current.outputTokens, candidate.outputTokens),
+    durationMs: Math.max(current.durationMs, candidate.durationMs),
+    resultCharacters: Math.max(current.resultCharacters, candidate.resultCharacters),
+  });
+}
+
+function safeUsageSum(left: number, right: number): number {
+  const result = left + right;
+  if (!Number.isSafeInteger(result) || result < 0) {
+    throw new TypeError("Subagent run usage exceeds the safe integer range");
+  }
+  return result;
+}
+
+function validateRunProgress(progress: SubagentJobRunProgress): void {
+  if (!progress || typeof progress !== "object" || Array.isArray(progress)) {
+    throw new TypeError("Subagent run progress must be an object");
+  }
+  for (const key of [
+    "modelCalls",
+    "toolCalls",
+    "inputTokens",
+    "outputTokens",
+    "durationMs",
+  ] as const) {
+    if (!Number.isSafeInteger(progress[key]) || progress[key] < 0) {
+      throw new TypeError(`Subagent run progress ${key} must be a non-negative safe integer`);
+    }
+  }
+}
+
+function assertRunCanStart(
+  jobId: string,
+  row: SubagentJobRunRow,
+  budgets: SubagentJobBudgetSnapshot,
+): void {
+  if (row.status !== "queued" && row.status !== "idle") {
+    throw new SubagentJobStateError(jobId, "a queued durable run");
+  }
+  if (Number(row.attempt_count) >= maximumSubagentRunAttempts) {
+    throw new SubagentJobStateError(jobId, "a remaining durable run attempt");
+  }
+  const usage = mapRunUsage(row);
+  if (usage.modelCalls >= budgets.maxWorkModelCalls + 1 ||
+      usage.durationMs >= budgets.timeoutMs) {
+    throw new SubagentJobStateError(jobId, "remaining frozen model and time budget");
+  }
+}
+
+function assertCompletionMatchesBudgets(
+  jobId: string,
+  completion: SubagentJobCompletion,
+  outputCharacters: number,
+  budgets: SubagentJobBudgetSnapshot,
+): void {
+  if (
+    completion.maxResultCharacters !== budgets.maxResultCharacters ||
+    outputCharacters > budgets.maxResultCharacters
+  ) {
+    throw new SubagentJobStateError(jobId, "the frozen result-size budget");
+  }
+}
+
+function assertRunUsageWithinBudgets(
+  jobId: string,
+  usage: SubagentJobRunUsage,
+  budgets: SubagentJobBudgetSnapshot,
+): void {
+  const maximumModelCalls = budgets.maxWorkModelCalls + 1;
+  if (
+    usage.modelCalls > maximumModelCalls ||
+    usage.toolCalls > maximumModelCalls * maximumSubagentToolCallsPerModelCall ||
+    usage.inputTokens > maximumModelCalls * maximumSubagentTranscriptBytes ||
+    usage.outputTokens > maximumModelCalls * budgets.maxOutputTokens ||
+    usage.durationMs > budgets.timeoutMs + maximumSubagentRunLeaseGraceMs ||
+    usage.resultCharacters > budgets.maxResultCharacters
+  ) {
+    throw new SubagentJobStateError(jobId, "the frozen cumulative run budget");
+  }
+}
+
+function clampRunUsageToBudgets(
+  usage: SubagentJobRunUsage,
+  budgets: SubagentJobBudgetSnapshot,
+): SubagentJobRunUsage {
+  const maximumModelCalls = budgets.maxWorkModelCalls + 1;
+  return Object.freeze({
+    modelCalls: Math.min(usage.modelCalls, maximumModelCalls),
+    toolCalls: Math.min(
+      usage.toolCalls,
+      maximumModelCalls * maximumSubagentToolCallsPerModelCall,
+    ),
+    inputTokens: Math.min(
+      usage.inputTokens,
+      maximumModelCalls * maximumSubagentTranscriptBytes,
+    ),
+    outputTokens: Math.min(usage.outputTokens, maximumModelCalls * budgets.maxOutputTokens),
+    durationMs: Math.min(
+      usage.durationMs,
+      budgets.timeoutMs + maximumSubagentRunLeaseGraceMs,
+    ),
+    resultCharacters: Math.min(usage.resultCharacters, budgets.maxResultCharacters),
+  });
+}
+
 function normalizeGrants(input: SubagentJobGrantSnapshot): SubagentJobGrantSnapshot {
   if (!input || typeof input !== "object" || Array.isArray(input)) {
     throw new TypeError("Subagent job grants must be an object");
@@ -784,15 +1302,28 @@ function isGrantSubset(
   candidate: SubagentJobGrantSnapshot,
   previous: SubagentJobGrantSnapshot,
 ): boolean {
+  return isGrantScopeSubset(candidate, previous) && toolNamesAreSubset(candidate, previous);
+}
+
+function isGrantScopeSubset(
+  candidate: SubagentJobGrantSnapshot,
+  previous: SubagentJobGrantSnapshot,
+): boolean {
   if (candidate.workspaceAccess === "read_only" && previous.workspaceAccess === "off") {
     return false;
   }
   const previousModules = new Set(previous.moduleIds);
   const previousSkills = new Set(previous.skillNames);
-  const previousTools = new Set(previous.toolNames);
   return candidate.moduleIds.every((value) => previousModules.has(value)) &&
-    candidate.skillNames.every((value) => previousSkills.has(value)) &&
-    candidate.toolNames.every((value) => previousTools.has(value));
+    candidate.skillNames.every((value) => previousSkills.has(value));
+}
+
+function toolNamesAreSubset(
+  candidate: SubagentJobGrantSnapshot,
+  previous: SubagentJobGrantSnapshot,
+): boolean {
+  const previousTools = new Set(previous.toolNames);
+  return candidate.toolNames.every((value) => previousTools.has(value));
 }
 
 function validateCreateInput(input: CreateSubagentJobInput): void {
@@ -853,21 +1384,40 @@ function validateFailure(input: SubagentFailureDiagnostic): void {
 
 function parseBudgets(json: string): SubagentJobBudgetSnapshot {
   const value = parseRecord(json, "budgets");
-  const keys = [
-    "maxConcurrentTasks",
-    "maxWorkModelCalls",
-    "maxOutputTokens",
-    "maxResultCharacters",
-    "timeoutSeconds",
-    "timeoutMs",
-  ] as const;
-  for (const key of keys) {
-    if (!Number.isSafeInteger(value[key]) || Number(value[key]) < 1) {
+  const ranges = {
+    maxConcurrentTasks: [
+      minimumSubagentSettings.maxConcurrentTasks,
+      maximumSubagentSettings.maxConcurrentTasks,
+    ],
+    maxWorkModelCalls: [
+      minimumSubagentSettings.maxWorkModelCalls,
+      maximumSubagentSettings.maxWorkModelCalls,
+    ],
+    maxOutputTokens: [
+      minimumSubagentSettings.maxOutputTokens,
+      maximumSubagentSettings.maxOutputTokens,
+    ],
+    maxResultCharacters: [
+      minimumSubagentSettings.maxResultCharacters,
+      maximumSubagentSettings.maxResultCharacters,
+    ],
+    timeoutSeconds: [
+      minimumSubagentSettings.timeoutSeconds,
+      maximumSubagentSettings.timeoutSeconds,
+    ],
+    timeoutMs: [1, maximumSubagentRunTimeoutMs],
+  } as const satisfies Record<keyof SubagentJobBudgetSnapshot, readonly [number, number]>;
+  for (const [key, [minimum, maximum]] of Object.entries(ranges) as Array<
+    [keyof SubagentJobBudgetSnapshot, readonly [number, number]]
+  >) {
+    if (!Number.isSafeInteger(value[key]) ||
+        Number(value[key]) < minimum || Number(value[key]) > maximum) {
       throw new TypeError(`Subagent job budget ${key} is invalid`);
     }
   }
-  return Object.freeze(Object.fromEntries(keys.map((key) => [key, Number(value[key])])) as
-    unknown as SubagentJobBudgetSnapshot);
+  return Object.freeze(Object.fromEntries(
+    Object.keys(ranges).map((key) => [key, Number(value[key])]),
+  ) as unknown as SubagentJobBudgetSnapshot);
 }
 
 function parseGrants(json: string): SubagentJobGrantSnapshot {
@@ -1030,6 +1580,13 @@ function validateParentSessionId(value: string): void {
   if (typeof value !== "string" || !value.trim() || value !== value.trim() ||
       [...value].length > maximumParentSessionIdCharacters) {
     throw new TypeError("Subagent job parent session ID is invalid");
+  }
+}
+
+function validateRunOwnerId(value: string): void {
+  if (typeof value !== "string" || !value.trim() || value !== value.trim() ||
+      [...value].length > 256) {
+    throw new TypeError("Subagent run owner ID is invalid");
   }
 }
 

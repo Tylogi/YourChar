@@ -12,6 +12,7 @@ import {
   rmSync,
   writeFileSync,
 } from "node:fs";
+import { randomUUID } from "node:crypto";
 import { basename, dirname, isAbsolute, join, resolve } from "node:path";
 import type { AgentMessage, ThinkingLevel } from "@earendil-works/pi-agent-core";
 import {
@@ -85,6 +86,8 @@ import {
   SubagentJobNotFoundError,
   SubagentJobStateError,
   type SubagentJobGrantSnapshot,
+  type SubagentJobRunClaim,
+  type SubagentJobRunProgress,
   type SubagentJobSummary,
   type SubagentJobService,
 } from "../modules/subagent-jobs.js";
@@ -608,6 +611,7 @@ export class PiSessionRuntime {
   private readonly subagentTimeoutMsOverride?: number;
   private readonly subagentSettings: () => SubagentSettingsValues;
   private readonly subagentJobs: SubagentJobService;
+  private readonly subagentRunOwnerId = `pi-runtime:${randomUUID()}`;
   private subagentJobTerminalListener?: (jobId: string) => void;
   private readonly incognitoChild: boolean;
   private readonly conversationCheckpointSummarizer?: ConversationCheckpointSummarizer;
@@ -2117,7 +2121,7 @@ export class PiSessionRuntime {
       workspaceAccess: childWorkspaceAccess,
       moduleIds: Object.freeze(admittedModuleIds),
       skillNames: Object.freeze(enabledSkills.map((skill) => skill.name)),
-      toolNames: Object.freeze([]),
+      toolNames: Object.freeze([...existing.grants.toolNames]),
     });
     const workspace = this.workspaceRegistry.resolve(metadata);
     const execution = this.subagentJobs.queueFollowup(
@@ -2380,7 +2384,7 @@ export class PiSessionRuntime {
   ): Promise<SubagentResult> {
     const {
       settings: subagentSettings,
-      maxTotalModelCalls,
+      maxTotalModelCalls: configuredMaxTotalModelCalls,
       startedAt,
       childWorkspaceAccess,
       enabledSkills,
@@ -2396,7 +2400,9 @@ export class PiSessionRuntime {
     const childBridges: McpPiBridge[] = [];
     let child: AgentSession | undefined;
     let timeout: NodeJS.Timeout | undefined;
+    let runClaim: SubagentJobRunClaim | undefined;
     let jobSettled = false;
+    let maxTotalModelCalls = configuredMaxTotalModelCalls;
     let modelCalls = 0;
     let modelBudgetExceeded = false;
     let forcedFinalization = false;
@@ -2405,6 +2411,24 @@ export class PiSessionRuntime {
     let baselineToolCalls = 0;
     let baselineInputTokens = 0;
     let baselineOutputTokens = 0;
+    const currentRunProgress = (): SubagentJobRunProgress => {
+      const stats = child?.getSessionStats();
+      return {
+        modelCalls,
+        toolCalls: Math.max(0, (stats?.toolCalls ?? 0) - baselineToolCalls),
+        inputTokens: Math.max(0, (stats?.tokens.input ?? 0) - baselineInputTokens),
+        outputTokens: Math.max(0, (stats?.tokens.output ?? 0) - baselineOutputTokens),
+        durationMs: Math.max(0, Math.round(performance.now() - startedAt)),
+      };
+    };
+    const checkpointRun = () => {
+      if (!runClaim) return;
+      this.subagentJobs.checkpointRun(
+        runClaim,
+        currentRunProgress(),
+        child?.messages ?? input.restoredMessages ?? [],
+      );
+    };
     const abort = () => void child?.abort();
     input.signal?.addEventListener("abort", abort, { once: true });
     try {
@@ -2506,10 +2530,29 @@ export class PiSessionRuntime {
       if (timedOut) {
         throw new Error(`Subagent timed out after ${subagentSettings.timeoutMs / 1_000} seconds`);
       }
-      this.subagentJobs.start(job.id, Object.freeze({
+      runClaim = this.subagentJobs.claimRun(job.id, Object.freeze({
         ...admittedGrants,
         toolNames: Object.freeze(childToolNames),
-      }));
+      }), this.subagentRunOwnerId);
+      maxTotalModelCalls = Math.min(
+        configuredMaxTotalModelCalls,
+        configuredMaxTotalModelCalls - runClaim.baseline.modelCalls,
+      );
+      if (maxTotalModelCalls < 1) {
+        modelBudgetExceeded = true;
+        throw new Error("Subagent has no remaining durable model-call budget");
+      }
+      if (timeout) clearTimeout(timeout);
+      const remainingDurationMs = subagentSettings.timeoutMs -
+        runClaim.baseline.durationMs - Math.round(performance.now() - startedAt);
+      if (remainingDurationMs < 1) {
+        timedOut = true;
+        throw new Error("Subagent has no remaining durable wall-clock budget");
+      }
+      timeout = setTimeout(() => {
+        timedOut = true;
+        void child?.abort();
+      }, remainingDurationMs);
       const systemPrompt = subagentSystemPrompt(
         input.request.role,
         input.timezone,
@@ -2527,6 +2570,13 @@ export class PiSessionRuntime {
             );
           }
           modelCalls += 1;
+          try {
+            checkpointRun();
+          } catch (error) {
+            modelBudgetExceeded = true;
+            void child?.abort();
+            throw error;
+          }
           if (!isRecord(event.payload)) return undefined;
           const payload = { ...event.payload };
           if (typeof childPayloadOptions.temperature === "number") {
@@ -2595,6 +2645,9 @@ export class PiSessionRuntime {
             block: true,
             reason: "Subagent tools are disabled during the reserved finalization call.",
           };
+        });
+        pi.on("turn_end", () => {
+          checkpointRun();
         });
       };
       const resourceLoader = new DefaultResourceLoader({
@@ -2680,6 +2733,8 @@ export class PiSessionRuntime {
       }
       if (promptError) throw promptError;
 
+      checkpointRun();
+
       const finalMessage = [...child.messages].reverse().find((message) => message.role === "assistant");
       if (finalMessage?.role === "assistant" && (finalMessage.stopReason === "error" || finalMessage.stopReason === "aborted")) {
         throw new Error(finalMessage.errorMessage || `Subagent stopped: ${finalMessage.stopReason}`);
@@ -2710,7 +2765,7 @@ export class PiSessionRuntime {
         forcedFinalization,
         maxResultCharacters: subagentSettings.maxResultCharacters,
       };
-      this.subagentJobs.complete(job.id, completion, child.messages);
+      this.subagentJobs.complete(job.id, completion, child.messages, runClaim);
       jobSettled = true;
       return {
         jobId: job.id,
@@ -2743,7 +2798,7 @@ export class PiSessionRuntime {
           })();
       if (!jobSettled) {
         try {
-          this.subagentJobs.fail(job.id, diagnostic);
+          this.subagentJobs.fail(job.id, diagnostic, runClaim);
           jobSettled = true;
         } catch {
           // A hard database failure is recovered from the non-terminal row on
