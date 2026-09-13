@@ -5,6 +5,11 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 import { createHttpServer } from "../src/http/router.js";
+import {
+  maximumSubagentFollowupTurns,
+  maximumSubagentTranscriptBytes,
+  SubagentJobStateError,
+} from "../src/modules/subagent-jobs.js";
 import { createTestRuntime } from "../src/testing/runtime.js";
 
 test("legacy delegation records a durable, redacted job and exposes scoped list/get controls", async () => {
@@ -38,6 +43,7 @@ test("legacy delegation records a durable, redacted job and exposes scoped list/
       "get_subagent_job",
       "start_subagent_job",
       "interrupt_subagent_job",
+      "send_subagent_message",
     ]) {
       assert.equal(initialRequest.toolNames.includes(toolName), true, `${toolName} must be mounted`);
     }
@@ -310,6 +316,35 @@ test("background Subagent HTTP controls require the local capability and remain 
 
     runtime.model.enqueue([{
       kind: "assistant_text",
+      text: "HTTP_FOLLOWUP_PRIVATE_RESULT_SENTINEL",
+      delayMs: 100,
+    }]);
+    const followupResponse = await fetch(
+      `${endpoint}/${encodeURIComponent(acceptedBody.job.id)}/messages`,
+      {
+        method: "POST",
+        headers,
+        body: JSON.stringify({ message: "HTTP_FOLLOWUP_PRIVATE_INPUT_SENTINEL" }),
+      },
+    );
+    assert.equal(followupResponse.status, 202, await followupResponse.clone().text());
+    const followupBody = await followupResponse.json() as {
+      job: { status: string; continuation: { followupCount: number } };
+    };
+    assert.equal(followupBody.job.status, "queued");
+    assert.equal(followupBody.job.continuation.followupCount, 1);
+    await waitFor(() =>
+      runtime.kernel.getSubagentJob(parentSessionId, acceptedBody.job.id).status === "completed"
+    );
+    const continuedDetailResponse = await fetch(
+      `${endpoint}/${encodeURIComponent(acceptedBody.job.id)}`,
+    );
+    const continuedDetailText = await continuedDetailResponse.text();
+    assert.match(continuedDetailText, /HTTP_FOLLOWUP_PRIVATE_RESULT_SENTINEL/u);
+    assert.doesNotMatch(continuedDetailText, /HTTP_FOLLOWUP_PRIVATE_INPUT_SENTINEL/u);
+
+    runtime.model.enqueue([{
+      kind: "assistant_text",
       text: "HTTP_INTERRUPTED_RESULT_MUST_NOT_PERSIST",
       delayMs: 500,
     }]);
@@ -352,6 +387,216 @@ test("background Subagent HTTP controls require the local capability and remain 
   }
 });
 
+test("a completed Subagent transcript supports a scoped follow-up after process restart", async () => {
+  const stateDir = mkdtempSync(join(tmpdir(), "yourchar-subagent-continuation-"));
+  const parentSessionId = "persistent-subagent-continuation-parent";
+  const task = "PERSISTENT_SUBAGENT_ORIGINAL_TASK_SENTINEL";
+  const firstOutput = "PERSISTENT_SUBAGENT_FIRST_RESULT_SENTINEL";
+  const followup = "PERSISTENT_SUBAGENT_FOLLOWUP_INPUT_SENTINEL";
+  const secondOutput = "PERSISTENT_SUBAGENT_SECOND_RESULT_SENTINEL";
+  let first: ReturnType<typeof createTestRuntime> | undefined = createTestRuntime({
+    stateDir,
+    seed: "subagent-continuation-first",
+  });
+  try {
+    first.kernel.setAgentModuleEnabled("mcp:subagent", true);
+    first.model.enqueue([{ kind: "assistant_text", text: "持久父会话已建立。" }]);
+    await first.kernel.sendMessage(parentSessionId, {
+      mode: "sms",
+      text: "建立可继续的子任务父会话。",
+    });
+    first.model.enqueue([{ kind: "assistant_text", text: firstOutput }]);
+    const admitted = first.kernel.startSubagentJob(parentSessionId, {
+      role: "planner",
+      task,
+    });
+    await waitFor(() =>
+      first?.kernel.getSubagentJob(parentSessionId, admitted.id).status === "completed"
+    );
+    const completed = first.kernel.getSubagentJob(parentSessionId, admitted.id);
+    assert.equal(completed.continuation.transcriptStored, true);
+    assert.equal(completed.continuation.available, true);
+    assert.equal(completed.continuation.followupCount, 0);
+    assert.equal(completed.grants.workspaceAccess, "off");
+
+    first.kernel.patchAgentPermissions({ workspaceAccess: "read_write" });
+    first.dispose();
+    first = undefined;
+
+    const second = createTestRuntime({
+      stateDir,
+      seed: "subagent-continuation-second",
+    });
+    try {
+      second.model.enqueue([{ kind: "assistant_text", text: secondOutput }]);
+      const queued = second.kernel.sendSubagentMessage(
+        parentSessionId,
+        admitted.id,
+        followup,
+      );
+      assert.equal(queued.status, "queued");
+      assert.equal(queued.childSessionId, admitted.childSessionId);
+      assert.equal(queued.continuation.followupCount, 1);
+      assert.equal(queued.grants.workspaceAccess, "off");
+      await waitFor(() =>
+        second.kernel.getSubagentJob(parentSessionId, admitted.id).status === "completed"
+      );
+
+      const continued = second.kernel.getSubagentJob(parentSessionId, admitted.id);
+      assert.equal(continued.output, secondOutput);
+      assert.equal(continued.childSessionId, admitted.childSessionId);
+      assert.equal(continued.continuation.transcriptStored, true);
+      assert.equal(continued.continuation.available, true);
+      assert.equal(continued.continuation.followupCount, 1);
+      assert.deepEqual(continued.grants.toolNames, []);
+      assert.equal(second.model.requests.length, 1);
+      assert.deepEqual(second.model.requests[0].toolNames, []);
+      const restoredProviderContext = JSON.stringify(second.model.requests[0].messages);
+      assert.match(restoredProviderContext, new RegExp(task, "u"));
+      assert.match(restoredProviderContext, new RegExp(firstOutput, "u"));
+      assert.match(restoredProviderContext, new RegExp(followup, "u"));
+
+      const raw = second.kernel.database.connection.prepare(`
+        SELECT transcript_json, pending_input_text, followup_count
+        FROM subagent_jobs WHERE id = ?
+      `).get(admitted.id) as {
+        transcript_json: string;
+        pending_input_text: string | null;
+        followup_count: number;
+      };
+      assert.match(raw.transcript_json, new RegExp(task, "u"));
+      assert.match(raw.transcript_json, new RegExp(firstOutput, "u"));
+      assert.match(raw.transcript_json, new RegExp(followup, "u"));
+      assert.match(raw.transcript_json, new RegExp(secondOutput, "u"));
+      assert.equal(raw.pending_input_text, null);
+      assert.equal(raw.followup_count, 1);
+      assert.doesNotMatch(
+        JSON.stringify(continued),
+        /PERSISTENT_SUBAGENT_(?:ORIGINAL_TASK|FIRST_RESULT|FOLLOWUP_INPUT)_SENTINEL/u,
+      );
+      assert.doesNotMatch(
+        JSON.stringify(second.kernel.store.actions),
+        /PERSISTENT_SUBAGENT_(?:ORIGINAL_TASK|FIRST_RESULT|FOLLOWUP_INPUT|SECOND_RESULT)_SENTINEL/u,
+      );
+    } finally {
+      second.dispose();
+    }
+  } finally {
+    first?.dispose();
+    rmSync(stateDir, { recursive: true, force: true });
+  }
+});
+
+test("Subagent continuation is CAS-bounded, cannot widen grants, and degrades safely at the transcript limit", () => {
+  const runtime = createTestRuntime({ seed: "subagent-continuation-bounds" });
+  try {
+    const settings = runtime.kernel.getSubagentSettings();
+    const budgets = {
+      maxConcurrentTasks: settings.maxConcurrentTasks,
+      maxWorkModelCalls: settings.maxWorkModelCalls,
+      maxOutputTokens: settings.maxOutputTokens,
+      maxResultCharacters: settings.maxResultCharacters,
+      timeoutSeconds: settings.timeoutSeconds,
+      timeoutMs: settings.timeoutSeconds * 1_000,
+    };
+    const grants = {
+      workspaceAccess: "off" as const,
+      moduleIds: [] as string[],
+      skillNames: [] as string[],
+      toolNames: [] as string[],
+    };
+    const created = runtime.kernel.subagentJobs.create({
+      parentSessionId: "bounded-continuation-parent",
+      role: "reviewer",
+      task: "Review the bounded continuation fixture.",
+      mode: "sms",
+      conversationSpace: "normal",
+      budgets,
+      grants,
+    });
+    runtime.kernel.subagentJobs.start(created.id, grants);
+    let transcript: unknown[] = [
+      { role: "user", content: "initial private input" },
+      { role: "assistant", content: [{ type: "text", text: "initial private output" }] },
+    ];
+    runtime.kernel.subagentJobs.complete(created.id, subagentCompletion("initial result"), transcript);
+
+    assert.throws(
+      () => runtime.kernel.subagentJobs.queueFollowup(
+        created.parentSessionId,
+        created.id,
+        "attempt to widen",
+        { ...grants, workspaceAccess: "read_only" },
+      ),
+      SubagentJobStateError,
+    );
+    assert.equal(runtime.kernel.subagentJobs.get(created.parentSessionId, created.id)?.revision, 3);
+
+    for (let turn = 1; turn <= maximumSubagentFollowupTurns; turn += 1) {
+      const prompt = `PRIVATE_BOUNDED_FOLLOWUP_${turn}`;
+      const execution = runtime.kernel.subagentJobs.queueFollowup(
+        created.parentSessionId,
+        created.id,
+        prompt,
+        grants,
+      );
+      assert.equal(execution.job.status, "queued");
+      assert.equal(execution.job.continuation.followupCount, turn);
+      assert.equal(execution.prompt, prompt);
+      assert.doesNotMatch(JSON.stringify(execution.job), /PRIVATE_BOUNDED_FOLLOWUP_/u);
+      runtime.kernel.subagentJobs.start(created.id, grants);
+      transcript = [
+        ...transcript,
+        { role: "user", content: prompt },
+        { role: "assistant", content: [{ type: "text", text: `result ${turn}` }] },
+      ];
+      runtime.kernel.subagentJobs.complete(
+        created.id,
+        subagentCompletion(`result ${turn}`),
+        transcript,
+      );
+    }
+    const exhausted = runtime.kernel.subagentJobs.get(created.parentSessionId, created.id);
+    assert.equal(exhausted?.continuation.available, false);
+    assert.equal(exhausted?.continuation.followupCount, maximumSubagentFollowupTurns);
+    assert.throws(
+      () => runtime.kernel.subagentJobs.queueFollowup(
+        created.parentSessionId,
+        created.id,
+        "one follow-up too many",
+        grants,
+      ),
+      SubagentJobStateError,
+    );
+
+    const oversized = runtime.kernel.subagentJobs.create({
+      parentSessionId: "bounded-continuation-parent",
+      role: "worker",
+      task: "Complete even if the private transcript is oversized.",
+      mode: "sms",
+      conversationSpace: "normal",
+      budgets,
+      grants,
+    });
+    runtime.kernel.subagentJobs.start(oversized.id, grants);
+    const oversizedTranscript = [{
+      role: "user",
+      content: "x".repeat(maximumSubagentTranscriptBytes + 1),
+    }];
+    const completedWithoutTranscript = runtime.kernel.subagentJobs.complete(
+      oversized.id,
+      subagentCompletion("bounded result remains available"),
+      oversizedTranscript,
+    );
+    assert.equal(completedWithoutTranscript.status, "completed");
+    assert.equal(completedWithoutTranscript.output, "bounded result remains available");
+    assert.equal(completedWithoutTranscript.continuation.transcriptStored, false);
+    assert.equal(completedWithoutTranscript.continuation.available, false);
+  } finally {
+    runtime.dispose();
+  }
+});
+
 test("startup recovery fails interrupted Subagent jobs closed without silently replaying work", async () => {
   const stateDir = mkdtempSync(join(tmpdir(), "yourchar-subagent-job-recovery-"));
   let first: ReturnType<typeof createTestRuntime> | undefined = createTestRuntime({
@@ -388,6 +633,49 @@ test("startup recovery fails interrupted Subagent jobs closed without silently r
       },
     });
     assert.equal(queued.status, "queued");
+    const continuable = first.kernel.subagentJobs.create({
+      parentSessionId: "recoverable-subagent-parent",
+      role: "worker",
+      task: "RECOVERED_SUBAGENT_CONTINUATION_ORIGINAL_SENTINEL",
+      mode: "sms",
+      conversationSpace: "normal",
+      budgets: {
+        maxConcurrentTasks: settings.maxConcurrentTasks,
+        maxWorkModelCalls: settings.maxWorkModelCalls,
+        maxOutputTokens: settings.maxOutputTokens,
+        maxResultCharacters: settings.maxResultCharacters,
+        timeoutSeconds: settings.timeoutSeconds,
+        timeoutMs: settings.timeoutSeconds * 1_000,
+      },
+      grants: {
+        workspaceAccess: "off",
+        moduleIds: [],
+        skillNames: [],
+        toolNames: [],
+      },
+    });
+    first.kernel.subagentJobs.start(continuable.id, continuable.grants);
+    first.kernel.subagentJobs.complete(
+      continuable.id,
+      subagentCompletion("RECOVERED_SUBAGENT_CONTINUATION_FIRST_RESULT_SENTINEL"),
+      [
+        { role: "user", content: "RECOVERED_SUBAGENT_CONTINUATION_ORIGINAL_SENTINEL" },
+        {
+          role: "assistant",
+          content: [{
+            type: "text",
+            text: "RECOVERED_SUBAGENT_CONTINUATION_FIRST_RESULT_SENTINEL",
+          }],
+        },
+      ],
+    );
+    const queuedFollowup = first.kernel.subagentJobs.queueFollowup(
+      continuable.parentSessionId,
+      continuable.id,
+      "RECOVERED_SUBAGENT_PENDING_FOLLOWUP_SENTINEL",
+      continuable.grants,
+    );
+    assert.equal(queuedFollowup.job.status, "queued");
     first.dispose();
     first = undefined;
 
@@ -416,6 +704,33 @@ test("startup recovery fails interrupted Subagent jobs closed without silently r
       ).get(queued.id) as { task_text: string; context_text: string };
       assert.equal(raw.task_text, "RECOVERED_SUBAGENT_PRIVATE_TASK_SENTINEL");
       assert.equal(raw.context_text, "RECOVERED_SUBAGENT_PRIVATE_CONTEXT_SENTINEL");
+
+      const recoveredFollowup = second.kernel.getSubagentJob(
+        "recoverable-subagent-parent",
+        continuable.id,
+      );
+      assert.equal(recoveredFollowup.status, "failed");
+      assert.equal(recoveredFollowup.failure?.failureKind, "interrupted");
+      assert.equal(recoveredFollowup.recoveryCount, 1);
+      assert.equal(recoveredFollowup.continuation.followupCount, 1);
+      assert.equal(recoveredFollowup.continuation.transcriptStored, true);
+      assert.equal(recoveredFollowup.continuation.available, false);
+      assert.doesNotMatch(
+        JSON.stringify(recoveredFollowup),
+        /RECOVERED_SUBAGENT_(?:CONTINUATION|PENDING_FOLLOWUP)_/u,
+      );
+      const rawFollowup = second.kernel.database.connection.prepare(`
+        SELECT transcript_json, pending_input_text
+        FROM subagent_jobs WHERE id = ?
+      `).get(continuable.id) as {
+        transcript_json: string;
+        pending_input_text: string;
+      };
+      assert.match(rawFollowup.transcript_json, /RECOVERED_SUBAGENT_CONTINUATION_ORIGINAL_SENTINEL/u);
+      assert.equal(
+        rawFollowup.pending_input_text,
+        "RECOVERED_SUBAGENT_PENDING_FOLLOWUP_SENTINEL",
+      );
     } finally {
       second.dispose();
     }
@@ -431,4 +746,18 @@ async function waitFor(predicate: () => boolean, timeoutMs = 2_000): Promise<voi
     if (Date.now() >= deadline) throw new Error("timed out waiting for Subagent job state");
     await new Promise((resolve) => setTimeout(resolve, 5));
   }
+}
+
+function subagentCompletion(output: string) {
+  return {
+    output,
+    modelCalls: 1,
+    toolCalls: 0,
+    inputTokens: 0,
+    outputTokens: 0,
+    durationMs: 1,
+    truncated: false,
+    forcedFinalization: false,
+    maxResultCharacters: 64_000,
+  };
 }

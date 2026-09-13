@@ -11,6 +11,10 @@ const maximumTaskCharacters = 4_000;
 const maximumContextCharacters = 8_000;
 const maximumResultCharacters = 200_000;
 const maximumListLimit = 100;
+export const maximumSubagentFollowupCharacters = 4_000;
+export const maximumSubagentFollowupTurns = 8;
+export const maximumSubagentTranscriptBytes = 4 * 1_024 * 1_024;
+const maximumSubagentTranscriptMessages = 2_048;
 const jobRoles = new Set<SubagentRole>(["worker", "researcher", "planner", "reviewer"]);
 const jobStatuses = new Set<SubagentJobStatus>([
   "queued",
@@ -77,6 +81,13 @@ export type SubagentJobSummary = Readonly<{
   secretOwnerCharacterId?: string;
   budgets: SubagentJobBudgetSnapshot;
   grants: SubagentJobGrantSnapshot;
+  continuation: Readonly<{
+    transcriptStored: boolean;
+    available: boolean;
+    followupCount: number;
+    maxFollowupTurns: number;
+    pendingInputCharacters: number;
+  }>;
   result?: Readonly<Omit<SubagentJobCompletion, "output">>;
   failure?: Readonly<SubagentFailureDiagnostic>;
   recoveryCount: number;
@@ -104,6 +115,15 @@ export type CreateSubagentJobInput = Readonly<{
   grants: SubagentJobGrantSnapshot;
 }>;
 
+/** Private execution material. Never return this shape from list/detail APIs. */
+export type SubagentJobFollowupExecution = Readonly<{
+  job: SubagentJobSummary;
+  task: string;
+  context?: string;
+  prompt: string;
+  transcript: readonly unknown[];
+}>;
+
 type SubagentJobRow = {
   id: string;
   parent_session_id: string;
@@ -124,6 +144,11 @@ type SubagentJobRow = {
   grants_json: string;
   result_json: string | null;
   failure_json: string | null;
+  transcript_json: string | null;
+  pending_input_text: string | null;
+  pending_input_sha256: string | null;
+  pending_input_characters: number;
+  followup_count: number;
   recovery_count: number;
   created_at: string;
   started_at: string | null;
@@ -150,9 +175,10 @@ export class SubagentJobStateError extends Error {
 }
 
 /**
- * Durable, host-owned ledger around the legacy blocking Subagent runner.
+ * Durable, host-owned ledger for blocking, background, and continued Subagent turns.
  * Raw task/context live only in this private table so ordinary audits and list
- * views can identify work without reproducing delegated prompts.
+ * views can identify work without reproducing delegated prompts. Transcript and
+ * pending follow-up bodies are likewise private execution material.
  */
 export class SubagentJobService {
   constructor(
@@ -210,17 +236,87 @@ export class SubagentJobService {
     return this.requireSummary(jobId);
   }
 
-  complete(jobId: string, completion: SubagentJobCompletion): SubagentJobDetail {
+  complete(
+    jobId: string,
+    completion: SubagentJobCompletion,
+    transcript?: readonly unknown[],
+  ): SubagentJobDetail {
     validateCompletion(completion);
+    const transcriptJson = boundedTranscriptJson(transcript);
     const updatedAt = this.clock.now().toISOString();
     const result = this.database.connection.prepare(`
       UPDATE subagent_jobs
       SET status = 'completed', revision = revision + 1, result_json = ?,
-          failure_json = NULL, finished_at = ?, updated_at = ?
+          failure_json = NULL, transcript_json = ?, pending_input_text = NULL,
+          pending_input_sha256 = NULL, pending_input_characters = 0,
+          finished_at = ?, updated_at = ?
       WHERE id = ? AND status = 'running'
-    `).run(JSON.stringify(completion), updatedAt, updatedAt, jobId);
+    `).run(JSON.stringify(completion), transcriptJson, updatedAt, updatedAt, jobId);
     if (Number(result.changes) !== 1) throw new SubagentJobStateError(jobId, "running");
     return this.requireDetail(jobId);
+  }
+
+  queueFollowup(
+    parentSessionId: string,
+    jobId: string,
+    prompt: string,
+    grants: SubagentJobGrantSnapshot,
+  ): SubagentJobFollowupExecution {
+    validateParentSessionId(parentSessionId);
+    const normalizedPrompt = validateFollowupPrompt(prompt);
+    const normalizedGrants = normalizeGrants(grants);
+    const row = this.database.connection.prepare(`
+      SELECT * FROM subagent_jobs
+      WHERE parent_session_id = ? AND id = ?
+    `).get(parentSessionId, jobId) as SubagentJobRow | undefined;
+    if (!row) throw new SubagentJobNotFoundError(jobId);
+    const transcript = parseTranscript(row.transcript_json);
+    if (!isGrantSubset(normalizedGrants, parseGrants(row.grants_json))) {
+      throw new SubagentJobStateError(jobId, "a continuation grant no wider than its prior grant");
+    }
+    if (
+      row.status !== "completed" ||
+      !transcript ||
+      !Number.isSafeInteger(row.followup_count) ||
+      row.followup_count >= maximumSubagentFollowupTurns
+    ) {
+      throw new SubagentJobStateError(
+        jobId,
+        `completed with a stored transcript and fewer than ${maximumSubagentFollowupTurns} follow-ups`,
+      );
+    }
+    const updatedAt = this.clock.now().toISOString();
+    const result = this.database.connection.prepare(`
+      UPDATE subagent_jobs
+      SET status = 'queued', revision = revision + 1,
+          pending_input_text = ?, pending_input_sha256 = ?, pending_input_characters = ?,
+          followup_count = followup_count + 1, result_json = NULL,
+          failure_json = NULL, grants_json = ?, finished_at = NULL, updated_at = ?
+      WHERE parent_session_id = ? AND id = ? AND status = 'completed'
+        AND revision = ? AND transcript_json IS NOT NULL
+        AND followup_count < ?
+    `).run(
+      normalizedPrompt,
+      createHash("sha256").update(normalizedPrompt).digest("hex"),
+      [...normalizedPrompt].length,
+      JSON.stringify(normalizedGrants),
+      updatedAt,
+      parentSessionId,
+      jobId,
+      row.revision,
+      maximumSubagentFollowupTurns,
+    );
+    if (Number(result.changes) !== 1) {
+      throw new SubagentJobStateError(jobId, "an available continuation slot");
+    }
+    const queued = this.requireRow(jobId);
+    return Object.freeze({
+      job: mapSummary(queued),
+      task: queued.task_text,
+      ...(queued.context_text === null ? {} : { context: queued.context_text }),
+      prompt: normalizedPrompt,
+      transcript,
+    });
   }
 
   fail(jobId: string, failure: SubagentFailureDiagnostic): SubagentJobSummary {
@@ -300,11 +396,15 @@ export class SubagentJobService {
   }
 
   private requireDetail(jobId: string): SubagentJobDetail {
+    return mapDetail(this.requireRow(jobId));
+  }
+
+  private requireRow(jobId: string): SubagentJobRow {
     const row = this.database.connection.prepare(
       "SELECT * FROM subagent_jobs WHERE id = ?",
     ).get(jobId) as SubagentJobRow | undefined;
     if (!row) throw new SubagentJobNotFoundError(jobId);
-    return mapDetail(row);
+    return row;
   }
 
   private getSummaryById(jobId: string): SubagentJobSummary | undefined {
@@ -317,6 +417,19 @@ export class SubagentJobService {
 
 function mapSummary(row: SubagentJobRow): SubagentJobSummary {
   const status = requiredStatus(row.status);
+  const followupCount = requiredBoundedInteger(
+    row.followup_count,
+    "followup_count",
+    0,
+    maximumSubagentFollowupTurns,
+  );
+  const pendingInputCharacters = requiredBoundedInteger(
+    row.pending_input_characters,
+    "pending_input_characters",
+    0,
+    maximumSubagentFollowupCharacters,
+  );
+  const transcriptStored = row.transcript_json !== null;
   const completion = parseCompletion(row.result_json);
   const result = completion
     ? Object.freeze({
@@ -349,6 +462,16 @@ function mapSummary(row: SubagentJobRow): SubagentJobSummary {
       : {}),
     budgets: parseBudgets(row.budgets_json),
     grants: parseGrants(row.grants_json),
+    continuation: Object.freeze({
+      transcriptStored,
+      available:
+        status === "completed" &&
+        transcriptStored &&
+        followupCount < maximumSubagentFollowupTurns,
+      followupCount,
+      maxFollowupTurns: maximumSubagentFollowupTurns,
+      pendingInputCharacters,
+    }),
     ...(result ? { result } : {}),
     ...(failure ? { failure } : {}),
     recoveryCount: Number(row.recovery_count),
@@ -381,6 +504,21 @@ function normalizeGrants(input: SubagentJobGrantSnapshot): SubagentJobGrantSnaps
     skillNames: boundedUniqueStrings(input.skillNames, "skillNames", 64, 200),
     toolNames: boundedUniqueStrings(input.toolNames, "toolNames", 128, 128),
   });
+}
+
+function isGrantSubset(
+  candidate: SubagentJobGrantSnapshot,
+  previous: SubagentJobGrantSnapshot,
+): boolean {
+  if (candidate.workspaceAccess === "read_only" && previous.workspaceAccess === "off") {
+    return false;
+  }
+  const previousModules = new Set(previous.moduleIds);
+  const previousSkills = new Set(previous.skillNames);
+  const previousTools = new Set(previous.toolNames);
+  return candidate.moduleIds.every((value) => previousModules.has(value)) &&
+    candidate.skillNames.every((value) => previousSkills.has(value)) &&
+    candidate.toolNames.every((value) => previousTools.has(value));
 }
 
 function validateCreateInput(input: CreateSubagentJobInput): void {
@@ -502,6 +640,78 @@ function parseFailure(json: string | null): Readonly<SubagentFailureDiagnostic> 
     forcedFinalization: value.forcedFinalization,
     retryable: value.retryable,
   });
+}
+
+function boundedTranscriptJson(transcript: readonly unknown[] | undefined): string | null {
+  if (transcript === undefined) return null;
+  let json: string;
+  try {
+    json = JSON.stringify(transcript);
+  } catch {
+    return null;
+  }
+  if (Buffer.byteLength(json, "utf8") > maximumSubagentTranscriptBytes) return null;
+  try {
+    parseTranscript(json);
+  } catch {
+    return null;
+  }
+  return json;
+}
+
+function parseTranscript(json: string | null): readonly unknown[] | undefined {
+  if (json === null) return undefined;
+  if (Buffer.byteLength(json, "utf8") > maximumSubagentTranscriptBytes) {
+    throw new TypeError("Subagent job transcript exceeds its private storage limit");
+  }
+  let value: unknown;
+  try {
+    value = JSON.parse(json);
+  } catch {
+    throw new TypeError("Subagent job transcript JSON is invalid");
+  }
+  if (!Array.isArray(value) || value.length > maximumSubagentTranscriptMessages) {
+    throw new TypeError("Subagent job transcript has an invalid message count");
+  }
+  const roles = new Set([
+    "user",
+    "assistant",
+    "toolResult",
+    "bashExecution",
+    "custom",
+    "branchSummary",
+    "compactionSummary",
+  ]);
+  for (const message of value) {
+    if (!message || typeof message !== "object" || Array.isArray(message) ||
+        !roles.has(String((message as Record<string, unknown>).role))) {
+      throw new TypeError("Subagent job transcript contains an invalid message");
+    }
+  }
+  return Object.freeze(value.map((message) => Object.freeze(message)));
+}
+
+function validateFollowupPrompt(value: string): string {
+  if (typeof value !== "string" || !value.trim() ||
+      [...value].length > maximumSubagentFollowupCharacters) {
+    throw new TypeError(
+      `Subagent follow-up must contain 1-${maximumSubagentFollowupCharacters} characters`,
+    );
+  }
+  return value;
+}
+
+function requiredBoundedInteger(
+  value: number,
+  field: string,
+  minimum: number,
+  maximum: number,
+): number {
+  const normalized = Number(value);
+  if (!Number.isSafeInteger(normalized) || normalized < minimum || normalized > maximum) {
+    throw new TypeError(`Subagent job ${field} is invalid`);
+  }
+  return normalized;
 }
 
 function parseRecord(json: string, field: string): Record<string, unknown> {

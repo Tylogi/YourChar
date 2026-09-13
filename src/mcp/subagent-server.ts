@@ -3,7 +3,11 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import * as z from "zod/v4";
 import type { CompanionStore } from "../domain/store.js";
 import type { ActionRecord } from "../domain/types.js";
-import type { SubagentJobDetail, SubagentJobSummary } from "../modules/subagent-jobs.js";
+import {
+  maximumSubagentFollowupCharacters,
+  type SubagentJobDetail,
+  type SubagentJobSummary,
+} from "../modules/subagent-jobs.js";
 import { connectMcpServerToPi, type McpPiBridge } from "./pi-adapter.js";
 
 export const subagentMcpToolNames = [
@@ -12,6 +16,7 @@ export const subagentMcpToolNames = [
   "get_subagent_job",
   "start_subagent_job",
   "interrupt_subagent_job",
+  "send_subagent_message",
 ] as const;
 const subagentBridgeTimeoutGraceMs = 30_000;
 const maximumNodeTimerMs = 2_147_483_647;
@@ -94,6 +99,7 @@ export type SubagentMcpContext = {
   run: (request: SubagentRequest, signal?: AbortSignal) => Promise<SubagentResult>;
   startJob: (request: SubagentRequest) => SubagentJobSummary;
   interruptJob: (jobId: string) => Promise<SubagentJobSummary>;
+  sendMessage: (jobId: string, prompt: string) => SubagentJobSummary;
   listJobs: (limit: number) => readonly SubagentJobSummary[];
   getJob: (jobId: string) => SubagentJobDetail | undefined;
 };
@@ -332,6 +338,56 @@ export function createSubagentMcpServer(context: SubagentMcpContext): McpServer 
           isError: true,
           content: [{ type: "text" as const, text: "Subagent job is unavailable in this session." }],
           structuredContent: { ok: false, code: "SUBAGENT_JOB_NOT_FOUND" },
+        };
+      }
+    },
+  );
+
+  server.registerTool(
+    "send_subagent_message",
+    {
+      title: "Continue completed Subagent job",
+      description:
+        "Queue one bounded follow-up turn on a completed same-session Subagent job whose private transcript was retained. Returns immediately; use get_subagent_job to observe the new result.",
+      inputSchema: z.object({
+        jobId: z.string().min(1).max(256),
+        message: z.string().min(1).max(maximumSubagentFollowupCharacters),
+      }),
+      annotations: { readOnlyHint: false, openWorldHint: true },
+    },
+    async (input) => {
+      const audit = {
+        sessionId: context.sessionId,
+        jobIdSha256: createHash("sha256").update(input.jobId).digest("hex"),
+        messageCharacters: [...input.message].length,
+        messageSha256: createHash("sha256").update(input.message).digest("hex"),
+      };
+      try {
+        const job = context.sendMessage(input.jobId, input.message);
+        context.actions().push(context.store.addAction("send_subagent_message", "completed", {
+          ...audit,
+          jobId: job.id,
+          childSessionId: job.childSessionId,
+          status: job.status,
+          revision: job.revision,
+          followupCount: job.continuation.followupCount,
+        }));
+        return {
+          content: [{
+            type: "text" as const,
+            text: `Subagent job ${job.id} accepted follow-up ${job.continuation.followupCount} (${job.status}).`,
+          }],
+          structuredContent: { job },
+        };
+      } catch {
+        context.actions().push(context.store.addAction("send_subagent_message", "failed", audit));
+        return {
+          isError: true,
+          content: [{
+            type: "text" as const,
+            text: "Subagent job is unavailable for continuation in this session.",
+          }],
+          structuredContent: { ok: false, code: "SUBAGENT_CONTINUATION_UNAVAILABLE" },
         };
       }
     },

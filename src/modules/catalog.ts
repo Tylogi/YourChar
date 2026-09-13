@@ -61,7 +61,7 @@ const mcpEstimatedTokens = {
   [gitMcpModuleId]: 620,
   [userProfileMcpModuleId]: 270,
   [memoryCoordinatorMcpModuleId]: 430,
-  [subagentMcpModuleId]: 950,
+  [subagentMcpModuleId]: 1_100,
   [relationshipStateMcpModuleId]: 230,
   [worldStateMcpModuleId]: 960,
   [interactionStateMcpModuleId]: 650,
@@ -154,6 +154,7 @@ const mcpDetails: Record<string, string> = {
 - \`get_subagent_job\`: inspect one same-session job and optionally retrieve its completed result.
 - \`start_subagent_job\`: admit one background job and return its durable identity without waiting for model work.
 - \`interrupt_subagent_job\`: cancel one same-session background job and wait for its durable terminal state.
+- \`send_subagent_message\`: queue a bounded follow-up turn on a completed job with a retained private transcript.
 
 ## Boundaries
 
@@ -162,6 +163,7 @@ const mcpDetails: Record<string, string> = {
 - The parent must provide a self-contained task and only the supporting context the child needs.
 - Every admitted task receives a durable job ID and child-session ID. Queued, running, completed, failed, and cancelled transitions retain frozen budgets and the exact read-only grant set.
 - Background jobs survive parent handle eviction and capability remounts. Conversation deletion and capability-setting changes are blocked while admitted work is active.
+- Completed child transcripts are retained privately up to 4 MiB and support at most eight 4,000-character follow-up turns, including after restart. Continuation reuses the stable child ID and can only retain or reduce its previous grants.
 - An interrupted non-terminal job fails closed on startup and is marked retryable; it is never silently replayed before resumable checkpoints exist.
 - Child tools are read-only: enabled Skill files, read-only Workspace and MarkItDown document conversion, configured Tavily Search, and configured Vision MCP.
 - The child cannot change schedules, memory, user profile, SOUL.md, scenes, or Workspace files and cannot create another subagent.

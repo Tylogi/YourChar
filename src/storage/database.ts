@@ -3156,6 +3156,23 @@ const migrations: Migration[] = [
         ON subagent_jobs(status, updated_at, id);
     `,
   },
+  {
+    version: 61,
+    sql: `
+      ALTER TABLE subagent_jobs ADD COLUMN transcript_json TEXT
+        CHECK (transcript_json IS NULL OR json_valid(transcript_json));
+      ALTER TABLE subagent_jobs ADD COLUMN pending_input_text TEXT;
+      ALTER TABLE subagent_jobs ADD COLUMN pending_input_sha256 TEXT
+        CHECK (
+          pending_input_sha256 IS NULL
+          OR (length(pending_input_sha256) = 64 AND pending_input_sha256 NOT GLOB '*[^a-f0-9]*')
+        );
+      ALTER TABLE subagent_jobs ADD COLUMN pending_input_characters INTEGER NOT NULL DEFAULT 0
+        CHECK (pending_input_characters BETWEEN 0 AND 4000);
+      ALTER TABLE subagent_jobs ADD COLUMN followup_count INTEGER NOT NULL DEFAULT 0
+        CHECK (followup_count BETWEEN 0 AND 8);
+    `,
+  },
 ];
 
 export class AppDatabase {

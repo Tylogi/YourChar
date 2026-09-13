@@ -1,6 +1,6 @@
 # Private-Chat Subagent Delegation
 
-Status: P2 background controls implemented; persistent continuation and restart recovery remain
+Status: P2 durable background continuation implemented; automatic recovery remains
 
 ## Product boundary
 
@@ -9,7 +9,8 @@ not roleplay characters and are not part of group-chat participation. A parent
 Agent may use `delegate_task` for blocking independent work, or
 `start_subagent_job` when the work should continue after the parent turn
 returns. The parent can inspect the latter with list/get and cancel it with
-`interrupt_subagent_job`.
+`interrupt_subagent_job`. A completed job whose private transcript was retained
+can accept a bounded `send_subagent_message` follow-up.
 
 `mcp:subagent` is disabled by default because every delegation creates extra
 model calls. The capability is managed through the existing MCP/Skill page and
@@ -27,7 +28,7 @@ Direct Pi AgentSession
        -> detached in-process Pi AgentSession
        -> optional read-only child tools
        -> durable result or failure
-       -> list/get/interrupt control operations
+       -> list/get/send/interrupt control operations
 ```
 
 The child receives no parent transcript, SOUL.md, user profile, memory, scene,
@@ -71,6 +72,9 @@ runtime composes background reminder messages.
 - model calls: 32 work calls by default, configurable from 1 to 64, plus one reserved tool-free finalization call per child;
 - hard wall time: 30 minutes by default, configurable from 60 to 3,600 seconds; model or tool activity never extends it;
 - concurrency: 4 children per parent session by default, configurable from 1 to 8.
+- continuation: at most 8 follow-up turns of 4,000 Unicode characters each;
+- private child transcript: retained up to 4 MiB, after which the completed
+  result remains available but continuation is disabled.
 
 These values are stored in the singleton Subagent runtime settings row. Updates
 use a revision compare-and-swap so an older settings page cannot overwrite a
@@ -93,26 +97,32 @@ in the transcript.
 
 Parent cancellation propagates to a blocking child, while
 `interrupt_subagent_job` propagates an explicit cancellation to a background
-child's model and provider transport. Child Pi transcripts are still in-memory
-and disposed after the run finishes, but schema 60 retains a host-owned job
-record with stable job/child IDs, frozen budgets, the explicit read-only
-module/Skill/tool grant, lifecycle timestamps, bounded result, and safe failure
-diagnostic. The private job table retains the raw task/context so a later
-continuation layer can resume it; those fields never appear in ordinary audits,
-list responses, or status projections. Normal state backups therefore need the
-same protection as the primary database.
+child's model and provider transport. Schema 60 introduced the host-owned job
+record; schema 61 adds its bounded private transcript, pending follow-up, and
+continuation counter. The record retains stable job/child IDs, frozen budgets,
+the explicit read-only module/Skill/tool grant, lifecycle timestamps, bounded
+result, and safe failure diagnostic. Raw task/context/follow-up text and the
+child transcript remain private table fields and never appear in ordinary
+audits, list responses, or status projections. Normal state backups therefore
+need the same protection as the primary database.
 
 The legacy `delegate_task` result remains blocking and compatible.
 `start_subagent_job` returns a queued job projection without waiting for model
 output. The read-only `list_subagent_jobs` and `get_subagent_job` tools expose
 jobs owned by the current parent session, and `interrupt_subagent_job` waits
 until an active background job reaches its durable cancelled state.
-Cross-session lookup or interruption returns not found. The same scope is
-available to the host through:
+`send_subagent_message` queues a new background turn against the retained
+transcript and returns immediately. It keeps the stable child ID across process
+restart, applies the original frozen budgets to the new turn, and intersects
+the old grant with current permissions/configuration so continuation can never
+gain a Workspace, module, Skill, or tool capability.
+Cross-session lookup, continuation, or interruption returns not found. The same
+scope is available to the host through:
 
 - `GET /api/v1/sessions/{parentSessionId}/subagent-jobs`
 - `POST /api/v1/sessions/{parentSessionId}/subagent-jobs`
 - `GET /api/v1/sessions/{parentSessionId}/subagent-jobs/{jobId}`
+- `POST /api/v1/sessions/{parentSessionId}/subagent-jobs/{jobId}/messages`
 - `POST /api/v1/sessions/{parentSessionId}/subagent-jobs/{jobId}/interrupt`
 
 Host mutations require the local browser control-plane capability. Lists and
@@ -129,8 +139,8 @@ Application disposal aborts live children after synchronously marking their
 durable rows interrupted. If the application starts with a `queued` or
 `running` row, it likewise marks that row failed with the retryable
 `interrupted` diagnostic. It deliberately does not replay model/tool work:
-persistent child transcripts, follow-up/send turns, idempotent result delivery,
-and bounded automatic recovery are later P2 slices.
+pending follow-up text is retained privately for diagnosis, but idempotent
+result delivery and bounded automatic recovery are later P2 slices.
 
 ## Observability and testing
 
@@ -147,7 +157,8 @@ Regression tests must preserve:
 - child read-only tool allowlist and no recursive delegation;
 - group actors receiving no subagent tool;
 - audit redaction, usage details, Trace persistence, cancellation, and limits;
-- durable identity, background start/interrupt, scoped list/get, handle-eviction
-  survival, terminal transitions, restart fail-closed, conversation erasure,
-  and incognito physical purge;
+- durable identity, background start/send/interrupt, scoped list/get,
+  handle-eviction and completed-transcript restart continuation, grant
+  non-expansion, terminal transitions, restart fail-closed, conversation
+  erasure, and incognito physical purge;
 - management-page detail and token-estimate rendering.

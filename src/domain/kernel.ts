@@ -3626,6 +3626,16 @@ export class CompanionKernel {
     return this.sessionRuntime.interruptSubagentJob(parentSessionId, jobId);
   }
 
+  sendSubagentMessage(
+    parentSessionId: string,
+    jobId: string,
+    prompt: string,
+    timezone = "Asia/Shanghai",
+  ) {
+    this.requireSubagentParentSession(parentSessionId);
+    return this.sessionRuntime.sendSubagentMessage(parentSessionId, jobId, prompt, timezone);
+  }
+
   patchSubagentSettings(patch: SubagentSettingsPatch, expectedRevision: number) {
     this.assertControlPlaneIdle();
     const settings = this.subagentSettingsService.patch(patch, expectedRevision);

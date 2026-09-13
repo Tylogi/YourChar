@@ -115,7 +115,8 @@ Required invariants:
   capability remounts.
 - [x] Propagate explicit interruption through model, tool, and provider
   transports into one durable cancelled state.
-- [ ] Persist child Pi transcripts and add bounded follow-up/send turns.
+- [x] Persist bounded child Pi transcripts and add parent-scoped follow-up/send
+  turns that preserve the stable child identity across restart.
 - [ ] Make completion notification/result delivery idempotent across process
   restart.
 
@@ -158,7 +159,8 @@ feature counts must not be reported as task-success improvements.
 - [x] P1b declarative product contributions.
 - [x] P1c profiles, reload, and declarative provider settings.
 - [ ] P2 continuable jobs and subagents (P2a complete; P2b background controls
-  complete, persistent continuation and P2c recovery remain).
+  and continuation implemented, idempotent result delivery and P2c recovery
+  remain).
 - [ ] P3 general execution.
 - [ ] P4 provider and host seams.
 - [ ] P5 event-sourced runtime state.

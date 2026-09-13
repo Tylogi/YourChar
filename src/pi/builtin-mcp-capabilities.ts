@@ -124,6 +124,7 @@ export type BuiltinMcpCapabilityOptions = Readonly<{
   runSubagent: (request: SubagentRequest, signal?: AbortSignal) => Promise<SubagentResult>;
   startSubagentJob: (request: SubagentRequest) => SubagentJobSummary;
   interruptSubagentJob: (jobId: string) => Promise<SubagentJobSummary>;
+  sendSubagentMessage: (jobId: string, prompt: string) => SubagentJobSummary;
   listSubagentJobs: (limit: number) => readonly SubagentJobSummary[];
   getSubagentJob: (jobId: string) => SubagentJobDetail | undefined;
   requestCharacterSkillCapabilityRefresh: () => void;
@@ -259,6 +260,7 @@ export function createBuiltinMcpCapabilities(
         run: options.runSubagent,
         startJob: options.startSubagentJob,
         interruptJob: options.interruptSubagentJob,
+        sendMessage: options.sendSubagentMessage,
         listJobs: options.listSubagentJobs,
         getJob: options.getSubagentJob,
       });

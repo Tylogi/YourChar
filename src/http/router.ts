@@ -645,7 +645,7 @@ async function route(input: {
       contextBudget: "GET /api/v1/sessions/{id}/context-budget",
       compactContext: "POST /api/v1/sessions/{id}/compact",
       subagentJobs:
-        "GET/POST /api/v1/sessions/{id}/subagent-jobs; GET /api/v1/sessions/{id}/subagent-jobs/{jobId}; POST /api/v1/sessions/{id}/subagent-jobs/{jobId}/interrupt",
+        "GET/POST /api/v1/sessions/{id}/subagent-jobs; GET /api/v1/sessions/{id}/subagent-jobs/{jobId}; POST /api/v1/sessions/{id}/subagent-jobs/{jobId}/{messages|interrupt}",
       imChannels: "GET /api/v1/im/channels",
       imSettings: "GET/PATCH /api/v1/im/settings",
       imBindingQr: "POST /api/v1/im/bindings/{provider}/qr",
@@ -952,6 +952,33 @@ async function route(input: {
       decodeURIComponent(subagentJobInterruptMatch[2]),
     );
     sendJson(input.response, 200, { job });
+    return;
+  }
+
+  const subagentJobMessagesMatch = pathname.match(
+    /^\/api\/v1\/sessions\/([^/]+)\/subagent-jobs\/([^/]+)\/messages$/,
+  );
+  if (subagentJobMessagesMatch && method === "POST") {
+    assertLocalControlPlaneMutation(input.request);
+    const body = asRecord(await readJson(input.request));
+    assertOnlyKeys(body, ["message", "timezone"], "Subagent follow-up request");
+    const message = requiredString(body.message, "message");
+    const timezone = body.timezone === undefined
+      ? "Asia/Shanghai"
+      : requiredStringValue(body.timezone, "timezone");
+    if ([...message].length > 4_000) {
+      throw new SyntaxError("message must contain at most 4000 characters");
+    }
+    if ([...timezone].length > 200) {
+      throw new SyntaxError("timezone must contain at most 200 characters");
+    }
+    const job = kernel.sendSubagentMessage(
+      decodeURIComponent(subagentJobMessagesMatch[1]),
+      decodeURIComponent(subagentJobMessagesMatch[2]),
+      message,
+      timezone,
+    );
+    sendJson(input.response, 202, { job });
     return;
   }
 
