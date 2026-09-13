@@ -54,8 +54,8 @@ not a prerequisite, and the product must remain runnable at every milestone.
 
 ### P1b — Declarative product contributions
 
-- Let a capability contribute its module descriptor, detail Markdown, context
-  status, settings schema, and optional UI card.
+- Let a capability contribute its module descriptor, detail Markdown, bounded
+  context status, generic enable setting, and module UI card.
 - Replace the hard-coded MCP array and context-status branches in
   `AgentModuleCatalog` with registered contributions.
 - Validate contribution ownership: one capability ID owns one module/settings
@@ -66,6 +66,7 @@ not a prerequisite, and the product must remain runnable at every milestone.
 - Add named runtime profiles composed from built-ins and trusted packages.
 - Persist a resolved, inspectable configuration snapshot.
 - Implement idle-boundary install/uninstall/reload with reversible effects.
+- Add declared provider-specific settings schemas and optional UI slots.
 - Keep third-party code disabled by default and require explicit trust review.
 
 ## 5. P2 design boundary
@@ -119,7 +120,7 @@ feature counts must not be reported as task-success improvements.
 
 - [x] Baseline work isolated on `refactor/agent-runtime-capabilities`.
 - [x] P1a session capability lifecycle.
-- [ ] P1b declarative product contributions.
+- [x] P1b declarative product contributions.
 - [ ] P1c profiles and reload.
 - [ ] P2 continuable jobs and subagents.
 - [ ] P3 general execution.

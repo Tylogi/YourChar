@@ -662,6 +662,10 @@ export class CompanionKernel {
     this.moduleCatalog = new AgentModuleCatalog(this.database, this.clock, {
       cwd: runtimeCwd,
       stateDir: this.store.stateDir,
+      additionalMcpModules: (normalizedOptions.additionalSessionCapabilities ?? [])
+        .flatMap((capability) => capability.moduleContribution
+          ? [capability.moduleContribution]
+          : []),
     });
     this.characterSkillPackages = this.incognitoChild ||
         normalizedOptions.characterSkillPackages === false ||

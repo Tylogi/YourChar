@@ -49,3 +49,26 @@ export type AgentModuleDetail = {
   format: "markdown";
   content: string;
 };
+
+export type AgentMcpContextContribution = Readonly<{
+  order: number;
+  enabled: string;
+  disabled: string;
+  availableSpaces?: readonly ConversationSpace[];
+}>;
+
+/**
+ * Trusted, declarative product surface for one MCP-backed Agent module. The
+ * generic boolean setting is owned by AgentModuleCatalog; runtime admission and
+ * permission checks remain the capability's responsibility.
+ */
+export type AgentMcpModuleContribution = Readonly<{
+  id: string;
+  name: string;
+  description: string;
+  source: string;
+  defaultEnabled: boolean;
+  estimatedTokens: number;
+  detail: string;
+  context?: AgentMcpContextContribution;
+}>;

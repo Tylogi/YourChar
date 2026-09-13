@@ -1,9 +1,10 @@
 import type { ToolDefinition } from "@earendil-works/pi-coding-agent";
 import type { ActionRecord, ConversationSpace, Mode } from "../domain/types.js";
-import type { AgentPermissions } from "../modules/types.js";
+import type { AgentMcpModuleContribution, AgentPermissions } from "../modules/types.js";
 import type { ScopedWorkspace } from "../workspace/scope.js";
 
 const capabilityIdPattern = /^[a-z0-9][a-z0-9._:/-]{0,127}$/u;
+const mcpModuleIdPattern = /^mcp:[a-z0-9][a-z0-9._/-]{0,123}$/u;
 const defaultCapabilityOrder = 10_000;
 
 export type SessionCapabilityContext = Readonly<{
@@ -17,6 +18,7 @@ export type SessionCapabilityContext = Readonly<{
   currentUserText: () => string;
   timezone: () => string;
   actions: () => ActionRecord[];
+  moduleEnabled: (moduleId: string) => boolean;
 }>;
 
 /**
@@ -35,6 +37,10 @@ export type SessionCapabilityMount = Readonly<{
 export type SessionCapability = Readonly<{
   id: string;
   order?: number;
+  /** Bind mounting to an existing Agent module setting. */
+  moduleId?: string;
+  /** Optionally contribute that module's catalog, context, and UI metadata. */
+  moduleContribution?: AgentMcpModuleContribution;
   mount: (
     context: SessionCapabilityContext,
   ) => SessionCapabilityMount | undefined | Promise<SessionCapabilityMount | undefined>;
@@ -49,11 +55,13 @@ export type MountedSessionCapability = Readonly<{
 export type SessionCapabilityDescriptor = Readonly<{
   id: string;
   order: number;
+  moduleId?: string;
 }>;
 
 type NormalizedSessionCapability = Readonly<{
   id: string;
   order: number;
+  moduleId?: string;
   mount: SessionCapability["mount"];
 }>;
 
@@ -87,6 +95,7 @@ export class SessionCapabilityRegistry {
 
   constructor(capabilities: readonly SessionCapability[] = []) {
     const ids = new Set<string>();
+    const moduleOwners = new Map<string, string>();
     const normalized = capabilities.map((capability) => {
       if (!capability || typeof capability !== "object") {
         throw new SessionCapabilityRegistrationError("session capability must be an object");
@@ -112,7 +121,48 @@ export class SessionCapabilityRegistry {
           `session capability ${id} order must be a safe integer`,
         );
       }
-      return Object.freeze({ id, order, mount: capability.mount });
+      if (
+        capability.moduleContribution !== undefined &&
+        (!capability.moduleContribution || typeof capability.moduleContribution !== "object")
+      ) {
+        throw new SessionCapabilityRegistrationError(
+          `session capability ${id} module contribution must be an object`,
+        );
+      }
+      const contributedModuleId = capability.moduleContribution?.id;
+      if (
+        capability.moduleId !== undefined &&
+        contributedModuleId !== undefined &&
+        capability.moduleId !== contributedModuleId
+      ) {
+        throw new SessionCapabilityRegistrationError(
+          `session capability ${id} moduleId must match its module contribution`,
+        );
+      }
+      const moduleId = capability.moduleId ?? contributedModuleId;
+      if (
+        moduleId !== undefined &&
+        (typeof moduleId !== "string" || moduleId !== moduleId.trim() || !mcpModuleIdPattern.test(moduleId))
+      ) {
+        throw new SessionCapabilityRegistrationError(
+          `invalid MCP module id for session capability ${id}: ${moduleId}`,
+        );
+      }
+      if (moduleId !== undefined) {
+        const owner = moduleOwners.get(moduleId);
+        if (owner) {
+          throw new SessionCapabilityRegistrationError(
+            `MCP module ${moduleId} is already bound to session capability ${owner}`,
+          );
+        }
+        moduleOwners.set(moduleId, id);
+      }
+      return Object.freeze({
+        id,
+        order,
+        ...(moduleId === undefined ? {} : { moduleId }),
+        mount: capability.mount,
+      });
     });
     this.capabilities = Object.freeze(
       normalized.sort((left, right) => left.order - right.order || left.id.localeCompare(right.id)),
@@ -120,7 +170,11 @@ export class SessionCapabilityRegistry {
   }
 
   list(): readonly SessionCapabilityDescriptor[] {
-    return this.capabilities.map(({ id, order }) => Object.freeze({ id, order }));
+    return this.capabilities.map(({ id, order, moduleId }) => Object.freeze({
+      id,
+      order,
+      ...(moduleId === undefined ? {} : { moduleId }),
+    }));
   }
 
   async mountAll(
@@ -147,6 +201,7 @@ export class SessionCapabilityRegistry {
     }
 
     for (const capability of this.capabilities) {
+      if (capability.moduleId && !context.moduleEnabled(capability.moduleId)) continue;
       let current: MountedSessionCapability | undefined;
       try {
         const contribution = await capability.mount(context);

@@ -615,6 +615,9 @@ export class PiSessionRuntime {
       additionalSessionCapabilities.map((capability) => Object.freeze({
         id: capability.id,
         ...(capability.order === undefined ? {} : { order: capability.order }),
+        ...(capability.moduleId === undefined && capability.moduleContribution === undefined
+          ? {}
+          : { moduleId: capability.moduleId ?? capability.moduleContribution!.id }),
         mount: capability.mount,
       })),
     );
@@ -1741,6 +1744,11 @@ export class PiSessionRuntime {
       workspaceSharePaths: [],
     };
     const permissions = Object.freeze({ ...this.permissionCatalog.get() });
+    const enabledMcpModuleIds = new Set(
+      this.moduleCatalog.listModules()
+        .filter((module) => module.type === "mcp" && module.enabled)
+        .map((module) => module.id),
+    );
     const capabilityContext: SessionCapabilityContext = Object.freeze({
       sessionId: metadata.id,
       mode: metadata.mode,
@@ -1752,6 +1760,7 @@ export class PiSessionRuntime {
       currentUserText: () => toolState.currentUserText,
       timezone: () => toolState.timezone,
       actions: () => toolState.actions,
+      moduleEnabled: (moduleId) => enabledMcpModuleIds.has(moduleId),
     });
     const enabledSkills = this.moduleCatalog.enabledSkills(
       metadata.conversationSpace,

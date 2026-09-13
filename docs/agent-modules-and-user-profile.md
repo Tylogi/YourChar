@@ -354,20 +354,25 @@ provenance, or manifest and is unsupported. Existing packages can be inspected,
 enabled, disabled, and—after disabling—removed from the trusted local UI;
 in-place update is not implemented.
 
-For a built-in MCP module, add its product descriptor to the catalog and its
-handle-scoped adapter to `createBuiltinMcpCapabilities`. Do not add another MCP
-branch to `PiSessionRuntime`: the `SessionCapabilityRegistry` owns deterministic
-mount order, duplicate-tool rejection, rollback, and cleanup. Keep direct domain
+For a built-in MCP module, add one declarative entry to
+`builtinMcpModuleContributions` and its handle-scoped adapter to
+`createBuiltinMcpCapabilities`. The adapter binds its `moduleId`; the registry
+therefore applies the catalog setting before mount. Do not add another MCP branch
+to `PiSessionRuntime`: `SessionCapabilityRegistry` owns deterministic mount
+order, duplicate-tool rejection, rollback, and cleanup. Keep direct domain
 services independent from model-facing toggles. Tests must cover enabled and
 disabled tools, context visibility, transcript resume, persistence, and UI state.
 
 Deployment-trusted integrations that need only a handle-scoped tool can instead
-provide `additionalSessionCapabilities` to `CompanionKernel`. A contribution
-receives the scoped Workspace, an immutable permission snapshot, session
-identity, and bounded runtime callbacks. It must still enforce its own admission
-policy. Additional capabilities are not inherited by disposable incognito child
-kernels, cannot shadow a built-in or host tool, and are closed when the handle is
-rebuilt, deleted, or disposed. This is a programmatic P1a seam, not a third-party
-installer: module descriptors, settings/context contributions, package trust,
-and idle-boundary reload belong to P1b/P1c in
+provide `additionalSessionCapabilities` to `CompanionKernel`. The same object may
+include `moduleContribution`, which supplies its discoverable name, description,
+detail Markdown, default toggle, token estimate, and bounded enabled/disabled
+context. Its generic setting gates mounting automatically and appears in the
+existing module UI. A contribution receives the scoped Workspace, an immutable
+permission snapshot, session identity, and bounded runtime callbacks. It must
+still enforce its own admission policy. Additional capabilities are not inherited
+by disposable incognito child kernels, cannot shadow a built-in module or any
+tool, and are closed when the handle is rebuilt, deleted, or disposed. This is a
+programmatic P1 seam, not a third-party installer: package trust, provider-specific
+settings, profiles, and idle-boundary reload belong to P1c in
 [`agent-runtime-modernization-plan.md`](agent-runtime-modernization-plan.md).

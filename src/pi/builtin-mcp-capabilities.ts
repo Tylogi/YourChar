@@ -111,8 +111,8 @@ export function createBuiltinMcpCapabilities(
   const currentUserText = () => toolState.currentUserText;
 
   return [
-    defineCapability("builtin:mcp:schedule", 100, async () => {
-      if (incognitoChild || isSecret || !moduleCatalog.isEnabled(scheduleMcpModuleId)) return undefined;
+    defineCapability("builtin:mcp:schedule", 100, scheduleMcpModuleId, async (context) => {
+      if (incognitoChild || isSecret) return undefined;
       return createScheduleMcpBridge({
         scheduleService: options.scheduleService,
         store: options.store,
@@ -122,7 +122,7 @@ export function createBuiltinMcpCapabilities(
         characterId: metadata.characterId,
         worldCoordinator: metadata.mode === "sms" &&
             Boolean(metadata.characterId) &&
-            moduleCatalog.isEnabled(worldStateMcpModuleId) &&
+            context.moduleEnabled(worldStateMcpModuleId) &&
             Boolean(metadata.characterId && options.worldService.repository.getMembership(metadata.characterId))
           ? options.worldCoordinator
           : undefined,
@@ -130,8 +130,8 @@ export function createBuiltinMcpCapabilities(
         actions,
       });
     }),
-    defineCapability("builtin:mcp:user-profile", 200, async () => {
-      if (incognitoChild || isSecret || !moduleCatalog.isEnabled(userProfileMcpModuleId)) return undefined;
+    defineCapability("builtin:mcp:user-profile", 200, userProfileMcpModuleId, async () => {
+      if (incognitoChild || isSecret) return undefined;
       return createUserProfileMcpBridge({
         profileService: options.profileService,
         store: options.store,
@@ -140,10 +140,9 @@ export function createBuiltinMcpCapabilities(
         allowWrite: permissions.userProfileWriteEnabled,
       });
     }),
-    defineCapability("builtin:mcp:tavily-search", 300, async () => {
+    defineCapability("builtin:mcp:tavily-search", 300, tavilySearchMcpModuleId, async () => {
       if (
         incognitoChild ||
-        !moduleCatalog.isEnabled(tavilySearchMcpModuleId) ||
         !options.tavilyService.isConfigured()
       ) return undefined;
       return createTavilyMcpBridge({
@@ -153,8 +152,8 @@ export function createBuiltinMcpCapabilities(
         actions,
       });
     }),
-    defineCapability("builtin:mcp:web-reader", 400, async () => {
-      if (incognitoChild || !moduleCatalog.isEnabled(webReaderMcpModuleId)) return undefined;
+    defineCapability("builtin:mcp:web-reader", 400, webReaderMcpModuleId, async () => {
+      if (incognitoChild) return undefined;
       return createWebReaderMcpBridge({
         webReaderService: options.webReaderService,
         store: options.store,
@@ -162,10 +161,9 @@ export function createBuiltinMcpCapabilities(
         actions,
       });
     }),
-    defineCapability("builtin:mcp:vision", 500, async () => {
+    defineCapability("builtin:mcp:vision", 500, visionMcpModuleId, async () => {
       if (
         incognitoChild ||
-        !moduleCatalog.isEnabled(visionMcpModuleId) ||
         !options.visionService.isConfigured() ||
         options.visionService.getConfig().mode === "off"
       ) return undefined;
@@ -178,10 +176,9 @@ export function createBuiltinMcpCapabilities(
         actions,
       });
     }),
-    defineCapability("builtin:mcp:mineru", 600, async () => {
+    defineCapability("builtin:mcp:mineru", 600, mineruMcpModuleId, async () => {
       if (
         incognitoChild ||
-        !moduleCatalog.isEnabled(mineruMcpModuleId) ||
         !options.mineruService.isConfigured() ||
         permissions.workspaceAccess === "off"
       ) return undefined;
@@ -194,13 +191,12 @@ export function createBuiltinMcpCapabilities(
         actions,
       });
     }),
-    defineCapability("builtin:mcp:git", 700, async () => {
+    defineCapability("builtin:mcp:git", 700, gitMcpModuleId, async () => {
       if (
         incognitoChild ||
         isSecret ||
         !metadata.characterId ||
         !options.gitService?.isConfigured() ||
-        !moduleCatalog.isEnabled(gitMcpModuleId) ||
         permissions.workspaceAccess !== "read_write"
       ) return undefined;
       const character = options.rpService.getCharacter(metadata.characterId);
@@ -213,8 +209,8 @@ export function createBuiltinMcpCapabilities(
         actions,
       });
     }),
-    defineCapability("builtin:mcp:subagent", 800, async () => {
-      if (incognitoChild || !moduleCatalog.isEnabled(subagentMcpModuleId)) return undefined;
+    defineCapability("builtin:mcp:subagent", 800, subagentMcpModuleId, async () => {
+      if (incognitoChild) return undefined;
       return createSubagentMcpBridge({
         store: options.store,
         sessionId: metadata.id,
@@ -223,12 +219,11 @@ export function createBuiltinMcpCapabilities(
         run: options.runSubagent,
       });
     }),
-    defineCapability("builtin:mcp:relationship-state", 900, async () => {
+    defineCapability("builtin:mcp:relationship-state", 900, relationshipStateMcpModuleId, async () => {
       if (
         incognitoChild ||
         isSecret ||
-        !metadata.characterId ||
-        !moduleCatalog.isEnabled(relationshipStateMcpModuleId)
+        !metadata.characterId
       ) return undefined;
       return createRelationshipMcpBridge({
         relationshipService: options.relationshipService,
@@ -236,13 +231,12 @@ export function createBuiltinMcpCapabilities(
         characterId: metadata.characterId,
       });
     }),
-    defineCapability("builtin:mcp:world-state", 1_000, async () => {
+    defineCapability("builtin:mcp:world-state", 1_000, worldStateMcpModuleId, async () => {
       if (
         incognitoChild ||
         isSecret ||
         metadata.mode !== "sms" ||
         !metadata.characterId ||
-        !moduleCatalog.isEnabled(worldStateMcpModuleId) ||
         !options.worldService.repository.getMembership(metadata.characterId)
       ) return undefined;
       return createWorldMcpBridge({
@@ -255,11 +249,10 @@ export function createBuiltinMcpCapabilities(
         actions,
       });
     }),
-    defineCapability("builtin:mcp:interaction-state", 1_100, async () => {
+    defineCapability("builtin:mcp:interaction-state", 1_100, interactionStateMcpModuleId, async () => {
       if (
         metadata.mode !== "sms" ||
-        !metadata.characterId ||
-        !moduleCatalog.isEnabled(interactionStateMcpModuleId)
+        !metadata.characterId
       ) return undefined;
       return createInteractionMcpBridge({
         interactionService: options.interactionService,
@@ -276,7 +269,7 @@ export function createBuiltinMcpCapabilities(
         actions,
       });
     }),
-    defineCapability("builtin:mcp:character-skill", 1_200, async () => {
+    defineCapability("builtin:mcp:character-skill", 1_200, undefined, async () => {
       if (
         incognitoChild ||
         !metadata.characterId ||
@@ -302,8 +295,8 @@ export function createBuiltinMcpCapabilities(
         requestCapabilityRefresh: options.requestCharacterSkillCapabilityRefresh,
       });
     }),
-    defineCapability("builtin:mcp:memory-coordinator", 1_300, async () => {
-      if (incognitoChild || !moduleCatalog.isEnabled(memoryCoordinatorMcpModuleId)) return undefined;
+    defineCapability("builtin:mcp:memory-coordinator", 1_300, memoryCoordinatorMcpModuleId, async () => {
+      if (incognitoChild) return undefined;
       const realm = metadata.mode === "rp" ? "roleplay" as const : "reality" as const;
       if (realm !== "reality" && !metadata.characterId) return undefined;
       return createMemoryMcpBridge({
@@ -322,7 +315,7 @@ export function createBuiltinMcpCapabilities(
           : permissions.characterMemoryWriteEnabled,
       });
     }),
-    defineCapability("builtin:mcp:character-soul", 1_400, async () => {
+    defineCapability("builtin:mcp:character-soul", 1_400, undefined, async () => {
       if (
         incognitoChild ||
         isSecret ||
@@ -343,7 +336,13 @@ export function createBuiltinMcpCapabilities(
 function defineCapability(
   id: string,
   order: number,
+  moduleId: string | undefined,
   mount: SessionCapability["mount"],
 ): SessionCapability {
-  return Object.freeze({ id, order, mount });
+  return Object.freeze({
+    id,
+    order,
+    ...(moduleId === undefined ? {} : { moduleId }),
+    mount,
+  });
 }
