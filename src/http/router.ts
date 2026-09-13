@@ -78,6 +78,7 @@ import {
   LocalControlPlaneRequestError,
 } from "./local-control-plane.js";
 import type { AgentSessionEvent } from "@earendil-works/pi-coding-agent";
+import type { SubagentRole } from "../mcp/subagent-server.js";
 import { UserProfileValidationError } from "../profile/service.js";
 import { profileManualSection } from "../profile/managed-memory.js";
 import { AvatarValidationError, type AvatarAsset } from "../profile/avatar-service.js";
@@ -91,6 +92,7 @@ import {
   AgentModuleSettingsUnavailableError,
   AgentModuleSettingsValidationError,
   SubagentJobNotFoundError,
+  SubagentJobStateError,
   SubagentSettingsConflictError,
   SubagentSettingsValidationError,
   type SubagentSettingsPatch,
@@ -382,6 +384,8 @@ export function createHttpServer(options: HttpServerOptions = {}) {
         sendJson(response, 404, { code: error.code, error: error.message });
       } else if (error instanceof SubagentJobNotFoundError) {
         sendJson(response, 404, { code: error.code, error: error.message });
+      } else if (error instanceof SubagentJobStateError) {
+        sendJson(response, 409, { code: error.code, error: error.message });
       } else if (error instanceof SubagentSettingsValidationError) {
         sendJson(response, 400, { code: error.code, error: error.message });
       } else if (error instanceof SubagentSettingsConflictError) {
@@ -640,7 +644,8 @@ async function route(input: {
       characterCollaborations: "GET /api/v1/sessions/{id}/character-collaborations",
       contextBudget: "GET /api/v1/sessions/{id}/context-budget",
       compactContext: "POST /api/v1/sessions/{id}/compact",
-      subagentJobs: "GET /api/v1/sessions/{id}/subagent-jobs[/{jobId}]",
+      subagentJobs:
+        "GET/POST /api/v1/sessions/{id}/subagent-jobs; GET /api/v1/sessions/{id}/subagent-jobs/{jobId}; POST /api/v1/sessions/{id}/subagent-jobs/{jobId}/interrupt",
       imChannels: "GET /api/v1/im/channels",
       imSettings: "GET/PATCH /api/v1/im/settings",
       imBindingQr: "POST /api/v1/im/bindings/{provider}/qr",
@@ -935,6 +940,21 @@ async function route(input: {
     return;
   }
 
+  const subagentJobInterruptMatch = pathname.match(
+    /^\/api\/v1\/sessions\/([^/]+)\/subagent-jobs\/([^/]+)\/interrupt$/,
+  );
+  if (subagentJobInterruptMatch && method === "POST") {
+    assertLocalControlPlaneMutation(input.request);
+    const body = asRecord(await readJson(input.request));
+    assertOnlyKeys(body, [], "Subagent job interruption");
+    const job = await kernel.interruptSubagentJob(
+      decodeURIComponent(subagentJobInterruptMatch[1]),
+      decodeURIComponent(subagentJobInterruptMatch[2]),
+    );
+    sendJson(input.response, 200, { job });
+    return;
+  }
+
   const subagentJobsMatch = pathname.match(
     /^\/api\/v1\/sessions\/([^/]+)\/subagent-jobs(?:\/([^/]+))?$/,
   );
@@ -954,6 +974,36 @@ async function route(input: {
     sendJson(input.response, 200, {
       jobs: kernel.listSubagentJobs(parentSessionId, limit),
     });
+    return;
+  }
+  if (subagentJobsMatch && method === "POST" && subagentJobsMatch[2] === undefined) {
+    assertLocalControlPlaneMutation(input.request);
+    const body = asRecord(await readJson(input.request));
+    assertOnlyKeys(body, ["role", "task", "context", "timezone"], "Subagent job request");
+    const task = requiredString(body.task, "task");
+    const context = body.context === undefined
+      ? undefined
+      : requiredStringValue(body.context, "context", true);
+    const timezone = body.timezone === undefined
+      ? "Asia/Shanghai"
+      : requiredStringValue(body.timezone, "timezone");
+    if ([...task].length > 4_000) throw new SyntaxError("task must contain at most 4000 characters");
+    if (context !== undefined && [...context].length > 8_000) {
+      throw new SyntaxError("context must contain at most 8000 characters");
+    }
+    if ([...timezone].length > 200) {
+      throw new SyntaxError("timezone must contain at most 200 characters");
+    }
+    const job = kernel.startSubagentJob(
+      decodeURIComponent(subagentJobsMatch[1]),
+      {
+        role: requiredSubagentRole(body.role ?? "worker"),
+        task,
+        ...(context === undefined ? {} : { context }),
+      },
+      timezone,
+    );
+    sendJson(input.response, 202, { job });
     return;
   }
 
@@ -4746,6 +4796,13 @@ function requiredString(value: unknown, field: string): string {
     throw new Error(`${field} is required`);
   }
   return result;
+}
+
+function requiredSubagentRole(value: unknown): SubagentRole {
+  if (value === "worker" || value === "researcher" || value === "planner" || value === "reviewer") {
+    return value;
+  }
+  throw new SyntaxError("role must be worker, researcher, planner, or reviewer");
 }
 
 function optionalDocumentString(value: unknown, field: string): string | undefined {

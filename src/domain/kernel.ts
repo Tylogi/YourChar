@@ -141,6 +141,7 @@ import {
   SubagentJobNotFoundError,
   SubagentJobService,
 } from "../modules/subagent-jobs.js";
+import type { SubagentRequest } from "../mcp/subagent-server.js";
 import {
   CharacterCapabilityRepository,
   CharacterCapabilityService,
@@ -3609,6 +3610,20 @@ export class CompanionKernel {
     const job = this.subagentJobs.get(parentSessionId, jobId);
     if (!job) throw new SubagentJobNotFoundError(jobId);
     return job;
+  }
+
+  startSubagentJob(
+    parentSessionId: string,
+    request: SubagentRequest,
+    timezone = "Asia/Shanghai",
+  ) {
+    this.requireSubagentParentSession(parentSessionId);
+    return this.sessionRuntime.startSubagentJob(parentSessionId, request, timezone);
+  }
+
+  async interruptSubagentJob(parentSessionId: string, jobId: string) {
+    this.requireSubagentParentSession(parentSessionId);
+    return this.sessionRuntime.interruptSubagentJob(parentSessionId, jobId);
   }
 
   patchSubagentSettings(patch: SubagentSettingsPatch, expectedRevision: number) {

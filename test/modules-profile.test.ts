@@ -43,13 +43,15 @@ test("module toggles rebuild Pi capabilities and profile context without losing 
     ]);
     assert.deepEqual(
       modules.filter((entry) => entry.type === "mcp").map((entry) => [entry.name, entry.estimatedTokens]),
-      [["Git MCP", 620], ["Interaction State MCP", 650], ["Memory Coordinator MCP", 430], ["MinerU Document MCP", 300], ["Relationship State MCP", 230], ["Schedule MCP", 960], ["Subagent Delegation MCP", 650], ["Tavily Search MCP", 350], ["User Profile MCP", 270], ["Vision MCP", 420], ["Web Reader MCP", 260], ["World State MCP", 960]],
+      [["Git MCP", 620], ["Interaction State MCP", 650], ["Memory Coordinator MCP", 430], ["MinerU Document MCP", 300], ["Relationship State MCP", 230], ["Schedule MCP", 960], ["Subagent Delegation MCP", 950], ["Tavily Search MCP", 350], ["User Profile MCP", 270], ["Vision MCP", 420], ["Web Reader MCP", 260], ["World State MCP", 960]],
     );
     assert.match(runtime.kernel.getAgentModuleDetail("mcp:interaction-state").content, /begin_meeting/);
     assert.match(runtime.kernel.getAgentModuleDetail("mcp:interaction-state").content, /semantic evidence/);
     assert.match(runtime.kernel.getAgentModuleDetail("mcp:schedule").content, /calendar=character/);
     assert.match(runtime.kernel.getAgentModuleDetail("mcp:schedule").content, /never reminders or system notifications/);
     assert.match(runtime.kernel.getAgentModuleDetail("mcp:subagent").content, /delegate_task/);
+    assert.match(runtime.kernel.getAgentModuleDetail("mcp:subagent").content, /start_subagent_job/);
+    assert.match(runtime.kernel.getAgentModuleDetail("mcp:subagent").content, /interrupt_subagent_job/);
     assert.match(runtime.kernel.getAgentModuleDetail("mcp:subagent").content, /At most four tasks/);
     assert.match(runtime.kernel.getAgentModuleDetail("mcp:mineru").content, /uploads the entire selected/);
     const gitDetail = runtime.kernel.getAgentModuleDetail("mcp:git").content;

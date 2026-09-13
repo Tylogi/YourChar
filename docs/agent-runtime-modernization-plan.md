@@ -109,12 +109,15 @@ Required invariants:
 
 ### P2b — Background control and continuation
 
-- [ ] Add non-blocking start plus status/list/send/interrupt operations while
+- [x] Add non-blocking start plus status/list/interrupt operations while
   retaining the blocking `delegate_task` compatibility path.
-- [ ] Persist child Pi transcripts and bounded follow-up turns so handle
-  eviction does not terminate admitted work.
-- [ ] Propagate cancellation through model, tool, and provider transports and
-  make completion/result delivery idempotent.
+- [x] Keep admitted in-process work independent of parent handle eviction and
+  capability remounts.
+- [x] Propagate explicit interruption through model, tool, and provider
+  transports into one durable cancelled state.
+- [ ] Persist child Pi transcripts and add bounded follow-up/send turns.
+- [ ] Make completion notification/result delivery idempotent across process
+  restart.
 
 ### P2c — Recovery and side-effect checkpoints
 
@@ -154,7 +157,8 @@ feature counts must not be reported as task-success improvements.
 - [x] P1a session capability lifecycle.
 - [x] P1b declarative product contributions.
 - [x] P1c profiles, reload, and declarative provider settings.
-- [ ] P2 continuable jobs and subagents (P2a durable ledger complete; P2b/P2c remain).
+- [ ] P2 continuable jobs and subagents (P2a complete; P2b background controls
+  complete, persistent continuation and P2c recovery remain).
 - [ ] P3 general execution.
 - [ ] P4 provider and host seams.
 - [ ] P5 event-sourced runtime state.

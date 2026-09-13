@@ -1,13 +1,15 @@
 # Private-Chat Subagent Delegation
 
-Status: P2 durable-ledger foundation implemented; background continuation remains
+Status: P2 background controls implemented; persistent continuation and restart recovery remain
 
 ## Product boundary
 
 Subagents support bounded work inside direct SMS or RP conversations. They are
 not roleplay characters and are not part of group-chat participation. A parent
-Agent may use `delegate_task` for independent work, research, planning, or
-review, then present the returned result in its own character voice.
+Agent may use `delegate_task` for blocking independent work, or
+`start_subagent_job` when the work should continue after the parent turn
+returns. The parent can inspect the latter with list/get and cancel it with
+`interrupt_subagent_job`.
 
 `mcp:subagent` is disabled by default because every delegation creates extra
 model calls. The capability is managed through the existing MCP/Skill page and
@@ -19,13 +21,13 @@ tool arguments.
 
 ```text
 Direct Pi AgentSession
-  -> delegate_task MCP call
   -> durable job + stable child-session identity
-  -> temporary in-process Pi AgentSession
-  -> optional read-only child tools
-  -> bounded final result
-  -> parent MCP tool result
-  -> parent Pi AgentSession resumes
+  -> delegate_task: wait for bounded result, then resume parent
+  -> start_subagent_job: return identity immediately
+       -> detached in-process Pi AgentSession
+       -> optional read-only child tools
+       -> durable result or failure
+       -> list/get/interrupt control operations
 ```
 
 The child receives no parent transcript, SOUL.md, user profile, memory, scene,
@@ -89,32 +91,46 @@ parallel delegated results share that configured total. Provider context-window
 limits can still require compaction even though the full bounded result remains
 in the transcript.
 
-Parent cancellation propagates to the child. Child Pi transcripts are still
-in-memory and disposed after the tool finishes, but schema 60 now retains a
-host-owned job record with stable job/child IDs, frozen budgets, the explicit
-read-only module/Skill/tool grant, lifecycle timestamps, bounded result, and
-safe failure diagnostic. The private job table retains the raw task/context so
-a later continuation layer can resume it; those fields never appear in ordinary
-audits, list responses, or status projections. Normal state backups therefore
-need the same protection as the primary database.
+Parent cancellation propagates to a blocking child, while
+`interrupt_subagent_job` propagates an explicit cancellation to a background
+child's model and provider transport. Child Pi transcripts are still in-memory
+and disposed after the run finishes, but schema 60 retains a host-owned job
+record with stable job/child IDs, frozen budgets, the explicit read-only
+module/Skill/tool grant, lifecycle timestamps, bounded result, and safe failure
+diagnostic. The private job table retains the raw task/context so a later
+continuation layer can resume it; those fields never appear in ordinary audits,
+list responses, or status projections. Normal state backups therefore need the
+same protection as the primary database.
 
-The legacy `delegate_task` result remains blocking and compatible. Two new
-read-only tools, `list_subagent_jobs` and `get_subagent_job`, expose jobs owned
-by the current parent session; cross-session lookup returns not found. The same
-scope is available to the host through:
+The legacy `delegate_task` result remains blocking and compatible.
+`start_subagent_job` returns a queued job projection without waiting for model
+output. The read-only `list_subagent_jobs` and `get_subagent_job` tools expose
+jobs owned by the current parent session, and `interrupt_subagent_job` waits
+until an active background job reaches its durable cancelled state.
+Cross-session lookup or interruption returns not found. The same scope is
+available to the host through:
 
 - `GET /api/v1/sessions/{parentSessionId}/subagent-jobs`
+- `POST /api/v1/sessions/{parentSessionId}/subagent-jobs`
 - `GET /api/v1/sessions/{parentSessionId}/subagent-jobs/{jobId}`
+- `POST /api/v1/sessions/{parentSessionId}/subagent-jobs/{jobId}/interrupt`
 
-Lists omit task, context, and output bodies. Detail omits task/context and may
-return the completed output. Conversation deletion and full user-data deletion
+Host mutations require the local browser control-plane capability. Lists and
+start responses omit task, context, and output bodies. Detail omits task/context
+and may return the completed output. A live background run owns its child
+runtime independently of the parent's cached Pi handle, so ordinary handle
+eviction or capability remount does not cancel admitted work. Conversation
+deletion and capability-changing control operations are rejected while a child
+is active. Once inactive, conversation deletion and full user-data deletion
 remove the corresponding rows, while incognito snapshots physically purge the
 entire table because the Subagent capability is unavailable there.
 
-If the application starts with a `queued` or `running` row, this first P2 slice
-marks it failed with the retryable `interrupted` diagnostic. It deliberately
-does not replay model/tool work: persistent child checkpoints, background
-start/send/interrupt, and bounded automatic recovery are later P2 slices.
+Application disposal aborts live children after synchronously marking their
+durable rows interrupted. If the application starts with a `queued` or
+`running` row, it likewise marks that row failed with the retryable
+`interrupted` diagnostic. It deliberately does not replay model/tool work:
+persistent child transcripts, follow-up/send turns, idempotent result delivery,
+and bounded automatic recovery are later P2 slices.
 
 ## Observability and testing
 
@@ -131,6 +147,7 @@ Regression tests must preserve:
 - child read-only tool allowlist and no recursive delegation;
 - group actors receiving no subagent tool;
 - audit redaction, usage details, Trace persistence, cancellation, and limits;
-- durable identity, scoped list/get, terminal transitions, restart fail-closed,
-  conversation erasure, and incognito physical purge;
+- durable identity, background start/interrupt, scoped list/get, handle-eviction
+  survival, terminal transitions, restart fail-closed, conversation erasure,
+  and incognito physical purge;
 - management-page detail and token-estimate rendering.

@@ -32,7 +32,13 @@ test("legacy delegation records a durable, redacted job and exposes scoped list/
     });
     assert.equal(response.status, "completed");
     const initialRequest = runtime.model.requests[0];
-    for (const toolName of ["delegate_task", "list_subagent_jobs", "get_subagent_job"]) {
+    for (const toolName of [
+      "delegate_task",
+      "list_subagent_jobs",
+      "get_subagent_job",
+      "start_subagent_job",
+      "interrupt_subagent_job",
+    ]) {
       assert.equal(initialRequest.toolNames.includes(toolName), true, `${toolName} must be mounted`);
     }
 
@@ -140,6 +146,212 @@ test("legacy delegation records a durable, redacted job and exposes scoped list/
   }
 });
 
+test("a background Subagent job survives parent handle eviction and completes durably", async () => {
+  const runtime = createTestRuntime({ seed: "subagent-background-completion" });
+  const parentSessionId = "background-subagent-parent";
+  const task = "BACKGROUND_SUBAGENT_PRIVATE_TASK_SENTINEL: inspect the isolated fixture.";
+  const context = "BACKGROUND_SUBAGENT_PRIVATE_CONTEXT_SENTINEL";
+  const output = "BACKGROUND_SUBAGENT_PRIVATE_RESULT_SENTINEL: fixture accepted.";
+  try {
+    runtime.kernel.setAgentModuleEnabled("mcp:subagent", true);
+    runtime.model.enqueue([{ kind: "assistant_text", text: "父会话已建立。" }]);
+    await runtime.kernel.sendMessage(parentSessionId, {
+      mode: "sms",
+      text: "建立后台任务父会话。",
+    });
+    runtime.model.enqueue([{ kind: "assistant_text", text: output, delayMs: 120 }]);
+
+    const admitted = runtime.kernel.startSubagentJob(parentSessionId, {
+      role: "researcher",
+      task,
+      context,
+    });
+    assert.equal(admitted.status, "queued");
+    assert.match(admitted.childSessionId, /^subagent:background-subagent-parent:/u);
+    assert.equal(runtime.kernel.sessionRuntime.hasActiveSubagentJob(parentSessionId), true);
+
+    runtime.kernel.sessionRuntime.invalidateSessionCapabilities(parentSessionId, "test_handle_eviction");
+    await waitFor(() => runtime.model.requests.some((request) =>
+      request.systemPrompt.includes("isolated researcher subagent")
+    ));
+    assert.throws(
+      () => runtime.kernel.patchAgentPermissions({ workspaceAccess: "read_only" }),
+      /control-plane operations are unavailable while an Agent turn is active/u,
+    );
+    const metadata = runtime.kernel.getConversationMetadata(parentSessionId);
+    assert.ok(metadata);
+    assert.throws(
+      () => runtime.kernel.assertConversationDeletable(
+        parentSessionId,
+        metadata.title || metadata.id,
+      ),
+      /busy and cannot be deleted/u,
+    );
+
+    await waitFor(() =>
+      runtime.kernel.getSubagentJob(parentSessionId, admitted.id).status === "completed"
+    );
+    const completed = runtime.kernel.getSubagentJob(parentSessionId, admitted.id);
+    assert.equal(completed.status, "completed");
+    assert.equal(completed.output, output);
+    assert.equal(completed.revision, 3);
+    assert.equal(runtime.kernel.sessionRuntime.hasActiveSubagentJob(parentSessionId), false);
+    assert.equal(runtime.model.pendingCount(), 0);
+
+    const backgroundAudit = runtime.kernel.store.actions.find((action) =>
+      action.actionType === "background_subagent_job" && action.payload.jobId === admitted.id
+    );
+    assert.equal(backgroundAudit?.status, "completed");
+    assert.doesNotMatch(
+      JSON.stringify(runtime.kernel.store.actions),
+      /BACKGROUND_SUBAGENT_PRIVATE_(?:TASK|CONTEXT|RESULT)_SENTINEL/u,
+    );
+  } finally {
+    runtime.dispose();
+  }
+});
+
+test("interrupting a background Subagent job propagates cancellation and is idempotent", async () => {
+  const runtime = createTestRuntime({ seed: "subagent-background-interrupt" });
+  const parentSessionId = "interrupt-subagent-parent";
+  try {
+    runtime.kernel.setAgentModuleEnabled("mcp:subagent", true);
+    runtime.model.enqueue([{ kind: "assistant_text", text: "父会话已建立。" }]);
+    await runtime.kernel.sendMessage(parentSessionId, {
+      mode: "sms",
+      text: "建立可取消任务的父会话。",
+    });
+    runtime.model.enqueue([{
+      kind: "assistant_text",
+      text: "INTERRUPTED_BACKGROUND_RESULT_MUST_NOT_PERSIST",
+      delayMs: 500,
+    }]);
+
+    const admitted = runtime.kernel.startSubagentJob(parentSessionId, {
+      role: "worker",
+      task: "Wait until the host interrupts this background job.",
+    });
+    await waitFor(() => runtime.model.requests.some((request) =>
+      request.systemPrompt.includes("isolated worker subagent")
+    ));
+
+    const cancelled = await runtime.kernel.interruptSubagentJob(parentSessionId, admitted.id);
+    assert.equal(cancelled.status, "cancelled");
+    assert.equal(cancelled.failure?.failureKind, "cancelled");
+    assert.equal(runtime.kernel.getSubagentJob(parentSessionId, admitted.id).output, undefined);
+    assert.equal(runtime.kernel.sessionRuntime.hasActiveSubagentJob(parentSessionId), false);
+    const repeated = await runtime.kernel.interruptSubagentJob(parentSessionId, admitted.id);
+    assert.equal(repeated.status, "cancelled");
+    assert.equal(repeated.revision, cancelled.revision);
+
+    const backgroundAudit = runtime.kernel.store.actions.find((action) =>
+      action.actionType === "background_subagent_job" && action.payload.jobId === admitted.id
+    );
+    assert.equal(backgroundAudit?.status, "failed");
+    assert.equal(backgroundAudit?.payload.failureKind, "cancelled");
+  } finally {
+    runtime.dispose();
+  }
+});
+
+test("background Subagent HTTP controls require the local capability and remain session-scoped", async () => {
+  const runtime = createTestRuntime({ seed: "subagent-background-http" });
+  const server = createHttpServer({ kernel: runtime.kernel });
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  const parentSessionId = "http-subagent-parent";
+  try {
+    runtime.kernel.setAgentModuleEnabled("mcp:subagent", true);
+    runtime.model.enqueue([{ kind: "assistant_text", text: "HTTP 父会话已建立。" }]);
+    await runtime.kernel.sendMessage(parentSessionId, {
+      mode: "sms",
+      text: "建立 HTTP 后台任务父会话。",
+    });
+    const address = server.address();
+    assert.ok(address && typeof address === "object");
+    const origin = `http://127.0.0.1:${address.port}`;
+    const endpoint = `${origin}/api/v1/sessions/${parentSessionId}/subagent-jobs`;
+    const requestBody = {
+      role: "reviewer",
+      task: "HTTP_BACKGROUND_PRIVATE_TASK_SENTINEL",
+      context: "HTTP_BACKGROUND_PRIVATE_CONTEXT_SENTINEL",
+    };
+
+    const rejected = await fetch(endpoint, {
+      method: "POST",
+      headers: { "content-type": "application/json", origin: "https://untrusted.example" },
+      body: JSON.stringify(requestBody),
+    });
+    assert.equal(rejected.status, 403);
+    assert.equal(runtime.kernel.listSubagentJobs(parentSessionId).length, 0);
+
+    const bootstrap = await fetch(`${origin}/`);
+    const cookie = bootstrap.headers.get("set-cookie")?.split(";", 1)[0];
+    assert.ok(cookie);
+    const headers = { "content-type": "application/json", origin, cookie };
+    runtime.model.enqueue([{
+      kind: "assistant_text",
+      text: "HTTP_BACKGROUND_PRIVATE_RESULT_SENTINEL",
+      delayMs: 100,
+    }]);
+    const accepted = await fetch(endpoint, {
+      method: "POST",
+      headers,
+      body: JSON.stringify(requestBody),
+    });
+    assert.equal(accepted.status, 202, await accepted.clone().text());
+    const acceptedBody = await accepted.json() as { job: { id: string; status: string } };
+    assert.equal(acceptedBody.job.status, "queued");
+    await waitFor(() =>
+      runtime.kernel.getSubagentJob(parentSessionId, acceptedBody.job.id).status === "completed"
+    );
+    const detailResponse = await fetch(`${endpoint}/${encodeURIComponent(acceptedBody.job.id)}`);
+    assert.equal(detailResponse.status, 200);
+    assert.match(await detailResponse.text(), /HTTP_BACKGROUND_PRIVATE_RESULT_SENTINEL/u);
+
+    runtime.model.enqueue([{
+      kind: "assistant_text",
+      text: "HTTP_INTERRUPTED_RESULT_MUST_NOT_PERSIST",
+      delayMs: 500,
+    }]);
+    const interruptibleResponse = await fetch(endpoint, {
+      method: "POST",
+      headers,
+      body: JSON.stringify({ role: "planner", task: "Wait for HTTP interruption." }),
+    });
+    assert.equal(interruptibleResponse.status, 202);
+    const interruptible = await interruptibleResponse.json() as { job: { id: string } };
+    await waitFor(() =>
+      runtime.kernel.getSubagentJob(parentSessionId, interruptible.job.id).status === "running"
+    );
+    const interrupted = await fetch(
+      `${endpoint}/${encodeURIComponent(interruptible.job.id)}/interrupt`,
+      { method: "POST", headers, body: "{}" },
+    );
+    assert.equal(interrupted.status, 200, await interrupted.clone().text());
+    const interruptedBody = await interrupted.json() as {
+      job: { status: string; failure?: { failureKind: string } };
+    };
+    assert.equal(interruptedBody.job.status, "cancelled");
+    assert.equal(interruptedBody.job.failure?.failureKind, "cancelled");
+
+    runtime.model.enqueue([{ kind: "assistant_text", text: "另一个 HTTP 父会话。" }]);
+    await runtime.kernel.sendMessage("other-http-subagent-parent", {
+      mode: "sms",
+      text: "建立另一个会话。",
+    });
+    const crossSessionInterrupt = await fetch(
+      `${origin}/api/v1/sessions/other-http-subagent-parent/subagent-jobs/${encodeURIComponent(acceptedBody.job.id)}/interrupt`,
+      { method: "POST", headers, body: "{}" },
+    );
+    assert.equal(crossSessionInterrupt.status, 404);
+  } finally {
+    await new Promise<void>((resolve, reject) =>
+      server.close((error) => error ? reject(error) : resolve())
+    );
+    runtime.dispose();
+  }
+});
+
 test("startup recovery fails interrupted Subagent jobs closed without silently replaying work", async () => {
   const stateDir = mkdtempSync(join(tmpdir(), "yourchar-subagent-job-recovery-"));
   let first: ReturnType<typeof createTestRuntime> | undefined = createTestRuntime({
@@ -212,3 +424,11 @@ test("startup recovery fails interrupted Subagent jobs closed without silently r
     rmSync(stateDir, { recursive: true, force: true });
   }
 });
+
+async function waitFor(predicate: () => boolean, timeoutMs = 2_000): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  while (!predicate()) {
+    if (Date.now() >= deadline) throw new Error("timed out waiting for Subagent job state");
+    await new Promise((resolve) => setTimeout(resolve, 5));
+  }
+}

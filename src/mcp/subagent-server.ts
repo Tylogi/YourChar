@@ -10,6 +10,8 @@ export const subagentMcpToolNames = [
   "delegate_task",
   "list_subagent_jobs",
   "get_subagent_job",
+  "start_subagent_job",
+  "interrupt_subagent_job",
 ] as const;
 const subagentBridgeTimeoutGraceMs = 30_000;
 const maximumNodeTimerMs = 2_147_483_647;
@@ -90,6 +92,8 @@ export type SubagentMcpContext = {
   runtimeTimeoutMs: number;
   actions: () => ActionRecord[];
   run: (request: SubagentRequest, signal?: AbortSignal) => Promise<SubagentResult>;
+  startJob: (request: SubagentRequest) => SubagentJobSummary;
+  interruptJob: (jobId: string) => Promise<SubagentJobSummary>;
   listJobs: (limit: number) => readonly SubagentJobSummary[];
   getJob: (jobId: string) => SubagentJobDetail | undefined;
 };
@@ -238,6 +242,98 @@ export function createSubagentMcpServer(context: SubagentMcpContext): McpServer 
         }],
         structuredContent: { job: projected },
       };
+    },
+  );
+
+  server.registerTool(
+    "start_subagent_job",
+    {
+      title: "Start background Subagent job",
+      description:
+        "Start one isolated Subagent job without waiting for its model result. The job keeps frozen read-only grants and budgets after this parent turn returns. Use list/get to observe it and interrupt_subagent_job to cancel it.",
+      inputSchema: z.object({
+        role: z.enum(subagentRoles).default("worker"),
+        task: z.string().min(1).max(4_000),
+        context: z.string().max(8_000).optional(),
+      }),
+      annotations: { readOnlyHint: false, openWorldHint: true },
+    },
+    async (input) => {
+      const audit = {
+        transport: "mcp",
+        mcpServer: "rp-agent-subagent",
+        sessionId: context.sessionId,
+        role: input.role,
+        taskCharacters: [...input.task].length,
+        contextCharacters: [...(input.context ?? "")].length,
+        taskSha256: createHash("sha256").update(input.task).digest("hex"),
+      };
+      try {
+        const job = context.startJob(input);
+        context.actions().push(context.store.addAction("start_subagent_job", "completed", {
+          ...audit,
+          jobId: job.id,
+          childSessionId: job.childSessionId,
+          status: job.status,
+          revision: job.revision,
+        }));
+        return {
+          content: [{
+            type: "text" as const,
+            text: `Subagent job ${job.id} accepted (${job.role}; ${job.status}).`,
+          }],
+          structuredContent: { job },
+        };
+      } catch (error) {
+        const failure = safeSubagentFailureDiagnostic(error);
+        context.actions().push(context.store.addAction("start_subagent_job", "failed", {
+          ...audit,
+          ...failure,
+        }));
+        return {
+          isError: true,
+          content: [{ type: "text" as const, text: publicSubagentFailureMessage(failure) }],
+          structuredContent: { ok: false, failure },
+        };
+      }
+    },
+  );
+
+  server.registerTool(
+    "interrupt_subagent_job",
+    {
+      title: "Interrupt background Subagent job",
+      description:
+        "Cancel one queued or running background Subagent job owned by this parent session. The cancellation propagates to its model and provider transport and leaves a durable cancelled terminal record.",
+      inputSchema: z.object({
+        jobId: z.string().min(1).max(256),
+      }),
+      annotations: { readOnlyHint: false, destructiveHint: true, openWorldHint: false },
+    },
+    async (input) => {
+      try {
+        const job = await context.interruptJob(input.jobId);
+        context.actions().push(context.store.addAction("interrupt_subagent_job", "completed", {
+          sessionId: context.sessionId,
+          jobId: job.id,
+          childSessionId: job.childSessionId,
+          status: job.status,
+          revision: job.revision,
+        }));
+        return {
+          content: [{
+            type: "text" as const,
+            text: `Subagent job ${job.id} is ${job.status}.`,
+          }],
+          structuredContent: { job },
+        };
+      } catch {
+        return {
+          isError: true,
+          content: [{ type: "text" as const, text: "Subagent job is unavailable in this session." }],
+          structuredContent: { ok: false, code: "SUBAGENT_JOB_NOT_FOUND" },
+        };
+      }
     },
   );
 

@@ -55,6 +55,7 @@ import {
   webReaderMcpModuleId,
   visionMcpModuleId,
   mineruMcpModuleId,
+  subagentMcpModuleId,
   type AgentModuleCatalog,
 } from "../modules/catalog.js";
 import type { AgentPermissionCatalog } from "../modules/permissions.js";
@@ -79,9 +80,12 @@ import {
   type SubagentSettingsSnapshot,
   type SubagentSettingsValues,
 } from "../modules/subagent-settings.js";
-import type {
-  SubagentJobGrantSnapshot,
-  SubagentJobService,
+import {
+  SubagentJobNotFoundError,
+  SubagentJobStateError,
+  type SubagentJobGrantSnapshot,
+  type SubagentJobSummary,
+  type SubagentJobService,
 } from "../modules/subagent-jobs.js";
 import type { UserProfileService } from "../profile/service.js";
 import type { RpService } from "../rp/service.js";
@@ -379,6 +383,36 @@ type SubagentRunSettingsSnapshot = SubagentSettingsSnapshot & {
   readonly timeoutMs: number;
 };
 
+type SubagentRunInput = {
+  parentSessionId: string;
+  mode: Mode;
+  conversationSpace: ConversationSpace;
+  characterId?: string;
+  secretOwnerCharacterId?: string;
+  workspace: ScopedWorkspace;
+  request: SubagentRequest;
+  timezone: string;
+  actions: ActionRecord[];
+  signal?: AbortSignal;
+};
+
+type SubagentRunAdmission = Readonly<{
+  settings: SubagentRunSettingsSnapshot;
+  maxTotalModelCalls: number;
+  startedAt: number;
+  childWorkspaceAccess: SubagentJobGrantSnapshot["workspaceAccess"];
+  enabledSkills: ReturnType<AgentModuleCatalog["enabledSkills"]>;
+  admittedModuleIds: readonly string[];
+  admittedGrants: SubagentJobGrantSnapshot;
+  job: SubagentJobSummary;
+}>;
+
+type BackgroundSubagentRun = Readonly<{
+  parentSessionId: string;
+  controller: AbortController;
+  promise: Promise<SubagentResult>;
+}>;
+
 export type PiSessionRuntimeOptions = {
   store: CompanionStore;
   scheduleService: ScheduleService;
@@ -559,6 +593,7 @@ export class PiSessionRuntime {
   private readonly activeSubagentCounts = new Map<string, number>();
   private readonly activeSubagents = new Set<AgentSession>();
   private readonly activeSubagentJobIds = new Set<string>();
+  private readonly backgroundSubagentRuns = new Map<string, BackgroundSubagentRun>();
   private activeCapabilityTurns = 0;
   private readonly canonicalDirectLoading = new Map<string, Promise<PiSessionHandle>>();
   private readonly legacyDirectMigrationTargets = new Map<string, string>();
@@ -1546,7 +1581,11 @@ export class PiSessionRuntime {
     const expected = metadata.title || metadata.id;
     if (confirmation.trim() !== expected) throw new ConversationDeletionConfirmationError();
     const handle = this.handles.get(metadata.id);
-    if (this.loading.has(metadata.id) || handle?.session.isStreaming) {
+    if (
+      this.loading.has(metadata.id) ||
+      handle?.session.isStreaming ||
+      this.hasActiveSubagentJob(metadata.id)
+    ) {
       throw new Error(`Session ${metadata.id} is busy and cannot be deleted`);
     }
   }
@@ -1565,6 +1604,8 @@ export class PiSessionRuntime {
         // Startup recovery will fail closed if the database is temporarily unavailable.
       }
     }
+    for (const run of this.backgroundSubagentRuns.values()) run.controller.abort();
+    for (const subagent of this.activeSubagents) void subagent.abort();
     this.closeHandles(false);
   }
 
@@ -1630,6 +1671,7 @@ export class PiSessionRuntime {
   assertCapabilitiesIdle(): void {
     if (
       this.activeCapabilityTurns > 0 ||
+      this.activeSubagentJobIds.size > 0 ||
       this.loading.size ||
       [...this.handles.values()].some((handle) => handle.session.isStreaming)
     ) {
@@ -1638,7 +1680,6 @@ export class PiSessionRuntime {
   }
 
   private closeHandles(preserveInMemoryMessages: boolean): void {
-    for (const subagent of this.activeSubagents) void subagent.abort();
     for (const handle of this.handles.values()) {
       if (preserveInMemoryMessages && !this.piSessionDir) {
         this.detachedMessages.set(handle.metadata.id, [...handle.session.messages]);
@@ -1872,6 +1913,10 @@ export class PiSessionRuntime {
           actions: toolState.actions,
           signal,
         }),
+        startSubagentJob: (request) =>
+          this.startSubagentJob(metadata.id, request, toolState.timezone),
+        interruptSubagentJob: (jobId) =>
+          this.interruptSubagentJob(metadata.id, jobId),
         listSubagentJobs: (limit) => this.subagentJobs.list(metadata.id, limit),
         getSubagentJob: (jobId) => this.subagentJobs.get(metadata.id, jobId),
         requestCharacterSkillCapabilityRefresh: () =>
@@ -1979,18 +2024,135 @@ export class PiSessionRuntime {
     return freezeSubagentSettingsSnapshot(this.subagentSettings()).timeoutSeconds * 1_000;
   }
 
-  private async runSubagent(input: {
-    parentSessionId: string;
-    mode: Mode;
-    conversationSpace: ConversationSpace;
-    characterId?: string;
-    secretOwnerCharacterId?: string;
-    workspace: ScopedWorkspace;
-    request: SubagentRequest;
-    timezone: string;
-    actions: ActionRecord[];
-    signal?: AbortSignal;
-  }): Promise<SubagentResult> {
+  startSubagentJob(
+    parentSessionId: string,
+    request: SubagentRequest,
+    timezone: string,
+  ): SubagentJobSummary {
+    if (this.incognitoChild || !this.moduleCatalog.isEnabled(subagentMcpModuleId)) {
+      throw new Error("Subagent background jobs are unavailable");
+    }
+    this.assertConversationActive(parentSessionId);
+    const metadata = this.requireMetadata(parentSessionId);
+    const controller = new AbortController();
+    const input: SubagentRunInput = {
+      parentSessionId: metadata.id,
+      mode: metadata.mode,
+      conversationSpace: metadata.conversationSpace,
+      ...(metadata.characterId ? { characterId: metadata.characterId } : {}),
+      ...(metadata.conversationSpace === "secret" && metadata.characterId
+        ? { secretOwnerCharacterId: metadata.characterId }
+        : {}),
+      workspace: this.workspaceRegistry.resolve(metadata),
+      request,
+      timezone,
+      actions: [],
+      signal: controller.signal,
+    };
+    const admission = this.admitSubagent(input);
+    const execution = this.executeSubagent(input, admission);
+    const observed = execution.then(
+      (result) => {
+        this.recordBackgroundSubagentOutcome(input, result);
+        return result;
+      },
+      (error: unknown) => {
+        this.recordBackgroundSubagentOutcome(input, error);
+        throw error;
+      },
+    );
+    const tracked = observed.finally(() => {
+      this.backgroundSubagentRuns.delete(admission.job.id);
+    });
+    this.backgroundSubagentRuns.set(admission.job.id, {
+      parentSessionId: metadata.id,
+      controller,
+      promise: tracked,
+    });
+    void tracked.catch(() => undefined);
+    return this.subagentJobs.get(metadata.id, admission.job.id) ?? admission.job;
+  }
+
+  async interruptSubagentJob(
+    parentSessionId: string,
+    jobId: string,
+  ): Promise<SubagentJobSummary> {
+    const job = this.subagentJobs.get(parentSessionId, jobId);
+    if (!job) throw new SubagentJobNotFoundError(jobId);
+    if (job.status === "completed" || job.status === "failed" || job.status === "cancelled") {
+      return job;
+    }
+    const active = this.backgroundSubagentRuns.get(jobId);
+    if (!active || active.parentSessionId !== parentSessionId) {
+      if (this.activeSubagentJobIds.has(jobId)) {
+        throw new SubagentJobStateError(jobId, "an interruptible background job");
+      }
+      return this.subagentJobs.fail(
+        jobId,
+        emptySubagentFailureDiagnostic("interrupted", true),
+      );
+    }
+    active.controller.abort();
+    await active.promise.catch(() => undefined);
+    return this.subagentJobs.get(parentSessionId, jobId) ?? job;
+  }
+
+  hasActiveSubagentJob(parentSessionId?: string): boolean {
+    if (parentSessionId === undefined) return this.activeSubagentJobIds.size > 0;
+    return [...this.backgroundSubagentRuns.values()]
+      .some((run) => run.parentSessionId === parentSessionId);
+  }
+
+  private recordBackgroundSubagentOutcome(
+    input: SubagentRunInput,
+    outcome: SubagentResult | unknown,
+  ): void {
+    const scope = {
+      conversationSpace: input.conversationSpace,
+      ...(input.secretOwnerCharacterId
+        ? { secretOwnerCharacterId: input.secretOwnerCharacterId }
+        : {}),
+    };
+    if (isSubagentResult(outcome)) {
+      this.store.addAction("background_subagent_job", "completed", {
+        jobId: outcome.jobId,
+        childSessionId: outcome.childSessionId,
+        role: outcome.role,
+        modelCalls: outcome.modelCalls,
+        toolCalls: outcome.toolCalls,
+        inputTokens: outcome.inputTokens,
+        outputTokens: outcome.outputTokens,
+        durationMs: outcome.durationMs,
+        truncated: outcome.truncated,
+        forcedFinalization: outcome.forcedFinalization,
+      }, scope);
+      return;
+    }
+    const failure = outcome instanceof SubagentRunError
+      ? outcome.diagnostic
+      : emptySubagentFailureDiagnostic("runtime_error", true);
+    const identity = outcome instanceof SubagentRunError
+      ? {
+          ...(outcome.jobId ? { jobId: outcome.jobId } : {}),
+          ...(outcome.childSessionId ? { childSessionId: outcome.childSessionId } : {}),
+        }
+      : {};
+    this.store.addAction("background_subagent_job", "failed", {
+      ...identity,
+      role: input.request.role,
+      ...failure,
+    }, scope);
+  }
+
+  private runSubagent(input: SubagentRunInput): Promise<SubagentResult> {
+    try {
+      return this.executeSubagent(input, this.admitSubagent(input));
+    } catch (error) {
+      return Promise.reject(error);
+    }
+  }
+
+  private admitSubagent(input: SubagentRunInput): SubagentRunAdmission {
     if (input.signal?.aborted) {
       throw new SubagentRunError(
         "Subagent task was cancelled before it started",
@@ -2047,10 +2209,35 @@ export class PiSessionRuntime {
       budgets: subagentSettings,
       grants: admittedGrants,
     });
-    const childSessionId = job.childSessionId;
     this.activeSubagentCounts.set(input.parentSessionId, active + 1);
     this.activeSubagentJobIds.add(job.id);
+    return Object.freeze({
+      settings: subagentSettings,
+      maxTotalModelCalls,
+      startedAt,
+      childWorkspaceAccess,
+      enabledSkills,
+      admittedModuleIds: Object.freeze(admittedModuleIds),
+      admittedGrants,
+      job,
+    });
+  }
 
+  private async executeSubagent(
+    input: SubagentRunInput,
+    admission: SubagentRunAdmission,
+  ): Promise<SubagentResult> {
+    const {
+      settings: subagentSettings,
+      maxTotalModelCalls,
+      startedAt,
+      childWorkspaceAccess,
+      enabledSkills,
+      admittedModuleIds,
+      admittedGrants,
+      job,
+    } = admission;
+    const childSessionId = job.childSessionId;
     const payloadOptions = this.providerPayloadOptions?.(input.parentSessionId) ?? {};
     const childPayloadOptions = payloadOptions.subagent ?? {};
     let providerTransport: ReturnType<typeof createSubagentProviderHttpTransport> | undefined;
@@ -2071,6 +2258,10 @@ export class PiSessionRuntime {
         void child?.abort();
       }, subagentSettings.timeoutMs);
       const modelRuntime = await createInMemoryModelRuntime();
+      if (input.signal?.aborted) throw abortError("Subagent task was cancelled");
+      if (timedOut) {
+        throw new Error(`Subagent timed out after ${subagentSettings.timeoutMs / 1_000} seconds`);
+      }
       const settingsManager = SettingsManager.inMemory({
         compaction: { enabled: false },
         // The frozen Subagent wall-clock deadline owns cancellation. Pi maps 0
@@ -2153,6 +2344,10 @@ export class PiSessionRuntime {
         }),
       ].map(preferStrictJsonSchemaSampling);
       const childToolNames = childTools.map((tool) => tool.name);
+      if (input.signal?.aborted) throw abortError("Subagent task was cancelled");
+      if (timedOut) {
+        throw new Error(`Subagent timed out after ${subagentSettings.timeoutMs / 1_000} seconds`);
+      }
       this.subagentJobs.start(job.id, Object.freeze({
         ...admittedGrants,
         toolNames: Object.freeze(childToolNames),
@@ -2258,10 +2453,18 @@ export class PiSessionRuntime {
         extensionFactories: [extensionFactory],
       });
       await resourceLoader.reload();
+      if (input.signal?.aborted) throw abortError("Subagent task was cancelled");
+      if (timedOut) {
+        throw new Error(`Subagent timed out after ${subagentSettings.timeoutMs / 1_000} seconds`);
+      }
       const resolvedModel = await this.modelResolver({
         appSessionId: input.parentSessionId,
         modelRuntime,
       });
+      if (input.signal?.aborted) throw abortError("Subagent task was cancelled");
+      if (timedOut) {
+        throw new Error(`Subagent timed out after ${subagentSettings.timeoutMs / 1_000} seconds`);
+      }
       if (!resolvedModel) throw new Error("Subagent model is unavailable");
       const model = routeProviderThroughSubagentTransport(
         modelRuntime,
@@ -3925,6 +4128,13 @@ function emptySubagentFailureDiagnostic(
     forcedFinalization: false,
     retryable,
   };
+}
+
+function isSubagentResult(value: unknown): value is SubagentResult {
+  return isRecord(value) &&
+    typeof value.jobId === "string" &&
+    typeof value.childSessionId === "string" &&
+    typeof value.output === "string";
 }
 
 function classifySubagentFailure(input: {
