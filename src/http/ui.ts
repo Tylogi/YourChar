@@ -1464,6 +1464,20 @@ export function renderAppHtml(): string {
       margin: 0 0 12px;
       font-size: 15px;
     }
+    .runtime-profile-bar {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      flex-wrap: wrap;
+      margin: 0 0 14px;
+      padding: 12px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: var(--bg);
+    }
+    .runtime-profile-bar label { display: flex; align-items: center; gap: 8px; font-size: 12px; }
+    .runtime-profile-bar select { width: auto; min-width: 180px; }
+    .runtime-profile-meta { min-width: 0; font-size: 11px; overflow-wrap: anywhere; }
     .module-list { border-top: 1px solid var(--line); }
     .module-row {
       min-width: 0;
@@ -5491,6 +5505,12 @@ export function renderAppHtml(): string {
               <h3>MCP 与 Skills</h3>
               <button id="refreshModulesBtn" class="secondary" type="button">重新扫描</button>
             </div>
+            <div id="runtimeProfileBar" class="runtime-profile-bar">
+              <label for="runtimeProfileSelect"><strong>运行配置</strong>
+                <select id="runtimeProfileSelect" aria-label="Agent 运行配置"></select>
+              </label>
+              <span id="runtimeProfileMeta" class="muted runtime-profile-meta">正在读取解析快照...</span>
+            </div>
             <div id="moduleList" class="module-list"></div>
             <div class="permission-section">
               <div class="schedule-head">
@@ -6689,6 +6709,8 @@ export function renderAppHtml(): string {
       workspaceFileDirectory: "",
       workspaceFiles: [],
       agentModules: [],
+      agentRuntimeConfiguration: null,
+      runtimeProfileSaving: false,
       moduleDetailRequestId: 0,
       moduleDetailData: null,
       agentPermissions: null,
@@ -6810,6 +6832,9 @@ export function renderAppHtml(): string {
       workspaceFileUploadBtn: document.getElementById("workspaceFileUploadBtn"),
       workspaceFileUploadInput: document.getElementById("workspaceFileUploadInput"),
       refreshModulesBtn: document.getElementById("refreshModulesBtn"),
+      runtimeProfileBar: document.getElementById("runtimeProfileBar"),
+      runtimeProfileSelect: document.getElementById("runtimeProfileSelect"),
+      runtimeProfileMeta: document.getElementById("runtimeProfileMeta"),
       moduleList: document.getElementById("moduleList"),
       workspacePath: document.getElementById("workspacePath"),
       permissionControls: document.getElementById("permissionControls"),
@@ -7477,6 +7502,7 @@ export function renderAppHtml(): string {
     nodes.memoryManagementTabBtn.addEventListener("click", () => setManagementTab("memory"));
     nodes.workspaceFilesTabBtn.addEventListener("click", () => setManagementTab("files"));
     nodes.refreshModulesBtn.addEventListener("click", loadCapabilityManagement);
+    nodes.runtimeProfileSelect.addEventListener("change", activateAgentRuntimeProfile);
     nodes.moduleList.addEventListener("change", toggleAgentModule);
     nodes.moduleList.addEventListener("click", openModuleDetailFromList);
     nodes.permissionControls.addEventListener("change", toggleAgentPermission);
@@ -16099,7 +16125,72 @@ export function renderAppHtml(): string {
     }
 
     async function loadCapabilityManagement() {
-      await Promise.all([loadAgentModules(), loadAgentPermissions()]);
+      await Promise.all([
+        loadAgentModules(),
+        loadAgentPermissions(),
+        loadAgentRuntimeConfiguration()
+      ]);
+    }
+
+    async function loadAgentRuntimeConfiguration() {
+      nodes.runtimeProfileMeta.textContent = "正在读取解析快照...";
+      try {
+        const response = await fetch("/api/v1/agent-runtime/configuration");
+        const body = await response.json();
+        if (!response.ok) throw new Error(body.error || "运行配置加载失败");
+        state.agentRuntimeConfiguration = body.configuration || null;
+        renderAgentRuntimeConfiguration();
+      } catch (error) {
+        state.agentRuntimeConfiguration = null;
+        nodes.runtimeProfileSelect.innerHTML = "";
+        nodes.runtimeProfileSelect.disabled = true;
+        nodes.runtimeProfileMeta.textContent = error.message || String(error);
+      }
+    }
+
+    function renderAgentRuntimeConfiguration() {
+      const configuration = state.agentRuntimeConfiguration;
+      if (!configuration) return;
+      const profiles = Array.isArray(configuration.profiles) ? configuration.profiles : [];
+      nodes.runtimeProfileSelect.innerHTML = profiles.map((profile) =>
+        '<option value="' + escapeHtml(profile.id) + '"' +
+          (profile.id === configuration.activeProfileId ? ' selected' : '') + '>' +
+          escapeHtml(profile.name || profile.id) + '</option>'
+      ).join("");
+      nodes.runtimeProfileSelect.disabled = state.runtimeProfileSaving || profiles.length < 2;
+      const activePackages = (Array.isArray(configuration.packages) ? configuration.packages : [])
+        .filter((entry) => entry.active);
+      const capabilityCount = Array.isArray(configuration.activeCapabilities)
+        ? configuration.activeCapabilities.length
+        : 0;
+      nodes.runtimeProfileMeta.textContent = "解析版本 r" + Number(configuration.revision || 0) +
+        " · " + activePackages.length + " 个包 · " + capabilityCount + " 项能力";
+      nodes.runtimeProfileMeta.title = configuration.digest || "";
+    }
+
+    async function activateAgentRuntimeProfile() {
+      const configuration = state.agentRuntimeConfiguration;
+      if (!configuration || state.runtimeProfileSaving) return;
+      const profileId = nodes.runtimeProfileSelect.value;
+      if (!profileId || profileId === configuration.activeProfileId) return;
+      state.runtimeProfileSaving = true;
+      renderAgentRuntimeConfiguration();
+      try {
+        const response = await controlPlaneFetch("/api/v1/agent-runtime/profile", {
+          method: "PATCH",
+          body: JSON.stringify({ profileId })
+        });
+        const body = await response.json();
+        if (!response.ok) throw new Error(body.error || "运行配置切换失败");
+        state.agentRuntimeConfiguration = body.configuration || null;
+        await loadAgentModules();
+        setStatus("Agent 运行配置已切换");
+      } catch (error) {
+        setStatus(error.message || String(error), true);
+      } finally {
+        state.runtimeProfileSaving = false;
+        renderAgentRuntimeConfiguration();
+      }
     }
 
     async function loadAgentPermissions() {

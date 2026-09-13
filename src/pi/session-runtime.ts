@@ -561,7 +561,8 @@ export class PiSessionRuntime {
   private readonly incognitoChild: boolean;
   private readonly conversationCheckpointSummarizer?: ConversationCheckpointSummarizer;
   private readonly checkpointControllers = new Set<AbortController>();
-  private readonly additionalSessionCapabilities: readonly SessionCapability[];
+  private additionalSessionCapabilities: readonly SessionCapability[];
+  private capabilityClosureBarrier: Promise<void> = Promise.resolve();
 
   constructor(options: PiSessionRuntimeOptions) {
     this.store = options.store;
@@ -607,19 +608,8 @@ export class PiSessionRuntime {
       ? undefined
       : normalizeSubagentTimeoutMs(options.subagentTimeoutMs);
     this.subagentSettings = options.subagentSettings ?? (() => defaultSubagentSettings);
-    const additionalSessionCapabilities = options.additionalSessionCapabilities ?? [];
-    // Validate once at runtime construction and detach from caller-owned objects
-    // so later mutation cannot change the capability graph between handles.
-    new SessionCapabilityRegistry(additionalSessionCapabilities);
-    this.additionalSessionCapabilities = Object.freeze(
-      additionalSessionCapabilities.map((capability) => Object.freeze({
-        id: capability.id,
-        ...(capability.order === undefined ? {} : { order: capability.order }),
-        ...(capability.moduleId === undefined && capability.moduleContribution === undefined
-          ? {}
-          : { moduleId: capability.moduleId ?? capability.moduleContribution!.id }),
-        mount: capability.mount,
-      })),
+    this.additionalSessionCapabilities = normalizeAdditionalSessionCapabilities(
+      options.additionalSessionCapabilities ?? [],
     );
     this.incognitoChild = options.incognitoChild === true;
     this.conversationCheckpointSummarizer = options.conversationCheckpointSummarizer;
@@ -681,7 +671,7 @@ export class PiSessionRuntime {
           this.detachedMessages.set(id, [...stale.session.messages]);
         }
         stale.session.dispose();
-        void closeMountedSessionCapabilities(stale.capabilityMounts).catch(() => undefined);
+        this.queueCapabilityClose(stale.capabilityMounts);
         this.handles.delete(id);
       }
     }
@@ -698,6 +688,7 @@ export class PiSessionRuntime {
     if (cached) {
       return cached;
     }
+    await this.capabilityClosureBarrier;
     const pending = this.loading.get(id);
     if (pending) {
       return pending;
@@ -1567,6 +1558,11 @@ export class PiSessionRuntime {
     this.closeHandles(true);
   }
 
+  replaceAdditionalSessionCapabilities(capabilities: readonly SessionCapability[]): void {
+    this.assertCapabilitiesIdle();
+    this.additionalSessionCapabilities = normalizeAdditionalSessionCapabilities(capabilities);
+  }
+
   invalidateSessionCapabilities(sessionId: string, reason = "capabilities_rebuilt"): void {
     const id = normalizeSessionId(sessionId);
     this.pendingCapabilityRefreshes.delete(id);
@@ -1579,7 +1575,7 @@ export class PiSessionRuntime {
     if (handle.session.isStreaming) throw new Error(`Session ${id} is running and cannot rebuild capabilities`);
     if (!this.piSessionDir) this.detachedMessages.set(id, [...handle.session.messages]);
     handle.session.dispose();
-    void closeMountedSessionCapabilities(handle.capabilityMounts).catch(() => undefined);
+    this.queueCapabilityClose(handle.capabilityMounts);
     this.handles.delete(id);
     this.pendingCacheBreakReasons.set(id, reason);
   }
@@ -1632,7 +1628,7 @@ export class PiSessionRuntime {
         this.detachedMessages.set(handle.metadata.id, [...handle.session.messages]);
       }
       handle.session.dispose();
-      void closeMountedSessionCapabilities(handle.capabilityMounts).catch(() => undefined);
+      this.queueCapabilityClose(handle.capabilityMounts);
     }
     this.handles.clear();
     this.loading.clear();
@@ -1648,7 +1644,7 @@ export class PiSessionRuntime {
       const handle = this.handles.get(metadata.id);
       if (handle) {
         handle.session.dispose();
-        void closeMountedSessionCapabilities(handle.capabilityMounts).catch(() => undefined);
+        this.queueCapabilityClose(handle.capabilityMounts);
       }
       this.handles.delete(metadata.id);
       this.detachedMessages.delete(metadata.id);
@@ -1666,6 +1662,12 @@ export class PiSessionRuntime {
     this.detachedMessages.clear();
     if (this.piSessionDir) rmSync(this.piSessionDir, { recursive: true, force: true });
     if (this.conversationIndexPath) rmSync(this.conversationIndexPath, { force: true });
+  }
+
+  private queueCapabilityClose(mounts: readonly MountedSessionCapability[]): void {
+    this.capabilityClosureBarrier = this.capabilityClosureBarrier
+      .then(() => closeMountedSessionCapabilities(mounts))
+      .catch(() => undefined);
   }
 
   private async createHandle(metadata: ConversationMetadata): Promise<PiSessionHandle> {
@@ -3971,6 +3973,22 @@ const mutatingTools = new Set([
 function isCharacterScheduleInput(input: unknown): boolean {
   return Boolean(input && typeof input === "object" && !Array.isArray(input) &&
     (input as { calendar?: unknown }).calendar === "character");
+}
+
+function normalizeAdditionalSessionCapabilities(
+  capabilities: readonly SessionCapability[],
+): readonly SessionCapability[] {
+  // Validate once and detach from caller-owned objects so later mutation cannot
+  // alter the capability graph between handles or across a profile reload.
+  new SessionCapabilityRegistry(capabilities);
+  return Object.freeze(capabilities.map((capability) => Object.freeze({
+    id: capability.id,
+    ...(capability.order === undefined ? {} : { order: capability.order }),
+    ...(capability.moduleId === undefined && capability.moduleContribution === undefined
+      ? {}
+      : { moduleId: capability.moduleId ?? capability.moduleContribution!.id }),
+    mount: capability.mount,
+  })));
 }
 
 function normalizeSessionId(value: string): string {

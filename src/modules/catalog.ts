@@ -448,7 +448,7 @@ export class AgentMcpModuleContributionError extends Error {
   }
 }
 
-function normalizeMcpModuleContributions(
+export function normalizeAgentMcpModuleContributions(
   contributions: readonly AgentMcpModuleContribution[],
 ): readonly AgentMcpModuleContribution[] {
   if (contributions.length > maximumMcpModuleContributions) {
@@ -584,8 +584,8 @@ function boundedContributionText(value: unknown, field: string, maximum: number)
 export class AgentModuleCatalog {
   private readonly cwd: string;
   private readonly agentDir: string;
-  private readonly mcpModules: readonly AgentMcpModuleContribution[];
-  private readonly mcpModulesById: ReadonlyMap<string, AgentMcpModuleContribution>;
+  private mcpModules: readonly AgentMcpModuleContribution[];
+  private mcpModulesById: ReadonlyMap<string, AgentMcpModuleContribution>;
   private characterSkillPackages?: CharacterSkillPackageProvider;
 
   constructor(
@@ -601,11 +601,22 @@ export class AgentModuleCatalog {
     this.agentDir = options.stateDir
       ? join(resolve(options.stateDir), "pi-agent")
       : join(this.cwd, EPHEMERAL_STATE_DIRECTORY_NAME);
-    this.mcpModules = normalizeMcpModuleContributions([
+    this.mcpModules = normalizeAgentMcpModuleContributions([
       ...builtinMcpModuleContributions,
       ...(options.additionalMcpModules ?? []),
     ]);
     this.mcpModulesById = new Map(this.mcpModules.map((module) => [module.id, module]));
+  }
+
+  replaceAdditionalMcpModules(
+    additionalMcpModules: readonly AgentMcpModuleContribution[],
+  ): void {
+    const next = normalizeAgentMcpModuleContributions([
+      ...builtinMcpModuleContributions,
+      ...additionalMcpModules,
+    ]);
+    this.mcpModules = next;
+    this.mcpModulesById = new Map(next.map((module) => [module.id, module]));
   }
 
   attachCharacterSkillPackages(provider: CharacterSkillPackageProvider): void {

@@ -51,6 +51,13 @@ import {
   type PiSessionHandle,
 } from "../pi/session-runtime.js";
 import type { SessionCapability } from "../pi/session-capability.js";
+import {
+  AgentRuntimeConfigurationManager,
+  type AgentCapabilityPackage,
+  type AgentRuntimeConfigurationInput,
+  type AgentRuntimeProfileDefinition,
+  type PreparedAgentRuntimeConfiguration,
+} from "../pi/runtime-configuration.js";
 import { classifyAssistantOutput, containsInternalAnalysis } from "../pi/output-guard.js";
 import { createTurnContextMessage } from "../pi/turn-context.js";
 import {
@@ -518,6 +525,12 @@ export type CompanionKernelOptions = CompanionStoreOptions & {
   subagentTimeoutMs?: number;
   /** Deployment-trusted session capabilities; not inherited by incognito children. */
   additionalSessionCapabilities?: readonly SessionCapability[];
+  /** Preloaded capability packages. Merely registering a package never activates it. */
+  agentCapabilityPackages?: readonly AgentCapabilityPackage[];
+  /** Named compositions of explicitly trusted preloaded packages. */
+  agentRuntimeProfiles?: readonly AgentRuntimeProfileDefinition[];
+  /** Explicit startup selection; otherwise the persisted valid selection is reused. */
+  activeAgentRuntimeProfileId?: string;
   /** Internal-only safety profile used by disposable tmpfs child kernels. */
   incognitoChild?: boolean;
   /** Test/deployment override; the target is still required to be tmpfs. */
@@ -529,6 +542,7 @@ export type CompanionKernelOptions = CompanionStoreOptions & {
 export class CompanionKernel {
   readonly store: CompanionStore;
   readonly sessionRuntime: PiSessionRuntime;
+  private readonly agentRuntimeConfiguration: AgentRuntimeConfigurationManager;
   readonly database: AppDatabase;
   readonly scheduleService: ScheduleService;
   readonly rpService: RpService;
@@ -629,6 +643,16 @@ export class CompanionKernel {
         this.store.stateDir ? join(this.store.stateDir, "rp-agent.sqlite") : ":memory:",
         { tempStoreMemory: this.incognitoChild },
       );
+    this.agentRuntimeConfiguration = new AgentRuntimeConfigurationManager(
+      this.database,
+      this.clock,
+      normalizedOptions.additionalSessionCapabilities,
+      {
+        packages: normalizedOptions.agentCapabilityPackages,
+        profiles: normalizedOptions.agentRuntimeProfiles,
+        activeProfileId: normalizedOptions.activeAgentRuntimeProfileId,
+      },
+    );
     this.subagentSettingsService = new SubagentSettingsService(this.database, this.clock);
     this.imIntegrations = new ImIntegrationService(
       new ImRepository(this.database),
@@ -662,10 +686,7 @@ export class CompanionKernel {
     this.moduleCatalog = new AgentModuleCatalog(this.database, this.clock, {
       cwd: runtimeCwd,
       stateDir: this.store.stateDir,
-      additionalMcpModules: (normalizedOptions.additionalSessionCapabilities ?? [])
-        .flatMap((capability) => capability.moduleContribution
-          ? [capability.moduleContribution]
-          : []),
+      additionalMcpModules: this.agentRuntimeConfiguration.activeModuleContributions(),
     });
     this.characterSkillPackages = this.incognitoChild ||
         normalizedOptions.characterSkillPackages === false ||
@@ -1054,7 +1075,7 @@ export class CompanionKernel {
           ? undefined : normalizedOptions.conversationCheckpointSummarizer ?? this.summarizeConversationCheckpoint.bind(this),
         subagentTimeoutMs: normalizedOptions.subagentTimeoutMs,
         subagentSettings: () => this.subagentSettingsService.snapshot(),
-        additionalSessionCapabilities: normalizedOptions.additionalSessionCapabilities,
+        additionalSessionCapabilities: this.agentRuntimeConfiguration.activeCapabilities(),
         incognitoChild: this.incognitoChild,
         providerPayloadOptions: (appSessionId) => {
           const binding = this.modelBindingForSession(appSessionId);
@@ -1107,6 +1128,11 @@ export class CompanionKernel {
           });
         },
       });
+    if (normalizedOptions.sessionRuntime) {
+      this.sessionRuntime.replaceAdditionalSessionCapabilities(
+        this.agentRuntimeConfiguration.activeCapabilities(),
+      );
+    }
     const privateInboxRepository = new PrivateInboxRepository(this.database);
     this.creator = new CreatorService(this.database, this.clock, this.store.idGenerator,
       createCreatorPort(this, () => {
@@ -3494,6 +3520,64 @@ export class CompanionKernel {
 
   listAgentModules() {
     return this.moduleCatalog.listModules();
+  }
+
+  getAgentRuntimeConfiguration() {
+    return this.agentRuntimeConfiguration.get();
+  }
+
+  activateAgentRuntimeProfile(profileId: string) {
+    this.assertControlPlaneIdle();
+    return this.applyAgentRuntimeConfiguration(
+      this.agentRuntimeConfiguration.prepareProfileActivation(profileId),
+      "profile_activated",
+    );
+  }
+
+  /**
+   * Trusted host-only reload seam. Executable package definitions are never
+   * accepted over HTTP or restored from persisted snapshot JSON.
+   */
+  reloadAgentRuntimeConfiguration(input: AgentRuntimeConfigurationInput) {
+    this.assertControlPlaneIdle();
+    return this.applyAgentRuntimeConfiguration(
+      this.agentRuntimeConfiguration.prepareReload(input),
+      "configuration_reloaded",
+    );
+  }
+
+  private applyAgentRuntimeConfiguration(
+    prepared: PreparedAgentRuntimeConfiguration,
+    actionType: "profile_activated" | "configuration_reloaded",
+  ) {
+    const previousSnapshot = this.agentRuntimeConfiguration.get();
+    if (prepared.core.digest === previousSnapshot.digest) return previousSnapshot;
+    const previousCapabilities = this.agentRuntimeConfiguration.activeCapabilities();
+    const previousContributions = this.agentRuntimeConfiguration.activeModuleContributions();
+    this.moduleCatalog.replaceAdditionalMcpModules(prepared.activeModuleContributions);
+    try {
+      this.sessionRuntime.replaceAdditionalSessionCapabilities(prepared.activeCapabilities);
+    } catch (error) {
+      this.moduleCatalog.replaceAdditionalMcpModules(previousContributions);
+      throw error;
+    }
+    let snapshot;
+    try {
+      snapshot = this.agentRuntimeConfiguration.commit(prepared);
+    } catch (error) {
+      this.sessionRuntime.replaceAdditionalSessionCapabilities(previousCapabilities);
+      this.moduleCatalog.replaceAdditionalMcpModules(previousContributions);
+      throw error;
+    }
+    this.store.addAction(`agent_runtime_${actionType}`, "completed", {
+      activeProfileId: snapshot.activeProfileId,
+      revision: snapshot.revision,
+      digest: snapshot.digest,
+      activePackageIds: snapshot.packages.filter((entry) => entry.active).map((entry) => entry.id),
+      activeCapabilityCount: snapshot.activeCapabilities.length,
+    });
+    this.sessionRuntime.invalidateCapabilities(`agent_runtime:${actionType}`);
+    return snapshot;
   }
 
   getSubagentSettings() {

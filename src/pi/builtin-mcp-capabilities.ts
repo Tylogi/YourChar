@@ -57,7 +57,42 @@ import {
   beginCharacterSkillRemoteInstall,
   finishCharacterSkillRemoteInstall,
 } from "../modules/character-skill-turn-policy.js";
-import type { SessionCapability } from "./session-capability.js";
+import type {
+  SessionCapability,
+  SessionCapabilityDescriptor,
+} from "./session-capability.js";
+
+export const builtinSessionCapabilityDescriptors = Object.freeze({
+  schedule: descriptor("builtin:mcp:schedule", 100, scheduleMcpModuleId),
+  userProfile: descriptor("builtin:mcp:user-profile", 200, userProfileMcpModuleId),
+  tavilySearch: descriptor("builtin:mcp:tavily-search", 300, tavilySearchMcpModuleId),
+  webReader: descriptor("builtin:mcp:web-reader", 400, webReaderMcpModuleId),
+  vision: descriptor("builtin:mcp:vision", 500, visionMcpModuleId),
+  mineru: descriptor("builtin:mcp:mineru", 600, mineruMcpModuleId),
+  git: descriptor("builtin:mcp:git", 700, gitMcpModuleId),
+  subagent: descriptor("builtin:mcp:subagent", 800, subagentMcpModuleId),
+  relationshipState: descriptor(
+    "builtin:mcp:relationship-state",
+    900,
+    relationshipStateMcpModuleId,
+  ),
+  worldState: descriptor("builtin:mcp:world-state", 1_000, worldStateMcpModuleId),
+  interactionState: descriptor(
+    "builtin:mcp:interaction-state",
+    1_100,
+    interactionStateMcpModuleId,
+  ),
+  characterSkill: descriptor("builtin:mcp:character-skill", 1_200),
+  memoryCoordinator: descriptor(
+    "builtin:mcp:memory-coordinator",
+    1_300,
+    memoryCoordinatorMcpModuleId,
+  ),
+  characterSoul: descriptor("builtin:mcp:character-soul", 1_400),
+});
+
+export const builtinSessionCapabilityDescriptorList: readonly SessionCapabilityDescriptor[] =
+  Object.freeze(Object.values(builtinSessionCapabilityDescriptors));
 
 export type BuiltinMcpCapabilityOptions = Readonly<{
   store: CompanionStore;
@@ -111,7 +146,7 @@ export function createBuiltinMcpCapabilities(
   const currentUserText = () => toolState.currentUserText;
 
   return [
-    defineCapability("builtin:mcp:schedule", 100, scheduleMcpModuleId, async (context) => {
+    defineCapability(builtinSessionCapabilityDescriptors.schedule, async (context) => {
       if (incognitoChild || isSecret) return undefined;
       return createScheduleMcpBridge({
         scheduleService: options.scheduleService,
@@ -130,7 +165,7 @@ export function createBuiltinMcpCapabilities(
         actions,
       });
     }),
-    defineCapability("builtin:mcp:user-profile", 200, userProfileMcpModuleId, async () => {
+    defineCapability(builtinSessionCapabilityDescriptors.userProfile, async () => {
       if (incognitoChild || isSecret) return undefined;
       return createUserProfileMcpBridge({
         profileService: options.profileService,
@@ -140,7 +175,7 @@ export function createBuiltinMcpCapabilities(
         allowWrite: permissions.userProfileWriteEnabled,
       });
     }),
-    defineCapability("builtin:mcp:tavily-search", 300, tavilySearchMcpModuleId, async () => {
+    defineCapability(builtinSessionCapabilityDescriptors.tavilySearch, async () => {
       if (
         incognitoChild ||
         !options.tavilyService.isConfigured()
@@ -152,7 +187,7 @@ export function createBuiltinMcpCapabilities(
         actions,
       });
     }),
-    defineCapability("builtin:mcp:web-reader", 400, webReaderMcpModuleId, async () => {
+    defineCapability(builtinSessionCapabilityDescriptors.webReader, async () => {
       if (incognitoChild) return undefined;
       return createWebReaderMcpBridge({
         webReaderService: options.webReaderService,
@@ -161,7 +196,7 @@ export function createBuiltinMcpCapabilities(
         actions,
       });
     }),
-    defineCapability("builtin:mcp:vision", 500, visionMcpModuleId, async () => {
+    defineCapability(builtinSessionCapabilityDescriptors.vision, async () => {
       if (
         incognitoChild ||
         !options.visionService.isConfigured() ||
@@ -176,7 +211,7 @@ export function createBuiltinMcpCapabilities(
         actions,
       });
     }),
-    defineCapability("builtin:mcp:mineru", 600, mineruMcpModuleId, async () => {
+    defineCapability(builtinSessionCapabilityDescriptors.mineru, async () => {
       if (
         incognitoChild ||
         !options.mineruService.isConfigured() ||
@@ -191,7 +226,7 @@ export function createBuiltinMcpCapabilities(
         actions,
       });
     }),
-    defineCapability("builtin:mcp:git", 700, gitMcpModuleId, async () => {
+    defineCapability(builtinSessionCapabilityDescriptors.git, async () => {
       if (
         incognitoChild ||
         isSecret ||
@@ -209,7 +244,7 @@ export function createBuiltinMcpCapabilities(
         actions,
       });
     }),
-    defineCapability("builtin:mcp:subagent", 800, subagentMcpModuleId, async () => {
+    defineCapability(builtinSessionCapabilityDescriptors.subagent, async () => {
       if (incognitoChild) return undefined;
       return createSubagentMcpBridge({
         store: options.store,
@@ -219,7 +254,7 @@ export function createBuiltinMcpCapabilities(
         run: options.runSubagent,
       });
     }),
-    defineCapability("builtin:mcp:relationship-state", 900, relationshipStateMcpModuleId, async () => {
+    defineCapability(builtinSessionCapabilityDescriptors.relationshipState, async () => {
       if (
         incognitoChild ||
         isSecret ||
@@ -231,7 +266,7 @@ export function createBuiltinMcpCapabilities(
         characterId: metadata.characterId,
       });
     }),
-    defineCapability("builtin:mcp:world-state", 1_000, worldStateMcpModuleId, async () => {
+    defineCapability(builtinSessionCapabilityDescriptors.worldState, async () => {
       if (
         incognitoChild ||
         isSecret ||
@@ -249,7 +284,7 @@ export function createBuiltinMcpCapabilities(
         actions,
       });
     }),
-    defineCapability("builtin:mcp:interaction-state", 1_100, interactionStateMcpModuleId, async () => {
+    defineCapability(builtinSessionCapabilityDescriptors.interactionState, async () => {
       if (
         metadata.mode !== "sms" ||
         !metadata.characterId
@@ -269,7 +304,7 @@ export function createBuiltinMcpCapabilities(
         actions,
       });
     }),
-    defineCapability("builtin:mcp:character-skill", 1_200, undefined, async () => {
+    defineCapability(builtinSessionCapabilityDescriptors.characterSkill, async () => {
       if (
         incognitoChild ||
         !metadata.characterId ||
@@ -295,7 +330,7 @@ export function createBuiltinMcpCapabilities(
         requestCapabilityRefresh: options.requestCharacterSkillCapabilityRefresh,
       });
     }),
-    defineCapability("builtin:mcp:memory-coordinator", 1_300, memoryCoordinatorMcpModuleId, async () => {
+    defineCapability(builtinSessionCapabilityDescriptors.memoryCoordinator, async () => {
       if (incognitoChild) return undefined;
       const realm = metadata.mode === "rp" ? "roleplay" as const : "reality" as const;
       if (realm !== "reality" && !metadata.characterId) return undefined;
@@ -315,7 +350,7 @@ export function createBuiltinMcpCapabilities(
           : permissions.characterMemoryWriteEnabled,
       });
     }),
-    defineCapability("builtin:mcp:character-soul", 1_400, undefined, async () => {
+    defineCapability(builtinSessionCapabilityDescriptors.characterSoul, async () => {
       if (
         incognitoChild ||
         isSecret ||
@@ -334,15 +369,23 @@ export function createBuiltinMcpCapabilities(
 }
 
 function defineCapability(
-  id: string,
-  order: number,
-  moduleId: string | undefined,
+  capability: SessionCapabilityDescriptor,
   mount: SessionCapability["mount"],
 ): SessionCapability {
+  return Object.freeze({
+    ...capability,
+    mount,
+  });
+}
+
+function descriptor(
+  id: string,
+  order: number,
+  moduleId?: string,
+): SessionCapabilityDescriptor {
   return Object.freeze({
     id,
     order,
     ...(moduleId === undefined ? {} : { moduleId }),
-    mount,
   });
 }

@@ -598,6 +598,7 @@ async function route(input: {
       taskBench: "POST /api/v1/task-bench/run; GET /api/v1/task-bench/reports[/{id}]",
       taskBenchUploads: "POST/DELETE /api/v1/task-bench/uploads[/{id}]",
       agentModules: "GET /api/v1/agent-modules",
+      agentRuntime: "GET /api/v1/agent-runtime/configuration; PATCH /api/v1/agent-runtime/profile",
       subagentSettings: "GET/PATCH /api/v1/subagent-settings",
       agentPermissions: "GET/PATCH /api/v1/agent-permissions",
       userProfile: "GET/PATCH /api/v1/user-profile",
@@ -1633,6 +1634,23 @@ async function route(input: {
 
   if (pathname === "/api/v1/agent-modules" && method === "GET") {
     sendJson(input.response, 200, { modules: kernel.listAgentModules() });
+    return;
+  }
+
+  if (pathname === "/api/v1/agent-runtime/configuration" && method === "GET") {
+    sendJson(input.response, 200, { configuration: kernel.getAgentRuntimeConfiguration() });
+    return;
+  }
+
+  if (pathname === "/api/v1/agent-runtime/profile" && method === "PATCH") {
+    assertLocalControlPlaneMutation(input.request);
+    const body = asRecord(await readJson(input.request));
+    assertOnlyKeys(body, ["profileId"], "Agent runtime profile activation");
+    sendJson(input.response, 200, {
+      configuration: kernel.activateAgentRuntimeProfile(
+        requiredString(body.profileId, "profileId"),
+      ),
+    });
     return;
   }
 

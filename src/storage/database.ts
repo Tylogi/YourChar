@@ -3081,6 +3081,18 @@ const migrations: Migration[] = [
       ALTER TABLE im_runtime_settings ADD COLUMN feishu_reminders_enabled INTEGER NOT NULL DEFAULT 1 CHECK(feishu_reminders_enabled IN (0,1));
     `,
   },
+  {
+    version: 58,
+    sql: `
+      CREATE TABLE agent_runtime_configuration_snapshots (
+        singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
+        revision INTEGER NOT NULL CHECK (revision >= 1),
+        digest TEXT NOT NULL CHECK (length(digest) = 64),
+        snapshot_json TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      );
+    `,
+  },
 ];
 
 export class AppDatabase {

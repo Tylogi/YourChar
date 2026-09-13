@@ -63,11 +63,15 @@ not a prerequisite, and the product must remain runnable at every milestone.
 
 ### P1c — Profiles and reload
 
-- Add named runtime profiles composed from built-ins and trusted packages.
-- Persist a resolved, inspectable configuration snapshot.
-- Implement idle-boundary install/uninstall/reload with reversible effects.
+- [x] Add named runtime profiles composed from built-ins and trusted packages.
+- [x] Persist a resolved, inspectable configuration snapshot without executable
+  code or credentials.
+- [x] Implement trusted-host install/uninstall/reload by replacing preloaded
+  packages at an idle boundary, with validation and rollback before handle
+  invalidation.
 - Add declared provider-specific settings schemas and optional UI slots.
-- Keep third-party code disabled by default and require explicit trust review.
+- [x] Keep third-party code inactive by default and require an explicit trust
+  flag, reviewed artifact SHA-256, and profile selection before activation.
 
 ## 5. P2 design boundary
 
@@ -121,7 +125,8 @@ feature counts must not be reported as task-success improvements.
 - [x] Baseline work isolated on `refactor/agent-runtime-capabilities`.
 - [x] P1a session capability lifecycle.
 - [x] P1b declarative product contributions.
-- [ ] P1c profiles and reload.
+- [ ] P1c profiles and reload (profile/snapshot/reload core complete; declared
+  provider settings remain).
 - [ ] P2 continuable jobs and subagents.
 - [ ] P3 general execution.
 - [ ] P4 provider and host seams.

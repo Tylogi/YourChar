@@ -373,6 +373,39 @@ permission snapshot, session identity, and bounded runtime callbacks. It must
 still enforce its own admission policy. Additional capabilities are not inherited
 by disposable incognito child kernels, cannot shadow a built-in module or any
 tool, and are closed when the handle is rebuilt, deleted, or disposed. This is a
-programmatic P1 seam, not a third-party installer: package trust, provider-specific
-settings, profiles, and idle-boundary reload belong to P1c in
+programmatic P1 seam, not an HTTP or directory-based executable package
+installer. The hardened profile and reload layer is described below; remaining
+provider-specific settings work is tracked in
 [`agent-runtime-modernization-plan.md`](agent-runtime-modernization-plan.md).
+
+### Runtime profiles and trusted capability packages
+
+`CompanionKernel` accepts preloaded `agentCapabilityPackages` and named
+`agentRuntimeProfiles`. Merely registering a package never runs it. A profile may
+select the package only when `trusted` is explicitly `true`, and every package
+must carry the lowercase SHA-256 `contentDigest` of the reviewed artifact. The
+digest participates in the resolved configuration fingerprint, so changing code
+without changing the reviewed artifact identity cannot silently pass as a no-op
+reload. Built-in capabilities and the backwards-compatible
+`additionalSessionCapabilities` seam are inherited by every profile.
+
+The selected profile can be changed through the local-control UI or
+`PATCH /api/v1/agent-runtime/profile`. The current safe projection is available
+at `GET /api/v1/agent-runtime/configuration`; it contains package provenance,
+trust state, module/capability IDs, revision, and digest, but never mount
+functions or credentials. Schema 58 stores only this derived snapshot. On
+restart, a persisted profile selection is reused only when the host declares
+that profile and supplies its executable packages again; SQLite is never a code
+loading authority.
+
+Trusted embedding code can replace the complete package/profile definition with
+`reloadAgentRuntimeConfiguration`. Resolution validates all package, profile,
+capability, and module ownership before mutation. The Kernel applies catalog and
+runtime changes only while the control plane is idle, rolls both back if snapshot
+persistence fails, invalidates existing handles after commit, and waits for old
+capability cleanup before a replacement handle mounts. Adding, updating, or
+removing a package is therefore the same reversible full-configuration reload.
+
+This slice does not accept executable package bodies over HTTP and does not scan
+arbitrary directories for code. Provider-specific settings schemas and extension
+UI slots remain the final P1c slice.
