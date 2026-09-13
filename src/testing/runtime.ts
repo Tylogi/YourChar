@@ -24,6 +24,7 @@ import type {
   ConversationLifecycleThresholds,
   PiModelResolver,
 } from "../pi/session-runtime.js";
+import type { SessionCapability } from "../pi/session-capability.js";
 import type { MemoryExtractor } from "../memory-coordinator/types.js";
 import type { RelationshipExtractor } from "../relationship/types.js";
 import type { VisionService } from "../vision/service.js";
@@ -98,6 +99,7 @@ export type CreateTestRuntimeOptions = {
   webReaderService?: WebReaderService;
   conversationLifecycleThresholds?: Partial<ConversationLifecycleThresholds>;
   subagentTimeoutMs?: number;
+  additionalSessionCapabilities?: readonly SessionCapability[];
   /** Keep the scripted Pi model's own window aligned with a small configured profile in budget tests. */
   scriptedModelContextWindowTokens?: number;
   privateInboxOptions?: PrivateInboxCoordinatorOptions;
@@ -285,6 +287,7 @@ export class TestRuntime {
       characterSkillReflector: options.characterSkillReflector ?? false,
       conversationLifecycleThresholds: options.conversationLifecycleThresholds,
       subagentTimeoutMs: options.subagentTimeoutMs,
+      additionalSessionCapabilities: options.additionalSessionCapabilities,
       privateInboxOptions: options.privateInboxOptions,
       startPrivateInboxCoordinator: options.startPrivateInboxCoordinator,
       imGateway: options.imGateway ?? false,

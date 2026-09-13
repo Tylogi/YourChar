@@ -354,7 +354,20 @@ provenance, or manifest and is unsupported. Existing packages can be inspected,
 enabled, disabled, and—after disabling—removed from the trusted local UI;
 in-place update is not implemented.
 
-For an MCP module, add its descriptor to the catalog, construct its bridge only
-when enabled, and append it to `PiSessionHandle.mcpBridges`. Keep direct domain
+For a built-in MCP module, add its product descriptor to the catalog and its
+handle-scoped adapter to `createBuiltinMcpCapabilities`. Do not add another MCP
+branch to `PiSessionRuntime`: the `SessionCapabilityRegistry` owns deterministic
+mount order, duplicate-tool rejection, rollback, and cleanup. Keep direct domain
 services independent from model-facing toggles. Tests must cover enabled and
 disabled tools, context visibility, transcript resume, persistence, and UI state.
+
+Deployment-trusted integrations that need only a handle-scoped tool can instead
+provide `additionalSessionCapabilities` to `CompanionKernel`. A contribution
+receives the scoped Workspace, an immutable permission snapshot, session
+identity, and bounded runtime callbacks. It must still enforce its own admission
+policy. Additional capabilities are not inherited by disposable incognito child
+kernels, cannot shadow a built-in or host tool, and are closed when the handle is
+rebuilt, deleted, or disposed. This is a programmatic P1a seam, not a third-party
+installer: module descriptors, settings/context contributions, package trust,
+and idle-boundary reload belong to P1b/P1c in
+[`agent-runtime-modernization-plan.md`](agent-runtime-modernization-plan.md).

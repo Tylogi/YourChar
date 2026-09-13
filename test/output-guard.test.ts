@@ -384,7 +384,7 @@ test("schedule recovery reports a committed MCP action when the bridge throws af
       "sms",
       character.id,
     );
-    const tool = handle.mcpBridges.flatMap((bridge) => bridge.tools)
+    const tool = handle.capabilityMounts.flatMap((mount) => mount.tools)
       .find((candidate) => candidate.name === "create_schedule_item");
     assert.ok(tool);
     const execute = tool.execute.bind(tool);

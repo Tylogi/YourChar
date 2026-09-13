@@ -50,38 +50,21 @@ import type {
   TurnStatus,
 } from "../domain/types.js";
 import {
-  scheduleMcpModuleId,
   memoryCoordinatorMcpModuleId,
   tavilySearchMcpModuleId,
   webReaderMcpModuleId,
-  subagentMcpModuleId,
-  relationshipStateMcpModuleId,
-  worldStateMcpModuleId,
-  interactionStateMcpModuleId,
-  userProfileMcpModuleId,
   visionMcpModuleId,
   mineruMcpModuleId,
-  gitMcpModuleId,
   type AgentModuleCatalog,
 } from "../modules/catalog.js";
 import type { AgentPermissionCatalog } from "../modules/permissions.js";
 import {
-  createCharacterSoulMcpBridge,
-  createMemoryMcpBridge,
-  createRelationshipMcpBridge,
-  createScheduleMcpBridge,
-  createSubagentMcpBridge,
-  maximumSubagentRuntimeTimeoutMs,
-  SubagentRunError,
   createTavilyMcpBridge,
   createWebReaderMcpBridge,
-  createUserProfileMcpBridge,
   createVisionMcpBridge,
   createMineruMcpBridge,
-  createGitMcpBridge,
-  createWorldMcpBridge,
-  createInteractionMcpBridge,
-  createCharacterSkillMcpBridge,
+  maximumSubagentRuntimeTimeoutMs,
+  SubagentRunError,
   type McpPiBridge,
   type SubagentRequest,
   type SubagentResult,
@@ -96,10 +79,6 @@ import {
   type SubagentSettingsSnapshot,
   type SubagentSettingsValues,
 } from "../modules/subagent-settings.js";
-import {
-  beginCharacterSkillRemoteInstall,
-  finishCharacterSkillRemoteInstall,
-} from "../modules/character-skill-turn-policy.js";
 import type { UserProfileService } from "../profile/service.js";
 import type { RpService } from "../rp/service.js";
 import type { ScheduleService } from "../schedule/service.js";
@@ -150,6 +129,14 @@ import {
 import { classifyAssistantOutput, classifyToolProtocolOutput } from "./output-guard.js";
 import { createTurnContextMessage, TURN_CONTEXT_CUSTOM_TYPE } from "./turn-context.js";
 import { buildConversationCheckpoint, type ConversationCheckpointSummarizer } from "./conversation-checkpoint.js";
+import { createBuiltinMcpCapabilities } from "./builtin-mcp-capabilities.js";
+import {
+  SessionCapabilityRegistry,
+  closeMountedSessionCapabilities,
+  type MountedSessionCapability,
+  type SessionCapability,
+  type SessionCapabilityContext,
+} from "./session-capability.js";
 
 // Pi's generic estimator uses characters/4, while Chinese dialogue is much denser.
 // 4k estimated tokens retains roughly 8-16k real conversational tokens here.
@@ -434,6 +421,8 @@ export type PiSessionRuntimeOptions = {
   subagentTimeoutMs?: number;
   /** Persistent settings provider. One immutable snapshot is taken per delegated task. */
   subagentSettings?: () => SubagentSettingsValues;
+  /** Deployment-trusted handle-scoped capabilities composed with the built-ins. */
+  additionalSessionCapabilities?: readonly SessionCapability[];
   /**
    * Incognito children operate on a disposable tmpfs snapshot. They may read
    * inherited context and mutate only their temporary interaction/workspace
@@ -449,7 +438,7 @@ export type PiSessionHandle = {
   sessionManager: SessionManager;
   modelRuntime: ModelRuntime;
   toolState: CompanionToolRuntimeState;
-  mcpBridges: McpPiBridge[];
+  capabilityMounts: MountedSessionCapability[];
   toolNames: string[];
   modelFingerprint?: string;
 };
@@ -572,6 +561,7 @@ export class PiSessionRuntime {
   private readonly incognitoChild: boolean;
   private readonly conversationCheckpointSummarizer?: ConversationCheckpointSummarizer;
   private readonly checkpointControllers = new Set<AbortController>();
+  private readonly additionalSessionCapabilities: readonly SessionCapability[];
 
   constructor(options: PiSessionRuntimeOptions) {
     this.store = options.store;
@@ -617,6 +607,17 @@ export class PiSessionRuntime {
       ? undefined
       : normalizeSubagentTimeoutMs(options.subagentTimeoutMs);
     this.subagentSettings = options.subagentSettings ?? (() => defaultSubagentSettings);
+    const additionalSessionCapabilities = options.additionalSessionCapabilities ?? [];
+    // Validate once at runtime construction and detach from caller-owned objects
+    // so later mutation cannot change the capability graph between handles.
+    new SessionCapabilityRegistry(additionalSessionCapabilities);
+    this.additionalSessionCapabilities = Object.freeze(
+      additionalSessionCapabilities.map((capability) => Object.freeze({
+        id: capability.id,
+        ...(capability.order === undefined ? {} : { order: capability.order }),
+        mount: capability.mount,
+      })),
+    );
     this.incognitoChild = options.incognitoChild === true;
     this.conversationCheckpointSummarizer = options.conversationCheckpointSummarizer;
     this.conversationIndexPath = this.stateDir ? join(this.stateDir, "conversations.json") : undefined;
@@ -677,7 +678,7 @@ export class PiSessionRuntime {
           this.detachedMessages.set(id, [...stale.session.messages]);
         }
         stale.session.dispose();
-        for (const bridge of stale.mcpBridges) void bridge.close();
+        void closeMountedSessionCapabilities(stale.capabilityMounts).catch(() => undefined);
         this.handles.delete(id);
       }
     }
@@ -686,7 +687,7 @@ export class PiSessionRuntime {
     if (cached && this.pendingCapabilityRefreshes.has(id) && !cached.session.isStreaming) {
       if (!this.piSessionDir) this.detachedMessages.set(id, [...cached.session.messages]);
       cached.session.dispose();
-      await Promise.allSettled(cached.mcpBridges.map((bridge) => bridge.close()));
+      await closeMountedSessionCapabilities(cached.capabilityMounts).catch(() => undefined);
       this.handles.delete(id);
       this.pendingCapabilityRefreshes.delete(id);
       cached = undefined;
@@ -1527,7 +1528,7 @@ export class PiSessionRuntime {
     const handle = this.handles.get(metadata.id);
     if (handle) {
       handle.session.dispose();
-      await Promise.all(handle.mcpBridges.map((bridge) => bridge.close()));
+      await closeMountedSessionCapabilities(handle.capabilityMounts);
       this.handles.delete(metadata.id);
     }
     this.detachedMessages.delete(metadata.id);
@@ -1575,7 +1576,7 @@ export class PiSessionRuntime {
     if (handle.session.isStreaming) throw new Error(`Session ${id} is running and cannot rebuild capabilities`);
     if (!this.piSessionDir) this.detachedMessages.set(id, [...handle.session.messages]);
     handle.session.dispose();
-    for (const bridge of handle.mcpBridges) void bridge.close();
+    void closeMountedSessionCapabilities(handle.capabilityMounts).catch(() => undefined);
     this.handles.delete(id);
     this.pendingCacheBreakReasons.set(id, reason);
   }
@@ -1628,7 +1629,7 @@ export class PiSessionRuntime {
         this.detachedMessages.set(handle.metadata.id, [...handle.session.messages]);
       }
       handle.session.dispose();
-      for (const bridge of handle.mcpBridges) void bridge.close();
+      void closeMountedSessionCapabilities(handle.capabilityMounts).catch(() => undefined);
     }
     this.handles.clear();
     this.loading.clear();
@@ -1644,7 +1645,7 @@ export class PiSessionRuntime {
       const handle = this.handles.get(metadata.id);
       if (handle) {
         handle.session.dispose();
-        for (const bridge of handle.mcpBridges) void bridge.close().catch(() => undefined);
+        void closeMountedSessionCapabilities(handle.capabilityMounts).catch(() => undefined);
       }
       this.handles.delete(metadata.id);
       this.detachedMessages.delete(metadata.id);
@@ -1739,236 +1740,19 @@ export class PiSessionRuntime {
       toolCallObserved: false,
       workspaceSharePaths: [],
     };
-    const mcpBridges: McpPiBridge[] = [];
-    const isSecret = metadata.conversationSpace === "secret";
-    if (!this.incognitoChild && !isSecret && this.moduleCatalog.isEnabled(scheduleMcpModuleId)) {
-      mcpBridges.push(await createScheduleMcpBridge({
-        scheduleService: this.scheduleService,
-        store: this.store,
-        clock: this.clock,
-        sessionId: metadata.id,
-        mode: metadata.mode,
-        characterId: metadata.characterId,
-        worldCoordinator: metadata.mode === "sms" &&
-            Boolean(metadata.characterId) &&
-            this.moduleCatalog.isEnabled(worldStateMcpModuleId) &&
-            Boolean(metadata.characterId && this.worldService.repository.getMembership(metadata.characterId))
-          ? this.worldCoordinator
-          : undefined,
-        currentUserText: () => toolState.currentUserText,
-        actions: () => toolState.actions,
-      }));
-    }
-    if (!this.incognitoChild && !isSecret && this.moduleCatalog.isEnabled(userProfileMcpModuleId)) {
-      const permissions = this.permissionCatalog.get();
-      mcpBridges.push(await createUserProfileMcpBridge({
-        profileService: this.profileService,
-        store: this.store,
-        sessionId: metadata.id,
-        actions: () => toolState.actions,
-        allowWrite: permissions.userProfileWriteEnabled,
-      }));
-    }
-    if (
-      !this.incognitoChild &&
-      this.moduleCatalog.isEnabled(tavilySearchMcpModuleId) &&
-      this.tavilyService.isConfigured()
-    ) {
-      mcpBridges.push(await createTavilyMcpBridge({
-        tavilyService: this.tavilyService,
-        store: this.store,
-        sessionId: metadata.id,
-        actions: () => toolState.actions,
-      }));
-    }
-    if (!this.incognitoChild && this.moduleCatalog.isEnabled(webReaderMcpModuleId)) {
-      mcpBridges.push(await createWebReaderMcpBridge({
-        webReaderService: this.webReaderService,
-        store: this.store,
-        sessionId: metadata.id,
-        actions: () => toolState.actions,
-      }));
-    }
-    if (
-      !this.incognitoChild &&
-      this.moduleCatalog.isEnabled(visionMcpModuleId) &&
-      this.visionService.isConfigured() &&
-      this.visionService.getConfig().mode !== "off"
-    ) {
-      mcpBridges.push(await createVisionMcpBridge({
-        visionService: this.visionService,
-        workspaceFiles: workspace.files,
-        cacheNamespace: workspace.cacheNamespace,
-        store: this.store,
-        sessionId: metadata.id,
-        actions: () => toolState.actions,
-      }));
-    }
-    if (
-      !this.incognitoChild &&
-      this.moduleCatalog.isEnabled(mineruMcpModuleId) &&
-      this.mineruService.isConfigured() &&
-      this.permissionCatalog.get().workspaceAccess !== "off"
-    ) {
-      mcpBridges.push(await createMineruMcpBridge({
-        mineruService: this.mineruService,
-        workspaceFiles: workspace.files,
-        cacheNamespace: workspace.cacheNamespace,
-        store: this.store,
-        sessionId: metadata.id,
-        actions: () => toolState.actions,
-      }));
-    }
-    if (
-      !this.incognitoChild &&
-      !isSecret &&
-      metadata.characterId &&
-      this.gitService?.isConfigured() &&
-      this.moduleCatalog.isEnabled(gitMcpModuleId) &&
-      this.permissionCatalog.get().workspaceAccess === "read_write"
-    ) {
-      const character = this.rpService.getCharacter(metadata.characterId);
-      mcpBridges.push(await createGitMcpBridge({
-        gitService: this.gitService,
-        store: this.store,
-        sessionId: metadata.id,
-        characterId: metadata.characterId,
-        characterName: character.name,
-        actions: () => toolState.actions,
-      }));
-    }
-    if (!this.incognitoChild && this.moduleCatalog.isEnabled(subagentMcpModuleId)) {
-      mcpBridges.push(await createSubagentMcpBridge({
-        store: this.store,
-        sessionId: metadata.id,
-        // Settings mutation requires an idle control plane and rebuilds this
-        // bridge, so its envelope and the task snapshot cannot race.
-        runtimeTimeoutMs: this.subagentRuntimeTimeoutMsSnapshot(),
-        actions: () => toolState.actions,
-        run: (request, signal) => this.runSubagent({
-          parentSessionId: metadata.id,
-          mode: metadata.mode,
-          conversationSpace: metadata.conversationSpace,
-          characterId: metadata.characterId,
-          ...(metadata.conversationSpace === "secret" && metadata.characterId
-            ? { secretOwnerCharacterId: metadata.characterId }
-            : {}),
-          workspace,
-          request,
-          timezone: toolState.timezone,
-          actions: toolState.actions,
-          signal,
-        }),
-      }));
-    }
-    if (!this.incognitoChild && !isSecret && metadata.characterId && this.moduleCatalog.isEnabled(relationshipStateMcpModuleId)) {
-      mcpBridges.push(await createRelationshipMcpBridge({
-        relationshipService: this.relationshipService,
-        sessionId: metadata.id,
-        characterId: metadata.characterId,
-      }));
-    }
-    if (
-      !this.incognitoChild &&
-      !isSecret &&
-      metadata.mode === "sms" &&
-      metadata.characterId &&
-      this.moduleCatalog.isEnabled(worldStateMcpModuleId) &&
-      this.worldService.repository.getMembership(metadata.characterId)
-    ) {
-      mcpBridges.push(await createWorldMcpBridge({
-        worldService: this.worldService,
-        coordinator: this.worldCoordinator,
-        interactionCoordinator: this.characterInteractionCoordinator,
-        store: this.store,
-        sessionId: metadata.id,
-        characterId: metadata.characterId,
-        actions: () => toolState.actions,
-      }));
-    }
-    if (
-      metadata.mode === "sms" &&
-      metadata.characterId &&
-      this.moduleCatalog.isEnabled(interactionStateMcpModuleId)
-    ) {
-      mcpBridges.push(await createInteractionMcpBridge({
-        interactionService: this.interactionService,
-        store: this.store,
-        sessionId: metadata.id,
-        characterId: metadata.characterId,
-        scope: isSecret
-          ? {
-              conversationSpace: "secret",
-              secretOwnerCharacterId: metadata.characterId,
-            }
-          : { conversationSpace: "normal" },
-        currentUserText: () => toolState.currentUserText,
-        actions: () => toolState.actions,
-      }));
-    }
-    const permissions = this.permissionCatalog.get();
-    if (
-      !this.incognitoChild &&
-      metadata.characterId &&
-      this.characterCapabilities &&
-      this.characterSkillPackages &&
-      permissions.characterSkillManageEnabled
-    ) {
-      mcpBridges.push(await createCharacterSkillMcpBridge({
-        characterCapabilities: this.characterCapabilities,
-        privatePackageService: this.characterSkillPackages,
-        moduleCatalog: this.moduleCatalog,
-        store: this.store,
-        sessionId: metadata.id,
-        characterId: metadata.characterId,
-        conversationSpace: metadata.conversationSpace,
-        actions: () => toolState.actions,
-        beginRemoteInstall: (sourceUrl) => {
-          beginCharacterSkillRemoteInstall(toolState, sourceUrl);
-        },
-        finishRemoteInstall: (sourceUrl, success) => {
-          finishCharacterSkillRemoteInstall(toolState, sourceUrl, success);
-        },
-        requestCapabilityRefresh: () => this.requestCharacterSkillCapabilityRefresh(
-          metadata.characterId!,
-          metadata.conversationSpace,
-        ),
-      }));
-    }
-    if (!this.incognitoChild && this.moduleCatalog.isEnabled(memoryCoordinatorMcpModuleId)) {
-      const realm = metadata.mode === "rp" ? "roleplay" as const : "reality" as const;
-      if (realm === "reality" || metadata.characterId) {
-        mcpBridges.push(await createMemoryMcpBridge({
-          lifecycle: this.memoryLifecycle,
-          store: this.store,
-          sessionId: metadata.id,
-          conversationSpace: metadata.conversationSpace,
-          ...(isSecret && metadata.characterId
-            ? { secretOwnerCharacterId: metadata.characterId }
-            : {}),
-          realm,
-          ...(metadata.characterId ? { characterId: metadata.characterId } : {}),
-          actions: () => toolState.actions,
-          allowPropose: realm === "reality"
-            ? permissions.realityMemoryWriteEnabled
-            : permissions.characterMemoryWriteEnabled,
-        }));
-      }
-    }
-    if (
-      !this.incognitoChild &&
-      !isSecret &&
-      metadata.characterId &&
-      permissions.characterSoulWriteEnabled
-    ) {
-      mcpBridges.push(await createCharacterSoulMcpBridge({
-        rpService: this.rpService,
-        store: this.store,
-        sessionId: metadata.id,
-        characterId: metadata.characterId,
-        actions: () => toolState.actions,
-      }));
-    }
+    const permissions = Object.freeze({ ...this.permissionCatalog.get() });
+    const capabilityContext: SessionCapabilityContext = Object.freeze({
+      sessionId: metadata.id,
+      mode: metadata.mode,
+      conversationSpace: metadata.conversationSpace,
+      ...(metadata.characterId ? { characterId: metadata.characterId } : {}),
+      workspace,
+      permissions,
+      incognitoChild: this.incognitoChild,
+      currentUserText: () => toolState.currentUserText,
+      timezone: () => toolState.timezone,
+      actions: () => toolState.actions,
+    });
     const enabledSkills = this.moduleCatalog.enabledSkills(
       metadata.conversationSpace,
       metadata.characterId,
@@ -2010,35 +1794,94 @@ export class PiSessionRuntime {
           actions: () => toolState.actions,
         })
       : undefined;
-    const customTools = [
-      ...mcpBridges.flatMap((bridge) => bridge.tools),
+    const hostTools = [
       ...(!this.incognitoChild ? createRpTools(toolState) : []),
       ...(skillReadTool ? [skillReadTool] : []),
       ...(documentReadTool ? [documentReadTool] : []),
       ...workspaceTools,
       ...(shellTool ? [shellTool] : []),
-    ].map(preferStrictJsonSchemaSampling);
-    const resourceLoader = new DefaultResourceLoader({
-      cwd: workspace.dir,
-      agentDir: this.piAgentDir,
-      settingsManager,
-      noExtensions: true,
-      noSkills: true,
-      additionalSkillPaths: enabledSkills.map((skill) => skill.filePath),
-      noPromptTemplates: true,
-      noThemes: true,
-      noContextFiles: true,
-      systemPromptOverride: () => this.systemPromptFor(metadata.mode),
-      appendSystemPromptOverride: () => [],
-      extensionFactories: this.createExtensionFactories(metadata.mode, toolState),
-    });
-    await resourceLoader.reload();
-    const model = await this.modelResolver({
-      appSessionId: metadata.id,
-      modelRuntime,
-    });
+    ];
+    const capabilityRegistry = new SessionCapabilityRegistry([
+      ...createBuiltinMcpCapabilities({
+        store: this.store,
+        clock: this.clock,
+        scheduleService: this.scheduleService,
+        rpService: this.rpService,
+        profileService: this.profileService,
+        tavilyService: this.tavilyService,
+        webReaderService: this.webReaderService,
+        visionService: this.visionService,
+        mineruService: this.mineruService,
+        gitService: this.gitService,
+        relationshipService: this.relationshipService,
+        worldService: this.worldService,
+        worldCoordinator: this.worldCoordinator,
+        characterInteractionCoordinator: this.characterInteractionCoordinator,
+        interactionService: this.interactionService,
+        characterCapabilities: this.characterCapabilities,
+        characterSkillPackages: this.characterSkillPackages,
+        memoryLifecycle: this.memoryLifecycle,
+        moduleCatalog: this.moduleCatalog,
+        metadata,
+        workspace,
+        permissions,
+        toolState,
+        incognitoChild: this.incognitoChild,
+        // Settings mutation requires an idle control plane and rebuilds this
+        // capability, so the bridge envelope and task snapshot cannot race.
+        subagentRuntimeTimeoutMs: () => this.subagentRuntimeTimeoutMsSnapshot(),
+        runSubagent: (request, signal) => this.runSubagent({
+          parentSessionId: metadata.id,
+          mode: metadata.mode,
+          conversationSpace: metadata.conversationSpace,
+          characterId: metadata.characterId,
+          ...(metadata.conversationSpace === "secret" && metadata.characterId
+            ? { secretOwnerCharacterId: metadata.characterId }
+            : {}),
+          workspace,
+          request,
+          timezone: toolState.timezone,
+          actions: toolState.actions,
+          signal,
+        }),
+        requestCharacterSkillCapabilityRefresh: () =>
+          this.requestCharacterSkillCapabilityRefresh(
+            metadata.characterId!,
+            metadata.conversationSpace,
+          ),
+      }),
+      ...this.additionalSessionCapabilities,
+    ]);
+    const capabilityMounts = await capabilityRegistry.mountAll(
+      capabilityContext,
+      hostTools.map((tool) => tool.name),
+    );
     let session: AgentSession | undefined;
+    let model: Model<Api> | undefined;
     try {
+      const customTools = [
+        ...capabilityMounts.flatMap((mount) => mount.tools),
+        ...hostTools,
+      ].map(preferStrictJsonSchemaSampling);
+      const resourceLoader = new DefaultResourceLoader({
+        cwd: workspace.dir,
+        agentDir: this.piAgentDir,
+        settingsManager,
+        noExtensions: true,
+        noSkills: true,
+        additionalSkillPaths: enabledSkills.map((skill) => skill.filePath),
+        noPromptTemplates: true,
+        noThemes: true,
+        noContextFiles: true,
+        systemPromptOverride: () => this.systemPromptFor(metadata.mode),
+        appendSystemPromptOverride: () => [],
+        extensionFactories: this.createExtensionFactories(metadata.mode, toolState),
+      });
+      await resourceLoader.reload();
+      model = await this.modelResolver({
+        appSessionId: metadata.id,
+        modelRuntime,
+      });
       ({ session } = await createAgentSession({
         cwd: workspace.dir,
         agentDir: this.piAgentDir,
@@ -2055,42 +1898,42 @@ export class PiSessionRuntime {
       if (metadata.piSessionFile === undefined && metadata.piSessionId === undefined) {
         this.rewritePersistedSession(sessionManager);
       }
+      if (!session) throw new Error("Pi AgentSession creation did not return a session");
+
+      metadata.piSessionId = session.sessionId;
+      metadata.piSessionFile = session.sessionFile;
+      const detachedMessages = this.detachedMessages.get(metadata.id);
+      if (detachedMessages) {
+        session.agent.state.messages = [...detachedMessages];
+        this.detachedMessages.delete(metadata.id);
+      }
+      this.contextEconomics.replaceResidentMemories(
+        metadata.id,
+        this.residentVersionsFromMessages(
+          session.agent.state.messages,
+          metadata.characterId,
+          metadata.conversationSpace,
+        ),
+        metadata.conversationSpace,
+        metadata.conversationSpace === "secret" ? metadata.characterId : undefined,
+      );
+      this.persistConversationIndex();
+      return {
+        metadata,
+        workspace,
+        session,
+        sessionManager,
+        modelRuntime,
+        toolState,
+        capabilityMounts,
+        toolNames: customTools.map((tool) => tool.name),
+        modelFingerprint: model ? modelFingerprint(model) : undefined,
+      };
     } catch (error) {
       session?.dispose();
-      await Promise.all(mcpBridges.map((bridge) => bridge.close()));
+      await closeMountedSessionCapabilities(capabilityMounts).catch(() => undefined);
       throw error;
     }
-    if (!session) throw new Error("Pi AgentSession creation did not return a session");
-
-    metadata.piSessionId = session.sessionId;
-    metadata.piSessionFile = session.sessionFile;
-    const detachedMessages = this.detachedMessages.get(metadata.id);
-    if (detachedMessages) {
-      session.agent.state.messages = [...detachedMessages];
-      this.detachedMessages.delete(metadata.id);
-    }
-    this.contextEconomics.replaceResidentMemories(
-      metadata.id,
-      this.residentVersionsFromMessages(
-        session.agent.state.messages,
-        metadata.characterId,
-        metadata.conversationSpace,
-      ),
-      metadata.conversationSpace,
-      metadata.conversationSpace === "secret" ? metadata.characterId : undefined,
-    );
-    this.persistConversationIndex();
-    return {
-      metadata,
-      workspace,
-      session,
-      sessionManager,
-      modelRuntime,
-      toolState,
-      mcpBridges,
-      toolNames: customTools.map((tool) => tool.name),
-      modelFingerprint: model ? modelFingerprint(model) : undefined,
-    };
   }
 
   private subagentRunSettingsSnapshot(): SubagentRunSettingsSnapshot {

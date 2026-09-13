@@ -50,6 +50,7 @@ import {
   type PiModelResolver,
   type PiSessionHandle,
 } from "../pi/session-runtime.js";
+import type { SessionCapability } from "../pi/session-capability.js";
 import { classifyAssistantOutput, containsInternalAnalysis } from "../pi/output-guard.js";
 import { createTurnContextMessage } from "../pi/turn-context.js";
 import {
@@ -515,6 +516,8 @@ export type CompanionKernelOptions = CompanionStoreOptions & {
   conversationLifecycleThresholds?: Partial<ConversationLifecycleThresholds>;
   /** Internal/test-only override for the delegated Pi subagent hard deadline. */
   subagentTimeoutMs?: number;
+  /** Deployment-trusted session capabilities; not inherited by incognito children. */
+  additionalSessionCapabilities?: readonly SessionCapability[];
   /** Internal-only safety profile used by disposable tmpfs child kernels. */
   incognitoChild?: boolean;
   /** Test/deployment override; the target is still required to be tmpfs. */
@@ -1047,6 +1050,7 @@ export class CompanionKernel {
           ? undefined : normalizedOptions.conversationCheckpointSummarizer ?? this.summarizeConversationCheckpoint.bind(this),
         subagentTimeoutMs: normalizedOptions.subagentTimeoutMs,
         subagentSettings: () => this.subagentSettingsService.snapshot(),
+        additionalSessionCapabilities: normalizedOptions.additionalSessionCapabilities,
         incognitoChild: this.incognitoChild,
         providerPayloadOptions: (appSessionId) => {
           const binding = this.modelBindingForSession(appSessionId);
@@ -5732,8 +5736,8 @@ export class CompanionKernel {
         }
         throw error;
       }
-      const tool = handle.mcpBridges
-        .flatMap((bridge) => bridge.tools)
+      const tool = handle.capabilityMounts
+        .flatMap((mount) => mount.tools)
         .find((candidate) => candidate.name === "create_schedule_item");
       if (!tool) return undefined;
 

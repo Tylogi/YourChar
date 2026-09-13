@@ -1,4 +1,5 @@
 export * from "./session-runtime.js";
+export * from "./session-capability.js";
 export * from "./workspace-tools.js";
 export * from "./document-read-tool.js";
 export * from "./sandboxed-shell-tool.js";
