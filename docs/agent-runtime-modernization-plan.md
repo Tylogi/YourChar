@@ -1,6 +1,6 @@
 # Agent Runtime Modernization Plan
 
-Status: active
+Status: complete
 
 ## 1. Objective
 
@@ -316,8 +316,13 @@ both transport abort and the explicit headless lifecycle endpoint.
 - [x] Expose typed replay/export APIs and event integrity in Kernel readiness.
 - [x] Document schema evolution, checkpoints, privacy, rollback, and the
   non-cryptographic integrity threat model.
-- [ ] Run the complete release gate and retain the passing result as the P5
+- [x] Run the complete release gate and retain the passing result as the P5
   exit proof.
+
+Exit proof (2026-09-15): `npm run release:gate` passed the TypeScript build,
+backup/state-migration/restore syntax checks, all 799 unit and integration
+tests, the complete browser visual and interaction suite, the sensitive-data
+scan across 521 source files, and the final diff whitespace check.
 
 ## 9. Verification strategy
 
@@ -376,5 +381,5 @@ feature counts must not be reported as task-success improvements.
 - [x] P5a typed versioned event ledger, replay, hash chains, and checkpoints.
 - [x] P5b automatic projection inventory, bootstrap, migration, and change capture.
 - [x] P5c session/turn/model-visible reconstruction with scoped export and purge.
-- [ ] P5d full release-gate exit proof.
-- [ ] P5 event-sourced runtime state.
+- [x] P5d full release-gate exit proof.
+- [x] P5 event-sourced runtime state.
