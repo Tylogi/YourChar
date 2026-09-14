@@ -91,6 +91,12 @@ import {
   mappedHeadlessApiPath,
   resolveHeadlessApiToken,
 } from "./headless-auth.js";
+import {
+  consumePreparedHeadlessJsonBody,
+  HeadlessIdempotencyError,
+  HeadlessIdempotencyRegistry,
+  recordHeadlessIdempotentJsonResponse,
+} from "./headless-idempotency.js";
 import type { AgentSessionEvent } from "@earendil-works/pi-coding-agent";
 import type { SubagentRole } from "../mcp/subagent-server.js";
 import { UserProfileValidationError } from "../profile/service.js";
@@ -231,6 +237,7 @@ export function disposeHttpServerOwnedResources(server: Server): void {
 
 export function createHttpServer(options: HttpServerOptions = {}) {
   const headlessApiToken = resolveHeadlessApiToken(options.headlessApiToken);
+  const headlessIdempotency = new HeadlessIdempotencyRegistry();
   const testMode = options.testMode ?? process.env.RP_AGENT_TEST_MODE === "1";
   const ownsKernel = !options.kernel;
   const kernel = options.kernel ?? new CompanionKernel({
@@ -263,6 +270,7 @@ export function createHttpServer(options: HttpServerOptions = {}) {
         response,
         imGatewaySecret,
         headlessApiToken,
+        headlessIdempotency,
       });
     } catch (error) {
       if (response.headersSent || response.writableEnded) {
@@ -276,6 +284,8 @@ export function createHttpServer(options: HttpServerOptions = {}) {
         if (error.status === 401) {
           response.setHeader("www-authenticate", 'Bearer realm="YourChar Headless API"');
         }
+        sendJson(response, error.status, { code: error.code, error: error.message });
+      } else if (error instanceof HeadlessIdempotencyError) {
         sendJson(response, error.status, { code: error.code, error: error.message });
       } else if (error instanceof LocalControlPlaneRequestError) {
         if (error.code === "LOCAL_CONTROL_TOKEN_REJECTED") {
@@ -560,6 +570,7 @@ async function route(input: {
   response: ServerResponse;
   imGatewaySecret?: string;
   headlessApiToken?: string;
+  headlessIdempotency: HeadlessIdempotencyRegistry;
 }) {
   const method = input.request.method ?? "GET";
   const url = new URL(input.request.url ?? "/", "http://127.0.0.1");
@@ -570,6 +581,12 @@ async function route(input: {
     input.response.setHeader("x-yourchar-api-version", HEADLESS_API_VERSION);
     authenticateHeadlessApiRequest(input.request, input.headlessApiToken);
     pathname = mappedHeadlessPath;
+    if (await input.headlessIdempotency.prepare({
+      request: input.request,
+      response: input.response,
+      method,
+      resource: `${pathname}${url.search}`,
+    })) return;
   }
 
   const asset = method === "GET" ? browserAsset(pathname) : undefined;
@@ -5034,6 +5051,8 @@ function isModelApiSettingsPath(pathname: string): boolean {
 }
 
 async function readJson(request: IncomingMessage): Promise<unknown> {
+  const prepared = consumePreparedHeadlessJsonBody(request);
+  if (prepared.prepared) return prepared.body;
   const chunks: Buffer[] = [];
   let size = 0;
   for await (const chunk of request) {
@@ -6049,6 +6068,7 @@ function requiredWorldStoryAction(
 
 function sendJson(response: ServerResponse, statusCode: number, payload: unknown): void {
   const body = JSON.stringify(payload);
+  recordHeadlessIdempotentJsonResponse(response, statusCode, body);
   response.writeHead(statusCode, {
     "content-type": "application/json; charset=utf-8",
     "cache-control": "no-store",

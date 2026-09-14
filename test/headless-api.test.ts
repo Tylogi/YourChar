@@ -119,6 +119,97 @@ test("authenticated headless mutations reuse trusted lifecycle policy without a 
   });
 });
 
+test("headless idempotency keys replay one JSON mutation and reject conflicting reuse", async () => {
+  await withServer(token, async ({ origin, kernel }) => {
+    const character = kernel.createCharacter({ name: "幂等测试角色" });
+    const session = await kernel.openCanonicalPrivateConversation(character.id);
+    const path = `/sessions/${encodeURIComponent(session.id)}/goals`;
+    const body = JSON.stringify({
+      title: "只创建一次",
+      successCriteria: "重复请求返回同一个目标",
+    });
+    const options = {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "idempotency-key": "goal-create-request-0001",
+      },
+      body,
+    } satisfies RequestInit;
+
+    const [first, concurrentReplay] = await Promise.all([
+      headlessFetch(origin, path, options),
+      headlessFetch(origin, path, options),
+    ]);
+    assert.equal(first.status, 201);
+    assert.equal(concurrentReplay.status, 201);
+    const firstGoal = ((await first.json()) as { goal: { id: string } }).goal;
+    const replayGoal = ((await concurrentReplay.json()) as { goal: { id: string } }).goal;
+    assert.equal(replayGoal.id, firstGoal.id);
+    assert.equal(
+      [first, concurrentReplay].filter((response) => response.headers.get("idempotency-replayed") === "true").length,
+      1,
+    );
+
+    const laterReplay = await headlessFetch(origin, path, options);
+    assert.equal(laterReplay.status, 201);
+    assert.equal(laterReplay.headers.get("idempotency-replayed"), "true");
+    assert.equal(((await laterReplay.json()) as { goal: { id: string } }).goal.id, firstGoal.id);
+
+    const listed = await headlessFetch(origin, `${path}?includeTerminal=true`);
+    assert.equal(((await listed.json()) as { goals: unknown[] }).goals.length, 1);
+
+    const conflict = await headlessFetch(origin, path, {
+      ...options,
+      body: JSON.stringify({ title: "另一个目标", successCriteria: "不应创建" }),
+    });
+    assert.equal(conflict.status, 409);
+    assert.equal(
+      ((await conflict.json()) as { code: string }).code,
+      "HEADLESS_IDEMPOTENCY_CONFLICT",
+    );
+    assert.equal(kernel.listSessionGoals(session.id, { includeTerminal: true }).length, 1);
+  });
+});
+
+test("headless idempotency fails closed for invalid, read-only, and streaming uses", async () => {
+  await withServer(token, async ({ origin }) => {
+    const invalid = await headlessFetch(origin, "/agent-permissions", {
+      method: "PATCH",
+      headers: { "content-type": "application/json", "idempotency-key": "short" },
+      body: "{}",
+    });
+    assert.equal(invalid.status, 400);
+    assert.equal(
+      ((await invalid.json()) as { code: string }).code,
+      "HEADLESS_IDEMPOTENCY_KEY_INVALID",
+    );
+
+    const read = await headlessFetch(origin, "/sessions", {
+      headers: { "idempotency-key": "read-request-0001" },
+    });
+    assert.equal(read.status, 422);
+    assert.equal(
+      ((await read.json()) as { code: string }).code,
+      "HEADLESS_IDEMPOTENCY_UNSUPPORTED",
+    );
+
+    const stream = await headlessFetch(origin, "/sessions/missing/messages/stream", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "idempotency-key": "stream-request-0001",
+      },
+      body: JSON.stringify({ text: "不会执行" }),
+    });
+    assert.equal(stream.status, 422);
+    assert.equal(
+      ((await stream.json()) as { code: string }).code,
+      "HEADLESS_IDEMPOTENCY_UNSUPPORTED",
+    );
+  });
+});
+
 function authRequest(
   authorization: string[] | undefined,
   remoteAddress = "127.0.0.1",
