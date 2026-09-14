@@ -1936,6 +1936,21 @@ export class PiSessionRuntime {
       currentUserText: () => toolState.currentUserText,
       timezone: () => toolState.timezone,
       actions: () => toolState.actions,
+      recordAction: (actionType, status, payload) => {
+        const action = this.store.addAction(
+          actionType,
+          status,
+          payload,
+          metadata.conversationSpace === "secret" && metadata.characterId
+            ? {
+                conversationSpace: "secret",
+                secretOwnerCharacterId: metadata.characterId,
+              }
+            : { conversationSpace: "normal" },
+        );
+        toolState.actions.push(action);
+        return action;
+      },
       moduleEnabled: (moduleId) => enabledMcpModuleIds.has(moduleId),
       settingsForModule: (moduleId) => this.moduleCatalog.resolvedProviderSettings(moduleId),
     });

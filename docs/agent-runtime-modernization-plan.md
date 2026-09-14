@@ -195,12 +195,18 @@ plane can record retry, skip, or cancel decisions before orchestration resumes.
 
 ### P3d — Optional code intelligence
 
-- [ ] Define deployment-trusted code-orchestration and LSP capability packages
-  behind explicit modules and permissions.
-- [ ] Scope language servers to the owning Workspace, bound diagnostics and
-  symbol results, and keep server processes inside the capability lifecycle.
-- [ ] Preserve the blocking `bash` compatibility path while Task Bench evidence
-  determines which code-specific primitives materially improve outcomes.
+- [x] Define a deployment-trusted, default-off LSP capability package behind an
+  explicit module, runtime profile trust, and Workspace read permission.
+- [x] Scope each language server to its owning read-only Workspace, expose only
+  definition/reference/implementation/hover queries, bound all inputs/results,
+  and keep server processes inside the capability lifecycle.
+- [x] Preserve the blocking `bash` compatibility path and allow only explicitly
+  approved capability definitions to be recreated inside the isolated Task
+  Bench runtime.
+- [ ] Run same-model Task Bench A/B trials on cross-file repository tasks and
+  record whether LSP materially improves pass rate, tokens, or latency.
+- [ ] Add a broader model-generated Code Mode SDK only if that evidence shows a
+  benefit beyond the existing bounded workflow DAG.
 
 ## 7. Verification strategy
 
@@ -236,6 +242,10 @@ feature counts must not be reported as task-success improvements.
   committed-result reconciliation, and explicit replay decisions.
 - [x] P3a durable background shell jobs and bounded result spill.
 - [x] P3b durable session goals, plans, todos, and typed progress transitions.
+- [x] P3c bounded durable workflow DAGs, cancellation, aggregation references,
+  and explicit replay decisions.
+- [ ] P3d optional code intelligence: lightweight LSP implementation is
+  complete; same-model A/B evidence and the Code Mode decision remain.
 - [ ] P3 general execution.
 - [ ] P4 provider and host seams.
 - [ ] P5 event-sourced runtime state.

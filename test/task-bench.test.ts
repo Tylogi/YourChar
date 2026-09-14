@@ -4,9 +4,14 @@ import test from "node:test";
 import { CompanionKernel } from "../src/domain/kernel.js";
 import {
   parseTaskBenchRequest,
+  runTaskBench,
   TaskBenchValidationError,
   type TaskBenchReport,
 } from "../src/evaluation/task-bench.js";
+import {
+  createLspNavigationCapabilityPackage,
+  type LspProviderScope,
+} from "../src/lsp/index.js";
 import {
   TASK_BENCH_UPLOAD_TTL_MS,
   TaskBenchUploadError,
@@ -286,6 +291,85 @@ test("task bench model mode excludes the selected character identity", async () 
     assert.equal(staleResponse.status, 404);
   } finally {
     await closeServer(appServer);
+    kernel.dispose();
+    await closeServer(modelServer);
+  }
+});
+
+test("task bench recreates only explicitly approved deployment capabilities in its fresh Workspace", async () => {
+  const targetPayloads: Record<string, unknown>[] = [];
+  const modelServer = createServer(async (request, response) => {
+    const chunks: Buffer[] = [];
+    for await (const chunk of request) chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+    const body = JSON.parse(Buffer.concat(chunks).toString("utf8")) as Record<string, unknown>;
+    targetPayloads.push(body);
+    writeModelResponse(response, String(body.model ?? ""), "LSP_BENCH_READY");
+  });
+  await new Promise<void>((resolve) => modelServer.listen(0, "127.0.0.1", resolve));
+  const modelAddress = modelServer.address();
+  assert.ok(modelAddress && typeof modelAddress === "object");
+  const scopes: LspProviderScope[] = [];
+  let closes = 0;
+  const lspPackage = createLspNavigationCapabilityPackage({
+    version: "1",
+    contentDigest: "e".repeat(64),
+    source: "task bench fixture",
+    trusted: true,
+    providers: [{
+      id: "bench-typescript",
+      extensions: [".ts"],
+      mount(scope) {
+        scopes.push(scope);
+        return {
+          id: "bench-typescript",
+          extensions: [".ts"],
+          query: async () => ({ kind: "empty" }),
+          close: () => { closes += 1; },
+        };
+      },
+    }],
+  });
+  const kernel = new CompanionKernel({
+    stateDir: false,
+    startScheduler: false,
+    startWorldCoordinator: false,
+    startPrivateInboxCoordinator: false,
+    agentCapabilityPackages: [lspPackage],
+    agentRuntimeProfiles: [{
+      id: "default",
+      name: "LSP benchmark",
+      description: "Activate the benchmark-safe LSP package.",
+      packageIds: [lspPackage.id],
+    }],
+  });
+  try {
+    const target = kernel.createModelApiProfile({
+      name: "LSP benchmark model",
+      enabled: true,
+      baseUrl: `http://127.0.0.1:${modelAddress.port}/v1`,
+      model: "lsp-bench-model",
+    });
+    kernel.patchAgentPermissions({ workspaceAccess: "read_only" });
+    kernel.setAgentModuleEnabled("mcp:lsp-navigation", true);
+    const { report } = await runTaskBench(kernel, {
+      targetMode: "model",
+      modelProfileId: target.id,
+      task: "确认代码导航评测环境。",
+      repetitions: 1,
+      assertions: { requiredPhrases: ["LSP_BENCH_READY"] },
+    });
+    await new Promise<void>((resolve) => setImmediate(resolve));
+
+    assert.equal(report.summary.passedRuns, 1);
+    assert.equal(report.capabilities.enabledModules.includes("mcp:lsp-navigation"), true);
+    assert.equal(targetPayloads.length, 1);
+    assert.match(JSON.stringify(targetPayloads[0]), /"name":"lsp"/u);
+    assert.equal(scopes.length, 1);
+    assert.equal(scopes[0]?.readOnly, true);
+    assert.equal(scopes[0]?.workspaceUri, "file:///workspace");
+    assert.notEqual(scopes[0]?.workspaceDir, kernel.getAgentPermissions().workspaceDir);
+    assert.equal(closes, 1);
+  } finally {
     kernel.dispose();
     await closeServer(modelServer);
   }

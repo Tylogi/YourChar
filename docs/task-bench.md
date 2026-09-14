@@ -24,6 +24,13 @@ permissions are inherited. Memory Coordinator, User Profile, and Relationship
 State modules, plus every profile/SOUL/Skill/memory write permission, are
 forcibly disabled in the disposable runtime.
 
+Deployment capability code is not inherited by default. A trusted capability
+must explicitly declare that it is safe to reconstruct from a fresh Task Bench
+mount scope; only those active definitions and their module contributions enter
+the disposable runtime. Optional LSP navigation uses this seam, allowing a
+module-off baseline and module-on variant without exposing the source runtime's
+Workspace or provider processes.
+
 ## Isolation lifecycle
 
 Every repetition receives a new state directory, SQLite database, conversation,
@@ -157,3 +164,9 @@ For fair A/B comparisons, keep the task, fixtures, target mode, character
 context switches, enabled capabilities, Judge profile, Judge weight, pass
 threshold, timeout settings, and repetition count constant. Prefer an
 independent Judge; the UI marks same-model self-evaluation explicitly.
+
+For an LSP A/B, use repository fixtures that require cross-file semantic
+navigation. Run once with `mcp:lsp-navigation` disabled and once enabled; keep
+Workspace and shell permissions unchanged. Reports include bounded
+`lsp_navigation` action evidence so tool availability is not mistaken for tool
+use.

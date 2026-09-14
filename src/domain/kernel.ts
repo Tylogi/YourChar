@@ -3713,6 +3713,11 @@ export class CompanionKernel {
     return this.agentRuntimeConfiguration.get();
   }
 
+  /** Host-only executable definitions approved for fresh disposable benchmarks. */
+  isolatedTaskBenchSessionCapabilities(): readonly SessionCapability[] {
+    return this.agentRuntimeConfiguration.isolatedTaskBenchCapabilities();
+  }
+
   activateAgentRuntimeProfile(profileId: string) {
     this.assertControlPlaneIdle();
     return this.applyAgentRuntimeConfiguration(
@@ -10102,6 +10107,7 @@ const readOnlyActionTypes = new Set([
   "read_web_page",
   "list_workspace",
   "read",
+  "lsp_navigation",
   "share_workspace_file",
   "analyze_image",
   "vision_auto_analyze",

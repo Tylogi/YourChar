@@ -171,6 +171,12 @@ export class AgentRuntimeConfigurationManager {
     return this.current.activeCapabilities;
   }
 
+  isolatedTaskBenchCapabilities(): readonly SessionCapability[] {
+    return Object.freeze(this.current.activeCapabilities.filter(
+      (capability) => capability.allowInIsolatedTaskBench === true,
+    ));
+  }
+
   activeModuleContributions(): readonly AgentMcpModuleContribution[] {
     return this.current.activeModuleContributions;
   }
@@ -525,6 +531,9 @@ function cloneCapabilityShells(
     ...(capability?.moduleContribution === undefined
       ? {}
       : { moduleContribution: capability.moduleContribution }),
+    ...(capability?.allowInIsolatedTaskBench === true
+      ? { allowInIsolatedTaskBench: true as const }
+      : {}),
     mount: capability?.mount,
   }) as SessionCapability));
 }
@@ -545,6 +554,9 @@ function freezeCapability(
     ...(capability.order === undefined ? {} : { order: capability.order }),
     ...(capability.moduleId === undefined ? {} : { moduleId: capability.moduleId }),
     ...(contribution ? { moduleContribution: contribution } : {}),
+    ...(capability.allowInIsolatedTaskBench === true
+      ? { allowInIsolatedTaskBench: true as const }
+      : {}),
     mount: capability.mount,
   });
 }

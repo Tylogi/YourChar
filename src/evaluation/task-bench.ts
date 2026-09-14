@@ -614,6 +614,7 @@ async function executeIteration(
     skillInstaller: false,
     imGateway: false,
     characterSkillReflector: false,
+    additionalSessionCapabilities: source.isolatedTaskBenchSessionCapabilities(),
   });
   const started = performance.now();
   let response: Awaited<ReturnType<CompanionKernel["sendMessage"]>> | undefined;

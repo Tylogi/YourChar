@@ -22,6 +22,12 @@ export type SessionCapabilityContext = Readonly<{
   currentUserText: () => string;
   timezone: () => string;
   actions: () => ActionRecord[];
+  /** Append one scope-bound action to both durable audit and current turn evidence. */
+  recordAction: (
+    actionType: string,
+    status: ActionRecord["status"],
+    payload: Record<string, unknown>,
+  ) => ActionRecord;
   moduleEnabled: (moduleId: string) => boolean;
   /** Immutable values from this capability's own declared module namespace. */
   settings: Readonly<Record<string, AgentModuleSettingValue>>;
@@ -56,6 +62,12 @@ export type SessionCapability = Readonly<{
   moduleId?: string;
   /** Optionally contribute that module's catalog, context, and UI metadata. */
   moduleContribution?: AgentMcpModuleContribution;
+  /**
+   * Trusted host-only opt-in for the disposable Task Bench runtime. Set this
+   * only when every resource is recreated from the supplied mount context and
+   * the capability cannot retain access to its source Kernel or Workspace.
+   */
+  allowInIsolatedTaskBench?: true;
   mount: (
     context: SessionCapabilityContext,
   ) => SessionCapabilityMount | undefined | Promise<SessionCapabilityMount | undefined>;
@@ -128,6 +140,14 @@ export class SessionCapabilityRegistry {
       if (typeof capability.mount !== "function") {
         throw new SessionCapabilityRegistrationError(
           `session capability ${id} must provide a mount function`,
+        );
+      }
+      if (
+        capability.allowInIsolatedTaskBench !== undefined &&
+        capability.allowInIsolatedTaskBench !== true
+      ) {
+        throw new SessionCapabilityRegistrationError(
+          `session capability ${id} has an invalid Task Bench admission flag`,
         );
       }
       const order = capability.order ?? defaultCapabilityOrder;
