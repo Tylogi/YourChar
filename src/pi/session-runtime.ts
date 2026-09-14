@@ -108,6 +108,7 @@ import type { WorldAutonomyCoordinator } from "../world/coordinator.js";
 import type { CharacterInteractionCoordinator } from "../world/character-interaction-coordinator.js";
 import type { InteractionService } from "../interaction/service.js";
 import type { ContextEconomicsRepository } from "../context/economics-repository.js";
+import type { RuntimeEventStore } from "../runtime-events/store.js";
 import type { WorkspaceFileService } from "../workspace/file-service.js";
 import {
   WorkspaceScopeRegistry,
@@ -512,6 +513,8 @@ export type PiSessionRuntimeOptions = {
   subagentSettings?: () => SubagentSettingsValues;
   /** Host-owned durable identity and lifecycle ledger for delegated work. */
   subagentJobs: SubagentJobService;
+  /** Optional host-owned event ledger; omitted only by isolated test/custom runtimes. */
+  runtimeEvents?: RuntimeEventStore;
   /** Host callback fired after a background job reaches a durable terminal state. */
   onSubagentJobTerminal?: (jobId: string) => void;
   /** Deployment-trusted handle-scoped capabilities composed with the built-ins. */
@@ -658,6 +661,7 @@ export class PiSessionRuntime {
   private readonly subagentTimeoutMsOverride?: number;
   private readonly subagentSettings: () => SubagentSettingsValues;
   private readonly subagentJobs: SubagentJobService;
+  private readonly runtimeEvents?: RuntimeEventStore;
   private readonly subagentRunOwnerId = `pi-runtime:${randomUUID()}`;
   private subagentJobTerminalListener?: (jobId: string) => void;
   private readonly incognitoChild: boolean;
@@ -711,6 +715,7 @@ export class PiSessionRuntime {
       : normalizeSubagentTimeoutMs(options.subagentTimeoutMs);
     this.subagentSettings = options.subagentSettings ?? (() => defaultSubagentSettings);
     this.subagentJobs = options.subagentJobs;
+    this.runtimeEvents = options.runtimeEvents;
     this.subagentJobTerminalListener = options.onSubagentJobTerminal;
     this.additionalSessionCapabilities = normalizeAdditionalSessionCapabilities(
       options.additionalSessionCapabilities ?? [],
@@ -723,6 +728,9 @@ export class PiSessionRuntime {
       ? join(this.stateDir, "pi-agent")
       : join(this.cwd, EPHEMERAL_STATE_DIRECTORY_NAME);
     this.loadConversationIndex();
+    for (const metadata of this.metadata.values()) {
+      this.runtimeEvents?.ensureSessionSnapshot(metadata);
+    }
   }
 
   setSubagentJobTerminalListener(listener?: (jobId: string) => void): void {
@@ -819,19 +827,22 @@ export class PiSessionRuntime {
 
     if (!existing) {
       const now = this.clock.now().toISOString();
-      this.metadata.set(id, {
+      const created: ConversationMetadata = {
         id,
         mode,
         conversationSpace: effectiveSpace,
         characterId,
         createdAt: now,
         updatedAt: now,
-      });
+      };
+      this.metadata.set(id, created);
       this.persistConversationIndex();
+      this.runtimeEvents?.recordSessionSnapshot(created, "created");
     } else if (!existing.characterId && characterId) {
       existing.characterId = characterId;
       existing.updatedAt = this.clock.now().toISOString();
       this.persistConversationIndex();
+      this.runtimeEvents?.recordSessionSnapshot(existing, "updated");
       characterAttached = true;
     }
 
@@ -1541,6 +1552,7 @@ export class PiSessionRuntime {
       metadata.updatedAt = now;
       clearPendingConversationWakeNotification(metadata);
       this.persistConversationIndex();
+      this.runtimeEvents?.recordSessionSnapshot(metadata, "archived");
     }
     return { ...metadata };
   }
@@ -1549,7 +1561,9 @@ export class PiSessionRuntime {
     const metadata = this.requireMetadata(sessionId);
     if (metadata.archivedAt) {
       delete metadata.archivedAt;
-      this.touch(metadata);
+      metadata.updatedAt = this.clock.now().toISOString();
+      this.persistConversationIndex();
+      this.runtimeEvents?.recordSessionSnapshot(metadata, "restored");
     }
     return { ...metadata };
   }
@@ -1729,6 +1743,7 @@ export class PiSessionRuntime {
     }
     this.detachedMessages.delete(metadata.id);
     if (sessionFile) rmSync(sessionFile, { force: true });
+    this.runtimeEvents?.recordSessionDeleted(metadata);
     this.metadata.delete(metadata.id);
     this.persistConversationIndex();
     return { ...metadata };
@@ -1871,6 +1886,7 @@ export class PiSessionRuntime {
       this.detachedMessages.delete(metadata.id);
       this.pendingCapabilityRefreshes.delete(metadata.id);
       this.pendingCacheBreakReasons.delete(metadata.id);
+      this.runtimeEvents?.recordSessionDeleted(metadata);
       this.metadata.delete(metadata.id);
     }
     this.persistConversationIndex();
@@ -1879,6 +1895,9 @@ export class PiSessionRuntime {
 
   deleteAllConversations(): void {
     this.dispose();
+    for (const metadata of this.metadata.values()) {
+      this.runtimeEvents?.recordSessionDeleted(metadata);
+    }
     this.metadata.clear();
     this.detachedMessages.clear();
     if (this.piSessionDir) rmSync(this.piSessionDir, { recursive: true, force: true });
@@ -2177,6 +2196,7 @@ export class PiSessionRuntime {
         metadata.conversationSpace === "secret" ? metadata.characterId : undefined,
       );
       this.persistConversationIndex();
+      this.runtimeEvents?.recordSessionSnapshot(metadata, "updated");
       return {
         metadata,
         workspace,
@@ -3957,6 +3977,7 @@ export class PiSessionRuntime {
   private touch(metadata: ConversationMetadata): void {
     metadata.updatedAt = this.clock.now().toISOString();
     this.persistConversationIndex();
+    this.runtimeEvents?.recordSessionSnapshot(metadata, "updated");
   }
 
   private rewritePersistedSession(sessionManager: SessionManager): void {

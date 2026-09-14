@@ -7,10 +7,14 @@ import { applyRuntimeEvent, validateRuntimeEvent } from "./schema.js";
 import {
   runtimeEventTypes,
   type RuntimeEventAppend,
+  type RuntimeEventCaptureCatalogEntry,
+  type RuntimeEventExport,
   type RuntimeEventIntegrity,
   type RuntimeEventRecord,
   type RuntimeEventScope,
   type RuntimeReplayState,
+  type RuntimeEventStreamExport,
+  type RuntimeProjectionReplayRow,
 } from "./types.js";
 
 const zeroHash = "0".repeat(64);
@@ -150,11 +154,22 @@ export class RuntimeEventStore {
         ...(metadata.conversationSpace === "secret" && metadata.characterId
           ? { secretOwnerCharacterId: metadata.characterId }
           : {}),
-        ...(metadata.characterId ? { characterId: metadata.characterId } : {}),
+        ...(metadata.conversationSpace === "secret" && metadata.characterId
+          ? { characterId: metadata.characterId }
+          : {}),
         sessionId: metadata.id,
       },
       occurredAt: metadata.updatedAt,
     });
+  }
+
+  ensureSessionSnapshot(metadata: ConversationMetadata): RuntimeEventRecord | undefined {
+    const current = this.replay(sessionStreamId(metadata.id));
+    const { piSessionFile: _piSessionFile, ...session } = metadata;
+    if (current?.kind === "session" && stableJson(current.session) === stableJson(session)) {
+      return undefined;
+    }
+    return this.recordSessionSnapshot(metadata, "bootstrap");
   }
 
   recordSessionDeleted(metadata: ConversationMetadata): RuntimeEventRecord {
@@ -170,21 +185,23 @@ export class RuntimeEventStore {
         ...(metadata.conversationSpace === "secret" && metadata.characterId
           ? { secretOwnerCharacterId: metadata.characterId }
           : {}),
-        ...(metadata.characterId ? { characterId: metadata.characterId } : {}),
+        ...(metadata.conversationSpace === "secret" && metadata.characterId
+          ? { characterId: metadata.characterId }
+          : {}),
         sessionId: metadata.id,
       },
-      occurredAt: metadata.updatedAt,
     });
   }
 
   recordTurnSettled(turn: ContextLogEntry): RuntimeEventRecord {
+    const { events, ...settled } = turn;
     return this.append({
       streamId: `turn:${digest([turn.sessionId, turn.id])}`,
       aggregateType: "turn",
       aggregateId: [turn.sessionId, turn.id],
       eventType: runtimeEventTypes.turnSettled,
       eventVersion: 1,
-      payload: { turn },
+      payload: { turn: { ...settled, eventTypes: events.map((event) => event.type) } },
       scope: {
         conversationSpace: turn.conversationSpace,
         ...(turn.secretOwnerCharacterId
@@ -252,6 +269,26 @@ export class RuntimeEventStore {
     return state;
   }
 
+  replayProjection(projection: string): RuntimeProjectionReplayRow[] {
+    if (!projection.trim()) throw new Error("projection name is required");
+    const catalog = this.database.connection.prepare(`
+      SELECT classification FROM runtime_event_capture_catalog WHERE table_name = ?
+    `).get(projection) as Row | undefined;
+    if (!catalog || catalog.classification === "excluded") {
+      throw new Error(`runtime projection is unavailable: ${projection}`);
+    }
+    const streams = this.database.connection.prepare(`
+      SELECT stream_id FROM runtime_event_streams
+      WHERE aggregate_type = ? ORDER BY aggregate_id_json
+    `).all(`projection:${projection}`) as Row[];
+    return streams.flatMap((stream) => {
+      const state = this.replay(String(stream.stream_id));
+      return state?.kind === "projection" && state.row !== null
+        ? [{ key: state.key, row: state.row, schemaHash: state.schemaHash }]
+        : [];
+    });
+  }
+
   verifyIntegrity(): RuntimeEventIntegrity {
     if (!this.available) {
       return { ok: false, streamCount: 0, eventCount: 0, checkpointCount: 0, errors: ["schema unavailable"] };
@@ -292,6 +329,9 @@ export class RuntimeEventStore {
       if (Number(stream.last_stream_sequence) !== events.length) {
         pushError(errors, `${streamId}: stream head sequence mismatch`);
       }
+      if (Number(stream.event_count) !== events.length) {
+        pushError(errors, `${streamId}: stream event count mismatch`);
+      }
       if (String(stream.last_event_hash) !== previousHash) {
         pushError(errors, `${streamId}: stream head hash mismatch`);
       }
@@ -321,6 +361,55 @@ export class RuntimeEventStore {
       eventCount,
       checkpointCount: checkpoints.length,
       errors,
+    };
+  }
+
+  captureCatalog(): RuntimeEventCaptureCatalogEntry[] {
+    if (!this.available) return [];
+    return (this.database.connection.prepare(`
+      SELECT * FROM runtime_event_capture_catalog ORDER BY table_name
+    `).all() as Row[]).map((row) => ({
+      tableName: String(row.table_name),
+      schemaHash: String(row.schema_hash),
+      classification: captureClassification(row.classification),
+      detail: String(row.detail),
+      updatedAt: String(row.updated_at),
+    }));
+  }
+
+  exportScope(
+    conversationSpace: "normal" | "secret",
+    secretOwnerCharacterId?: string,
+  ): RuntimeEventExport {
+    if (conversationSpace === "secret" && !secretOwnerCharacterId?.trim()) {
+      throw new Error("secret runtime event export requires a character owner");
+    }
+    if (conversationSpace === "normal" && secretOwnerCharacterId !== undefined) {
+      throw new Error("normal runtime event export cannot select a secret owner");
+    }
+    const where = conversationSpace === "secret"
+      ? "conversation_space = 'secret' AND secret_owner_character_id = ?"
+      : "conversation_space IS NULL OR conversation_space = 'normal'";
+    const parameters = conversationSpace === "secret" ? [secretOwnerCharacterId!.trim()] : [];
+    const streamRows = this.database.connection.prepare(`
+      SELECT * FROM runtime_event_streams WHERE ${where} ORDER BY stream_id
+    `).all(...parameters) as Row[];
+    const eventRows = this.database.connection.prepare(`
+      SELECT * FROM runtime_events WHERE ${where} ORDER BY sequence
+    `).all(...parameters) as Row[];
+    return {
+      formatVersion: 1,
+      eventSchema: "yourchar.runtime-event",
+      conversationSpace,
+      ...(conversationSpace === "secret" ? { secretOwnerCharacterId: secretOwnerCharacterId!.trim() } : {}),
+      checkpointPolicy: {
+        everyEvents: checkpointEveryEvents,
+        everyBytes: checkpointEveryBytes,
+        retainedPerStream: retainedCheckpoints,
+      },
+      catalog: this.captureCatalog(),
+      streams: streamRows.map(decodeStreamExport),
+      events: eventRows.map(decodeEvent),
     };
   }
 
@@ -509,6 +598,38 @@ function decodeEvent(row: Row): RuntimeEventRecord {
   };
 }
 
+function decodeStreamExport(row: Row): RuntimeEventStreamExport {
+  return {
+    streamId: String(row.stream_id),
+    aggregateType: String(row.aggregate_type),
+    aggregateId: parseArray(String(row.aggregate_id_json), "runtime aggregate id"),
+    scope: {
+      ...(nullableString(row.conversation_space)
+        ? { conversationSpace: nullableString(row.conversation_space) as "normal" | "secret" }
+        : {}),
+      ...(nullableString(row.secret_owner_character_id)
+        ? { secretOwnerCharacterId: nullableString(row.secret_owner_character_id)! }
+        : {}),
+      ...(nullableString(row.character_id) ? { characterId: nullableString(row.character_id)! } : {}),
+      ...(nullableString(row.session_id) ? { sessionId: nullableString(row.session_id)! } : {}),
+    },
+    ...(nullableString(row.projection_schema_hash)
+      ? { projectionSchemaHash: nullableString(row.projection_schema_hash) }
+      : {}),
+    eventCount: Number(row.event_count),
+    lastEventHash: String(row.last_event_hash),
+    createdAt: String(row.created_at),
+    updatedAt: String(row.updated_at),
+  };
+}
+
+function captureClassification(value: unknown): RuntimeEventCaptureCatalogEntry["classification"] {
+  if (value !== "projection" && value !== "native_event" && value !== "excluded") {
+    throw new Error(`invalid runtime capture classification: ${String(value)}`);
+  }
+  return value;
+}
+
 function runtimeEventType(value: unknown): RuntimeEventRecord["eventType"] {
   if (!Object.values(runtimeEventTypes).includes(value as never)) {
     throw new Error(`unsupported runtime event type: ${String(value)}`);
@@ -522,6 +643,12 @@ function parseRecord(value: string): Readonly<Record<string, unknown>> {
     throw new Error("runtime event payload must be an object");
   }
   return parsed as Readonly<Record<string, unknown>>;
+}
+
+function parseArray(value: string, name: string): readonly unknown[] {
+  const parsed = JSON.parse(value) as unknown;
+  if (!Array.isArray(parsed)) throw new Error(`${name} must be an array`);
+  return parsed;
 }
 
 function nullableString(value: unknown): string | undefined {

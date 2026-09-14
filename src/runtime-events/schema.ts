@@ -116,6 +116,12 @@ function sessionSnapshot(value: Readonly<Record<string, unknown>>): RuntimeSessi
   ) throw new Error("invalid session snapshot transition");
   const session = requiredRecord(value.session, "session snapshot");
   requiredString(session.id, "session id");
+  if (session.mode !== "sms" && session.mode !== "rp") throw new Error("invalid session mode");
+  if (session.conversationSpace !== "normal" && session.conversationSpace !== "secret") {
+    throw new Error("invalid session conversation space");
+  }
+  requiredString(session.createdAt, "session createdAt");
+  requiredString(session.updatedAt, "session updatedAt");
   return { session: session as RuntimeSessionSnapshotV1["session"], transition };
 }
 
@@ -127,6 +133,27 @@ function turnSettled(value: Readonly<Record<string, unknown>>): RuntimeTurnSettl
   const turn = requiredRecord(value.turn, "settled turn");
   requiredString(turn.id, "settled turn id");
   requiredString(turn.sessionId, "settled turn session id");
+  if (turn.mode !== "sms" && turn.mode !== "rp") throw new Error("invalid settled turn mode");
+  if (turn.conversationSpace !== "normal" && turn.conversationSpace !== "secret") {
+    throw new Error("invalid settled turn conversation space");
+  }
+  requiredString(turn.requestText, "settled turn requestText", true);
+  requiredString(turn.systemPrompt, "settled turn systemPrompt", true);
+  requiredString(turn.reply, "settled turn reply", true);
+  requiredString(turn.createdAt, "settled turn createdAt");
+  if (!["completed", "failed", "cancelled", "blocked"].includes(String(turn.status))) {
+    throw new Error("invalid settled turn status");
+  }
+  if (typeof turn.canRetry !== "boolean") throw new Error("invalid settled turn canRetry");
+  if (!Array.isArray(turn.toolNames) || !Array.isArray(turn.actions) || !Array.isArray(turn.eventTypes)) {
+    throw new Error("invalid settled turn arrays");
+  }
+  if (!turn.eventTypes.every((entry) => typeof entry === "string")) {
+    throw new Error("invalid settled turn eventTypes");
+  }
+  if (!turn.toolNames.every((entry) => typeof entry === "string")) {
+    throw new Error("invalid settled turn toolNames");
+  }
   return { turn: turn as RuntimeTurnSettledV1["turn"] };
 }
 
@@ -149,8 +176,10 @@ function requiredArray(value: unknown, name: string): readonly unknown[] {
   return value;
 }
 
-function requiredString(value: unknown, name: string): string {
-  if (typeof value !== "string" || !value.trim()) throw new Error(`${name} must be a non-empty string`);
+function requiredString(value: unknown, name: string, allowEmpty = false): string {
+  if (typeof value !== "string" || (!allowEmpty && !value.trim())) {
+    throw new Error(`${name} must be ${allowEmpty ? "a string" : "a non-empty string"}`);
+  }
   return value;
 }
 

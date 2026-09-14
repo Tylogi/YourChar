@@ -47,8 +47,15 @@ export type RuntimeSessionDeletedV1 = Readonly<{
   sessionId: string;
 }>;
 
+export type RuntimeSettledTurn = Readonly<
+  Omit<ContextLogEntry, "events"> & {
+    /** Streaming payloads are transient; ordered semantic types are durable. */
+    eventTypes: readonly string[];
+  }
+>;
+
 export type RuntimeTurnSettledV1 = Readonly<{
-  turn: ContextLogEntry;
+  turn: RuntimeSettledTurn;
 }>;
 
 export type RuntimeVersionedEvent =
@@ -121,7 +128,7 @@ export type RuntimeReplayState =
     }>
   | Readonly<{
       kind: "turn";
-      turn: ContextLogEntry;
+      turn: RuntimeSettledTurn;
     }>;
 
 export type RuntimeEventIntegrity = Readonly<{
@@ -130,4 +137,45 @@ export type RuntimeEventIntegrity = Readonly<{
   eventCount: number;
   checkpointCount: number;
   errors: readonly string[];
+}>;
+
+export type RuntimeEventCaptureCatalogEntry = Readonly<{
+  tableName: string;
+  schemaHash: string;
+  classification: "projection" | "native_event" | "excluded";
+  detail: string;
+  updatedAt: string;
+}>;
+
+export type RuntimeEventStreamExport = Readonly<{
+  streamId: string;
+  aggregateType: string;
+  aggregateId: readonly unknown[];
+  scope: RuntimeEventScope;
+  projectionSchemaHash?: string;
+  eventCount: number;
+  lastEventHash: string;
+  createdAt: string;
+  updatedAt: string;
+}>;
+
+export type RuntimeEventExport = Readonly<{
+  formatVersion: 1;
+  eventSchema: "yourchar.runtime-event";
+  conversationSpace: ConversationSpace;
+  secretOwnerCharacterId?: string;
+  checkpointPolicy: Readonly<{
+    everyEvents: number;
+    everyBytes: number;
+    retainedPerStream: number;
+  }>;
+  catalog: readonly RuntimeEventCaptureCatalogEntry[];
+  streams: readonly RuntimeEventStreamExport[];
+  events: readonly RuntimeEventRecord[];
+}>;
+
+export type RuntimeProjectionReplayRow = Readonly<{
+  key: readonly unknown[];
+  row: Readonly<Record<string, unknown>>;
+  schemaHash: string;
 }>;

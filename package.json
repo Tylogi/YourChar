@@ -20,6 +20,10 @@
     "./acp": {
       "types": "./dist/src/acp/index.d.ts",
       "import": "./dist/src/acp/index.js"
+    },
+    "./runtime-events": {
+      "types": "./dist/src/runtime-events/index.d.ts",
+      "import": "./dist/src/runtime-events/index.js"
     }
   },
   "description": "Local-first runtime for persistent AI characters and digital lives.",

@@ -12,6 +12,7 @@ import {
   runtimeEventTypes,
 } from "../src/runtime-events/index.js";
 import { AppDatabase } from "../src/storage/database.js";
+import { createTestRuntime } from "../src/testing/index.js";
 
 const schemaHash = "a".repeat(64);
 
@@ -142,6 +143,25 @@ test("projection capture inventories the schema and records insert, update, and 
       catalog.find((entry) => entry.table_name === "characters")?.classification,
       "projection",
     );
+    assert.equal(
+      catalog.find((entry) => entry.table_name === "agent_module_provider_settings")?.classification,
+      "excluded",
+    );
+    database.connection.prepare(`
+      INSERT INTO agent_module_provider_settings(module_id, revision, values_json, updated_at)
+      VALUES (?, 1, ?, ?)
+    `).run(
+      "provider:secret-probe",
+      JSON.stringify({ apiToken: "EVENT_LEDGER_MUST_NOT_COPY_THIS" }),
+      "2026-09-15T00:00:00.000Z",
+    );
+    assert.equal(Number((database.connection.prepare(`
+      SELECT count(*) AS count FROM runtime_events WHERE payload_json LIKE '%EVENT_LEDGER_MUST_NOT_COPY_THIS%'
+    `).get() as { count: number }).count), 0);
+    assert.equal(
+      JSON.stringify(events.exportScope("normal")).includes("EVENT_LEDGER_MUST_NOT_COPY_THIS"),
+      false,
+    );
 
     database.connection.prepare(`
       INSERT INTO characters(id, name, created_at, updated_at) VALUES (?, ?, ?, ?)
@@ -159,6 +179,11 @@ test("projection capture inventories the schema and records insert, update, and 
       (events.replay(streamId) as { row: Record<string, unknown> }).row.name,
       "After",
     );
+    assert.equal(
+      events.replayProjection("characters")
+        .find((entry) => entry.key[0] === "character:event-capture")?.row.name,
+      "After",
+    );
 
     database.connection.prepare("DELETE FROM characters WHERE id = ?")
       .run("character:event-capture");
@@ -169,6 +194,11 @@ test("projection capture inventories the schema and records insert, update, and 
       row: null,
       schemaHash: (events.replay(streamId) as { schemaHash: string }).schemaHash,
     });
+    assert.equal(
+      events.replayProjection("characters")
+        .some((entry) => entry.key[0] === "character:event-capture"),
+      false,
+    );
     assert.equal(events.verifyIntegrity().ok, true);
   } finally {
     database.close();
@@ -270,5 +300,141 @@ test("projection capture encodes blobs and inherits secret scope through foreign
     assert.equal(events.verifyIntegrity().ok, true);
   } finally {
     database.close();
+  }
+});
+
+test("runtime boundaries reconstruct session lifecycle, model context, and the full settled turn", async () => {
+  const runtime = createTestRuntime({ seed: "runtime-boundaries" });
+  try {
+    const character = runtime.kernel.createCharacter({ name: "Event Character" });
+    await runtime.kernel.sessionRuntime.getOrCreate(
+      "session:normal-events",
+      "sms",
+      character.id,
+      "normal",
+    );
+    const requestText = `secret request ${"q".repeat(8_100)}`;
+    const reply = `secret reply ${"r".repeat(12_100)}`;
+    runtime.model.enqueue([{ kind: "assistant_text", text: reply }]);
+    const response = await runtime.kernel.sendMessage("session:secret-events", {
+      mode: "sms",
+      characterId: character.id,
+      conversationSpace: "secret",
+      text: requestText,
+    });
+    assert.equal(response.reply, reply);
+
+    runtime.kernel.archiveConversation("session:secret-events");
+    runtime.kernel.restoreConversation("session:secret-events");
+    const lifecycle = runtime.kernel.database.connection.prepare(`
+      SELECT json_extract(payload_json, '$.transition') AS transition
+      FROM runtime_events
+      WHERE aggregate_type = 'session' AND session_id = ?
+        AND event_type = 'runtime.session.snapshotted'
+      ORDER BY stream_sequence
+    `).all("session:secret-events") as Array<{ transition: string }>;
+    assert.ok(lifecycle.some((entry) => entry.transition === "created"));
+    assert.ok(lifecycle.some((entry) => entry.transition === "archived"));
+    assert.ok(lifecycle.some((entry) => entry.transition === "restored"));
+
+    const settled = runtime.kernel.database.connection.prepare(`
+      SELECT payload_json FROM runtime_events
+      WHERE event_type = 'runtime.turn.settled' AND session_id = ?
+      ORDER BY sequence DESC LIMIT 1
+    `).get("session:secret-events") as { payload_json: string };
+    const settledPayload = JSON.parse(settled.payload_json) as {
+      turn: { requestText: string; reply: string; systemPrompt: string };
+    };
+    assert.equal(settledPayload.turn.requestText, requestText);
+    assert.equal(settledPayload.turn.reply, reply);
+    assert.ok(settledPayload.turn.systemPrompt.length > 100);
+
+    const summary = runtime.kernel.database.connection.prepare(`
+      SELECT request_text, reply FROM context_log_summaries WHERE session_id = ?
+    `).get("session:secret-events") as { request_text: string; reply: string };
+    assert.equal(summary.request_text.length, 8_014);
+    assert.equal(summary.reply.length, 12_014);
+    assert.match(summary.request_text, /\.\.\.\[truncated\]$/u);
+    assert.match(summary.reply, /\.\.\.\[truncated\]$/u);
+    const modelTrace = runtime.kernel.database.connection.prepare(`
+      SELECT payload_json FROM runtime_events
+      WHERE aggregate_type = 'projection:model_context_traces' AND session_id = ?
+        AND event_type = 'runtime.projection.upserted'
+      ORDER BY sequence DESC LIMIT 1
+    `).get("session:secret-events") as { payload_json: string };
+    const traceRow = (JSON.parse(modelTrace.payload_json) as {
+      row: { request_text: string; payload_json: string };
+    }).row;
+    assert.equal(traceRow.request_text, requestText);
+    assert.match(traceRow.payload_json, /secret request/u);
+
+    const readiness = runtime.kernel.readiness();
+    assert.equal(readiness.runtimeEvents.status, "ok");
+    const normalExport = runtime.kernel.runtimeEvents.exportScope("normal");
+    const secretExport = runtime.kernel.runtimeEvents.exportScope("secret", character.id);
+    assert.ok(normalExport.events.some((event) => event.scope.sessionId === "session:normal-events"));
+    assert.ok(secretExport.events.length > 0);
+    assert.ok(secretExport.events.every((event) =>
+      event.scope.conversationSpace === "secret" &&
+      event.scope.secretOwnerCharacterId === character.id
+    ));
+    assert.equal(JSON.stringify(secretExport).includes("piSessionFile"), false);
+
+    const metadata = runtime.kernel.sessionRuntime.getConversationMetadata()
+      .find((entry) => entry.id === "session:secret-events");
+    assert.ok(metadata);
+    await runtime.kernel.deleteConversation(
+      metadata.id,
+      metadata.title ?? metadata.id,
+    );
+    assert.equal(Number((runtime.kernel.database.connection.prepare(`
+      SELECT count(*) AS count FROM runtime_event_streams WHERE session_id = ?
+    `).get(metadata.id) as { count: number }).count), 0);
+    assert.equal(runtime.kernel.runtimeEvents.verifyIntegrity().ok, true);
+  } finally {
+    runtime.dispose();
+  }
+});
+
+test("character and all-data deletion physically purge owned runtime history", async () => {
+  const runtime = createTestRuntime({ seed: "runtime-event-purge" });
+  try {
+    const character = runtime.kernel.createCharacter({ name: "Purge Character" });
+    await runtime.kernel.sessionRuntime.getOrCreate(
+      "session:purge-normal",
+      "sms",
+      character.id,
+      "normal",
+    );
+    await runtime.kernel.sessionRuntime.getOrCreate(
+      "session:purge-secret",
+      "sms",
+      character.id,
+      "secret",
+    );
+    runtime.kernel.deleteCharacter(character.id, character.name, "delete");
+    assert.equal(Number((runtime.kernel.database.connection.prepare(`
+      SELECT count(*) AS count FROM runtime_event_streams
+      WHERE character_id = ? OR secret_owner_character_id = ?
+        OR session_id IN ('session:purge-normal', 'session:purge-secret')
+    `).get(character.id, character.id) as { count: number }).count), 0);
+
+    runtime.kernel.createCharacter({ name: "Delete All Character" });
+    assert.ok(Number((runtime.kernel.database.connection.prepare(
+      "SELECT count(*) AS count FROM runtime_event_streams",
+    ).get() as { count: number }).count) > 0);
+    await runtime.kernel.deleteAllUserData();
+    assert.equal(Number((runtime.kernel.database.connection.prepare(
+      "SELECT count(*) AS count FROM runtime_event_streams",
+    ).get() as { count: number }).count), 0);
+    assert.deepEqual(runtime.kernel.runtimeEvents.verifyIntegrity(), {
+      ok: true,
+      streamCount: 0,
+      eventCount: 0,
+      checkpointCount: 0,
+      errors: [],
+    });
+  } finally {
+    runtime.dispose();
   }
 });

@@ -8,6 +8,7 @@ import type {
   ModelContextTraceScope,
 } from "../domain/types.js";
 import type { AppDatabase } from "./database.js";
+import type { RuntimeEventStore } from "../runtime-events/store.js";
 
 type Row = Record<string, unknown>;
 
@@ -31,7 +32,10 @@ export interface ObservabilitySink {
 }
 
 export class ObservabilityRepository implements ObservabilitySink {
-  constructor(private readonly database: AppDatabase) {}
+  constructor(
+    private readonly database: AppDatabase,
+    private readonly runtimeEvents?: RuntimeEventStore,
+  ) {}
 
   recordAction(action: ActionRecord): void {
     this.database.connection.prepare(`
@@ -48,30 +52,35 @@ export class ObservabilityRepository implements ObservabilitySink {
   }
 
   recordContextLog(log: ContextLogEntry): void {
-    this.database.connection.prepare(`
-      INSERT OR REPLACE INTO context_log_summaries(
-        id, session_id, mode, conversation_space, secret_owner_character_id,
-        request_text, system_prompt_excerpt, message_count_before,
-        tool_names_json, reply, actions_json, event_types_json, turn_status, can_retry, created_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `).run(
-      log.id,
-      log.sessionId,
-      log.mode,
-      log.conversationSpace,
-      log.secretOwnerCharacterId ?? null,
-      truncate(log.requestText, 8_000),
-      truncate(log.systemPrompt, 12_000),
-      log.messageCountBefore,
-      boundedStringArrayJson(log.toolNames, 8_000),
-      truncate(log.reply, 12_000),
-      boundedActionsJson(log.actions, 32_000),
-      boundedStringArrayJson(log.events.map((event) => event.type), 8_000),
-      log.status,
-      log.canRetry ? 1 : 0,
-      log.createdAt,
-    );
-    this.trim();
+    const operation = () => {
+      this.database.connection.prepare(`
+        INSERT OR REPLACE INTO context_log_summaries(
+          id, session_id, mode, conversation_space, secret_owner_character_id,
+          request_text, system_prompt_excerpt, message_count_before,
+          tool_names_json, reply, actions_json, event_types_json, turn_status, can_retry, created_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `).run(
+        log.id,
+        log.sessionId,
+        log.mode,
+        log.conversationSpace,
+        log.secretOwnerCharacterId ?? null,
+        truncate(log.requestText, 8_000),
+        truncate(log.systemPrompt, 12_000),
+        log.messageCountBefore,
+        boundedStringArrayJson(log.toolNames, 8_000),
+        truncate(log.reply, 12_000),
+        boundedActionsJson(log.actions, 32_000),
+        boundedStringArrayJson(log.events.map((event) => event.type), 8_000),
+        log.status,
+        log.canRetry ? 1 : 0,
+        log.createdAt,
+      );
+      this.runtimeEvents?.recordTurnSettled(log);
+      this.trim();
+    };
+    if (this.database.connection.isTransaction) operation();
+    else this.database.transaction(operation);
   }
 
   recentContextLogs(

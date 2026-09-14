@@ -37,12 +37,14 @@ type ScopeKind = "conversationSpace" | "secretOwnerCharacterId" | "characterId" 
 
 const zeroHash = "0".repeat(64);
 const maximumTraversalDepth = 5;
+const capturePolicyVersion = 2;
 const nativeEventTables = new Set([
   "execution_job_output_chunks",
   "session_goal_transitions",
   "session_workflow_events",
 ]);
 const excludedTables = new Set([
+  "agent_module_provider_settings",
   "memory_vault_writer_lease",
   "schema_migrations",
   "task_bench_report_migrations",
@@ -130,6 +132,7 @@ function inspectTables(database: DatabaseSync): Map<string, TableDescriptor> {
   const descriptors = new Map<string, TableDescriptor>();
   for (const table of partial.values()) {
     const schema = {
+      capturePolicyVersion,
       name: table.name,
       columns: table.columns,
       foreignKeys: table.foreignKeys,
@@ -140,7 +143,7 @@ function inspectTables(database: DatabaseSync): Map<string, TableDescriptor> {
       detail: table.classification === "projection"
         ? "mutable durable row mirrored as a typed runtime projection stream"
         : table.classification === "native_event"
-          ? "append-only typed domain ledger replayed through its owning repository"
+          ? "append-only typed domain ledger also mirrored for unified runtime replay"
           : excludedDetail(table.name, table.sql),
     });
   }
@@ -162,6 +165,9 @@ function excludedDetail(name: string, sql: string): string {
     return "derived search index rebuilt from its authoritative projection";
   }
   if (name === "memory_vault_writer_lease") return "ephemeral process lease, not durable domain state";
+  if (name === "agent_module_provider_settings") {
+    return "may contain write-only provider secrets; intentionally never copied into the event ledger";
+  }
   return "schema or one-shot migration bookkeeping";
 }
 
@@ -203,7 +209,7 @@ function reconcileProjectionSnapshots(
   };
   const events = new RuntimeEventStore(eventDatabase);
   for (const table of descriptors.values()) {
-    if (table.classification !== "projection" || !table.primaryKey.length) continue;
+    if (table.classification === "excluded" || !table.primaryKey.length) continue;
     transaction(database, () => reconcileTable(database, events, descriptors, table));
   }
 }
@@ -222,14 +228,15 @@ function reconcileTable(
     const streamId = projectionStreamId(table.name, key);
     liveStreams.add(streamId);
     const row = projectionRow(rawRow);
+    const scope = readScope(database, table, rawRow, scopeSql);
     const head = database.prepare(`
-      SELECT projection_schema_hash FROM runtime_event_streams WHERE stream_id = ?
-    `).get(streamId) as { projection_schema_hash?: string | null } | undefined;
+      SELECT * FROM runtime_event_streams WHERE stream_id = ?
+    `).get(streamId) as Row | undefined;
+    if (head) reconcileStreamScope(database, streamId, head, scope);
     const previous = head ? events.replay(streamId) : undefined;
     const unchanged = previous?.kind === "projection" && previous.row !== null &&
       head?.projection_schema_hash === table.schemaHash && stableJson(previous.row) === stableJson(row);
     if (unchanged) continue;
-    const scope = readScope(database, table, rawRow, scopeSql);
     events.append({
       streamId,
       aggregateType: `projection:${table.name}`,
@@ -276,7 +283,7 @@ function installProjectionTriggers(
   descriptors: ReadonlyMap<string, TableDescriptor>,
 ): void {
   for (const table of descriptors.values()) {
-    if (table.classification !== "projection" || !table.primaryKey.length) continue;
+    if (table.classification === "excluded" || !table.primaryKey.length) continue;
     const base = `runtime_capture_${sha256(table.name).slice(0, 16)}`;
     for (const suffix of ["insert", "update", "delete"] as const) {
       database.exec(`DROP TRIGGER IF EXISTS temp.${identifier(`${base}_${suffix}`)}`);
@@ -453,22 +460,52 @@ function readScope(
   };
 }
 
+function reconcileStreamScope(
+  database: DatabaseSync,
+  streamId: string,
+  stored: Row,
+  scope: RuntimeEventScope,
+): void {
+  const conversationSpace = scope.conversationSpace ?? null;
+  const secretOwnerCharacterId = scope.secretOwnerCharacterId ?? null;
+  const characterId = scope.characterId ?? null;
+  const sessionId = scope.sessionId ?? null;
+  if (
+    (stored.conversation_space ?? null) === conversationSpace &&
+    (stored.secret_owner_character_id ?? null) === secretOwnerCharacterId &&
+    (stored.character_id ?? null) === characterId &&
+    (stored.session_id ?? null) === sessionId
+  ) return;
+  database.prepare(`
+    UPDATE runtime_event_streams SET
+      conversation_space = ?, secret_owner_character_id = ?, character_id = ?, session_id = ?
+    WHERE stream_id = ?
+  `).run(conversationSpace, secretOwnerCharacterId, characterId, sessionId, streamId);
+  database.prepare(`
+    UPDATE runtime_events SET
+      conversation_space = ?, secret_owner_character_id = ?, character_id = ?, session_id = ?
+    WHERE stream_id = ?
+  `).run(conversationSpace, secretOwnerCharacterId, characterId, sessionId, streamId);
+}
+
 function scopeExpressions(
   descriptors: ReadonlyMap<string, TableDescriptor>,
   table: TableDescriptor,
   alias: string,
 ): Readonly<Record<ScopeKind, string>> {
+  const characterId = scopeExpression(descriptors, table, "characterId", alias, new Set(), 0);
+  const explicitSecretOwner = scopeExpression(
+    descriptors,
+    table,
+    "secretOwnerCharacterId",
+    alias,
+    new Set(),
+    0,
+  );
   return {
     conversationSpace: scopeExpression(descriptors, table, "conversationSpace", alias, new Set(), 0),
-    secretOwnerCharacterId: scopeExpression(
-      descriptors,
-      table,
-      "secretOwnerCharacterId",
-      alias,
-      new Set(),
-      0,
-    ),
-    characterId: scopeExpression(descriptors, table, "characterId", alias, new Set(), 0),
+    secretOwnerCharacterId: explicitSecretOwner === "NULL" ? characterId : explicitSecretOwner,
+    characterId,
     sessionId: scopeExpression(descriptors, table, "sessionId", alias, new Set(), 0),
   };
 }
@@ -481,6 +518,8 @@ function scopeExpression(
   visited: ReadonlySet<string>,
   depth: number,
 ): string {
+  const special = specialScopeExpression(table, kind, alias);
+  if (special) return special;
   const direct = directScopeColumn(table, kind);
   if (direct) return `${alias}.${identifier(direct)}`;
   if (depth >= maximumTraversalDepth || visited.has(table.name)) return "NULL";
@@ -506,6 +545,24 @@ function scopeExpression(
     return `(SELECT ${parentExpression} FROM main.${identifier(parent.name)} AS ${parentAlias} WHERE ${join} LIMIT 1)`;
   }
   return "NULL";
+}
+
+function specialScopeExpression(
+  table: TableDescriptor,
+  kind: ScopeKind,
+  alias: string,
+): string | undefined {
+  if (table.name !== "audit_actions") return undefined;
+  if (kind === "conversationSpace") {
+    return `json_extract(${alias}.${identifier("payload_json")}, '$.__rp_agent_action_scope_v1.conversationSpace')`;
+  }
+  if (kind === "secretOwnerCharacterId") {
+    return `json_extract(${alias}.${identifier("payload_json")}, '$.__rp_agent_action_scope_v1.secretOwnerCharacterId')`;
+  }
+  if (kind === "sessionId") {
+    return `json_extract(${alias}.${identifier("payload_json")}, '$.payload.sessionId')`;
+  }
+  return undefined;
 }
 
 function directScopeColumn(table: TableDescriptor, kind: ScopeKind): string | undefined {

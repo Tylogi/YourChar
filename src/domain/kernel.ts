@@ -109,6 +109,7 @@ import type {
 import { AppDatabase } from "../storage/database.js";
 import { DataManagementRepository } from "../storage/data-management.js";
 import { ObservabilityRepository } from "../storage/observability.js";
+import { RuntimeEventStore } from "../runtime-events/store.js";
 import {
   createExecutionJobCapability,
   ExecutionJobCapacityError,
@@ -611,6 +612,8 @@ export class CompanionKernel {
   private readonly sessionGoalCapability: SessionCapability;
   private readonly sessionWorkflowCapability: SessionCapability;
   readonly database: AppDatabase;
+  /** Append-only reconstruction ledger for durable projections and model-visible turns. */
+  readonly runtimeEvents: RuntimeEventStore;
   readonly scheduleService: ScheduleService;
   readonly rpService: RpService;
   readonly groupChatService: GroupChatService;
@@ -732,6 +735,7 @@ export class CompanionKernel {
         this.store.stateDir ? join(this.store.stateDir, "rp-agent.sqlite") : ":memory:",
         { tempStoreMemory: this.incognitoChild },
       );
+    this.runtimeEvents = new RuntimeEventStore(this.database, this.clock);
     this.agentRuntimeConfiguration = new AgentRuntimeConfigurationManager(
       this.database,
       this.clock,
@@ -1232,6 +1236,7 @@ export class CompanionKernel {
         subagentTimeoutMs: normalizedOptions.subagentTimeoutMs,
         subagentSettings: () => this.subagentSettingsService.snapshot(),
         subagentJobs: this.subagentJobs,
+        runtimeEvents: this.runtimeEvents,
         additionalSessionCapabilities: [
           this.executionJobCapability,
           this.sessionGoalCapability,
@@ -1396,7 +1401,7 @@ export class CompanionKernel {
       },
     );
     this.dataManagement = new DataManagementRepository(this.database);
-    this.store.attachObservability(new ObservabilityRepository(this.database));
+    this.store.attachObservability(new ObservabilityRepository(this.database, this.runtimeEvents));
     if (!this.incognitoChild) this.materializeDepartureMemories();
     if (!this.incognitoChild && (normalizedOptions.startPrivateInboxCoordinator ?? true)) {
       this.privateInbox.start();
@@ -3379,6 +3384,7 @@ export class CompanionKernel {
   readiness() {
     this.dataManagement.check();
     const model = this.store.getRawModelApiConfig();
+    const runtimeEvents = this.runtimeEvents.verifyIntegrity();
     return {
       status: "ready",
       database: "ok",
@@ -3393,6 +3399,13 @@ export class CompanionKernel {
       imGatewayConfigured: this.imIntegrations.gateway.configured,
       worldCount: this.worldService.listWorlds(true).length,
       notificationChannel: this.notificationChannel,
+      runtimeEvents: {
+        status: runtimeEvents.ok ? "ok" : "corrupt",
+        streamCount: runtimeEvents.streamCount,
+        eventCount: runtimeEvents.eventCount,
+        checkpointCount: runtimeEvents.checkpointCount,
+        errors: runtimeEvents.errors,
+      },
     };
   }
 
@@ -3567,6 +3580,10 @@ export class CompanionKernel {
           .filter((mutation) => sessionIds.has(mutation.sessionId))
         : [],
       actions,
+      runtimeEvents: this.runtimeEvents.exportScope(
+        conversationSpace,
+        secretOwnerCharacterId,
+      ),
       modelContextTraces: this.store.recentModelContextTraces(
         20,
         undefined,

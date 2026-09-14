@@ -30,13 +30,18 @@ export class DataManagementRepository {
       const memoryContextItems = Number(this.database.connection.prepare(
         "DELETE FROM memory_context_items WHERE session_id = ?",
       ).run(sessionId).changes);
+      const contextLogs = Number(this.database.connection.prepare(
+        "DELETE FROM context_log_summaries WHERE session_id = ?",
+      ).run(sessionId).changes);
+      const modelTraces = Number(this.database.connection.prepare(
+        "DELETE FROM model_context_traces WHERE session_id = ?",
+      ).run(sessionId).changes);
+      this.database.connection.prepare(
+        "DELETE FROM runtime_event_streams WHERE session_id = ?",
+      ).run(sessionId);
       return {
-        contextLogs: Number(this.database.connection.prepare(
-          "DELETE FROM context_log_summaries WHERE session_id = ?",
-        ).run(sessionId).changes),
-        modelTraces: Number(this.database.connection.prepare(
-          "DELETE FROM model_context_traces WHERE session_id = ?",
-        ).run(sessionId).changes),
+        contextLogs,
+        modelTraces,
         contextEconomics,
         memoryContextItems,
         memoryContextSessions,
@@ -76,6 +81,13 @@ export class DataManagementRepository {
       connection.prepare("DELETE FROM memory_extraction_jobs WHERE character_id = ?").run(characterId);
       connection.prepare("DELETE FROM im_inbound_events WHERE character_id = ?").run(characterId);
       connection.prepare("DELETE FROM characters WHERE id = ?").run(characterId);
+      for (const sessionId of sessionIds) {
+        connection.prepare("DELETE FROM runtime_event_streams WHERE session_id = ?").run(sessionId);
+      }
+      connection.prepare(`
+        DELETE FROM runtime_event_streams
+        WHERE character_id = ? OR secret_owner_character_id = ?
+      `).run(characterId, characterId);
     });
   }
 
@@ -182,6 +194,7 @@ export class DataManagementRepository {
         DELETE FROM model_context_traces;
         DELETE FROM context_log_summaries;
         DELETE FROM audit_actions;
+        DELETE FROM runtime_event_streams;
       `);
     });
   }
