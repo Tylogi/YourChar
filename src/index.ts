@@ -15,3 +15,4 @@ export * from "./interaction/index.js";
 export * from "./post-turn/index.js";
 export * from "./user-insight/index.js";
 export * from "./execution/index.js";
+export * from "./goals/index.js";

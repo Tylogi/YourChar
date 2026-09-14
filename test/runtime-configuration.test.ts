@@ -26,7 +26,7 @@ const capabilityId = "test:profile-probe";
 const toolName = "profile_probe";
 const providerSettingsModuleId = "mcp:provider-settings-probe";
 
-test("schemas 58-66 add runtime, provider settings, and durable execution without changing older settings", () => {
+test("schemas 58-67 add runtime, execution, and durable goals without changing older settings", () => {
   const directory = mkdtempSync(join(tmpdir(), "yourchar-runtime-schema-"));
   const path = join(directory, "state.sqlite");
   try {
@@ -43,7 +43,7 @@ test("schemas 58-66 add runtime, provider settings, and durable execution withou
         Number((upgraded.connection.prepare(
           "SELECT MAX(version) AS version FROM schema_migrations",
         ).get() as { version: number }).version),
-        66,
+        67,
       );
       const manager = new AgentRuntimeConfigurationManager(
         upgraded,
@@ -164,6 +164,16 @@ test("schemas 58-66 add runtime, provider settings, and durable execution withou
       assert.ok(upgraded.connection.prepare(
         "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'execution_job_output_chunks'",
       ).get());
+      for (const table of [
+        "session_goals",
+        "session_goal_dependencies",
+        "session_goal_todos",
+        "session_goal_transitions",
+      ]) {
+        assert.ok(upgraded.connection.prepare(
+          "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?",
+        ).get(table), `${table} must be migrated`);
+      }
     } finally {
       upgraded.close();
     }
@@ -184,8 +194,8 @@ test("default runtime configuration is inspectable, bounded, and persisted witho
       snapshot.packages.map((entry) => [entry.id, entry.trust, entry.active]),
       [["builtin-core", "built_in", true]],
     );
-    assert.equal(snapshot.activeCapabilities.length, 15);
-    assert.equal(new Set(snapshot.activeCapabilities.map((entry) => entry.id)).size, 15);
+    assert.equal(snapshot.activeCapabilities.length, 16);
+    assert.equal(new Set(snapshot.activeCapabilities.map((entry) => entry.id)).size, 16);
 
     const row = runtime.kernel.database.connection.prepare(`
       SELECT revision, digest, snapshot_json

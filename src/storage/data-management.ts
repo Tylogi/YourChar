@@ -19,6 +19,7 @@ export class DataManagementRepository {
       this.database.connection.prepare("DELETE FROM relationship_extraction_jobs WHERE session_id = ?").run(sessionId);
       this.database.connection.prepare("DELETE FROM subagent_jobs WHERE parent_session_id = ?").run(sessionId);
       this.database.connection.prepare("DELETE FROM execution_jobs WHERE parent_session_id = ?").run(sessionId);
+      this.database.connection.prepare("DELETE FROM session_goals WHERE parent_session_id = ?").run(sessionId);
       const contextEconomics = Number(this.database.connection.prepare(
         "DELETE FROM context_economics WHERE session_id = ?",
       ).run(sessionId).changes);
@@ -165,6 +166,7 @@ export class DataManagementRepository {
         DELETE FROM meeting_presets;
         DELETE FROM user_profiles;
         DELETE FROM agent_module_provider_settings;
+        DELETE FROM session_goals;
         DELETE FROM execution_jobs;
         DELETE FROM subagent_jobs;
         DELETE FROM agent_skill_space_settings;

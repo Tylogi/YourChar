@@ -41,6 +41,9 @@ test("background shell jobs use the capability seam and expose only bounded outp
       text: "启动一个后台输出任务。",
     });
     assert.equal(response.status, "completed");
+    const staticToolContextBytes = JSON.stringify(
+      runtime.model.requests[0]?.providerPayload,
+    ).length;
     for (const toolName of [
       "start_shell_job",
       "list_execution_jobs",
@@ -91,7 +94,10 @@ test("background shell jobs use the capability seam and expose only bounded outp
     });
     const pagedContext = JSON.stringify(runtime.model.requests.at(-1)?.providerPayload);
     assert.doesNotMatch(pagedContext, /EXPLICIT_OUTPUT_SENTINEL/u);
-    assert.ok(pagedContext.length < 40_000, `paged context grew to ${pagedContext.length} characters`);
+    assert.ok(
+      pagedContext.length < staticToolContextBytes + 16_000,
+      `paged context grew from ${staticToolContextBytes} to ${pagedContext.length} characters`,
+    );
 
     let cursor = 0;
     let explicitOutput = "";
@@ -382,7 +388,7 @@ test("shutdown stages shell work as idle and only trusted explicit retry replays
       Number((second.kernel.database.connection.prepare(
         "SELECT MAX(version) AS version FROM schema_migrations",
       ).get() as { version: number }).version),
-      66,
+      67,
     );
   } finally {
     if (server) await new Promise<void>((resolve) => server!.close(() => resolve()));

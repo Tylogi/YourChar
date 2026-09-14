@@ -22,6 +22,7 @@ import type { AgentModuleCatalog } from "../modules/catalog.js";
 import type { AgentPermissions } from "../modules/types.js";
 import type { SubagentJobDetail, SubagentJobSummary } from "../modules/subagent-jobs.js";
 import { executionJobCapabilityDescriptor } from "../execution/index.js";
+import { sessionGoalCapabilityDescriptor } from "../goals/index.js";
 import type { ScopedWorkspace } from "../workspace/scope.js";
 import {
   gitMcpModuleId,
@@ -74,6 +75,7 @@ export const builtinSessionCapabilityDescriptors = Object.freeze({
   git: descriptor("builtin:mcp:git", 700, gitMcpModuleId),
   subagent: descriptor("builtin:mcp:subagent", 800, subagentMcpModuleId),
   executionJobs: executionJobCapabilityDescriptor,
+  sessionGoals: sessionGoalCapabilityDescriptor,
   relationshipState: descriptor(
     "builtin:mcp:relationship-state",
     900,

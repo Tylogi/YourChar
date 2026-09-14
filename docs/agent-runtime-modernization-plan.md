@@ -156,12 +156,19 @@ Required invariants:
 
 ### P3b — General goals, plans, and todos
 
-- [ ] Add session-scoped durable goals with explicit success criteria, status,
+- [x] Add session-scoped durable goals with explicit success criteria, status,
   priority, dependencies, and bounded notes.
-- [ ] Expose plan/todo mutation tools without allowing model-visible state to
+- [x] Expose plan/todo mutation tools without allowing model-visible state to
   bypass normal/secret/incognito ownership.
-- [ ] Record progress as typed transitions so a restarted turn can reconstruct
+- [x] Record progress as typed transitions so a restarted turn can reconstruct
   what remains without replaying completed work.
+
+The projection uses optimistic goal/todo revisions. Every accepted mutation
+updates the projection and appends exactly one typed transition in the same
+SQLite transaction. Dependency edges are same-session and acyclic; completion
+is rejected while a dependency or todo remains unfinished. Terminal work is
+immutable, hidden from the default active list, and retained for explicit
+history/reconstruction until its owning conversation is deleted.
 
 ### P3c — Workflow fan-out and orchestration
 
@@ -214,6 +221,7 @@ feature counts must not be reported as task-success improvements.
 - [x] P2 continuable jobs and subagents, including fenced checkpoint recovery,
   committed-result reconciliation, and explicit replay decisions.
 - [x] P3a durable background shell jobs and bounded result spill.
+- [x] P3b durable session goals, plans, todos, and typed progress transitions.
 - [ ] P3 general execution.
 - [ ] P4 provider and host seams.
 - [ ] P5 event-sourced runtime state.

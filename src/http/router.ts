@@ -121,6 +121,15 @@ import {
   ExecutionJobValidationError,
   maximumExecutionOutputPageBytes,
 } from "../execution/index.js";
+import {
+  SessionGoalConflictError,
+  SessionGoalNotFoundError,
+  SessionGoalTodoNotFoundError,
+  SessionGoalValidationError,
+  type SessionGoalPriority,
+  type SessionGoalStatus,
+  type SessionGoalTodoStatus,
+} from "../goals/index.js";
 import type { MemoryControlPlaneEdit } from "../memory-coordinator/types.js";
 import { UserInsightControlError } from "../user-insight/index.js";
 import {
@@ -398,6 +407,15 @@ export function createHttpServer(options: HttpServerOptions = {}) {
         error instanceof ExecutionJobCapacityError
       ) {
         sendJson(response, 409, { code: error.code, error: error.message });
+      } else if (
+        error instanceof SessionGoalNotFoundError ||
+        error instanceof SessionGoalTodoNotFoundError
+      ) {
+        sendJson(response, 404, { code: error.code, error: error.message });
+      } else if (error instanceof SessionGoalValidationError) {
+        sendJson(response, 400, { code: error.code, error: error.message });
+      } else if (error instanceof SessionGoalConflictError) {
+        sendJson(response, 409, { code: error.code, error: error.message });
       } else if (error instanceof SubagentJobNotFoundError) {
         sendJson(response, 404, { code: error.code, error: error.message });
       } else if (error instanceof SubagentJobStateError) {
@@ -664,6 +682,8 @@ async function route(input: {
         "GET/POST /api/v1/sessions/{id}/subagent-jobs; GET /api/v1/sessions/{id}/subagent-jobs/{jobId}; POST /api/v1/sessions/{id}/subagent-jobs/{jobId}/{messages|interrupt|retry}",
       executionJobs:
         "GET/POST /api/v1/sessions/{id}/execution-jobs; GET /api/v1/sessions/{id}/execution-jobs/{jobId}[/output]; POST /api/v1/sessions/{id}/execution-jobs/{jobId}/{interrupt|retry}",
+      goals:
+        "GET/POST /api/v1/sessions/{id}/goals; GET/PATCH /api/v1/sessions/{id}/goals/{goalId}; mutate transitions, dependencies, and todos below a goal",
       imChannels: "GET /api/v1/im/channels",
       imSettings: "GET/PATCH /api/v1/im/settings",
       imBindingQr: "POST /api/v1/im/bindings/{provider}/qr",
@@ -955,6 +975,274 @@ async function route(input: {
         updatedAt: record.updatedAt,
       })),
     });
+    return;
+  }
+
+  const goalTodoTransitionMatch = pathname.match(
+    /^\/api\/v1\/sessions\/([^/]+)\/goals\/([^/]+)\/todos\/([^/]+)\/transition$/,
+  );
+  if (goalTodoTransitionMatch && method === "POST") {
+    assertLocalControlPlaneMutation(input.request);
+    const body = asRecord(await readJson(input.request));
+    assertOnlyKeys(
+      body,
+      ["expectedGoalRevision", "expectedTodoRevision", "status", "note"],
+      "Goal todo transition",
+    );
+    const goal = kernel.transitionSessionGoalTodo(
+      decodeURIComponent(goalTodoTransitionMatch[1]),
+      decodeURIComponent(goalTodoTransitionMatch[2]),
+      decodeURIComponent(goalTodoTransitionMatch[3]),
+      {
+        expectedGoalRevision: requiredPositiveInteger(
+          body.expectedGoalRevision,
+          "expectedGoalRevision",
+        ),
+        expectedTodoRevision: requiredPositiveInteger(
+          body.expectedTodoRevision,
+          "expectedTodoRevision",
+        ),
+        status: requiredSessionGoalTodoStatus(body.status),
+        ...(body.note === undefined
+          ? {}
+          : { note: requiredStringValue(body.note, "note") }),
+      },
+    );
+    sendJson(input.response, 200, { goal });
+    return;
+  }
+
+  const goalTodoMatch = pathname.match(
+    /^\/api\/v1\/sessions\/([^/]+)\/goals\/([^/]+)\/todos\/([^/]+)$/,
+  );
+  if (goalTodoMatch && method === "PATCH") {
+    assertLocalControlPlaneMutation(input.request);
+    const body = asRecord(await readJson(input.request));
+    assertOnlyKeys(
+      body,
+      [
+        "expectedGoalRevision",
+        "expectedTodoRevision",
+        "title",
+        "notes",
+        "transitionNote",
+      ],
+      "Goal todo update",
+    );
+    const goal = kernel.updateSessionGoalTodo(
+      decodeURIComponent(goalTodoMatch[1]),
+      decodeURIComponent(goalTodoMatch[2]),
+      decodeURIComponent(goalTodoMatch[3]),
+      {
+        expectedGoalRevision: requiredPositiveInteger(
+          body.expectedGoalRevision,
+          "expectedGoalRevision",
+        ),
+        expectedTodoRevision: requiredPositiveInteger(
+          body.expectedTodoRevision,
+          "expectedTodoRevision",
+        ),
+        ...(body.title === undefined
+          ? {}
+          : { title: requiredStringValue(body.title, "title") }),
+        ...(body.notes === undefined
+          ? {}
+          : { notes: requiredStringValue(body.notes, "notes", true) }),
+        ...(body.transitionNote === undefined
+          ? {}
+          : { transitionNote: requiredStringValue(body.transitionNote, "transitionNote") }),
+      },
+    );
+    sendJson(input.response, 200, { goal });
+    return;
+  }
+
+  const goalTodosMatch = pathname.match(
+    /^\/api\/v1\/sessions\/([^/]+)\/goals\/([^/]+)\/todos$/,
+  );
+  if (goalTodosMatch && method === "POST") {
+    assertLocalControlPlaneMutation(input.request);
+    const body = asRecord(await readJson(input.request));
+    assertOnlyKeys(body, ["expectedGoalRevision", "title", "notes"], "Goal todo");
+    const goal = kernel.createSessionGoalTodo(
+      decodeURIComponent(goalTodosMatch[1]),
+      decodeURIComponent(goalTodosMatch[2]),
+      {
+        expectedGoalRevision: requiredPositiveInteger(
+          body.expectedGoalRevision,
+          "expectedGoalRevision",
+        ),
+        title: requiredStringValue(body.title, "title"),
+        ...(body.notes === undefined
+          ? {}
+          : { notes: requiredStringValue(body.notes, "notes", true) }),
+      },
+    );
+    sendJson(input.response, 201, { goal });
+    return;
+  }
+
+  const goalDependenciesMatch = pathname.match(
+    /^\/api\/v1\/sessions\/([^/]+)\/goals\/([^/]+)\/dependencies$/,
+  );
+  if (goalDependenciesMatch && method === "PATCH") {
+    assertLocalControlPlaneMutation(input.request);
+    const body = asRecord(await readJson(input.request));
+    assertOnlyKeys(
+      body,
+      ["expectedRevision", "dependencyGoalIds", "transitionNote"],
+      "Goal dependencies",
+    );
+    const goal = kernel.setSessionGoalDependencies(
+      decodeURIComponent(goalDependenciesMatch[1]),
+      decodeURIComponent(goalDependenciesMatch[2]),
+      {
+        expectedRevision: requiredPositiveInteger(body.expectedRevision, "expectedRevision"),
+        dependencyGoalIds: requiredExactStringArray(
+          body.dependencyGoalIds,
+          "dependencyGoalIds",
+        ),
+        ...(body.transitionNote === undefined
+          ? {}
+          : { transitionNote: requiredStringValue(body.transitionNote, "transitionNote") }),
+      },
+    );
+    sendJson(input.response, 200, { goal });
+    return;
+  }
+
+  const goalTransitionMatch = pathname.match(
+    /^\/api\/v1\/sessions\/([^/]+)\/goals\/([^/]+)\/transition$/,
+  );
+  if (goalTransitionMatch && method === "POST") {
+    assertLocalControlPlaneMutation(input.request);
+    const body = asRecord(await readJson(input.request));
+    assertOnlyKeys(body, ["expectedRevision", "status", "note"], "Goal transition");
+    const goal = kernel.transitionSessionGoal(
+      decodeURIComponent(goalTransitionMatch[1]),
+      decodeURIComponent(goalTransitionMatch[2]),
+      {
+        expectedRevision: requiredPositiveInteger(body.expectedRevision, "expectedRevision"),
+        status: requiredSessionGoalStatus(body.status),
+        ...(body.note === undefined
+          ? {}
+          : { note: requiredStringValue(body.note, "note") }),
+      },
+    );
+    sendJson(input.response, 200, { goal });
+    return;
+  }
+
+  const goalsMatch = pathname.match(
+    /^\/api\/v1\/sessions\/([^/]+)\/goals(?:\/([^/]+))?$/,
+  );
+  if (goalsMatch && method === "GET") {
+    const parentSessionId = decodeURIComponent(goalsMatch[1]);
+    if (goalsMatch[2] !== undefined) {
+      const transitionLimit = optionalQueryInteger(
+        url.searchParams.get("transitionLimit"),
+        "transitionLimit",
+        0,
+      ) ?? 20;
+      if (transitionLimit > 100) {
+        throw new SyntaxError("transitionLimit must not exceed 100");
+      }
+      sendJson(input.response, 200, {
+        goal: kernel.getSessionGoal(
+          parentSessionId,
+          decodeURIComponent(goalsMatch[2]),
+          transitionLimit,
+        ),
+      });
+      return;
+    }
+    const limit = optionalQueryInteger(url.searchParams.get("limit"), "limit", 1) ?? 20;
+    if (limit > 100) throw new SyntaxError("limit must not exceed 100");
+    sendJson(input.response, 200, {
+      goals: kernel.listSessionGoals(parentSessionId, {
+        limit,
+        includeTerminal: optionalQueryBoolean(
+          url.searchParams.get("includeTerminal"),
+          "includeTerminal",
+        ) ?? false,
+      }),
+    });
+    return;
+  }
+  if (goalsMatch && method === "POST" && goalsMatch[2] === undefined) {
+    assertLocalControlPlaneMutation(input.request);
+    const body = asRecord(await readJson(input.request));
+    assertOnlyKeys(
+      body,
+      ["title", "successCriteria", "plan", "notes", "priority", "dependencyGoalIds"],
+      "Goal",
+    );
+    const goal = kernel.createSessionGoal(decodeURIComponent(goalsMatch[1]), {
+      title: requiredStringValue(body.title, "title"),
+      successCriteria: requiredStringValue(body.successCriteria, "successCriteria"),
+      ...(body.plan === undefined
+        ? {}
+        : { plan: requiredStringValue(body.plan, "plan", true) }),
+      ...(body.notes === undefined
+        ? {}
+        : { notes: requiredStringValue(body.notes, "notes", true) }),
+      ...(body.priority === undefined
+        ? {}
+        : { priority: requiredSessionGoalPriority(body.priority) }),
+      ...(body.dependencyGoalIds === undefined
+        ? {}
+        : {
+            dependencyGoalIds: requiredExactStringArray(
+              body.dependencyGoalIds,
+              "dependencyGoalIds",
+            ),
+          }),
+    });
+    sendJson(input.response, 201, { goal });
+    return;
+  }
+  if (goalsMatch && method === "PATCH" && goalsMatch[2] !== undefined) {
+    assertLocalControlPlaneMutation(input.request);
+    const body = asRecord(await readJson(input.request));
+    assertOnlyKeys(
+      body,
+      [
+        "expectedRevision",
+        "title",
+        "successCriteria",
+        "plan",
+        "notes",
+        "priority",
+        "transitionNote",
+      ],
+      "Goal update",
+    );
+    const goal = kernel.updateSessionGoal(
+      decodeURIComponent(goalsMatch[1]),
+      decodeURIComponent(goalsMatch[2]),
+      {
+        expectedRevision: requiredPositiveInteger(body.expectedRevision, "expectedRevision"),
+        ...(body.title === undefined
+          ? {}
+          : { title: requiredStringValue(body.title, "title") }),
+        ...(body.successCriteria === undefined
+          ? {}
+          : { successCriteria: requiredStringValue(body.successCriteria, "successCriteria") }),
+        ...(body.plan === undefined
+          ? {}
+          : { plan: requiredStringValue(body.plan, "plan", true) }),
+        ...(body.notes === undefined
+          ? {}
+          : { notes: requiredStringValue(body.notes, "notes", true) }),
+        ...(body.priority === undefined
+          ? {}
+          : { priority: requiredSessionGoalPriority(body.priority) }),
+        ...(body.transitionNote === undefined
+          ? {}
+          : { transitionNote: requiredStringValue(body.transitionNote, "transitionNote") }),
+      },
+    );
+    sendJson(input.response, 200, { goal });
     return;
   }
 
@@ -5362,6 +5650,45 @@ function optionalQueryInteger(
     throw new SyntaxError(`${field} must be an integer greater than or equal to ${minimum}`);
   }
   return parsed;
+}
+
+function optionalQueryBoolean(value: string | null, field: string): boolean | undefined {
+  if (value === null || value === "") return undefined;
+  if (value === "true") return true;
+  if (value === "false") return false;
+  throw new SyntaxError(`${field} must be true or false`);
+}
+
+function requiredSessionGoalPriority(value: unknown): SessionGoalPriority {
+  if (value === "low" || value === "normal" || value === "high" || value === "urgent") {
+    return value;
+  }
+  throw new SyntaxError("priority must be low, normal, high, or urgent");
+}
+
+function requiredSessionGoalStatus(value: unknown): SessionGoalStatus {
+  if (
+    value === "planned" ||
+    value === "active" ||
+    value === "blocked" ||
+    value === "completed" ||
+    value === "cancelled"
+  ) {
+    return value;
+  }
+  throw new SyntaxError("status must be planned, active, blocked, completed, or cancelled");
+}
+
+function requiredSessionGoalTodoStatus(value: unknown): SessionGoalTodoStatus {
+  if (
+    value === "pending" ||
+    value === "in_progress" ||
+    value === "completed" ||
+    value === "cancelled"
+  ) {
+    return value;
+  }
+  throw new SyntaxError("status must be pending, in_progress, completed, or cancelled");
 }
 
 function optionalProactiveMessageStatus(value: unknown): ProactiveMessageStatus | undefined {

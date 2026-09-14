@@ -3142,6 +3142,7 @@ const migrations: Migration[] = [
           (conversation_space = 'secret' AND character_id IS NOT NULL
             AND secret_owner_character_id = character_id)
         ),
+        CHECK (conversation_space = 'normal' OR mode = 'sms'),
         CHECK (
           (status = 'completed' AND result_json IS NOT NULL AND failure_json IS NULL)
           OR
@@ -3509,6 +3510,169 @@ const migrations: Migration[] = [
           REFERENCES execution_job_runs(job_id, attempt) ON DELETE CASCADE,
         CHECK (bytes = length(content))
       );
+    `,
+  },
+  {
+    version: 67,
+    sql: `
+      CREATE TABLE session_goals (
+        id TEXT PRIMARY KEY CHECK (length(id) BETWEEN 1 AND 256),
+        parent_session_id TEXT NOT NULL
+          CHECK (length(parent_session_id) BETWEEN 1 AND 256),
+        mode TEXT NOT NULL CHECK (mode IN ('sms', 'rp')),
+        conversation_space TEXT NOT NULL
+          CHECK (conversation_space IN ('normal', 'secret')),
+        character_id TEXT,
+        secret_owner_character_id TEXT,
+        title TEXT NOT NULL
+          CHECK (length(title) BETWEEN 1 AND 240 AND trim(title) = title),
+        success_criteria TEXT NOT NULL CHECK (
+          length(success_criteria) BETWEEN 1 AND 2000
+          AND trim(success_criteria) = success_criteria
+        ),
+        plan_text TEXT NOT NULL DEFAULT ''
+          CHECK (length(plan_text) <= 4000 AND trim(plan_text) = plan_text),
+        notes TEXT NOT NULL DEFAULT ''
+          CHECK (length(notes) <= 1000 AND trim(notes) = notes),
+        priority TEXT NOT NULL
+          CHECK (priority IN ('low', 'normal', 'high', 'urgent')),
+        status TEXT NOT NULL CHECK (
+          status IN ('planned', 'active', 'blocked', 'completed', 'cancelled')
+        ),
+        revision INTEGER NOT NULL DEFAULT 1 CHECK (revision >= 1),
+        terminal_note TEXT CHECK (
+          terminal_note IS NULL OR
+          (length(terminal_note) BETWEEN 1 AND 2000 AND trim(terminal_note) = terminal_note)
+        ),
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        finished_at TEXT,
+        UNIQUE (id, parent_session_id),
+        CHECK (
+          (conversation_space = 'normal' AND secret_owner_character_id IS NULL)
+          OR
+          (conversation_space = 'secret' AND character_id IS NOT NULL
+            AND secret_owner_character_id = character_id)
+        ),
+        CHECK (
+          (status IN ('planned', 'active', 'blocked')
+            AND terminal_note IS NULL AND finished_at IS NULL)
+          OR
+          (status IN ('completed', 'cancelled')
+            AND terminal_note IS NOT NULL AND finished_at IS NOT NULL)
+        )
+      );
+      CREATE INDEX session_goals_parent_status_idx
+        ON session_goals(parent_session_id, status, priority, updated_at DESC, id DESC);
+
+      CREATE TABLE session_goal_dependencies (
+        parent_session_id TEXT NOT NULL,
+        goal_id TEXT NOT NULL,
+        depends_on_goal_id TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        PRIMARY KEY (parent_session_id, goal_id, depends_on_goal_id),
+        FOREIGN KEY (goal_id, parent_session_id)
+          REFERENCES session_goals(id, parent_session_id) ON DELETE CASCADE,
+        FOREIGN KEY (depends_on_goal_id, parent_session_id)
+          REFERENCES session_goals(id, parent_session_id) ON DELETE CASCADE,
+        CHECK (goal_id <> depends_on_goal_id)
+      );
+      CREATE INDEX session_goal_dependencies_target_idx
+        ON session_goal_dependencies(parent_session_id, depends_on_goal_id, goal_id);
+
+      CREATE TABLE session_goal_todos (
+        id TEXT PRIMARY KEY CHECK (length(id) BETWEEN 1 AND 256),
+        goal_id TEXT NOT NULL,
+        parent_session_id TEXT NOT NULL,
+        position INTEGER NOT NULL CHECK (position BETWEEN 1 AND 50),
+        title TEXT NOT NULL
+          CHECK (length(title) BETWEEN 1 AND 240 AND trim(title) = title),
+        notes TEXT NOT NULL DEFAULT ''
+          CHECK (length(notes) <= 1000 AND trim(notes) = notes),
+        status TEXT NOT NULL CHECK (
+          status IN ('pending', 'in_progress', 'completed', 'cancelled')
+        ),
+        revision INTEGER NOT NULL DEFAULT 1 CHECK (revision >= 1),
+        result_note TEXT CHECK (
+          result_note IS NULL OR
+          (length(result_note) BETWEEN 1 AND 2000 AND trim(result_note) = result_note)
+        ),
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        finished_at TEXT,
+        UNIQUE (goal_id, position),
+        UNIQUE (id, goal_id, parent_session_id),
+        FOREIGN KEY (goal_id, parent_session_id)
+          REFERENCES session_goals(id, parent_session_id) ON DELETE CASCADE,
+        CHECK (
+          (status IN ('pending', 'in_progress')
+            AND result_note IS NULL AND finished_at IS NULL)
+          OR
+          (status IN ('completed', 'cancelled')
+            AND result_note IS NOT NULL AND finished_at IS NOT NULL)
+        )
+      );
+      CREATE INDEX session_goal_todos_goal_status_idx
+        ON session_goal_todos(parent_session_id, goal_id, status, position);
+
+      CREATE TABLE session_goal_transitions (
+        id TEXT PRIMARY KEY CHECK (length(id) BETWEEN 1 AND 256),
+        goal_id TEXT NOT NULL,
+        parent_session_id TEXT NOT NULL,
+        sequence INTEGER NOT NULL CHECK (sequence >= 1),
+        transition_type TEXT NOT NULL CHECK (transition_type IN (
+          'goal_created', 'goal_updated', 'goal_status_changed',
+          'dependencies_replaced', 'todo_created', 'todo_updated',
+          'todo_status_changed'
+        )),
+        source TEXT NOT NULL CHECK (source IN ('agent', 'http', 'host')),
+        subject_type TEXT NOT NULL
+          CHECK (subject_type IN ('goal', 'todo', 'dependencies')),
+        subject_id TEXT NOT NULL CHECK (length(subject_id) BETWEEN 1 AND 256),
+        from_status TEXT CHECK (
+          from_status IS NULL OR from_status IN (
+            'planned', 'active', 'blocked', 'completed', 'cancelled',
+            'pending', 'in_progress'
+          )
+        ),
+        to_status TEXT CHECK (
+          to_status IS NULL OR to_status IN (
+            'planned', 'active', 'blocked', 'completed', 'cancelled',
+            'pending', 'in_progress'
+          )
+        ),
+        payload_json TEXT NOT NULL CHECK (
+          json_valid(payload_json) AND json_type(payload_json) = 'object'
+          AND length(payload_json) BETWEEN 2 AND 65536
+        ),
+        note TEXT CHECK (
+          note IS NULL OR
+          (length(note) BETWEEN 1 AND 2000 AND trim(note) = note)
+        ),
+        created_at TEXT NOT NULL,
+        UNIQUE (parent_session_id, goal_id, sequence),
+        FOREIGN KEY (goal_id, parent_session_id)
+          REFERENCES session_goals(id, parent_session_id) ON DELETE CASCADE,
+        CHECK (
+          (transition_type IN ('goal_status_changed', 'todo_status_changed')
+            AND from_status IS NOT NULL AND to_status IS NOT NULL
+            AND from_status <> to_status)
+          OR
+          (transition_type NOT IN ('goal_status_changed', 'todo_status_changed')
+            AND from_status IS NULL AND to_status IS NULL)
+        ),
+        CHECK (
+          (transition_type IN ('todo_created', 'todo_updated', 'todo_status_changed')
+            AND subject_type = 'todo')
+          OR
+          (transition_type = 'dependencies_replaced' AND subject_type = 'dependencies')
+          OR
+          (transition_type IN ('goal_created', 'goal_updated', 'goal_status_changed')
+            AND subject_type = 'goal')
+        )
+      );
+      CREATE INDEX session_goal_transitions_recent_idx
+        ON session_goal_transitions(parent_session_id, goal_id, sequence DESC);
     `,
   },
 ];

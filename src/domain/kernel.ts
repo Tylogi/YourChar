@@ -109,6 +109,19 @@ import {
   type ExecutionJobSummary,
 } from "../execution/index.js";
 import {
+  createSessionGoalCapability,
+  SessionGoalConflictError,
+  SessionGoalNotFoundError,
+  SessionGoalService,
+  type CreateSessionGoalInput,
+  type SessionGoalDetail,
+  type SessionGoalSummary,
+  type TransitionSessionGoalInput,
+  type TransitionSessionGoalTodoInput,
+  type UpdateSessionGoalInput,
+  type UpdateSessionGoalTodoInput,
+} from "../goals/index.js";
+import {
   AgentModuleCatalog,
   agentSkillDiscoveryRoots,
   scheduleMcpModuleId,
@@ -563,6 +576,7 @@ export class CompanionKernel {
   readonly sessionRuntime: PiSessionRuntime;
   private readonly agentRuntimeConfiguration: AgentRuntimeConfigurationManager;
   private readonly executionJobCapability: SessionCapability;
+  private readonly sessionGoalCapability: SessionCapability;
   readonly database: AppDatabase;
   readonly scheduleService: ScheduleService;
   readonly rpService: RpService;
@@ -577,6 +591,8 @@ export class CompanionKernel {
   readonly subagentJobs: SubagentJobService;
   /** Durable background commands and bounded output artifacts; raw bodies stay private. */
   readonly executionJobs: ExecutionJobService;
+  /** Durable session-owned goals, plans, todos, and typed progress transitions. */
+  readonly sessionGoals: SessionGoalService;
   readonly profileService: UserProfileService;
   readonly avatarService: AvatarService;
   readonly systemPromptService: SystemPromptService;
@@ -721,6 +737,15 @@ export class CompanionKernel {
     );
     this.executionJobCapability = createExecutionJobCapability({
       service: this.executionJobs,
+      store: this.store,
+    });
+    this.sessionGoals = new SessionGoalService(
+      this.database,
+      this.clock,
+      this.store.idGenerator,
+    );
+    this.sessionGoalCapability = createSessionGoalCapability({
+      service: this.sessionGoals,
       store: this.store,
     });
     this.imIntegrations = new ImIntegrationService(
@@ -1147,6 +1172,7 @@ export class CompanionKernel {
         subagentJobs: this.subagentJobs,
         additionalSessionCapabilities: [
           this.executionJobCapability,
+          this.sessionGoalCapability,
           ...this.agentRuntimeConfiguration.activeCapabilities(),
         ],
         incognitoChild: this.incognitoChild,
@@ -1205,6 +1231,7 @@ export class CompanionKernel {
       this.sessionRuntime.replaceAdditionalSessionCapabilities(
         [
           this.executionJobCapability,
+          this.sessionGoalCapability,
           ...this.agentRuntimeConfiguration.activeCapabilities(),
         ],
       );
@@ -3652,6 +3679,7 @@ export class CompanionKernel {
     try {
       this.sessionRuntime.replaceAdditionalSessionCapabilities([
         this.executionJobCapability,
+        this.sessionGoalCapability,
         ...prepared.activeCapabilities,
       ]);
     } catch (error) {
@@ -3664,6 +3692,7 @@ export class CompanionKernel {
     } catch (error) {
       this.sessionRuntime.replaceAdditionalSessionCapabilities([
         this.executionJobCapability,
+        this.sessionGoalCapability,
         ...previousCapabilities,
       ]);
       this.moduleCatalog.replaceAdditionalMcpModules(previousContributions);
@@ -3788,6 +3817,134 @@ export class CompanionKernel {
       networkEnabled: job.run?.networkEnabled ?? job.grants.networkEnabled,
     }, conversationActionScope(metadata));
     return job;
+  }
+
+  listSessionGoals(
+    parentSessionId: string,
+    options: { includeTerminal?: boolean; limit?: number } = {},
+  ): readonly SessionGoalSummary[] {
+    const metadata = this.requireSessionGoalParentSession(parentSessionId);
+    return this.sessionGoals.list(metadata.id, options);
+  }
+
+  getSessionGoal(
+    parentSessionId: string,
+    goalId: string,
+    transitionLimit = 20,
+  ): SessionGoalDetail {
+    const metadata = this.requireSessionGoalParentSession(parentSessionId);
+    const goal = this.sessionGoals.get(metadata.id, goalId, transitionLimit);
+    if (!goal) throw new SessionGoalNotFoundError(goalId);
+    return goal;
+  }
+
+  createSessionGoal(
+    parentSessionId: string,
+    input: CreateSessionGoalInput,
+  ): SessionGoalDetail {
+    const metadata = this.requireSessionGoalParentSession(parentSessionId, true);
+    const goal = this.sessionGoals.create({
+      parentSessionId: metadata.id,
+      mode: metadata.mode,
+      conversationSpace: metadata.conversationSpace,
+      ...(metadata.characterId ? { characterId: metadata.characterId } : {}),
+      ...(metadata.conversationSpace === "secret" && metadata.characterId
+        ? { secretOwnerCharacterId: metadata.characterId }
+        : {}),
+    }, input, "http");
+    this.recordSessionGoalMutation("create_goal", metadata, goal);
+    return goal;
+  }
+
+  updateSessionGoal(
+    parentSessionId: string,
+    goalId: string,
+    input: UpdateSessionGoalInput,
+  ): SessionGoalDetail {
+    const metadata = this.requireSessionGoalParentSession(parentSessionId, true);
+    const goal = this.sessionGoals.update(metadata.id, goalId, input, "http");
+    this.recordSessionGoalMutation("update_goal", metadata, goal);
+    return goal;
+  }
+
+  transitionSessionGoal(
+    parentSessionId: string,
+    goalId: string,
+    input: TransitionSessionGoalInput,
+  ): SessionGoalDetail {
+    const metadata = this.requireSessionGoalParentSession(parentSessionId, true);
+    const goal = this.sessionGoals.transition(metadata.id, goalId, input, "http");
+    this.recordSessionGoalMutation("transition_goal", metadata, goal);
+    return goal;
+  }
+
+  setSessionGoalDependencies(
+    parentSessionId: string,
+    goalId: string,
+    input: {
+      expectedRevision: number;
+      dependencyGoalIds: readonly string[];
+      transitionNote?: string;
+    },
+  ): SessionGoalDetail {
+    const metadata = this.requireSessionGoalParentSession(parentSessionId, true);
+    const goal = this.sessionGoals.setDependencies(
+      metadata.id,
+      goalId,
+      input.expectedRevision,
+      input.dependencyGoalIds,
+      "http",
+      input.transitionNote,
+    );
+    this.recordSessionGoalMutation("set_goal_dependencies", metadata, goal);
+    return goal;
+  }
+
+  createSessionGoalTodo(
+    parentSessionId: string,
+    goalId: string,
+    input: { expectedGoalRevision: number; title: string; notes?: string },
+  ): SessionGoalDetail {
+    const metadata = this.requireSessionGoalParentSession(parentSessionId, true);
+    const goal = this.sessionGoals.createTodo(metadata.id, goalId, input, "http");
+    this.recordSessionGoalMutation("create_goal_todo", metadata, goal);
+    return goal;
+  }
+
+  updateSessionGoalTodo(
+    parentSessionId: string,
+    goalId: string,
+    todoId: string,
+    input: UpdateSessionGoalTodoInput,
+  ): SessionGoalDetail {
+    const metadata = this.requireSessionGoalParentSession(parentSessionId, true);
+    const goal = this.sessionGoals.updateTodo(
+      metadata.id,
+      goalId,
+      todoId,
+      input,
+      "http",
+    );
+    this.recordSessionGoalMutation("update_goal_todo", metadata, goal, todoId);
+    return goal;
+  }
+
+  transitionSessionGoalTodo(
+    parentSessionId: string,
+    goalId: string,
+    todoId: string,
+    input: TransitionSessionGoalTodoInput,
+  ): SessionGoalDetail {
+    const metadata = this.requireSessionGoalParentSession(parentSessionId, true);
+    const goal = this.sessionGoals.transitionTodo(
+      metadata.id,
+      goalId,
+      todoId,
+      input,
+      "http",
+    );
+    this.recordSessionGoalMutation("transition_goal_todo", metadata, goal, todoId);
+    return goal;
   }
 
   listSubagentJobs(parentSessionId: string, limit = 20) {
@@ -4096,6 +4253,40 @@ export class CompanionKernel {
       .find((entry) => entry.id === sessionId);
     if (!metadata) throw new ConversationNotFoundError(sessionId);
     return metadata;
+  }
+
+  private requireSessionGoalParentSession(sessionId: string, mutable = false) {
+    if (this.incognitoChild) {
+      throw new SessionGoalConflictError("Persistent goals are unavailable in incognito mode");
+    }
+    if (this.deleteAllUserDataOperation || this.deletingConversationIds.has(sessionId)) {
+      throw new ControlPlaneBusyError("此会话正在清理，不能访问或修改持久目标。");
+    }
+    this.assertKnownIncognitoSessionId(sessionId);
+    this.incognitoSessions?.assertUnsupported(sessionId, "persistent goal access");
+    const metadata = this.sessionRuntime.getConversationMetadata()
+      .find((entry) => entry.id === sessionId);
+    if (!metadata) throw new ConversationNotFoundError(sessionId);
+    if (mutable) this.sessionRuntime.assertConversationActive(metadata.id);
+    return metadata;
+  }
+
+  private recordSessionGoalMutation(
+    actionType: string,
+    metadata: ConversationMetadata,
+    goal: SessionGoalSummary,
+    todoId?: string,
+  ): void {
+    this.store.addAction(actionType, "completed", {
+      transport: "http",
+      sessionId: metadata.id,
+      goalId: goal.id,
+      ...(todoId ? { todoId } : {}),
+      status: goal.status,
+      revision: goal.revision,
+      remainingTodos: goal.todoCounts.remaining,
+      blockedDependencies: goal.blockedByGoalIds.length,
+    }, conversationActionScope(metadata));
   }
 
   private assertConversationExecutionIdle(sessionId: string): void {

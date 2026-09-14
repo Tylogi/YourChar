@@ -151,7 +151,38 @@ local services and may send any current-context or Workspace information the
 Agent can express. Private mode and Skill loading preserve the user's choice;
 they do not provide an outbound confidentiality guarantee.
 
-## 5. Protected Markdown capabilities
+## 5. Durable goals, plans, and todos
+
+Every persistent non-incognito conversation receives the compact
+`manage_goal`, `list_goals`, and `get_goal` tool surface. `manage_goal` uses an
+explicit operation for goal edits, lifecycle transitions, dependency updates,
+and todo creation/edit/transition. Goal state belongs to the exact parent conversation;
+normal and per-character secret conversations cannot read or reference one
+another's goals. Incognito handles receive none of these tools and cannot write
+goal rows through the local control plane.
+
+A goal has a bounded title (240 characters), explicit success criteria (2,000),
+plan (4,000), notes (1,000), priority, lifecycle status, and at most 16 acyclic
+same-session dependencies. It may contain at most 50 ordered todos. Goal and
+todo mutations require current optimistic revisions, so parallel or stale
+writes fail instead of silently overwriting newer progress. A goal cannot be
+completed until every dependency is completed and every todo is completed or
+cancelled. Completed and cancelled goals/todos are immutable.
+
+Each accepted mutation changes the current projection and appends exactly one
+typed transition in the same SQLite transaction. The transition ledger records
+its source, sequence, subject, status edge, bounded note, and a bounded private
+payload. A restarted turn can use `list_goals` and `get_goal` to recover the
+remaining todos and recent transitions without rerunning completed work.
+Ordinary action audits retain only IDs, revisions, lifecycle status, and counts;
+goal, plan, note, and todo text stays in the conversation-owned durable rows.
+Deleting the conversation cascades through all goal artifacts.
+
+The local control plane mirrors the same ownership and revision checks under
+`/api/v1/sessions/{id}/goals`, with nested `transition`, `dependencies`, and
+`todos` routes. All mutations require the trusted local mutation boundary.
+
+## 6. Protected Markdown capabilities
 
 User Profile MCP is still the context switch for profile visibility. When the
 module is enabled, `get_user_profile` is available and only the manual profile
@@ -167,7 +198,7 @@ character receives `get_current_character_soul` and
 handle is created, so the model cannot select another character. No SOUL tools
 are registered in SMS or an unbound RP session.
 
-## 6. HTTP and testing contract
+## 7. HTTP and testing contract
 
 | Method | Path | Purpose |
 |---|---|---|
@@ -180,6 +211,13 @@ are registered in SMS or an unbound RP session.
 | GET | `/api/v1/sessions/{id}/execution-jobs/{jobId}/output` | Read a bounded output page |
 | POST | `/api/v1/sessions/{id}/execution-jobs/{jobId}/interrupt` | Interrupt a non-terminal job |
 | POST | `/api/v1/sessions/{id}/execution-jobs/{jobId}/retry` | Explicitly retry with no wider grant |
+| GET/POST | `/api/v1/sessions/{id}/goals` | List or create conversation-owned durable goals |
+| GET/PATCH | `/api/v1/sessions/{id}/goals/{goalId}` | Read or revise goal details using a revision |
+| POST | `/api/v1/sessions/{id}/goals/{goalId}/transition` | Change goal lifecycle status |
+| PATCH | `/api/v1/sessions/{id}/goals/{goalId}/dependencies` | Replace the bounded dependency set |
+| POST | `/api/v1/sessions/{id}/goals/{goalId}/todos` | Append a pending todo |
+| PATCH | `/api/v1/sessions/{id}/goals/{goalId}/todos/{todoId}` | Revise a non-terminal todo |
+| POST | `/api/v1/sessions/{id}/goals/{goalId}/todos/{todoId}/transition` | Change todo lifecycle status |
 
 Example:
 
