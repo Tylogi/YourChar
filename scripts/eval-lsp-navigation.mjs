@@ -38,14 +38,14 @@ const benchmarkTasks = Object.freeze([
   }),
   Object.freeze({
     id: "semantic-references",
-    task: `分析 fixtures/repository 中的 TypeScript 小型仓库。查找 src/audit/token.ts 所声明 makeAuditToken 符号的语义引用，忽略其他目录中仅同名但不同符号的声明和调用。可以使用当前提供的只读代码工具。不要修改文件。只返回 JSON，不要解释或列出被排除项：{"declaration":"...","referenceFiles":["..."]}，referenceFiles 去重并排序。`,
+    task: `分析 fixtures/repository 中的 TypeScript 小型仓库。查找 src/audit/token.ts 所声明 makeAuditToken 符号的语义引用，忽略其他目录中仅同名但不同符号的声明和调用。可以使用当前提供的只读代码工具。不要修改文件。只返回 JSON，不要解释或列出被排除项：{"declaration":"...","referenceFiles":["..."]}；declaration 填写声明文件路径，referenceFiles 去重并排序。`,
     assertions: {
       requiredPhrases: [
-        "fixtures/repository/src/audit/token.ts",
-        "fixtures/repository/src/audit/record.ts",
-        "fixtures/repository/src/audit/replay.ts",
+        "src/audit/token.ts",
+        "src/audit/record.ts",
+        "src/audit/replay.ts",
       ],
-      forbiddenPhrases: ["fixtures/repository/src/decoys/token.ts", "NOT_A_REAL_AUDIT_REFERENCE"],
+      forbiddenPhrases: ["src/decoys/token.ts", "NOT_A_REAL_AUDIT_REFERENCE"],
       requiredFiles: [],
       responseMustBeJson: true,
     },

@@ -170,3 +170,30 @@ Bench reports, fixture digest, completion/integrity checks, actual LSP actions,
 pass rate, latency, model requests, and reported token use. A provider failure
 or incomplete run makes the comparison integrity check fail; a module merely
 being available never counts as LSP usage.
+
+### P3d decision record — 2026-09-14
+
+The valid paired run used `DeepSeek-V4-Flash-0731-MXFP4-MLX`, three cross-file
+tasks, three repetitions per variant, identical fixtures and permissions, and
+alternating variant order. Every integrity check passed and all 18 runs
+completed.
+
+| Metric | Baseline | LSP | LSP minus baseline |
+| --- | ---: | ---: | ---: |
+| Passed runs | 9/9 | 9/9 | 0 pp |
+| Average duration | 37,507 ms | 44,016 ms | +6,509 ms |
+| Model requests | 27 | 37 | +10 |
+| Reported input tokens | 26,408 | 14,238 | -12,170 |
+| Reported output tokens | 1,826 | 1,768 | -58 |
+
+The model selected LSP in 4/9 variant runs. Five of six LSP actions completed;
+the single failed query was followed by a successful retry, and that run still
+produced the correct answer. The result demonstrates working, selectively used
+semantic navigation and lower reported input-token use, but no pass-rate
+improvement and worse latency/request cost on this suite.
+Therefore LSP remains shipped but default-off, while a broader Code Mode SDK is
+not added in P3. Revisit that decision only with harder repository tasks or a
+model/runtime change that can clear the same paired evidence bar.
+
+The raw mode-`0600` report is intentionally gitignored at
+`eval-artifacts/lsp-navigation-ab-2026-09-14T09-38-48-377Z.json`.

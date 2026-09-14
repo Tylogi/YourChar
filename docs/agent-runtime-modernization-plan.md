@@ -203,10 +203,19 @@ plane can record retry, skip, or cancel decisions before orchestration resumes.
 - [x] Preserve the blocking `bash` compatibility path and allow only explicitly
   approved capability definitions to be recreated inside the isolated Task
   Bench runtime.
-- [ ] Run same-model Task Bench A/B trials on cross-file repository tasks and
+- [x] Run same-model Task Bench A/B trials on cross-file repository tasks and
   record whether LSP materially improves pass rate, tokens, or latency.
-- [ ] Add a broader model-generated Code Mode SDK only if that evidence shows a
-  benefit beyond the existing bounded workflow DAG.
+- [x] Keep a broader model-generated Code Mode SDK out of this milestone: the
+  paired trial showed no pass-rate gain and higher latency/request cost, so the
+  conditional benefit bar was not met.
+
+The 2026-09-14 paired run used the same
+`DeepSeek-V4-Flash-0731-MXFP4-MLX` model, three cross-file tasks, and three
+repetitions per variant. All 18 runs completed and both variants passed 9/9.
+The model used LSP in 4/9 variant runs; LSP reduced reported input tokens from
+26,408 to 14,238 but increased average duration from 37,507 ms to 44,016 ms and
+model requests from 27 to 37. This supports retaining the bounded LSP as an
+explicitly selected, default-off capability, not promoting a broader Code Mode.
 
 ## 7. Verification strategy
 
@@ -244,9 +253,8 @@ feature counts must not be reported as task-success improvements.
 - [x] P3b durable session goals, plans, todos, and typed progress transitions.
 - [x] P3c bounded durable workflow DAGs, cancellation, aggregation references,
   and explicit replay decisions.
-- [ ] P3d optional code intelligence: lightweight LSP implementation is
-  complete, a real TypeScript provider and reproducible paired runner are in
-  place; valid same-model A/B evidence and the Code Mode decision remain.
-- [ ] P3 general execution.
+- [x] P3d optional code intelligence: real TypeScript provider, reproducible
+  same-model A/B evidence, and a default-off/no-Code-Mode rollout decision.
+- [x] P3 general execution.
 - [ ] P4 provider and host seams.
 - [ ] P5 event-sourced runtime state.
