@@ -63,7 +63,7 @@ export type MessageResponse = {
 
 export type ModelApiConfig = {
   enabled: boolean;
-  provider: "openai_compatible";
+  provider: string;
   baseUrl: string;
   model: string;
   visionInputEnabled: boolean;
@@ -80,6 +80,7 @@ export type ModelApiConfig = {
 
 export type ModelApiConfigPatch = {
   enabled?: boolean;
+  provider?: string;
   baseUrl?: string;
   model?: string;
   visionInputEnabled?: boolean;

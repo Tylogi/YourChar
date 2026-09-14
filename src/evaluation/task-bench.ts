@@ -22,10 +22,6 @@ import {
   applyBackgroundThinkingPolicy,
   backgroundThinkingPolicy,
 } from "../model/background-thinking-policy.js";
-import {
-  completeOpenAiCompatible,
-  createOpenAiCompatibleModel,
-} from "../model/openai-compatible.js";
 import type { TaskBenchUploadFixture } from "./task-bench-uploads.js";
 
 const maximumTaskCharacters = 30_000;
@@ -550,7 +546,7 @@ function prepareTarget(
   if (!profile || !rawProfile) {
     throw new TaskBenchValidationError(`model profile not found: ${request.modelProfileId}`);
   }
-  if (!rawProfile.enabled || !rawProfile.baseUrl || !rawProfile.model) {
+  if (!source.modelProviders.isConfigured(rawProfile)) {
     throw new TaskBenchValidationError("被测模型未启用或配置不完整");
   }
   const character = request.targetMode === "character" && request.characterId
@@ -565,7 +561,10 @@ function prepareTarget(
   const rawJudge = request.judgeModelProfileId
     ? source.store.getRawModelApiProfile(request.judgeModelProfileId)
     : undefined;
-  if (request.judgeModelProfileId && (!judgeProfile || !rawJudge?.enabled || !rawJudge.baseUrl || !rawJudge.model)) {
+  if (
+    request.judgeModelProfileId &&
+    (!judgeProfile || !rawJudge || !source.modelProviders.isConfigured(rawJudge))
+  ) {
     throw new TaskBenchValidationError("Judge 模型未启用或配置不完整");
   }
   const uploadedById = new Map(uploadedFixtures.map((fixture) => [fixture.id, fixture]));
@@ -619,6 +618,7 @@ async function executeIteration(
     imGateway: false,
     characterSkillReflector: false,
     additionalSessionCapabilities: source.isolatedTaskBenchSessionCapabilities(),
+    modelProviderAdapters: source.isolatedTaskBenchModelProviderAdapters(),
   });
   const started = performance.now();
   let response: Awaited<ReturnType<CompanionKernel["sendMessage"]>> | undefined;
@@ -739,7 +739,7 @@ async function judgeIteration(
   const profile = prepared.judgeProfile;
   const raw = source.store.getRawModelApiProfile(profileId);
   const identity = modelIdentity(profile, profileId);
-  if (!profile || !raw?.enabled || !raw.baseUrl || !raw.model) {
+  if (!profile || !raw || !source.modelProviders.isConfigured(raw)) {
     return failedJudgment(identity, started, 0, "Judge 模型未配置或未启用");
   }
   if (run.status !== "completed") {
@@ -785,7 +785,7 @@ async function judgeIteration(
     }
     try {
       modelRequests += 1;
-      const message = await completeOpenAiCompatible(createOpenAiCompatibleModel(raw), {
+      const message = await source.modelProviders.complete(raw, {
         systemPrompt: taskBenchJudgeSystemPrompt,
         messages: [{
           role: "user",
@@ -795,7 +795,6 @@ async function judgeIteration(
           timestamp: Date.now(),
         }],
       }, {
-        apiKey: raw.apiKey || "unused",
         temperature: 0,
         maxTokens: policy.maxTokens,
         signal: judgeDeadline,
@@ -881,6 +880,7 @@ function cloneEvaluationConfiguration(
   if (!model) throw new TaskBenchValidationError(`model profile not found: ${sourceProfileId}`);
   target.patchModelApiConfig({
     enabled: model.enabled,
+    provider: model.provider,
     baseUrl: model.baseUrl,
     model: model.model,
     visionInputEnabled: model.visionInputEnabled,
@@ -889,6 +889,12 @@ function cloneEvaluationConfiguration(
     ...(model.maxTokens === undefined ? {} : { maxTokens: model.maxTokens }),
     ...(model.contextWindowTokens === undefined ? {} : { contextWindowTokens: model.contextWindowTokens }),
     ...(model.reasoningEffort === undefined ? {} : { reasoningEffort: model.reasoningEffort }),
+    ...(model.thinkingTokenBudgetField === undefined
+      ? {}
+      : { thinkingTokenBudgetField: model.thinkingTokenBudgetField }),
+    ...(model.thinkingBudgetTokens === undefined
+      ? {}
+      : { thinkingBudgetTokens: model.thinkingBudgetTokens }),
   });
   const enabledById = new Map(source.listAgentModules().map((entry) => [entry.id, entry.enabled]));
   for (const module of target.listAgentModules()) {

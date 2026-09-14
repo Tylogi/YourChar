@@ -65,6 +65,9 @@ and Bubblewrap. `npm run setup:markitdown` creates only the project-local
 The repository pins Node `22.19.0` in `.nvmrc`. The target product architecture,
 development milestones, and Agent-oriented test contracts are documented in
 [`docs/development-spec.md`](docs/development-spec.md).
+The deployment-trusted model adapter registry, exact provider selection, and
+native-provider extension boundary are documented in
+[`docs/model-provider-adapters.md`](docs/model-provider-adapters.md).
 The reusable MCP module and proactive-event pattern is documented in
 [`docs/mcp-agent-modules.md`](docs/mcp-agent-modules.md).
 Shared/private Agent Skill package lifecycle, character management permission,

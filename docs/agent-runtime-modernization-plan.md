@@ -217,7 +217,62 @@ The model used LSP in 4/9 variant runs; LSP reduced reported input tokens from
 model requests from 27 to 37. This supports retaining the bounded LSP as an
 explicitly selected, default-off capability, not promoting a broader Code Mode.
 
-## 7. Verification strategy
+## 7. P4 implementation slices
+
+### P4a — Provider adapter registry
+
+- [x] Add a deployment-trusted adapter registry with stable IDs, duplicate
+  rejection, exact selection, safe public descriptors, and no fallback for an
+  unknown provider.
+- [x] Route interactive sessions, Creator, background jobs, diagnostics,
+  feature evaluation, and Task Bench through the same registry.
+- [x] Preserve the existing OpenAI-compatible behavior as the built-in adapter
+  and allow synchronous or asynchronous Pi-native provider registration.
+- [x] Carry explicitly injected adapters into incognito and disposable
+  evaluation kernels without serializing executable code or credentials.
+
+### P4b — First-party native providers and settings
+
+- [ ] Add first-party native Pi adapters in priority order, beginning with the
+  APIs whose tool use, thinking, streaming, or cache semantics differ from the
+  OpenAI-compatible route.
+- [ ] Give adapters declarative configuration fields and validation; expose a
+  provider selector without leaking credentials or executable definitions.
+- [ ] Move request-payload, reasoning/thinking, usage, timeout, retry, and
+  discovery behavior behind provider-owned hooks; retain
+  `openai_compatible` for local and compatible endpoints.
+- [ ] Run same-task, same-model compatibility tests where a model is available
+  through both native and compatible transports.
+
+### P4c — Credential references and rotation
+
+- [ ] Replace profile-embedded API keys with opaque credential references and
+  a host-owned credential store; migrate existing secrets without returning
+  plaintext through APIs, logs, traces, exports, or reports.
+- [ ] Support atomic create/rotate/revoke operations, profile reference checks,
+  last-known-good rollback, and explicit missing/revoked states.
+- [ ] Keep normal, secret, incognito, Task Bench, and background request paths
+  scoped to the selected reference and prevent runtime credential reuse across
+  profiles.
+
+### P4d — Headless API and typed SDK
+
+- [ ] Define a versioned authenticated loopback/headless API for sessions,
+  streaming turns, jobs, goals, workflows, files, and lifecycle control without
+  requiring the Web UI or browser cookie bootstrap.
+- [ ] Generate or hand-maintain a typed TypeScript SDK with cancellation,
+  idempotency, pagination, event schemas, and stable error types.
+- [ ] Add contract tests that run the same workflow through Kernel, HTTP, and
+  SDK surfaces and verify identical ownership and permission enforcement.
+
+### P4e — Optional ACP bridge
+
+- [ ] Evaluate ACP only as a thin host adapter over the typed API/SDK; do not
+  make ACP the source of truth for sessions, permissions, or durable jobs.
+- [ ] Implement it only if interoperability tests demonstrate value beyond the
+  headless API, with explicit capability mapping and cancellation semantics.
+
+## 8. Verification strategy
 
 Each slice must run, at minimum:
 
@@ -232,7 +287,7 @@ For DSH comparisons, use the Task Bench with the same model, context window,
 task fixtures, tool permissions, timeout, and repetition count. Architectural
 feature counts must not be reported as task-success improvements.
 
-## 8. Rollout and rollback
+## 9. Rollout and rollback
 
 - Land every slice as a small commit on a dedicated branch.
 - Preserve the old public tool names and module IDs during P1.
@@ -241,7 +296,7 @@ feature counts must not be reported as task-success improvements.
   capability extraction.
 - A slice is rollback-safe when reverting it requires no user-data migration.
 
-## 9. Current progress
+## 10. Current progress
 
 - [x] Baseline work isolated on `refactor/agent-runtime-capabilities`.
 - [x] P1a session capability lifecycle.
@@ -256,5 +311,7 @@ feature counts must not be reported as task-success improvements.
 - [x] P3d optional code intelligence: real TypeScript provider, reproducible
   same-model A/B evidence, and a default-off/no-Code-Mode rollout decision.
 - [x] P3 general execution.
+- [x] P4a provider adapter registry, exact fail-closed selection, and complete
+  Kernel/evaluation routing.
 - [ ] P4 provider and host seams.
 - [ ] P5 event-sourced runtime state.

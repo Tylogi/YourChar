@@ -334,6 +334,7 @@ export async function runFeatureTest(
     stateDir,
     startScheduler: false,
     quietHours: false,
+    modelProviderAdapters: source.isolatedTaskBenchModelProviderAdapters(),
   });
   const started = performance.now();
   try {
@@ -424,6 +425,7 @@ function cloneModelBinding(
   return target.createModelApiProfile({
     name: `功能测试 · ${profile.name}`,
     enabled: raw.enabled,
+    provider: raw.provider,
     baseUrl: raw.baseUrl,
     model: raw.model,
     visionInputEnabled: raw.visionInputEnabled,
@@ -431,6 +433,13 @@ function cloneModelBinding(
     ...(raw.temperature === undefined ? {} : { temperature: raw.temperature }),
     ...(raw.maxTokens === undefined ? {} : { maxTokens: raw.maxTokens }),
     ...(raw.contextWindowTokens === undefined ? {} : { contextWindowTokens: raw.contextWindowTokens }),
+    ...(raw.reasoningEffort === undefined ? {} : { reasoningEffort: raw.reasoningEffort }),
+    ...(raw.thinkingTokenBudgetField === undefined
+      ? {}
+      : { thinkingTokenBudgetField: raw.thinkingTokenBudgetField }),
+    ...(raw.thinkingBudgetTokens === undefined
+      ? {}
+      : { thinkingBudgetTokens: raw.thinkingBudgetTokens }),
   }).id;
 }
 
@@ -443,6 +452,7 @@ function cloneRuntimeConfiguration(
   if (!model) throw new Error(`model profile not found: ${sourceProfileId}`);
   target.patchModelApiConfig({
     enabled: model.enabled,
+    provider: model.provider,
     baseUrl: model.baseUrl,
     model: model.model,
     visionInputEnabled: model.visionInputEnabled,
@@ -450,6 +460,13 @@ function cloneRuntimeConfiguration(
     ...(model.temperature === undefined ? {} : { temperature: model.temperature }),
     ...(model.maxTokens === undefined ? {} : { maxTokens: model.maxTokens }),
     ...(model.contextWindowTokens === undefined ? {} : { contextWindowTokens: model.contextWindowTokens }),
+    ...(model.reasoningEffort === undefined ? {} : { reasoningEffort: model.reasoningEffort }),
+    ...(model.thinkingTokenBudgetField === undefined
+      ? {}
+      : { thinkingTokenBudgetField: model.thinkingTokenBudgetField }),
+    ...(model.thinkingBudgetTokens === undefined
+      ? {}
+      : { thinkingBudgetTokens: model.thinkingBudgetTokens }),
   });
   target.updateUserProfile(source.getUserProfile().markdown);
   const enabledById = new Map(source.listAgentModules().map((entry) => [entry.id, entry.enabled]));
@@ -744,7 +761,7 @@ function preflightRules(
   const output: FeatureTestRule[] = [rule(
     "model-configured",
     boundProfile ? "被测模型已配置" : "被测模型配置存在",
-    Boolean(boundProfile && model?.enabled && model.baseUrl && model.model),
+    Boolean(boundProfile && model && source.modelProviders.isConfigured(model)),
     [boundProfile?.name, model?.model].filter(Boolean).join(" · ") || "未配置模型",
     "preflight",
   )];

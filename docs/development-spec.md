@@ -525,6 +525,7 @@ temporary compatibility adapters until the UI migrates.
 | GET/PATCH | `/api/v1/sessions/{id}/scene` | Legacy/private continuity scene adapter |
 | GET/POST | `/api/v1/memories` | Search or pin memory |
 | PATCH/DELETE | `/api/v1/memories/{id}` | Correct, supersede, or remove memory |
+| GET | `/api/v1/model-providers` | List loaded model adapter descriptors without configuration or credentials |
 | POST | `/api/v1/diagnostics/model/test` | Test configured model completion endpoint |
 | GET | `/api/v1/diagnostics/model/models` | Discover provider models when supported |
 | GET | `/api/v1/export` | Export user data without model credentials |

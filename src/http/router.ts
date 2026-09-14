@@ -31,6 +31,8 @@ import {
   ControlPlaneBusyError,
   CharacterDeletionConfirmationError,
   ModelApiConfigValidationError,
+  ModelProviderNotFoundError,
+  ModelProviderOperationUnsupportedError,
   IncognitoConversationNotFoundError,
   IncognitoOperationUnsupportedError,
   IncognitoUnavailableError,
@@ -444,6 +446,10 @@ export function createHttpServer(options: HttpServerOptions = {}) {
         });
       } else if (error instanceof ModelApiConfigValidationError) {
         sendJson(response, 400, { code: error.code, error: error.message });
+      } else if (error instanceof ModelProviderNotFoundError) {
+        sendJson(response, 400, { code: error.code, error: error.message });
+      } else if (error instanceof ModelProviderOperationUnsupportedError) {
+        sendJson(response, 501, { code: error.code, error: error.message });
       } else if (error instanceof WorkspaceFileError) {
         sendJson(response, workspaceFileHttpStatus(error.code), { code: error.code, error: error.message });
       } else if (error instanceof TavilyConfigurationError) {
@@ -681,6 +687,7 @@ async function route(input: {
       userInsights: "GET /api/v1/user-insights",
       userInsightControl: "POST /api/v1/user-insights/{id}/{confirm|reject|unlock}",
       modelApiSettings: "GET/PATCH /api/settings/model-api",
+      modelProviders: "GET /api/v1/model-providers",
       tavilySettings: "GET/PATCH /api/settings/tavily",
       visionSettings: "GET/PATCH /api/settings/vision",
       mineruSettings: "GET/PATCH /api/settings/mineru",
@@ -4553,6 +4560,11 @@ async function route(input: {
       sendJson(input.response, 200, kernel.patchModelApiConfig(patch));
       return;
     }
+  }
+
+  if (method === "GET" && pathname === "/api/v1/model-providers") {
+    sendJson(input.response, 200, { providers: kernel.listModelProviders() });
+    return;
   }
 
   if (pathname === "/api/v1/model-profiles") {

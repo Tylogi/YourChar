@@ -7,10 +7,6 @@ import {
   backgroundThinkingPolicy,
 } from "../model/background-thinking-policy.js";
 import {
-  completeOpenAiCompatible,
-  createOpenAiCompatibleModel,
-} from "../model/openai-compatible.js";
-import {
   listFeatureTestCases,
   type FeatureTestResult,
 } from "./feature-tests.js";
@@ -146,7 +142,7 @@ export async function judgeFeatureTestQuality(
   const profile = kernel.listModelApiProfiles().profiles.find((entry) => entry.id === judgeProfileId);
   const raw = kernel.store.getRawModelApiProfile(judgeProfileId);
   const judge = judgeIdentity(profile, judgeProfileId);
-  if (!profile || !raw?.enabled || !raw.baseUrl || !raw.model) {
+  if (!profile || !raw || !kernel.modelProviders.isConfigured(raw)) {
     return failedJudgment(judge, started, 0, "Judge 模型未配置或未启用");
   }
   if (result.status !== "completed" || !result.qualitySample.trim()) {
@@ -183,7 +179,7 @@ export async function judgeFeatureTestQuality(
   for (let attempt = 0; attempt < 2; attempt += 1) {
     try {
       modelRequests += 1;
-      const message = await completeOpenAiCompatible(createOpenAiCompatibleModel(raw), {
+      const message = await kernel.modelProviders.complete(raw, {
         systemPrompt: qualityJudgeSystemPrompt,
         messages: [{
           role: "user",
@@ -193,7 +189,6 @@ export async function judgeFeatureTestQuality(
           timestamp: Date.now(),
         }],
       }, {
-        apiKey: raw.apiKey || "unused",
         temperature: 0,
         maxTokens: policy.maxTokens,
         signal: AbortSignal.timeout(120_000),

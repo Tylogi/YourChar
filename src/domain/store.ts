@@ -13,6 +13,7 @@ import type { ObservabilitySink } from "../storage/observability.js";
 import { TraceArchive } from "../storage/trace-archive.js";
 import { modelContextTraceScope } from "./types.js";
 import { isModelReasoningEffort } from "../model/reasoning-effort.js";
+import { isModelProviderId } from "../model/provider-adapter.js";
 import type {
   ActionRecord,
   ContextLogEntry,
@@ -444,6 +445,7 @@ function normalizeStoredModelApiConfig(value: unknown): StoredModelApiConfig {
   const config: StoredModelApiConfig = {
     ...defaultModelApiConfig,
     enabled: typeof input.enabled === "boolean" ? input.enabled : defaultModelApiConfig.enabled,
+    provider: isModelProviderId(input.provider) ? input.provider : defaultModelApiConfig.provider,
     baseUrl: typeof input.baseUrl === "string" ? input.baseUrl : defaultModelApiConfig.baseUrl,
     model: typeof input.model === "string" ? input.model : defaultModelApiConfig.model,
     visionInputEnabled: typeof input.visionInputEnabled === "boolean"
@@ -521,6 +523,11 @@ function applyModelProfilePatch(
   patch: ModelApiProfilePatch,
   updatedAt: string,
 ): void {
+  if (patch.provider !== undefined && !isModelProviderId(patch.provider)) {
+    throw new ModelApiConfigValidationError(
+      "provider must match ^[a-z][a-z0-9_-]{0,63}$",
+    );
+  }
   if (
     patch.reasoningEffort !== undefined &&
     patch.reasoningEffort !== null &&
@@ -550,6 +557,7 @@ function applyModelProfilePatch(
   }
   if (patch.name !== undefined) profile.name = requiredProfileName(patch.name);
   if (typeof patch.enabled === "boolean") profile.enabled = patch.enabled;
+  if (isModelProviderId(patch.provider)) profile.provider = patch.provider;
   if (typeof patch.baseUrl === "string") profile.baseUrl = patch.baseUrl.trim();
   if (typeof patch.model === "string") profile.model = patch.model.trim();
   if (typeof patch.visionInputEnabled === "boolean") profile.visionInputEnabled = patch.visionInputEnabled;
