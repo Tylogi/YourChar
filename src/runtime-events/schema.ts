@@ -85,7 +85,7 @@ function projectionUpsertV2(value: Readonly<Record<string, unknown>>): RuntimePr
   const operation = value.operation;
   if (
     operation !== "bootstrap" && operation !== "insert" &&
-    operation !== "update" && operation !== "migration"
+    operation !== "update" && operation !== "migration" && operation !== "reconcile"
   ) throw new Error("invalid projection upsert operation");
   const schemaHash = requiredString(value.schemaHash, "projection schemaHash");
   if (!sha256Pattern.test(schemaHash)) throw new Error("invalid projection schemaHash");

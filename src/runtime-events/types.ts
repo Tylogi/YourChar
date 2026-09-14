@@ -28,7 +28,7 @@ export type RuntimeProjectionUpsertV2 = Readonly<{
   projection: string;
   key: readonly unknown[];
   row: Readonly<Record<string, unknown>>;
-  operation: "bootstrap" | "insert" | "update" | "migration";
+  operation: "bootstrap" | "insert" | "update" | "migration" | "reconcile";
   schemaHash: string;
 }>;
 

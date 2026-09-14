@@ -3,7 +3,6 @@ import type { Clock } from "../app/clock.js";
 import { SystemClock } from "../app/clock.js";
 import type { ContextLogEntry } from "../domain/types.js";
 import type { ConversationMetadata } from "../pi/session-runtime.js";
-import type { AppDatabase } from "../storage/database.js";
 import { applyRuntimeEvent, validateRuntimeEvent } from "./schema.js";
 import {
   runtimeEventTypes,
@@ -21,10 +20,15 @@ const retainedCheckpoints = 4;
 const maximumPayloadBytes = 16 * 1024 * 1024;
 type Row = Record<string, unknown>;
 
+export type RuntimeEventDatabase = Readonly<{
+  connection: import("node:sqlite").DatabaseSync;
+  transaction<T>(operation: () => T): T;
+}>;
+
 export class RuntimeEventStore {
   private readonly clock: Clock;
 
-  constructor(private readonly database: AppDatabase, clock?: Clock) {
+  constructor(private readonly database: RuntimeEventDatabase, clock?: Clock) {
     this.clock = clock ?? new SystemClock();
   }
 
@@ -426,7 +430,7 @@ function canonicalValue(value: unknown): unknown {
   }
   if (Array.isArray(value)) return value.map((entry) => canonicalValue(entry));
   if (value && typeof value === "object") {
-    if (Buffer.isBuffer(value)) return { $binaryHex: value.toString("hex") };
+    if (value instanceof Uint8Array) return { $binaryHex: Buffer.from(value).toString("hex") };
     const output: Record<string, unknown> = {};
     for (const key of Object.keys(value).sort()) {
       const entry = (value as Record<string, unknown>)[key];

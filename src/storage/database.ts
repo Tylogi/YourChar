@@ -1,6 +1,7 @@
 import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";
 import { DatabaseSync } from "node:sqlite";
+import { initializeRuntimeEventCapture } from "../runtime-events/change-capture.js";
 
 type Migration = {
   version: number;
@@ -4009,6 +4010,7 @@ export class AppDatabase {
       this.connection.exec("PRAGMA journal_mode = WAL");
     }
     this.migrate(options.maxMigrationVersion);
+    initializeRuntimeEventCapture(this.connection);
   }
 
   transaction<T>(operation: () => T): T {
