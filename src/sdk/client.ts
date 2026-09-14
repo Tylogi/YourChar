@@ -15,6 +15,7 @@ import type {
   AgentPermissionsPatch,
   CreateSessionGoalInput,
   CreateSessionWorkflowInput,
+  DirectConversationSession,
   ExecutionJobDetail,
   ExecutionJobSummary,
   ExecutionOutputPage,
@@ -110,6 +111,19 @@ export class YourCharClient {
       },
     });
     return payload.sessions;
+  }
+
+  async openDirectConversation(
+    characterId: string,
+    conversationSpace: "normal" | "secret" = "normal",
+    options: YourCharRequestOptions = {},
+  ): Promise<DirectConversationSession> {
+    const payload = await this.request<{ session: DirectConversationSession }>(
+      "POST",
+      "/direct-conversations",
+      { ...options, body: { characterId, conversationSpace } },
+    );
+    return payload.session;
   }
 
   async listMessages(

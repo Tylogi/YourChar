@@ -188,3 +188,7 @@ projections and verifies the same cross-session ownership denial, Shell
 permission denial, and archived-session lifecycle fence on all three surfaces.
 Authentication, replay, streaming, pagination, file, and error-schema coverage
 lives in `test/headless-api.test.ts` and `test/sdk-client.test.ts`.
+
+The optional stdio adapter for ACP automation hosts is documented separately
+in [`acp-bridge.md`](acp-bridge.md). It delegates all work to this SDK and does
+not introduce another session, permission, or persistence implementation.

@@ -82,6 +82,17 @@ export type SessionSummary = Readonly<{
   updatedAt: string;
 }>;
 
+/** Canonical character conversation returned by the explicit open operation. */
+export type DirectConversationSession = Readonly<{
+  id: string;
+  mode: Mode;
+  conversationSpace: ConversationSpace;
+  characterId: string;
+  canonicalDirect?: boolean;
+  title?: string;
+  archivedAt?: string;
+}>;
+
 export type SessionMessageResponse = MessageResponse & Readonly<{ sessionId: string }>;
 
 export type MessageHistoryQuery = SessionScopeQuery & Readonly<{

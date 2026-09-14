@@ -267,10 +267,19 @@ explicitly selected, default-off capability, not promoting a broader Code Mode.
 
 ### P4e — Optional ACP bridge
 
-- [ ] Evaluate ACP only as a thin host adapter over the typed API/SDK; do not
+- [x] Evaluate ACP only as a thin host adapter over the typed API/SDK; do not
   make ACP the source of truth for sessions, permissions, or durable jobs.
-- [ ] Implement it only if interoperability tests demonstrate value beyond the
+- [x] Implement it only if interoperability tests demonstrate value beyond the
   headless API, with explicit capability mapping and cancellation semantics.
+
+The value gate passed because DeepSeek Harness's out-of-process subagent
+provider directly drives an ACP child using initialize, new-session, prompt,
+semantic update, and cancellation operations. The optional `yourchar-acp`
+stdio process implements that sequence with the official ACP 1.4.0 SDK while
+delegating every product operation to `YourCharClient`. It freezes character,
+privacy scope, cwd admission, and one-session concurrency; rejects client MCP,
+extra roots, and unsupported media; omits raw tool material; and maps cancel to
+both transport abort and the explicit headless lifecycle endpoint.
 
 ## 8. Verification strategy
 
@@ -322,5 +331,8 @@ feature counts must not be reported as task-success improvements.
 - [x] P4d default-off authenticated loopback API, bounded replay keys, typed
   TypeScript SDK, validated streaming/cancellation/pagination contracts, and
   Kernel/HTTP/SDK ownership and permission parity.
-- [ ] P4 provider and host seams.
+- [x] P4e conditional ACP bridge: the DeepSeek Harness interoperability gate
+  passed, and a thin SDK-backed stdio adapter now has explicit capability,
+  scope, streaming, and cancellation mappings.
+- [x] P4 provider and host seams.
 - [ ] P5 event-sourced runtime state.

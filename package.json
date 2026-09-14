@@ -5,6 +5,9 @@
   "type": "module",
   "main": "./dist/src/index.js",
   "types": "./dist/src/index.d.ts",
+  "bin": {
+    "yourchar-acp": "./dist/src/acp/stdio.js"
+  },
   "exports": {
     ".": {
       "types": "./dist/src/index.d.ts",
@@ -13,6 +16,10 @@
     "./sdk": {
       "types": "./dist/src/sdk/index.d.ts",
       "import": "./dist/src/sdk/index.js"
+    },
+    "./acp": {
+      "types": "./dist/src/acp/index.d.ts",
+      "import": "./dist/src/acp/index.js"
     }
   },
   "description": "Local-first runtime for persistent AI characters and digital lives.",
@@ -21,6 +28,7 @@
     "setup:markitdown": "uv sync --project services/markitdown --frozen --python /usr/bin/python3",
     "dev": "npm run build && node --disable-warning=ExperimentalWarning dist/src/server.js",
     "start": "node --disable-warning=ExperimentalWarning dist/src/server.js",
+    "acp": "node --disable-warning=ExperimentalWarning dist/src/acp/stdio.js",
     "test": "npm run build && node --disable-warning=ExperimentalWarning --test dist/test/*.test.js",
     "test:memory-durability": "npm run build && node --disable-warning=ExperimentalWarning --test dist/test/memory-durability-r5.test.js",
     "test:browser": "npm run build && CLOAKBROWSER_AUTO_UPDATE=false LD_LIBRARY_PATH=${CLOAKBROWSER_LIB_DIR:-$HOME/.local/share/cloakbrowser-libs/usr/lib/x86_64-linux-gnu}:$LD_LIBRARY_PATH node --disable-warning=ExperimentalWarning test/browser.mjs",
@@ -47,6 +55,7 @@
     "playwright-core": "^1.61.1"
   },
   "dependencies": {
+    "@agentclientprotocol/sdk": "1.4.0",
     "@earendil-works/pi-agent-core": "0.84.4",
     "@earendil-works/pi-ai": "0.84.4",
     "@earendil-works/pi-coding-agent": "0.84.4",

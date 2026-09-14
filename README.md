@@ -187,6 +187,8 @@ identifiers.
 | `RP_AGENT_DESKTOP_NOTIFICATIONS` | unset | Set to `1` to use the `notify-send` adapter |
 | `RP_AGENT_TEST_MODE` | unset | Set to `1` to enable isolated Agent test controls |
 | `YOURCHAR_HEADLESS_API_TOKEN` | unset | Enables authenticated loopback automation under `/api/headless/v1` |
+| `YOURCHAR_ACP_CHARACTER_ID` | unset | Character selected by the optional one-session ACP stdio bridge |
+| `YOURCHAR_ACP_CWD` | process cwd | Exact cwd admitted by the optional ACP bridge |
 | `HOST` / `PORT` | `127.0.0.1` / `8765` | HTTP listen address |
 
 Desktop notifications require `notify-send` and a working desktop notification
@@ -238,7 +240,10 @@ In test mode, create an isolated run at
 tick, captured notifications, event stream, and canonical snapshot controls.
 Local automation uses the separately authenticated `/api/headless/v1` surface;
 it is disabled unless `YOURCHAR_HEADLESS_API_TOKEN` is set and never requires a
-browser-cookie bootstrap.
+browser-cookie bootstrap. The optional `yourchar-acp` binary is a thin stdio
+adapter over that SDK for automation hosts such as DeepSeek Harness; its exact
+capability and cancellation mapping is documented in
+[`docs/acp-bridge.md`](docs/acp-bridge.md).
 
 `npm run test:browser` launches CloakBrowser against an isolated in-memory RP
 Agent server and covers desktop/mobile viewports, Debug bounds, schedule CRUD,
