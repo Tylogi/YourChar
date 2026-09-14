@@ -17,3 +17,5 @@ export * from "./user-insight/index.js";
 export * from "./execution/index.js";
 export * from "./goals/index.js";
 export * from "./lsp/index.js";
+export * from "./workflows/index.js";
+export * from "./sdk/index.js";
