@@ -281,7 +281,7 @@ test("goal projections survive restart, expose guarded HTTP mutations, and casca
       Number((second.kernel.database.connection.prepare(
         "SELECT MAX(version) AS version FROM schema_migrations",
       ).get() as { version: number }).version),
-      67,
+      68,
     );
 
     server = createHttpServer({ kernel: second.kernel });

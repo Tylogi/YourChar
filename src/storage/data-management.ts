@@ -17,6 +17,7 @@ export class DataManagementRepository {
     return this.database.transaction(() => {
       this.database.connection.prepare("DELETE FROM memory_extraction_jobs WHERE session_id = ?").run(sessionId);
       this.database.connection.prepare("DELETE FROM relationship_extraction_jobs WHERE session_id = ?").run(sessionId);
+      this.database.connection.prepare("DELETE FROM session_workflows WHERE parent_session_id = ?").run(sessionId);
       this.database.connection.prepare("DELETE FROM subagent_jobs WHERE parent_session_id = ?").run(sessionId);
       this.database.connection.prepare("DELETE FROM execution_jobs WHERE parent_session_id = ?").run(sessionId);
       this.database.connection.prepare("DELETE FROM session_goals WHERE parent_session_id = ?").run(sessionId);
@@ -166,6 +167,7 @@ export class DataManagementRepository {
         DELETE FROM meeting_presets;
         DELETE FROM user_profiles;
         DELETE FROM agent_module_provider_settings;
+        DELETE FROM session_workflows;
         DELETE FROM session_goals;
         DELETE FROM execution_jobs;
         DELETE FROM subagent_jobs;

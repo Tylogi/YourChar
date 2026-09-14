@@ -163,6 +163,8 @@ export type CreateSubagentJobInput = Readonly<{
   grants: SubagentJobGrantSnapshot;
   /** Background admission requests one durable parent notification for this run. */
   notifyParent?: boolean;
+  /** Host-owned idempotency key used by durable orchestrators. */
+  admissionKey?: string;
 }>;
 
 /** Private execution material. Never return this shape from list/detail APIs. */
@@ -405,8 +407,8 @@ export class SubagentJobService {
           task_text, context_text, task_sha256, task_characters, context_characters,
           mode, conversation_space, character_id, secret_owner_character_id, timezone,
           budgets_json, grants_json, result_json, failure_json, recovery_count,
-          created_at, started_at, finished_at, updated_at
-        ) VALUES (?, ?, ?, ?, 'queued', 1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL, 0, ?, NULL, NULL, ?)
+          admission_key, created_at, started_at, finished_at, updated_at
+        ) VALUES (?, ?, ?, ?, 'queued', 1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL, 0, ?, ?, NULL, NULL, ?)
       `).run(
         id,
         input.parentSessionId,
@@ -424,6 +426,7 @@ export class SubagentJobService {
         normalizeSubagentTimezone(input.timezone),
         JSON.stringify(input.budgets),
         JSON.stringify(normalizeGrants(input.grants)),
+        input.admissionKey ?? null,
         createdAt,
         createdAt,
       );
@@ -433,6 +436,19 @@ export class SubagentJobService {
       }
     });
     return this.requireSummary(id);
+  }
+
+  getByAdmissionKey(
+    parentSessionId: string,
+    admissionKey: string,
+  ): SubagentJobSummary | undefined {
+    validateParentSessionId(parentSessionId);
+    validateAdmissionKey(admissionKey);
+    const row = this.database.connection.prepare(`
+      SELECT * FROM subagent_jobs
+      WHERE parent_session_id = ? AND admission_key = ?
+    `).get(parentSessionId, admissionKey) as unknown as SubagentJobRow | undefined;
+    return row ? mapSummary(row) : undefined;
   }
 
   start(jobId: string, grants: SubagentJobGrantSnapshot): SubagentJobSummary {
@@ -2232,8 +2248,16 @@ function validateCreateInput(input: CreateSubagentJobInput): void {
   if (input.notifyParent !== undefined && typeof input.notifyParent !== "boolean") {
     throw new TypeError("Subagent notifyParent must be a boolean");
   }
+  if (input.admissionKey !== undefined) validateAdmissionKey(input.admissionKey);
   parseBudgets(JSON.stringify(input.budgets));
   normalizeGrants(input.grants);
+}
+
+function validateAdmissionKey(value: string): void {
+  if (typeof value !== "string" || !value.trim() || value !== value.trim() ||
+      [...value].length > 256) {
+    throw new TypeError("Subagent admissionKey must contain 1-256 trimmed characters");
+  }
 }
 
 function normalizeSubagentTimezone(value: string | undefined): string {

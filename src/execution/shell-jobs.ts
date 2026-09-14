@@ -125,6 +125,8 @@ export type StartExecutionJobInput = Readonly<{
   workspaceAccess: WorkspaceAccess;
   networkEnabled: boolean;
   timeoutSeconds?: number;
+  /** Host-owned idempotency key used by durable orchestrators. */
+  admissionKey?: string;
 }>;
 
 export type RetryExecutionJobInput = Readonly<{
@@ -161,6 +163,7 @@ type ExecutionJobRow = {
   started_at: string | null;
   finished_at: string | null;
   updated_at: string;
+  admission_key: string | null;
 };
 
 type ExecutionRunRow = {
@@ -276,8 +279,8 @@ export class ExecutionJobService {
         command_characters, mode, conversation_space, character_id,
         secret_owner_character_id, workspace_key, workspace_dir,
         workspace_access, network_enabled, timeout_seconds, max_output_bytes,
-        current_attempt, created_at, started_at, finished_at, updated_at
-      ) VALUES (?, ?, 'queued', 1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, NULL, NULL, ?)
+        current_attempt, admission_key, created_at, started_at, finished_at, updated_at
+      ) VALUES (?, ?, 'queued', 1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, NULL, NULL, ?)
     `).run(
       id,
       input.parentSessionId,
@@ -294,10 +297,24 @@ export class ExecutionJobService {
       input.networkEnabled ? 1 : 0,
       input.timeoutSeconds ?? defaultExecutionTimeoutSeconds,
       maximumExecutionOutputBytes,
+      input.admissionKey ?? null,
       now,
       now,
     );
     return this.launch(id, input.workspaceAccess, input.networkEnabled);
+  }
+
+  getByAdmissionKey(
+    parentSessionId: string,
+    admissionKey: string,
+  ): ExecutionJobSummary | undefined {
+    validateParentSessionId(parentSessionId);
+    validateAdmissionKey(admissionKey);
+    const row = this.database.connection.prepare(`
+      SELECT * FROM execution_jobs
+      WHERE parent_session_id = ? AND admission_key = ?
+    `).get(parentSessionId, admissionKey) as unknown as ExecutionJobRow | undefined;
+    return row ? this.mapSummary(row) : undefined;
   }
 
   retry(input: RetryExecutionJobInput): ExecutionJobSummary {
@@ -930,6 +947,16 @@ function validateStartInput(input: StartExecutionJobInput): void {
   if (!Number.isInteger(timeout) || timeout < 1 || timeout > maximumExecutionTimeoutSeconds) {
     throw new ExecutionJobValidationError(
       `timeoutSeconds must be an integer between 1 and ${maximumExecutionTimeoutSeconds}`,
+    );
+  }
+  if (input.admissionKey !== undefined) validateAdmissionKey(input.admissionKey);
+}
+
+function validateAdmissionKey(value: string): void {
+  if (typeof value !== "string" || !value.trim() || value !== value.trim() ||
+      [...value].length > 256) {
+    throw new ExecutionJobValidationError(
+      "admissionKey must contain between 1 and 256 trimmed characters",
     );
   }
 }

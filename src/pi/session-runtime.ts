@@ -403,7 +403,28 @@ type SubagentRunInput = {
   restoredMessages?: readonly AgentMessage[];
   recoveryMode?: SubagentJobRecoveryExecution["mode"];
   notifyParent?: boolean;
+  admissionKey?: string;
+  grantConstraints?: Readonly<{
+    workspaceAccess: SubagentJobGrantSnapshot["workspaceAccess"];
+    moduleIds: readonly string[];
+    skillNames: readonly string[];
+  }>;
+  timeoutSeconds?: number;
 };
+
+export type StartSubagentJobOptions = Readonly<{
+  /** Workflow children aggregate by reference and suppress direct parent delivery. */
+  notifyParent?: boolean;
+  /** Stable host-owned key used to recover a launch exactly once. */
+  admissionKey?: string;
+  /** Explicit child ceiling; admission can only narrow it further. */
+  grants?: Readonly<{
+    workspaceAccess: SubagentJobGrantSnapshot["workspaceAccess"];
+    moduleIds: readonly string[];
+    skillNames: readonly string[];
+  }>;
+  timeoutSeconds?: number;
+}>;
 
 type SubagentRunAdmission = Readonly<{
   settings: SubagentRunSettingsSnapshot;
@@ -2126,6 +2147,7 @@ export class PiSessionRuntime {
     parentSessionId: string,
     request: SubagentRequest,
     timezone: string,
+    options: StartSubagentJobOptions = {},
   ): SubagentJobSummary {
     if (this.incognitoChild || !this.moduleCatalog.isEnabled(subagentMcpModuleId)) {
       throw new Error("Subagent background jobs are unavailable");
@@ -2146,7 +2168,12 @@ export class PiSessionRuntime {
       timezone,
       actions: [],
       signal: controller.signal,
-      notifyParent: true,
+      notifyParent: options.notifyParent ?? true,
+      ...(options.admissionKey ? { admissionKey: options.admissionKey } : {}),
+      ...(options.grants ? { grantConstraints: options.grants } : {}),
+      ...(options.timeoutSeconds === undefined
+        ? {}
+        : { timeoutSeconds: options.timeoutSeconds }),
     };
     const admission = this.admitSubagent(input);
     return this.launchBackgroundSubagent(input, admission, controller);
@@ -2495,7 +2522,24 @@ export class PiSessionRuntime {
         emptySubagentFailureDiagnostic("cancelled", false),
       );
     }
-    const subagentSettings = this.subagentRunSettingsSnapshot();
+    const baseSettings = this.subagentRunSettingsSnapshot();
+    if (input.timeoutSeconds !== undefined &&
+        (!Number.isSafeInteger(input.timeoutSeconds) || input.timeoutSeconds < 1)) {
+      throw new TypeError("Subagent timeoutSeconds must be a positive safe integer");
+    }
+    const subagentSettings: SubagentRunSettingsSnapshot = input.timeoutSeconds === undefined
+      ? baseSettings
+      : (() => {
+          const requestedTimeoutSeconds = Math.min(
+            baseSettings.timeoutSeconds,
+            input.timeoutSeconds!,
+          );
+          return Object.freeze({
+            ...baseSettings,
+            timeoutSeconds: requestedTimeoutSeconds,
+            timeoutMs: Math.min(baseSettings.timeoutMs, requestedTimeoutSeconds * 1_000),
+          });
+        })();
     const maxTotalModelCalls = subagentSettings.maxWorkModelCalls + 1;
     const startedAt = performance.now();
     const active = this.activeSubagentCounts.get(input.parentSessionId) ?? 0;
@@ -2506,12 +2550,18 @@ export class PiSessionRuntime {
       );
     }
     const permissions = this.permissionCatalog.get();
-    const childWorkspaceAccess = permissions.workspaceAccess === "off" ? "off" : "read_only";
+    const availableWorkspaceAccess = permissions.workspaceAccess === "off" ? "off" : "read_only";
+    const childWorkspaceAccess = input.grantConstraints?.workspaceAccess === "off"
+      ? "off"
+      : availableWorkspaceAccess;
+    const grantedSkillNames = input.grantConstraints
+      ? new Set(input.grantConstraints.skillNames)
+      : undefined;
     const enabledSkills = this.moduleCatalog.enabledSkills(
       input.conversationSpace,
       input.characterId,
-    );
-    const admittedModuleIds = [
+    ).filter((skill) => grantedSkillNames === undefined || grantedSkillNames.has(skill.name));
+    const availableModuleIds = [
       this.moduleCatalog.isEnabled(tavilySearchMcpModuleId) && this.tavilyService.isConfigured()
         ? tavilySearchMcpModuleId
         : undefined,
@@ -2525,6 +2575,12 @@ export class PiSessionRuntime {
         ? mineruMcpModuleId
         : undefined,
     ].filter((moduleId): moduleId is string => moduleId !== undefined);
+    const grantedModuleIds = input.grantConstraints
+      ? new Set(input.grantConstraints.moduleIds)
+      : undefined;
+    const admittedModuleIds = availableModuleIds.filter((moduleId) =>
+      grantedModuleIds === undefined || grantedModuleIds.has(moduleId)
+    );
     const admittedGrants: SubagentJobGrantSnapshot = Object.freeze({
       workspaceAccess: childWorkspaceAccess,
       moduleIds: Object.freeze(admittedModuleIds),
@@ -2546,6 +2602,7 @@ export class PiSessionRuntime {
       budgets: subagentSettings,
       grants: admittedGrants,
       notifyParent: input.notifyParent === true,
+      ...(input.admissionKey ? { admissionKey: input.admissionKey } : {}),
     });
     this.activeSubagentCounts.set(input.parentSessionId, active + 1);
     this.activeSubagentJobIds.add(job.id);

@@ -50,7 +50,10 @@ import {
   type PiModelResolver,
   type PiSessionHandle,
 } from "../pi/session-runtime.js";
-import type { SessionCapability } from "../pi/session-capability.js";
+import type {
+  SessionCapability,
+  SessionCapabilityContext,
+} from "../pi/session-capability.js";
 import {
   AgentRuntimeConfigurationManager,
   type AgentCapabilityPackage,
@@ -103,6 +106,7 @@ import { DataManagementRepository } from "../storage/data-management.js";
 import { ObservabilityRepository } from "../storage/observability.js";
 import {
   createExecutionJobCapability,
+  ExecutionJobCapacityError,
   ExecutionJobNotFoundError,
   ExecutionJobService,
   ExecutionJobStateError,
@@ -121,6 +125,21 @@ import {
   type UpdateSessionGoalInput,
   type UpdateSessionGoalTodoInput,
 } from "../goals/index.js";
+import {
+  createSessionWorkflowCapability,
+  SessionWorkflowConflictError,
+  SessionWorkflowCoordinator,
+  SessionWorkflowNotFoundError,
+  SessionWorkflowService,
+  type CreateSessionWorkflowInput,
+  type SessionWorkflowDetail,
+  type SessionWorkflowGrantCeiling,
+  type SessionWorkflowNodeExecution,
+  type SessionWorkflowReplayDecision,
+  type SessionWorkflowResultReference,
+  type SessionWorkflowSummary,
+  type WorkflowChildState,
+} from "../workflows/index.js";
 import {
   AgentModuleCatalog,
   agentSkillDiscoveryRoots,
@@ -163,8 +182,9 @@ import {
   SubagentJobService,
   type SubagentJobDelivery,
   type SubagentJobDeliveryCursor,
+  type SubagentJobSummary,
 } from "../modules/subagent-jobs.js";
-import type { SubagentRequest } from "../mcp/subagent-server.js";
+import { SubagentRunError, type SubagentRequest } from "../mcp/subagent-server.js";
 import {
   CharacterCapabilityRepository,
   CharacterCapabilityService,
@@ -577,6 +597,7 @@ export class CompanionKernel {
   private readonly agentRuntimeConfiguration: AgentRuntimeConfigurationManager;
   private readonly executionJobCapability: SessionCapability;
   private readonly sessionGoalCapability: SessionCapability;
+  private readonly sessionWorkflowCapability: SessionCapability;
   readonly database: AppDatabase;
   readonly scheduleService: ScheduleService;
   readonly rpService: RpService;
@@ -593,6 +614,10 @@ export class CompanionKernel {
   readonly executionJobs: ExecutionJobService;
   /** Durable session-owned goals, plans, todos, and typed progress transitions. */
   readonly sessionGoals: SessionGoalService;
+  /** Durable bounded DAGs whose child outputs remain external references. */
+  readonly sessionWorkflows: SessionWorkflowService;
+  readonly workflowCoordinator: SessionWorkflowCoordinator;
+  private workflowCoordinatorInstance?: SessionWorkflowCoordinator;
   readonly profileService: UserProfileService;
   readonly avatarService: AvatarService;
   readonly systemPromptService: SystemPromptService;
@@ -733,6 +758,7 @@ export class CompanionKernel {
               }
             : { conversationSpace: "normal" },
         );
+        this.workflowCoordinatorInstance?.onChildTerminal("shell", job.id);
       },
     );
     this.executionJobCapability = createExecutionJobCapability({
@@ -748,6 +774,11 @@ export class CompanionKernel {
       service: this.sessionGoals,
       store: this.store,
     });
+    this.sessionWorkflows = new SessionWorkflowService(
+      this.database,
+      this.clock,
+      this.store.idGenerator,
+    );
     this.imIntegrations = new ImIntegrationService(
       new ImRepository(this.database),
       this.incognitoChild || normalizedOptions.imGateway === false
@@ -1117,6 +1148,17 @@ export class CompanionKernel {
       workspaceDir,
       clock: this.clock,
     });
+    this.sessionWorkflowCapability = createSessionWorkflowCapability({
+      service: this.sessionWorkflows,
+      coordinator: () => {
+        if (!this.workflowCoordinatorInstance) {
+          throw new SessionWorkflowConflictError("Workflow coordinator is not ready");
+        }
+        return this.workflowCoordinatorInstance;
+      },
+      store: this.store,
+      grantCeiling: (context) => this.workflowGrantCeiling(context),
+    });
     if (!this.incognitoChild) {
       this.mineruService.registerWorkspace({
         workspaceFiles: this.workspaceFiles,
@@ -1173,6 +1215,7 @@ export class CompanionKernel {
         additionalSessionCapabilities: [
           this.executionJobCapability,
           this.sessionGoalCapability,
+          this.sessionWorkflowCapability,
           ...this.agentRuntimeConfiguration.activeCapabilities(),
         ],
         incognitoChild: this.incognitoChild,
@@ -1232,12 +1275,34 @@ export class CompanionKernel {
         [
           this.executionJobCapability,
           this.sessionGoalCapability,
+          this.sessionWorkflowCapability,
           ...this.agentRuntimeConfiguration.activeCapabilities(),
         ],
       );
     }
+    this.workflowCoordinator = new SessionWorkflowCoordinator(
+      this.sessionWorkflows,
+      this.clock,
+      {
+        findByAdmission: (parentSessionId, execution) =>
+          this.findWorkflowChildByAdmission(parentSessionId, execution),
+        findById: (parentSessionId, execution) =>
+          this.findWorkflowChildById(parentSessionId, execution),
+        start: (parentSessionId, execution, references, timeoutSeconds) =>
+          this.startWorkflowChild(parentSessionId, execution, references, timeoutSeconds),
+        retry: (parentSessionId, execution, timeoutSeconds) =>
+          this.retryWorkflowChild(parentSessionId, execution, timeoutSeconds),
+        interrupt: (parentSessionId, execution) =>
+          this.interruptWorkflowChild(parentSessionId, execution),
+        isCapacityError: (error) =>
+          error instanceof ExecutionJobCapacityError ||
+          (error instanceof SubagentRunError && error.diagnostic.failureKind === "capacity"),
+      },
+    );
+    this.workflowCoordinatorInstance = this.workflowCoordinator;
     this.sessionRuntime.setSubagentJobTerminalListener((jobId) => {
       this.scheduleSubagentJobDeliveries(jobId);
+      this.workflowCoordinator.onChildTerminal("subagent", jobId);
     });
     const privateInboxRepository = new PrivateInboxRepository(this.database);
     this.creator = new CreatorService(this.database, this.clock, this.store.idGenerator,
@@ -1356,6 +1421,7 @@ export class CompanionKernel {
       }
       this.scheduleSubagentJobDeliveries();
       this.sessionRuntime.scheduleSubagentRecovery();
+      this.workflowCoordinator.recover();
     }
   }
 
@@ -3680,6 +3746,7 @@ export class CompanionKernel {
       this.sessionRuntime.replaceAdditionalSessionCapabilities([
         this.executionJobCapability,
         this.sessionGoalCapability,
+        this.sessionWorkflowCapability,
         ...prepared.activeCapabilities,
       ]);
     } catch (error) {
@@ -3693,6 +3760,7 @@ export class CompanionKernel {
       this.sessionRuntime.replaceAdditionalSessionCapabilities([
         this.executionJobCapability,
         this.sessionGoalCapability,
+        this.sessionWorkflowCapability,
         ...previousCapabilities,
       ]);
       this.moduleCatalog.replaceAdditionalMcpModules(previousContributions);
@@ -3792,6 +3860,11 @@ export class CompanionKernel {
 
   retryExecutionJob(parentSessionId: string, jobId: string): ExecutionJobSummary {
     const metadata = this.requireExecutionParentSession(parentSessionId);
+    if (this.sessionWorkflows.findNodeByChild("shell", jobId)) {
+      throw new SessionWorkflowConflictError(
+        "Workflow-owned shell jobs can only replay through a workflow node decision",
+      );
+    }
     this.sessionRuntime.assertConversationActive(metadata.id);
     const permissions = this.permissionCatalog.get();
     if (!permissions.shellEnabled || !permissions.shellAvailable) {
@@ -3817,6 +3890,101 @@ export class CompanionKernel {
       networkEnabled: job.run?.networkEnabled ?? job.grants.networkEnabled,
     }, conversationActionScope(metadata));
     return job;
+  }
+
+  listSessionWorkflows(
+    parentSessionId: string,
+    options: { includeTerminal?: boolean; limit?: number } = {},
+  ): readonly SessionWorkflowSummary[] {
+    const metadata = this.requireWorkflowParentSession(parentSessionId);
+    return this.sessionWorkflows.list(metadata.id, options);
+  }
+
+  getSessionWorkflow(
+    parentSessionId: string,
+    workflowId: string,
+    eventLimit = 20,
+  ): SessionWorkflowDetail {
+    const metadata = this.requireWorkflowParentSession(parentSessionId);
+    const workflow = this.sessionWorkflows.get(metadata.id, workflowId, eventLimit);
+    if (!workflow) throw new SessionWorkflowNotFoundError(workflowId);
+    return workflow;
+  }
+
+  createSessionWorkflow(
+    parentSessionId: string,
+    input: CreateSessionWorkflowInput,
+  ): SessionWorkflowDetail {
+    const metadata = this.requireWorkflowParentSession(parentSessionId, true);
+    const permissions = this.permissionCatalog.get();
+    const workflow = this.sessionWorkflows.create({
+      parentSessionId: metadata.id,
+      mode: metadata.mode,
+      conversationSpace: metadata.conversationSpace,
+      ...(metadata.characterId ? { characterId: metadata.characterId } : {}),
+      ...(metadata.conversationSpace === "secret" && metadata.characterId
+        ? { secretOwnerCharacterId: metadata.characterId }
+        : {}),
+    }, input, this.workflowGrantCeiling({
+      conversationSpace: metadata.conversationSpace,
+      ...(metadata.characterId ? { characterId: metadata.characterId } : {}),
+      permissions,
+    }), "http");
+    this.recordSessionWorkflowMutation("create_workflow", metadata, workflow);
+    return workflow;
+  }
+
+  startSessionWorkflow(
+    parentSessionId: string,
+    workflowId: string,
+    expectedRevision: number,
+  ): SessionWorkflowDetail {
+    const metadata = this.requireWorkflowParentSession(parentSessionId, true);
+    const workflow = this.workflowCoordinator.start(
+      metadata.id,
+      workflowId,
+      expectedRevision,
+      "http",
+    );
+    this.recordSessionWorkflowMutation("start_workflow", metadata, workflow);
+    return workflow;
+  }
+
+  cancelSessionWorkflow(
+    parentSessionId: string,
+    workflowId: string,
+    expectedRevision: number,
+    note: string,
+  ): SessionWorkflowDetail {
+    const metadata = this.requireWorkflowParentSession(parentSessionId, true);
+    const workflow = this.workflowCoordinator.cancel(
+      metadata.id,
+      workflowId,
+      expectedRevision,
+      note,
+      "http",
+    );
+    this.recordSessionWorkflowMutation("cancel_workflow", metadata, workflow);
+    return workflow;
+  }
+
+  decideSessionWorkflowReplay(
+    parentSessionId: string,
+    workflowId: string,
+    nodeKey: string,
+    decision: SessionWorkflowReplayDecision,
+    note: string,
+  ): SessionWorkflowDetail {
+    const metadata = this.requireWorkflowParentSession(parentSessionId, true);
+    const workflow = this.workflowCoordinator.decideReplay(
+      metadata.id,
+      workflowId,
+      nodeKey,
+      decision,
+      note,
+    );
+    this.recordSessionWorkflowMutation("decide_workflow_replay", metadata, workflow, nodeKey);
+    return workflow;
   }
 
   listSessionGoals(
@@ -3978,6 +4146,11 @@ export class CompanionKernel {
     jobId: string,
   ) {
     this.requireSubagentParentSession(parentSessionId);
+    if (this.sessionWorkflows.findNodeByChild("subagent", jobId)) {
+      throw new SessionWorkflowConflictError(
+        "Workflow-owned Subagent jobs can only replay through a workflow node decision",
+      );
+    }
     return this.sessionRuntime.retrySubagentJob(parentSessionId, jobId);
   }
 
@@ -3988,6 +4161,11 @@ export class CompanionKernel {
     timezone = "Asia/Shanghai",
   ) {
     this.requireSubagentParentSession(parentSessionId);
+    if (this.sessionWorkflows.findNodeByChild("subagent", jobId)) {
+      throw new SessionWorkflowConflictError(
+        "Workflow-owned Subagent jobs cannot be continued outside their workflow",
+      );
+    }
     return this.sessionRuntime.sendSubagentMessage(parentSessionId, jobId, prompt, timezone);
   }
 
@@ -4253,6 +4431,206 @@ export class CompanionKernel {
       .find((entry) => entry.id === sessionId);
     if (!metadata) throw new ConversationNotFoundError(sessionId);
     return metadata;
+  }
+
+  private requireWorkflowParentSession(sessionId: string, mutable = false) {
+    if (this.incognitoChild) {
+      throw new SessionWorkflowConflictError("Persistent workflows are unavailable in incognito mode");
+    }
+    if (this.deleteAllUserDataOperation || this.deletingConversationIds.has(sessionId)) {
+      throw new ControlPlaneBusyError("此会话正在清理，不能访问或修改持久工作流。");
+    }
+    this.assertKnownIncognitoSessionId(sessionId);
+    this.incognitoSessions?.assertUnsupported(sessionId, "persistent workflow access");
+    const metadata = this.sessionRuntime.getConversationMetadata()
+      .find((entry) => entry.id === sessionId);
+    if (!metadata) throw new ConversationNotFoundError(sessionId);
+    if (mutable) this.sessionRuntime.assertConversationActive(metadata.id);
+    return metadata;
+  }
+
+  private workflowGrantCeiling(
+    context: Pick<
+      SessionCapabilityContext,
+      "conversationSpace" | "characterId" | "permissions"
+    >,
+  ): SessionWorkflowGrantCeiling {
+    const permissions = context.permissions;
+    const moduleIds = [
+      this.moduleCatalog.isEnabled(tavilySearchMcpModuleId) && this.tavilyService.isConfigured()
+        ? tavilySearchMcpModuleId
+        : undefined,
+      this.moduleCatalog.isEnabled(webReaderMcpModuleId) ? webReaderMcpModuleId : undefined,
+      this.moduleCatalog.isEnabled(visionMcpModuleId) &&
+          this.visionService.isConfigured() && this.visionService.getConfig().mode !== "off"
+        ? visionMcpModuleId
+        : undefined,
+      permissions.workspaceAccess !== "off" && this.moduleCatalog.isEnabled(mineruMcpModuleId) &&
+          this.mineruService.isConfigured()
+        ? mineruMcpModuleId
+        : undefined,
+    ].filter((moduleId): moduleId is string => moduleId !== undefined);
+    const skillNames = this.moduleCatalog.enabledSkills(
+      context.conversationSpace,
+      context.characterId,
+    ).map((skill) => skill.name);
+    return Object.freeze({
+      subagent: Object.freeze({
+        available: this.moduleCatalog.isEnabled(subagentMcpModuleId),
+        workspaceAccess: permissions.workspaceAccess === "off" ? "off" : "read_only",
+        moduleIds: Object.freeze(moduleIds),
+        skillNames: Object.freeze(skillNames),
+      }),
+      shell: Object.freeze({
+        available: permissions.shellEnabled && permissions.shellAvailable,
+        workspaceAccess: permissions.workspaceAccess,
+        networkEnabled: permissions.networkEnabled,
+      }),
+    });
+  }
+
+  private findWorkflowChildByAdmission(
+    parentSessionId: string,
+    execution: SessionWorkflowNodeExecution,
+  ): WorkflowChildState | undefined {
+    return execution.node.kind === "shell"
+      ? workflowExecutionChildState(
+          this.executionJobs.getByAdmissionKey(parentSessionId, execution.admissionKey),
+        )
+      : workflowSubagentChildState(
+          this.subagentJobs.getByAdmissionKey(parentSessionId, execution.admissionKey),
+        );
+  }
+
+  private findWorkflowChildById(
+    parentSessionId: string,
+    execution: SessionWorkflowNodeExecution,
+  ): WorkflowChildState | undefined {
+    const childJobId = execution.node.childJobId;
+    if (!childJobId) return undefined;
+    return execution.node.kind === "shell"
+      ? workflowExecutionChildState(this.executionJobs.get(parentSessionId, childJobId))
+      : workflowSubagentChildState(this.subagentJobs.get(parentSessionId, childJobId));
+  }
+
+  private startWorkflowChild(
+    parentSessionId: string,
+    execution: SessionWorkflowNodeExecution,
+    dependencyReferences: readonly SessionWorkflowResultReference[],
+    timeoutSeconds: number,
+  ): WorkflowChildState {
+    const metadata = this.requireWorkflowParentSession(parentSessionId, true);
+    const permissions = this.permissionCatalog.get();
+    if (execution.node.kind === "shell") {
+      if (!permissions.shellEnabled || !permissions.shellAvailable) {
+        throw new ExecutionJobStateError("runtime", "authorized for shell execution");
+      }
+      if (execution.node.grants.kind !== "shell" || !("command" in execution.input)) {
+        throw new SessionWorkflowConflictError("Workflow shell node grant is invalid");
+      }
+      const workspace = this.workspaceRegistry.resolve(metadata);
+      const job = this.executionJobs.start({
+        parentSessionId,
+        command: execution.input.command,
+        mode: metadata.mode,
+        conversationSpace: metadata.conversationSpace,
+        ...(metadata.characterId ? { characterId: metadata.characterId } : {}),
+        ...(metadata.conversationSpace === "secret" && metadata.characterId
+          ? { secretOwnerCharacterId: metadata.characterId }
+          : {}),
+        workspaceKey: workspace.key,
+        workspaceDir: workspace.dir,
+        workspaceAccess: narrowerWorkflowWorkspaceAccess(
+          execution.node.grants.workspaceAccess,
+          permissions.workspaceAccess,
+        ),
+        networkEnabled: execution.node.grants.networkEnabled && permissions.networkEnabled,
+        timeoutSeconds,
+        admissionKey: execution.admissionKey,
+      });
+      return workflowExecutionChildState(job)!;
+    }
+    if (execution.node.grants.kind !== "subagent" || !("task" in execution.input)) {
+      throw new SessionWorkflowConflictError("Workflow Subagent node grant is invalid");
+    }
+    const job = this.sessionRuntime.startSubagentJob(
+      parentSessionId,
+      {
+        role: execution.input.role,
+        task: execution.input.task,
+        context: workflowSubagentContext(execution.input.context, dependencyReferences),
+      },
+      "Asia/Shanghai",
+      {
+        notifyParent: false,
+        admissionKey: execution.admissionKey,
+        grants: execution.node.grants,
+        timeoutSeconds,
+      },
+    );
+    return workflowSubagentChildState(job)!;
+  }
+
+  private retryWorkflowChild(
+    parentSessionId: string,
+    execution: SessionWorkflowNodeExecution,
+    _timeoutSeconds: number,
+  ): WorkflowChildState {
+    const childJobId = execution.node.childJobId;
+    if (!childJobId) throw new SessionWorkflowConflictError("Workflow replay child is missing");
+    if (execution.node.kind === "subagent") {
+      return workflowSubagentChildState(
+        this.sessionRuntime.retrySubagentJob(parentSessionId, childJobId),
+      )!;
+    }
+    const metadata = this.requireWorkflowParentSession(parentSessionId, true);
+    const permissions = this.permissionCatalog.get();
+    if (!permissions.shellEnabled || !permissions.shellAvailable) {
+      throw new ExecutionJobStateError(childJobId, "authorized for shell execution");
+    }
+    const workspace = this.workspaceRegistry.resolve(metadata);
+    return workflowExecutionChildState(this.executionJobs.retry({
+      parentSessionId,
+      jobId: childJobId,
+      workspaceKey: workspace.key,
+      workspaceDir: workspace.dir,
+      workspaceAccess: permissions.workspaceAccess,
+      networkEnabled: permissions.networkEnabled,
+    }))!;
+  }
+
+  private async interruptWorkflowChild(
+    parentSessionId: string,
+    execution: SessionWorkflowNodeExecution,
+  ): Promise<WorkflowChildState | undefined> {
+    const childJobId = execution.node.childJobId;
+    if (!childJobId) return undefined;
+    return execution.node.kind === "subagent"
+      ? workflowSubagentChildState(
+          await this.sessionRuntime.interruptSubagentJob(parentSessionId, childJobId),
+        )
+      : workflowExecutionChildState(
+          await this.executionJobs.interrupt(parentSessionId, childJobId),
+        );
+  }
+
+  private recordSessionWorkflowMutation(
+    actionType: string,
+    metadata: ConversationMetadata,
+    workflow: SessionWorkflowSummary,
+    nodeKey?: string,
+  ): void {
+    this.store.addAction(actionType, "completed", {
+      transport: "http",
+      sessionId: metadata.id,
+      workflowId: workflow.id,
+      ...(nodeKey ? { nodeKey } : {}),
+      status: workflow.status,
+      revision: workflow.revision,
+      nodeCount: workflow.counts.total,
+      activeNodes: workflow.counts.active,
+      decisionRequired: workflow.counts.decisionRequired,
+    }, conversationActionScope(metadata));
   }
 
   private requireSessionGoalParentSession(sessionId: string, mutable = false) {
@@ -5160,6 +5538,7 @@ export class CompanionKernel {
     this.postTurnCoordinator.dispose();
     this.characterInteractionCoordinator.dispose();
     this.characterCapabilities.dispose();
+    this.workflowCoordinator.dispose();
     this.executionJobs.dispose();
     this.sessionRuntime.dispose();
     this.documentService.clearCache();
@@ -10935,6 +11314,88 @@ function subagentJobDeliveryText(delivery: SubagentJobDelivery): string {
     return `【可信运行时通知，非用户输入】后台子 Agent 任务已取消（任务 ID：${delivery.jobId}）。可使用 get_subagent_job 查看状态。`;
   }
   return `【可信运行时通知，非用户输入】后台子 Agent 任务未完成（任务 ID：${delivery.jobId}）。可使用 get_subagent_job 查看状态和可重试信息。`;
+}
+
+function workflowExecutionChildState(
+  job: ExecutionJobSummary | undefined,
+): WorkflowChildState | undefined {
+  if (!job) return undefined;
+  return Object.freeze({
+    id: job.id,
+    status: job.status,
+    reference: Object.freeze({
+      kind: "execution_job" as const,
+      status: job.status,
+      jobId: job.id,
+      digest: job.commandSha256,
+      attempt: job.currentAttempt,
+      outputBytes: job.run?.outputBytes ?? 0,
+      outputTruncated: job.run?.outputTruncated ?? false,
+      ...(job.status === "idle" ? { reason: "process_restarted" } : {}),
+    }),
+    ...(job.status === "idle"
+      ? {
+          recovery: "decision_required" as const,
+          decisionReason: "process_restarted" as const,
+        }
+      : {}),
+  });
+}
+
+function workflowSubagentChildState(
+  job: SubagentJobSummary | undefined,
+): WorkflowChildState | undefined {
+  if (!job) return undefined;
+  const decisionReason = job.recovery?.reason === "external_effect_ambiguous"
+    ? "external_effect_ambiguous" as const
+    : "process_restarted" as const;
+  return Object.freeze({
+    id: job.id,
+    status: job.status,
+    reference: Object.freeze({
+      kind: "subagent_job" as const,
+      status: job.status,
+      jobId: job.id,
+      childSessionId: job.childSessionId,
+      digest: job.taskSha256,
+      ...(job.status === "idle" ? { reason: job.recovery?.reason ?? "process_restarted" } : {}),
+    }),
+    ...(job.status === "idle"
+      ? {
+          recovery: job.recovery?.state ?? "unavailable",
+          decisionReason,
+        }
+      : {}),
+  });
+}
+
+function workflowSubagentContext(
+  original: string | undefined,
+  references: readonly SessionWorkflowResultReference[],
+): string | undefined {
+  if (!references.length) return original;
+  const referenceText = [
+    "Dependency result references (bodies are intentionally not embedded):",
+    ...references.map((reference) => JSON.stringify(reference)),
+  ].join("\n");
+  const maximum = 8_000;
+  const referenceCharacters = [...referenceText];
+  const boundedReference = referenceCharacters.length <= maximum
+    ? referenceText
+    : referenceCharacters.slice(0, maximum).join("");
+  if (!original) return boundedReference;
+  const separator = "\n\n";
+  const remaining = Math.max(0, maximum - [...boundedReference].length - separator.length);
+  const boundedOriginal = [...original].slice(0, remaining).join("");
+  return `${boundedOriginal}${separator}${boundedReference}`;
+}
+
+function narrowerWorkflowWorkspaceAccess(
+  frozen: "off" | "read_only" | "read_write",
+  current: "off" | "read_only" | "read_write",
+): "off" | "read_only" | "read_write" {
+  const rank = { off: 0, read_only: 1, read_write: 2 } as const;
+  return rank[frozen] <= rank[current] ? frozen : current;
 }
 
 function fallbackCharacterCollaborationReport(

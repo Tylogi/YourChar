@@ -3675,6 +3675,202 @@ const migrations: Migration[] = [
         ON session_goal_transitions(parent_session_id, goal_id, sequence DESC);
     `,
   },
+  {
+    version: 68,
+    sql: `
+      ALTER TABLE subagent_jobs ADD COLUMN admission_key TEXT
+        CHECK (
+          admission_key IS NULL OR
+          (length(admission_key) BETWEEN 1 AND 256 AND trim(admission_key) = admission_key)
+        );
+      CREATE UNIQUE INDEX subagent_jobs_parent_admission_idx
+        ON subagent_jobs(parent_session_id, admission_key)
+        WHERE admission_key IS NOT NULL;
+
+      ALTER TABLE execution_jobs ADD COLUMN admission_key TEXT
+        CHECK (
+          admission_key IS NULL OR
+          (length(admission_key) BETWEEN 1 AND 256 AND trim(admission_key) = admission_key)
+        );
+      CREATE UNIQUE INDEX execution_jobs_parent_admission_idx
+        ON execution_jobs(parent_session_id, admission_key)
+        WHERE admission_key IS NOT NULL;
+
+      CREATE TABLE session_workflows (
+        id TEXT PRIMARY KEY CHECK (length(id) BETWEEN 1 AND 256),
+        parent_session_id TEXT NOT NULL
+          CHECK (length(parent_session_id) BETWEEN 1 AND 256),
+        mode TEXT NOT NULL CHECK (mode IN ('sms', 'rp')),
+        conversation_space TEXT NOT NULL
+          CHECK (conversation_space IN ('normal', 'secret')),
+        character_id TEXT,
+        secret_owner_character_id TEXT,
+        title TEXT NOT NULL
+          CHECK (length(title) BETWEEN 1 AND 240 AND trim(title) = title),
+        status TEXT NOT NULL CHECK (
+          status IN ('planned', 'running', 'blocked', 'cancelling',
+            'completed', 'failed', 'cancelled')
+        ),
+        revision INTEGER NOT NULL DEFAULT 1 CHECK (revision >= 1),
+        max_concurrency INTEGER NOT NULL CHECK (max_concurrency BETWEEN 1 AND 4),
+        timeout_seconds INTEGER NOT NULL CHECK (timeout_seconds BETWEEN 1 AND 86400),
+        deadline_at TEXT,
+        cancellation_note TEXT CHECK (
+          cancellation_note IS NULL OR
+          (length(cancellation_note) BETWEEN 1 AND 2000 AND trim(cancellation_note) = cancellation_note)
+        ),
+        terminal_note TEXT CHECK (
+          terminal_note IS NULL OR
+          (length(terminal_note) BETWEEN 1 AND 2000 AND trim(terminal_note) = terminal_note)
+        ),
+        created_at TEXT NOT NULL,
+        started_at TEXT,
+        finished_at TEXT,
+        updated_at TEXT NOT NULL,
+        UNIQUE (id, parent_session_id),
+        CHECK (
+          (conversation_space = 'normal' AND secret_owner_character_id IS NULL)
+          OR
+          (conversation_space = 'secret' AND character_id IS NOT NULL
+            AND secret_owner_character_id = character_id)
+        ),
+        CHECK (conversation_space = 'normal' OR mode = 'sms'),
+        CHECK (
+          (status = 'planned' AND started_at IS NULL AND deadline_at IS NULL
+            AND cancellation_note IS NULL AND terminal_note IS NULL AND finished_at IS NULL)
+          OR
+          (status IN ('running', 'blocked', 'cancelling') AND started_at IS NOT NULL
+            AND deadline_at IS NOT NULL AND terminal_note IS NULL AND finished_at IS NULL)
+          OR
+          (status IN ('completed', 'failed', 'cancelled')
+            AND terminal_note IS NOT NULL AND finished_at IS NOT NULL)
+        )
+      );
+      CREATE INDEX session_workflows_parent_status_idx
+        ON session_workflows(parent_session_id, status, updated_at DESC, id DESC);
+      CREATE INDEX session_workflows_recovery_idx
+        ON session_workflows(status, deadline_at, updated_at, id);
+
+      CREATE TABLE session_workflow_nodes (
+        id TEXT PRIMARY KEY CHECK (length(id) BETWEEN 1 AND 256),
+        workflow_id TEXT NOT NULL,
+        parent_session_id TEXT NOT NULL,
+        node_key TEXT NOT NULL
+          CHECK (length(node_key) BETWEEN 1 AND 80 AND trim(node_key) = node_key),
+        kind TEXT NOT NULL CHECK (kind IN ('subagent', 'shell')),
+        status TEXT NOT NULL CHECK (
+          status IN ('pending', 'launching', 'running', 'decision_required',
+            'completed', 'failed', 'cancelled', 'skipped')
+        ),
+        revision INTEGER NOT NULL DEFAULT 1 CHECK (revision >= 1),
+        input_json TEXT NOT NULL CHECK (
+          json_valid(input_json) AND json_type(input_json) = 'object'
+          AND length(CAST(input_json AS BLOB)) BETWEEN 2 AND 65536
+        ),
+        input_sha256 TEXT NOT NULL CHECK (
+          length(input_sha256) = 64 AND input_sha256 NOT GLOB '*[^a-f0-9]*'
+        ),
+        input_characters INTEGER NOT NULL CHECK (input_characters BETWEEN 1 AND 65536),
+        grants_json TEXT NOT NULL CHECK (
+          json_valid(grants_json) AND json_type(grants_json) = 'object'
+        ),
+        timeout_seconds INTEGER NOT NULL CHECK (timeout_seconds BETWEEN 1 AND 86400),
+        admission_key TEXT NOT NULL UNIQUE CHECK (
+          length(admission_key) BETWEEN 1 AND 256 AND trim(admission_key) = admission_key
+        ),
+        child_job_id TEXT,
+        result_ref_json TEXT CHECK (
+          result_ref_json IS NULL OR
+          (json_valid(result_ref_json) AND json_type(result_ref_json) = 'object')
+        ),
+        decision_reason TEXT CHECK (
+          decision_reason IS NULL OR decision_reason IN (
+            'process_restarted', 'external_effect_ambiguous', 'child_missing'
+          )
+        ),
+        replay_count INTEGER NOT NULL DEFAULT 0 CHECK (replay_count BETWEEN 0 AND 3),
+        created_at TEXT NOT NULL,
+        started_at TEXT,
+        finished_at TEXT,
+        updated_at TEXT NOT NULL,
+        UNIQUE (workflow_id, node_key),
+        UNIQUE (id, workflow_id, parent_session_id),
+        FOREIGN KEY (workflow_id, parent_session_id)
+          REFERENCES session_workflows(id, parent_session_id) ON DELETE CASCADE,
+        CHECK (
+          (status = 'pending' AND child_job_id IS NULL AND result_ref_json IS NULL
+            AND decision_reason IS NULL AND started_at IS NULL AND finished_at IS NULL)
+          OR
+          (status = 'launching' AND result_ref_json IS NULL
+            AND decision_reason IS NULL AND finished_at IS NULL)
+          OR
+          (status = 'running' AND child_job_id IS NOT NULL AND result_ref_json IS NULL
+            AND decision_reason IS NULL AND started_at IS NOT NULL AND finished_at IS NULL)
+          OR
+          (status = 'decision_required' AND child_job_id IS NOT NULL
+            AND result_ref_json IS NOT NULL AND decision_reason IS NOT NULL
+            AND started_at IS NOT NULL AND finished_at IS NULL)
+          OR
+          (status IN ('completed', 'cancelled') AND child_job_id IS NOT NULL
+            AND result_ref_json IS NOT NULL AND decision_reason IS NULL
+            AND started_at IS NOT NULL AND finished_at IS NOT NULL)
+          OR
+          (status = 'failed' AND result_ref_json IS NOT NULL
+            AND decision_reason IS NULL AND finished_at IS NOT NULL)
+          OR
+          (status = 'skipped' AND result_ref_json IS NOT NULL
+            AND decision_reason IS NULL AND finished_at IS NOT NULL)
+        )
+      );
+      CREATE INDEX session_workflow_nodes_state_idx
+        ON session_workflow_nodes(workflow_id, status, node_key);
+      CREATE INDEX session_workflow_nodes_child_idx
+        ON session_workflow_nodes(kind, child_job_id)
+        WHERE child_job_id IS NOT NULL;
+
+      CREATE TABLE session_workflow_dependencies (
+        workflow_id TEXT NOT NULL,
+        parent_session_id TEXT NOT NULL,
+        node_id TEXT NOT NULL,
+        depends_on_node_id TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        PRIMARY KEY (workflow_id, node_id, depends_on_node_id),
+        FOREIGN KEY (node_id, workflow_id, parent_session_id)
+          REFERENCES session_workflow_nodes(id, workflow_id, parent_session_id)
+          ON DELETE CASCADE,
+        FOREIGN KEY (depends_on_node_id, workflow_id, parent_session_id)
+          REFERENCES session_workflow_nodes(id, workflow_id, parent_session_id)
+          ON DELETE CASCADE,
+        CHECK (node_id <> depends_on_node_id)
+      );
+      CREATE INDEX session_workflow_dependencies_target_idx
+        ON session_workflow_dependencies(workflow_id, depends_on_node_id, node_id);
+
+      CREATE TABLE session_workflow_events (
+        id TEXT PRIMARY KEY CHECK (length(id) BETWEEN 1 AND 256),
+        workflow_id TEXT NOT NULL,
+        parent_session_id TEXT NOT NULL,
+        sequence INTEGER NOT NULL CHECK (sequence >= 1),
+        event_type TEXT NOT NULL CHECK (event_type IN (
+          'workflow_created', 'workflow_started', 'workflow_status_changed',
+          'node_launch_reserved', 'node_attached', 'node_status_changed',
+          'node_replay_decided'
+        )),
+        source TEXT NOT NULL CHECK (source IN ('agent', 'http', 'host', 'recovery')),
+        node_id TEXT,
+        payload_json TEXT NOT NULL CHECK (
+          json_valid(payload_json) AND json_type(payload_json) = 'object'
+          AND length(payload_json) BETWEEN 2 AND 65536
+        ),
+        created_at TEXT NOT NULL,
+        UNIQUE (workflow_id, sequence),
+        FOREIGN KEY (workflow_id, parent_session_id)
+          REFERENCES session_workflows(id, parent_session_id) ON DELETE CASCADE
+      );
+      CREATE INDEX session_workflow_events_recent_idx
+        ON session_workflow_events(parent_session_id, workflow_id, sequence DESC);
+    `,
+  },
 ];
 
 export class AppDatabase {

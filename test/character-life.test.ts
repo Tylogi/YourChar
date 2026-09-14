@@ -274,7 +274,7 @@ test("life schema upgrades from 53 and persistent goals/interrupted tasks surviv
   const legacy = new AppDatabase(migrationFile, { maxMigrationVersion: 53 });
   legacy.close();
   const upgraded = new AppDatabase(migrationFile);
-  assert.equal(upgraded.connection.prepare("SELECT MAX(version) AS v FROM schema_migrations").get()!.v, 67);
+  assert.equal(upgraded.connection.prepare("SELECT MAX(version) AS v FROM schema_migrations").get()!.v, 68);
   upgraded.close();
   let runtime = createTestRuntime({ stateDir });
   try {

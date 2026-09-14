@@ -172,12 +172,26 @@ history/reconstruction until its owning conversation is deleted.
 
 ### P3c — Workflow fan-out and orchestration
 
-- [ ] Add a bounded DAG executor over existing Subagent and execution-job
+- [x] Add a bounded DAG executor over existing Subagent and execution-job
   primitives, with dependency validation and per-workflow concurrency budgets.
-- [ ] Propagate cancellation, deadlines, and least-privilege grants through all
+- [x] Propagate cancellation, deadlines, and least-privilege grants through all
   descendants; make aggregation consume references rather than full outputs.
-- [ ] Require explicit replay decisions for nodes with ambiguous external
+- [x] Require explicit replay decisions for nodes with ambiguous external
   effects and make workflow completion idempotent across restart.
+
+Workflows are planned before they are started, are limited to 16 acyclic nodes
+and four concurrent descendants, and freeze a grant ceiling for every node.
+Shell nodes default to no Workspace or network access; Subagent module/Skill
+access is opt-in. A stable admission key joins every node to exactly one durable
+child job across the crash window between child creation and attachment.
+
+The workflow projection stores private commands and delegated prompts only in
+its execution rows. DAG aggregation and model-visible tools carry bounded child
+references, hashes, lifecycle state, and output sizes—not result bodies. On
+restart, completed children reconcile idempotently, safe Subagent checkpoints
+retain their existing automatic recovery policy, and shell or ambiguous
+Subagent effects enter `decision_required`. Only the trusted local control
+plane can record retry, skip, or cancel decisions before orchestration resumes.
 
 ### P3d — Optional code intelligence
 

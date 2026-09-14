@@ -163,7 +163,7 @@ test("creator history is paginated and restart never replays an uncertain mutati
   try {
     const legacy = new AppDatabase(join(directory, "migration.sqlite"), { maxMigrationVersion: 54 }); legacy.close();
     const upgraded = new AppDatabase(join(directory, "migration.sqlite"));
-    assert.equal(upgraded.connection.prepare("SELECT max(version) AS v FROM schema_migrations").get()!.v, 67); upgraded.close();
+    assert.equal(upgraded.connection.prepare("SELECT max(version) AS v FROM schema_migrations").get()!.v, 68); upgraded.close();
     runtime = createTestRuntime({ stateDir: directory });
     const proposal = await propose(runtime, { kind: "create_world", input: { name: "中断不能自动重建" } });
     runtime.kernel.database.connection.prepare("UPDATE creator_proposals SET status='applying' WHERE id=?").run(proposal.id);

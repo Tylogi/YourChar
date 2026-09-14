@@ -130,6 +130,13 @@ import {
   type SessionGoalStatus,
   type SessionGoalTodoStatus,
 } from "../goals/index.js";
+import {
+  SessionWorkflowConflictError,
+  SessionWorkflowNotFoundError,
+  SessionWorkflowValidationError,
+  type SessionWorkflowNodeInput,
+  type SessionWorkflowReplayDecision,
+} from "../workflows/index.js";
 import type { MemoryControlPlaneEdit } from "../memory-coordinator/types.js";
 import { UserInsightControlError } from "../user-insight/index.js";
 import {
@@ -416,6 +423,12 @@ export function createHttpServer(options: HttpServerOptions = {}) {
         sendJson(response, 400, { code: error.code, error: error.message });
       } else if (error instanceof SessionGoalConflictError) {
         sendJson(response, 409, { code: error.code, error: error.message });
+      } else if (error instanceof SessionWorkflowNotFoundError) {
+        sendJson(response, 404, { code: error.code, error: error.message });
+      } else if (error instanceof SessionWorkflowValidationError) {
+        sendJson(response, 400, { code: error.code, error: error.message });
+      } else if (error instanceof SessionWorkflowConflictError) {
+        sendJson(response, 409, { code: error.code, error: error.message });
       } else if (error instanceof SubagentJobNotFoundError) {
         sendJson(response, 404, { code: error.code, error: error.message });
       } else if (error instanceof SubagentJobStateError) {
@@ -684,6 +697,8 @@ async function route(input: {
         "GET/POST /api/v1/sessions/{id}/execution-jobs; GET /api/v1/sessions/{id}/execution-jobs/{jobId}[/output]; POST /api/v1/sessions/{id}/execution-jobs/{jobId}/{interrupt|retry}",
       goals:
         "GET/POST /api/v1/sessions/{id}/goals; GET/PATCH /api/v1/sessions/{id}/goals/{goalId}; mutate transitions, dependencies, and todos below a goal",
+      workflows:
+        "GET/POST /api/v1/sessions/{id}/workflows; GET /api/v1/sessions/{id}/workflows/{workflowId}; POST start/cancel or trusted node replay decisions below a workflow",
       imChannels: "GET /api/v1/im/channels",
       imSettings: "GET/PATCH /api/v1/im/settings",
       imBindingQr: "POST /api/v1/im/bindings/{provider}/qr",
@@ -1243,6 +1258,122 @@ async function route(input: {
       },
     );
     sendJson(input.response, 200, { goal });
+    return;
+  }
+
+  const workflowDecisionMatch = pathname.match(
+    /^\/api\/v1\/sessions\/([^/]+)\/workflows\/([^/]+)\/nodes\/([^/]+)\/decision$/,
+  );
+  if (workflowDecisionMatch && method === "POST") {
+    assertLocalControlPlaneMutation(input.request);
+    const body = asRecord(await readJson(input.request));
+    assertOnlyKeys(body, ["decision", "note"], "Workflow replay decision");
+    const workflow = kernel.decideSessionWorkflowReplay(
+      decodeURIComponent(workflowDecisionMatch[1]),
+      decodeURIComponent(workflowDecisionMatch[2]),
+      decodeURIComponent(workflowDecisionMatch[3]),
+      requiredWorkflowReplayDecision(body.decision),
+      requiredStringValue(body.note, "note"),
+    );
+    sendJson(input.response, 202, { workflow });
+    return;
+  }
+
+  const workflowActionMatch = pathname.match(
+    /^\/api\/v1\/sessions\/([^/]+)\/workflows\/([^/]+)\/(start|cancel)$/,
+  );
+  if (workflowActionMatch && method === "POST") {
+    assertLocalControlPlaneMutation(input.request);
+    const body = asRecord(await readJson(input.request));
+    const parentSessionId = decodeURIComponent(workflowActionMatch[1]);
+    const workflowId = decodeURIComponent(workflowActionMatch[2]);
+    const action = workflowActionMatch[3];
+    if (action === "start") {
+      assertOnlyKeys(body, ["expectedRevision"], "Workflow start");
+      const workflow = kernel.startSessionWorkflow(
+        parentSessionId,
+        workflowId,
+        requiredPositiveInteger(body.expectedRevision, "expectedRevision"),
+      );
+      sendJson(input.response, 202, { workflow });
+      return;
+    }
+    assertOnlyKeys(body, ["expectedRevision", "note"], "Workflow cancellation");
+    const workflow = kernel.cancelSessionWorkflow(
+      parentSessionId,
+      workflowId,
+      requiredPositiveInteger(body.expectedRevision, "expectedRevision"),
+      requiredStringValue(body.note, "note"),
+    );
+    sendJson(input.response, 202, { workflow });
+    return;
+  }
+
+  const workflowsMatch = pathname.match(
+    /^\/api\/v1\/sessions\/([^/]+)\/workflows(?:\/([^/]+))?$/,
+  );
+  if (workflowsMatch && method === "GET") {
+    const parentSessionId = decodeURIComponent(workflowsMatch[1]);
+    if (workflowsMatch[2] !== undefined) {
+      const eventLimit = optionalQueryInteger(url.searchParams.get("eventLimit"), "eventLimit", 0);
+      if (eventLimit !== undefined && eventLimit > 100) {
+        throw new SyntaxError("eventLimit must not exceed 100");
+      }
+      sendJson(input.response, 200, {
+        workflow: kernel.getSessionWorkflow(
+          parentSessionId,
+          decodeURIComponent(workflowsMatch[2]),
+          eventLimit ?? 20,
+        ),
+      });
+      return;
+    }
+    const limit = optionalQueryInteger(url.searchParams.get("limit"), "limit", 1) ?? 20;
+    if (limit > 100) throw new SyntaxError("limit must not exceed 100");
+    const includeTerminal = optionalQueryBoolean(
+      url.searchParams.get("includeTerminal"),
+      "includeTerminal",
+    );
+    sendJson(input.response, 200, {
+      workflows: kernel.listSessionWorkflows(parentSessionId, {
+        ...(includeTerminal === undefined ? {} : { includeTerminal }),
+        limit,
+      }),
+    });
+    return;
+  }
+  if (workflowsMatch && method === "POST" && workflowsMatch[2] === undefined) {
+    assertLocalControlPlaneMutation(input.request);
+    const body = asRecord(await readJson(input.request));
+    assertOnlyKeys(
+      body,
+      ["title", "nodes", "maxConcurrency", "timeoutSeconds"],
+      "Workflow request",
+    );
+    const workflow = kernel.createSessionWorkflow(
+      decodeURIComponent(workflowsMatch[1]),
+      {
+        title: requiredStringValue(body.title, "title"),
+        nodes: requiredWorkflowNodes(body.nodes),
+        ...(body.maxConcurrency === undefined
+          ? {}
+          : {
+              maxConcurrency: requiredPositiveInteger(
+                body.maxConcurrency,
+                "maxConcurrency",
+              ),
+            }),
+        ...(body.timeoutSeconds === undefined
+          ? {}
+          : {
+              timeoutSeconds: requiredPositiveInteger(
+                body.timeoutSeconds,
+                "timeoutSeconds",
+              ),
+            }),
+      },
+    );
+    sendJson(input.response, 201, { workflow });
     return;
   }
 
@@ -5254,6 +5385,91 @@ function requiredSubagentRole(value: unknown): SubagentRole {
     return value;
   }
   throw new SyntaxError("role must be worker, researcher, planner, or reviewer");
+}
+
+function requiredWorkflowNodes(value: unknown): SessionWorkflowNodeInput[] {
+  if (!Array.isArray(value)) throw new SyntaxError("nodes must be an array");
+  return value.map((raw, index) => {
+    const node = asRecord(raw);
+    const prefix = `nodes[${index}]`;
+    const key = requiredStringValue(node.key, `${prefix}.key`);
+    const dependsOn = node.dependsOn === undefined
+      ? undefined
+      : requiredExactStringArray(node.dependsOn, `${prefix}.dependsOn`);
+    const timeoutSeconds = node.timeoutSeconds === undefined
+      ? undefined
+      : requiredPositiveInteger(node.timeoutSeconds, `${prefix}.timeoutSeconds`);
+    if (node.kind === "subagent") {
+      assertOnlyKeys(node, [
+        "key", "kind", "dependsOn", "role", "task", "context",
+        "timeoutSeconds", "workspaceAccess", "moduleIds", "skillNames",
+      ], `Workflow Subagent ${prefix}`);
+      const workspaceAccess = node.workspaceAccess === undefined
+        ? undefined
+        : requiredWorkflowSubagentWorkspaceAccess(node.workspaceAccess, `${prefix}.workspaceAccess`);
+      return {
+        key,
+        kind: "subagent" as const,
+        ...(dependsOn === undefined ? {} : { dependsOn }),
+        role: requiredSubagentRole(node.role),
+        task: requiredStringValue(node.task, `${prefix}.task`),
+        ...(node.context === undefined
+          ? {}
+          : { context: requiredStringValue(node.context, `${prefix}.context`, true) }),
+        ...(timeoutSeconds === undefined ? {} : { timeoutSeconds }),
+        ...(workspaceAccess === undefined ? {} : { workspaceAccess }),
+        ...(node.moduleIds === undefined
+          ? {}
+          : { moduleIds: requiredExactStringArray(node.moduleIds, `${prefix}.moduleIds`) }),
+        ...(node.skillNames === undefined
+          ? {}
+          : { skillNames: requiredExactStringArray(node.skillNames, `${prefix}.skillNames`) }),
+      };
+    }
+    if (node.kind === "shell") {
+      assertOnlyKeys(node, [
+        "key", "kind", "dependsOn", "command", "timeoutSeconds",
+        "workspaceAccess", "networkEnabled",
+      ], `Workflow shell ${prefix}`);
+      return {
+        key,
+        kind: "shell" as const,
+        ...(dependsOn === undefined ? {} : { dependsOn }),
+        command: requiredExecutionCommand(node.command),
+        ...(timeoutSeconds === undefined ? {} : { timeoutSeconds }),
+        ...(node.workspaceAccess === undefined
+          ? {}
+          : {
+              workspaceAccess: requiredWorkflowWorkspaceAccess(
+                node.workspaceAccess,
+                `${prefix}.workspaceAccess`,
+              ),
+            }),
+        ...(node.networkEnabled === undefined
+          ? {}
+          : { networkEnabled: requiredBoolean(node.networkEnabled, `${prefix}.networkEnabled`) }),
+      };
+    }
+    throw new SyntaxError(`${prefix}.kind must be subagent or shell`);
+  });
+}
+
+function requiredWorkflowWorkspaceAccess(value: unknown, field: string): WorkspaceAccess {
+  if (value === "off" || value === "read_only" || value === "read_write") return value;
+  throw new SyntaxError(`${field} must be off, read_only, or read_write`);
+}
+
+function requiredWorkflowSubagentWorkspaceAccess(
+  value: unknown,
+  field: string,
+): "off" | "read_only" {
+  if (value === "off" || value === "read_only") return value;
+  throw new SyntaxError(`${field} must be off or read_only`);
+}
+
+function requiredWorkflowReplayDecision(value: unknown): SessionWorkflowReplayDecision {
+  if (value === "retry" || value === "skip" || value === "cancel") return value;
+  throw new SyntaxError("decision must be retry, skip, or cancel");
 }
 
 function optionalDocumentString(value: unknown, field: string): string | undefined {

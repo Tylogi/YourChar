@@ -143,6 +143,9 @@ test("incognito inherits a stable transcript, supports meetings, and leaves pare
       "manage_goal",
       "list_goals",
       "get_goal",
+      "manage_workflow",
+      "list_workflows",
+      "get_workflow",
       "share_workspace_file",
     ]) {
       assert.equal(childTools.includes(blocked), false, `${blocked} must be unavailable in incognito`);

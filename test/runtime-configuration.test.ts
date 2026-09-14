@@ -26,7 +26,7 @@ const capabilityId = "test:profile-probe";
 const toolName = "profile_probe";
 const providerSettingsModuleId = "mcp:provider-settings-probe";
 
-test("schemas 58-67 add runtime, execution, and durable goals without changing older settings", () => {
+test("schemas 58-68 add runtime, execution, goals, and workflows without changing older settings", () => {
   const directory = mkdtempSync(join(tmpdir(), "yourchar-runtime-schema-"));
   const path = join(directory, "state.sqlite");
   try {
@@ -43,7 +43,7 @@ test("schemas 58-67 add runtime, execution, and durable goals without changing o
         Number((upgraded.connection.prepare(
           "SELECT MAX(version) AS version FROM schema_migrations",
         ).get() as { version: number }).version),
-        67,
+        68,
       );
       const manager = new AgentRuntimeConfigurationManager(
         upgraded,
@@ -72,6 +72,7 @@ test("schemas 58-67 add runtime, execution, and durable goals without changing o
         "pending_input_characters",
         "followup_count",
         "timezone",
+        "admission_key",
       ]) {
         assert.equal(subagentJobColumns.has(column), true, `${column} must be migrated`);
       }
@@ -155,6 +156,7 @@ test("schemas 58-67 add runtime, execution, and durable goals without changing o
         "timeout_seconds",
         "max_output_bytes",
         "current_attempt",
+        "admission_key",
       ]) {
         assert.equal(executionJobColumns.has(column), true, `${column} must be migrated`);
       }
@@ -169,6 +171,10 @@ test("schemas 58-67 add runtime, execution, and durable goals without changing o
         "session_goal_dependencies",
         "session_goal_todos",
         "session_goal_transitions",
+        "session_workflows",
+        "session_workflow_nodes",
+        "session_workflow_dependencies",
+        "session_workflow_events",
       ]) {
         assert.ok(upgraded.connection.prepare(
           "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?",
@@ -194,8 +200,8 @@ test("default runtime configuration is inspectable, bounded, and persisted witho
       snapshot.packages.map((entry) => [entry.id, entry.trust, entry.active]),
       [["builtin-core", "built_in", true]],
     );
-    assert.equal(snapshot.activeCapabilities.length, 16);
-    assert.equal(new Set(snapshot.activeCapabilities.map((entry) => entry.id)).size, 16);
+    assert.equal(snapshot.activeCapabilities.length, 17);
+    assert.equal(new Set(snapshot.activeCapabilities.map((entry) => entry.id)).size, 17);
 
     const row = runtime.kernel.database.connection.prepare(`
       SELECT revision, digest, snapshot_json
