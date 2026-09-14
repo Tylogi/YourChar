@@ -245,7 +245,8 @@ feature counts must not be reported as task-success improvements.
 - [x] P3c bounded durable workflow DAGs, cancellation, aggregation references,
   and explicit replay decisions.
 - [ ] P3d optional code intelligence: lightweight LSP implementation is
-  complete; same-model A/B evidence and the Code Mode decision remain.
+  complete, a real TypeScript provider and reproducible paired runner are in
+  place; valid same-model A/B evidence and the Code Mode decision remain.
 - [ ] P3 general execution.
 - [ ] P4 provider and host seams.
 - [ ] P5 event-sourced runtime state.

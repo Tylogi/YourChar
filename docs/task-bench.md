@@ -36,9 +36,11 @@ Workspace or provider processes.
 Every repetition receives a new state directory, SQLite database, conversation,
 and Workspace. Fixtures may come from explicitly listed source Workspace paths
 or files uploaded directly on the task-bench page. Only those selected files are
-copied into the disposable runtime's `uploads/`; no other normal Workspace file
-is visible. After the reply, checks, file manifest, and usage evidence have been
-collected, the runtime is disposed and the directory is recursively deleted.
+copied. Source Workspace fixtures keep their relative hierarchy below
+`fixtures/`, so repository imports remain meaningful; direct uploads live below
+`uploads/`. No other normal Workspace file is visible. After the reply, checks,
+file manifest, and usage evidence have been collected, the runtime is disposed
+and the directory is recursively deleted.
 
 Direct uploads never enter the normal Workspace or persistent state. The server
 keeps them in memory so the same selection can be reused for repeated and A/B

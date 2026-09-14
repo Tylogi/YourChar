@@ -1,5 +1,7 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import { createServer, type ServerResponse } from "node:http";
+import { join } from "node:path";
 import test from "node:test";
 import { CompanionKernel } from "../src/domain/kernel.js";
 import {
@@ -296,6 +298,53 @@ test("task bench model mode excludes the selected character identity", async () 
   }
 });
 
+test("task bench redacts provider URLs and credentials from failed candidate replies", async () => {
+  const apiKey = "task-bench-redaction-secret-key";
+  let providerUrl = "";
+  const modelServer = createServer((_request, response) => {
+    response.writeHead(400, { "content-type": "application/json" });
+    response.end(JSON.stringify({
+      error: {
+        message: `provider ${providerUrl} at [fd03:1136:3800::1c2]:43178 rejected Bearer ${apiKey}`,
+      },
+    }));
+  });
+  await new Promise<void>((resolve) => modelServer.listen(0, "127.0.0.1", resolve));
+  const address = modelServer.address();
+  assert.ok(address && typeof address === "object");
+  providerUrl = `http://127.0.0.1:${address.port}/v1`;
+  const kernel = new CompanionKernel({
+    stateDir: false,
+    startScheduler: false,
+    startWorldCoordinator: false,
+    startPrivateInboxCoordinator: false,
+  });
+  try {
+    const target = kernel.createModelApiProfile({
+      name: "Redaction target",
+      enabled: true,
+      baseUrl: providerUrl,
+      model: "failing-model",
+      apiKey,
+    });
+    const { report } = await runTaskBench(kernel, {
+      targetMode: "model",
+      modelProfileId: target.id,
+      task: "触发受控失败。",
+      repetitions: 1,
+    });
+    const serialized = JSON.stringify(report);
+    assert.equal(report.runs[0]?.status, "failed");
+    assert.doesNotMatch(serialized, new RegExp(apiKey, "u"));
+    assert.equal(serialized.includes(providerUrl), false);
+    assert.equal(serialized.includes("fd03:1136:3800::1c2"), false);
+    assert.match(serialized, /\[redacted/u);
+  } finally {
+    kernel.dispose();
+    await closeServer(modelServer);
+  }
+});
+
 test("task bench recreates only explicitly approved deployment capabilities in its fresh Workspace", async () => {
   const targetPayloads: Record<string, unknown>[] = [];
   const modelServer = createServer(async (request, response) => {
@@ -309,6 +358,7 @@ test("task bench recreates only explicitly approved deployment capabilities in i
   const modelAddress = modelServer.address();
   assert.ok(modelAddress && typeof modelAddress === "object");
   const scopes: LspProviderScope[] = [];
+  const fixtureContents: string[] = [];
   let closes = 0;
   const lspPackage = createLspNavigationCapabilityPackage({
     version: "1",
@@ -320,6 +370,10 @@ test("task bench recreates only explicitly approved deployment capabilities in i
       extensions: [".ts"],
       mount(scope) {
         scopes.push(scope);
+        fixtureContents.push(readFileSync(
+          join(scope.workspaceDir, "fixtures", "repository", "src", "main.ts"),
+          "utf8",
+        ));
         return {
           id: "bench-typescript",
           extensions: [".ts"],
@@ -351,11 +405,17 @@ test("task bench recreates only explicitly approved deployment capabilities in i
     });
     kernel.patchAgentPermissions({ workspaceAccess: "read_only" });
     kernel.setAgentModuleEnabled("mcp:lsp-navigation", true);
+    kernel.uploadWorkspaceFile({
+      directory: "repository/src",
+      name: "main.ts",
+      bytes: Buffer.from("export const preservedHierarchy = true;\n", "utf8"),
+    });
     const { report } = await runTaskBench(kernel, {
       targetMode: "model",
       modelProfileId: target.id,
       task: "确认代码导航评测环境。",
       repetitions: 1,
+      workspacePaths: ["repository/src/main.ts"],
       assertions: { requiredPhrases: ["LSP_BENCH_READY"] },
     });
     await new Promise<void>((resolve) => setImmediate(resolve));
@@ -368,6 +428,8 @@ test("task bench recreates only explicitly approved deployment capabilities in i
     assert.equal(scopes[0]?.readOnly, true);
     assert.equal(scopes[0]?.workspaceUri, "file:///workspace");
     assert.notEqual(scopes[0]?.workspaceDir, kernel.getAgentPermissions().workspaceDir);
+    assert.deepEqual(fixtureContents, ["export const preservedHierarchy = true;\n"]);
+    assert.equal(report.fixtures[0]?.workspacePath, "fixtures/repository/src/main.ts");
     assert.equal(closes, 1);
   } finally {
     kernel.dispose();

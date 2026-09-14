@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { basename, join } from "node:path";
+import { basename, join, posix } from "node:path";
 import type { AssistantMessage } from "@earendil-works/pi-ai";
 import { z } from "zod";
 import { CompanionKernel } from "../domain/kernel.js";
@@ -212,6 +212,8 @@ export type TaskBenchReport = {
   fixtures: Array<{
     source: "workspace" | "temporary_upload";
     sourcePath?: string;
+    /** Deterministic location inside each disposable benchmark Workspace. */
+    workspacePath?: string;
     name: string;
     size: number;
   }>;
@@ -223,6 +225,7 @@ export type TaskBenchReport = {
 type FixtureSnapshot = {
   source: "workspace" | "temporary_upload";
   sourcePath?: string;
+  workspacePath?: string;
   uploadId?: string;
   name: string;
   bytes: Buffer;
@@ -435,6 +438,7 @@ export async function runTaskBench(
     fixtures: prepared.fixtures.map((fixture) => ({
       source: fixture.source,
       ...(fixture.sourcePath ? { sourcePath: fixture.sourcePath } : {}),
+      ...(fixture.workspacePath ? { workspacePath: fixture.workspacePath } : {}),
       name: fixture.name,
       size: fixture.bytes.byteLength,
     })),
@@ -659,10 +663,12 @@ async function executeIteration(
     });
     memoryCount = runtime.listMemories({ limit: 1_000 }).length;
   } catch (error) {
-    executionError = sanitizeError(error, prepared.rawProfile?.apiKey, [
-      stateDir,
-      runtime.workspaceFiles.rootDir,
-    ]);
+    executionError = sanitizeError(
+      error,
+      prepared.rawProfile?.apiKey,
+      [stateDir, runtime.workspaceFiles.rootDir],
+      [prepared.rawProfile?.baseUrl],
+    );
     modelRequests = Math.max(modelRequests, runtime.getModelRequestCount());
     memoryCount = runtime.listMemories({ limit: 1_000 }).length;
     outputFiles = collectWorkspaceFiles(runtime);
@@ -678,7 +684,15 @@ async function executeIteration(
   const status: TaskBenchRunResult["status"] = timedOut
     ? "timed_out"
     : response?.status ?? "error";
-  const reply = timedOut ? timeoutMessage : response?.reply ?? "";
+  const reply = timedOut
+    ? timeoutMessage
+    : sanitizeCandidateReply(
+        response?.reply ?? "",
+        status,
+        prepared.rawProfile?.apiKey,
+        prepared.rawProfile?.baseUrl,
+        [stateDir, runtime.workspaceFiles.rootDir],
+      );
   const resultError = timedOut ? timeoutMessage : executionError;
   const checks = evaluateChecks(
     prepared.request.assertions,
@@ -838,6 +852,7 @@ async function judgeIteration(
     inputTokens,
     outputTokens,
     raw.apiKey,
+    raw.baseUrl,
   );
 }
 
@@ -981,7 +996,8 @@ function snapshotWorkspaceFixtures(source: CompanionKernel, paths: string[]): Fi
       const asset = source.getWorkspaceFileAsset(sourcePath, "attachment");
       return {
         source: "workspace" as const,
-        sourcePath,
+        sourcePath: asset.entry.path,
+        workspacePath: posix.join("fixtures", asset.entry.path),
         name: asset.entry.name || basename(sourcePath),
         bytes: readFileSync(asset.absolutePath),
       };
@@ -996,9 +1012,10 @@ function snapshotWorkspaceFixtures(source: CompanionKernel, paths: string[]): Fi
 
 function installFixtures(runtime: CompanionKernel, fixtures: FixtureSnapshot[]): MessageAttachment[] {
   return fixtures.map((fixture) => {
+    const workspacePath = fixture.workspacePath;
     const entry = runtime.uploadWorkspaceFile({
-      directory: "uploads",
-      name: fixture.name,
+      directory: workspacePath ? posix.dirname(workspacePath) : "uploads",
+      name: workspacePath ? posix.basename(workspacePath) : fixture.name,
       bytes: fixture.bytes,
     });
     return {
@@ -1195,6 +1212,7 @@ function failedJudgment(
   inputTokens = 0,
   outputTokens = 0,
   apiKey?: string,
+  baseUrl?: string,
 ): TaskBenchJudgment {
   return {
     status: "failed",
@@ -1208,7 +1226,7 @@ function failedJudgment(
     durationMs: Math.round(performance.now() - started),
     inputTokens,
     outputTokens,
-    error: sanitizeError(error, apiKey),
+    error: sanitizeError(error, apiKey, [], [baseUrl]),
   };
 }
 
@@ -1244,15 +1262,44 @@ function modelIdentity(profile: ModelApiProfile | undefined, profileId: string):
   };
 }
 
-function sanitizeError(error: unknown, apiKey?: string, sensitivePaths: string[] = []): string {
+function sanitizeError(
+  error: unknown,
+  apiKey?: string,
+  sensitivePaths: string[] = [],
+  sensitiveUrls: Array<string | undefined> = [],
+): string {
   let output = (error instanceof Error ? error.message : String(error))
     .replace(/https?:\/\/[^\s"'<>]+/giu, "[redacted-url]")
-    .replace(/bearer\s+[^\s"'<>]+/giu, "Bearer [redacted]");
+    .replace(/bearer\s+[^\s"'<>]+/giu, "Bearer [redacted]")
+    .replace(/\[[0-9a-f:]+\](?::\d+)?/giu, "[redacted-address]")
+    .replace(/\b(?:\d{1,3}\.){3}\d{1,3}(?::\d+)?\b/gu, "[redacted-address]");
   if (apiKey) output = output.split(apiKey).join("[redacted-key]");
+  for (const url of sensitiveUrls.filter((value): value is string => Boolean(value))) {
+    output = output.split(url).join("[redacted-provider-url]");
+  }
   for (const path of sensitivePaths.filter(Boolean).sort((left, right) => right.length - left.length)) {
     output = output.split(path).join("[temporary-sandbox]");
   }
   return output.slice(0, 600);
+}
+
+function sanitizeCandidateReply(
+  reply: string,
+  status: TaskBenchRunResult["status"],
+  apiKey?: string,
+  baseUrl?: string,
+  sensitivePaths: string[] = [],
+): string {
+  if (status !== "completed") {
+    return sanitizeError(reply, apiKey, sensitivePaths, [baseUrl]);
+  }
+  let output = reply;
+  if (apiKey) output = output.split(apiKey).join("[redacted-key]");
+  if (baseUrl) output = output.split(baseUrl).join("[redacted-provider-url]");
+  for (const path of sensitivePaths.filter(Boolean).sort((left, right) => right.length - left.length)) {
+    output = output.split(path).join("[temporary-sandbox]");
+  }
+  return output;
 }
 
 function uniqueStrings(values: string[]): string[] {

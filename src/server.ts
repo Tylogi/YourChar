@@ -8,6 +8,7 @@ import {
   UnavailableImGateway,
 } from "./im/index.js";
 import { createHttpServer, disposeHttpServerOwnedResources } from "./http/router.js";
+import { createBundledTypeScriptLspRuntimeConfiguration } from "./lsp/index.js";
 
 const port = Number(process.env.PORT ?? 8765);
 const host = process.env.HOST ?? "127.0.0.1";
@@ -43,7 +44,14 @@ const imGateway = localImGateway ?? (imRuntimeMode === "external"
         process.env.RP_AGENT_IM_GATEWAY_TOKEN,
     })
   : new UnavailableImGateway("IM Channel Runtime 已由 YOURCHAR_IM_RUNTIME_MODE=off 禁用"));
-const kernel = new CompanionKernel({ store, workspaceDir, imGateway });
+const lspRuntimeConfiguration = createBundledTypeScriptLspRuntimeConfiguration();
+const kernel = new CompanionKernel({
+  store,
+  workspaceDir,
+  imGateway,
+  agentCapabilityPackages: lspRuntimeConfiguration.packages,
+  agentRuntimeProfiles: lspRuntimeConfiguration.profiles,
+});
 
 if (localImGateway) {
   const localCore: LocalImCore = {

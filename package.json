@@ -14,6 +14,7 @@
     "test:browser": "npm run build && CLOAKBROWSER_AUTO_UPDATE=false LD_LIBRARY_PATH=${CLOAKBROWSER_LIB_DIR:-$HOME/.local/share/cloakbrowser-libs/usr/lib/x86_64-linux-gnu}:$LD_LIBRARY_PATH node --disable-warning=ExperimentalWarning test/browser.mjs",
     "eval:real-model": "npm run build && node --disable-warning=ExperimentalWarning scripts/eval-real-model.mjs",
     "eval:real-model:long": "npm run eval:real-model -- --long",
+    "eval:lsp-navigation": "npm run build && node --disable-warning=ExperimentalWarning scripts/eval-lsp-navigation.mjs",
     "eval:memory-daily": "npm run build && node --disable-warning=ExperimentalWarning scripts/eval-memory-daily.mjs",
     "eval:background-classifiers": "npm run build && node --disable-warning=ExperimentalWarning scripts/eval-background-classifiers.mjs",
     "scan:sensitive": "node scripts/scan-sensitive.mjs",
@@ -31,8 +32,7 @@
     "@types/node": "^22.20.1",
     "@types/qrcode": "^1.5.5",
     "cloakbrowser": "^0.4.10",
-    "playwright-core": "^1.61.1",
-    "typescript": "^5.8.3"
+    "playwright-core": "^1.61.1"
   },
   "dependencies": {
     "@earendil-works/pi-agent-core": "0.84.4",
@@ -52,6 +52,8 @@
     "qrcode": "^1.5.4",
     "twemoji-svg": "^17.0.2",
     "typebox": "1.3.7",
+    "typescript": "5.9.3",
+    "typescript-language-server": "5.3.0",
     "undici": "8.5.0",
     "yaml": "2.9.0",
     "zod": "4.4.3"

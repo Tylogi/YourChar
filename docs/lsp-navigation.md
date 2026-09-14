@@ -127,6 +127,16 @@ installation tree: bind the reviewed Node executable to `/opt/lsp/node`, bind
 the reviewed server package directory to `/opt/lsp/server`, then use those
 sandbox paths as `command` and `args`.
 
+The shipped server registers an npm-locked TypeScript/JavaScript provider as a
+trusted package. The normal `default` runtime profile does not load it. Select
+the `code-navigation` profile and then enable `mcp:lsp-navigation` to expose the
+tool. The bundle pins `typescript-language-server` 5.3.0 because 6.x requires a
+newer Node patch release than YourChar's current Node 22.19 floor; TypeScript is
+pinned at 5.9.3 and both package integrities feed the runtime package digest.
+Cold TypeScript queries use a single semantic server rather than the upstream
+dynamic syntax-server route, which can otherwise return same-file aliases while
+the project is still loading.
+
 ## Task Bench decision gate
 
 Run two reports with the same model, fixtures, prompt, Judge, permissions,
@@ -142,3 +152,21 @@ edits do not provide a useful signal. Keep the blocking `bash` path regardless
 of the result. A broader model-generated Code Mode SDK remains deferred until
 this evidence shows a material improvement that the existing workflow DAG does
 not already provide.
+
+The repository includes three deterministic cross-file TypeScript tasks and an
+alternating-order runner:
+
+```bash
+RP_EVAL_BASE_URL=http://127.0.0.1:8000/v1 \
+RP_EVAL_MODEL=your-model \
+RP_EVAL_API_KEY=optional \
+npm run eval:lsp-navigation -- --runs 3 --timeout 600
+```
+
+To reuse a locally stored model configuration, set `RP_EVAL_REUSE_CONFIG=1`.
+Set `RP_EVAL_PROFILE_ID` as well to select a non-default stored profile. Reports
+are written with mode `0600` below `eval-artifacts/` and contain paired Task
+Bench reports, fixture digest, completion/integrity checks, actual LSP actions,
+pass rate, latency, model requests, and reported token use. A provider failure
+or incomplete run makes the comparison integrity check fail; a module merely
+being available never counts as LSP usage.

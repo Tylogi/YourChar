@@ -12,6 +12,11 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import test from "node:test";
 import {
+  bundledTypeScriptLspContentDigest,
+  bundledTypeScriptLspRuntimePackageId,
+  bundledTypeScriptLspRuntimeProfileId,
+  createBundledTypeScriptLspProviderDefinition,
+  createBundledTypeScriptLspRuntimeConfiguration,
   createLspNavigationCapabilityPackage,
   createStdioLspProviderDefinition,
   LspError,
@@ -209,6 +214,115 @@ test("stdio LSP provider speaks JSON-RPC inside a read-only Workspace sandbox", 
   if (changedHover.kind === "hover") assert.match(changedHover.contents, /snapshot=const second = 2;/u);
 
   await service.dispose();
+});
+
+test("bundled TypeScript LSP resolves real cross-file semantics in its sandbox", async (context) => {
+  const root = mkdtempSync(join(tmpdir(), "yourchar-lsp-typescript-"));
+  context.after(() => rmSync(root, { recursive: true, force: true }));
+  mkdirSync(join(root, "src"), { recursive: true });
+  writeFileSync(join(root, "tsconfig.json"), JSON.stringify({
+    compilerOptions: {
+      module: "ESNext",
+      moduleResolution: "Bundler",
+      strict: true,
+    },
+    include: ["src/**/*.ts"],
+  }), "utf8");
+  writeFileSync(
+    join(root, "src", "contracts.ts"),
+    "export interface Greeter {\n  greet(name: string): string;\n}\n",
+    "utf8",
+  );
+  writeFileSync(
+    join(root, "src", "implementation.ts"),
+    [
+      'import type { Greeter } from "./contracts";',
+      "export class FriendlyGreeter implements Greeter {",
+      "  greet(name: string): string {",
+      "    return `Hello ${name}`;",
+      "  }",
+      "}",
+      "",
+    ].join("\n"),
+    "utf8",
+  );
+  writeFileSync(
+    join(root, "src", "main.ts"),
+    [
+      'import { FriendlyGreeter } from "./implementation";',
+      "const greeter = new FriendlyGreeter();",
+      'export const message = greeter.greet("Ada");',
+      "",
+    ].join("\n"),
+    "utf8",
+  );
+
+  const service = await WorkspaceLspService.mount(
+    root,
+    [createBundledTypeScriptLspProviderDefinition({ requestTimeoutMs: 20_000 })],
+    { queryTimeoutMs: 25_000 },
+  );
+  context.after(() => service.dispose());
+
+  const aliasDefinition = await service.query({
+    operation: "goToDefinition",
+    path: "src/main.ts",
+    position: { line: 1, character: 22 },
+  });
+  assert.equal(aliasDefinition.kind, "locations");
+  if (aliasDefinition.kind === "locations") {
+    assert.equal(
+      aliasDefinition.locations.some((entry) => entry.path === "src/implementation.ts"),
+      true,
+      JSON.stringify(aliasDefinition),
+    );
+  }
+  const definition = await service.query({
+    operation: "goToDefinition",
+    path: "src/main.ts",
+    position: { line: 0, character: 12 },
+  });
+  assert.equal(definition.kind, "locations");
+  if (definition.kind === "locations") {
+    assert.equal(definition.locations.length > 0, true, JSON.stringify(definition));
+  }
+
+  const hover = await service.query({
+    operation: "hover",
+    path: "src/main.ts",
+    position: { line: 2, character: 32 },
+  });
+  assert.equal(hover.kind, "hover");
+  if (hover.kind === "hover") assert.match(hover.contents, /Greeter\.greet/u);
+
+  const implementation = await service.query({
+    operation: "goToImplementation",
+    path: "src/contracts.ts",
+    position: { line: 0, character: 17 },
+  });
+  assert.equal(implementation.kind, "locations");
+  if (implementation.kind === "locations") {
+    assert.equal(implementation.locations.some((entry) => entry.path === "src/implementation.ts"), true);
+  }
+
+  await service.dispose();
+});
+
+test("bundled TypeScript deployment stays default-off behind its code-navigation profile", () => {
+  const configuration = createBundledTypeScriptLspRuntimeConfiguration();
+  assert.match(bundledTypeScriptLspContentDigest, /^[a-f0-9]{64}$/u);
+  assert.equal(configuration.packages?.[0]?.id, bundledTypeScriptLspRuntimePackageId);
+  assert.equal(configuration.packages?.[0]?.trusted, true);
+  assert.deepEqual(configuration.profiles?.map((profile) => ({
+    id: profile.id,
+    packageIds: profile.packageIds,
+  })), [
+    { id: "default", packageIds: [] },
+    {
+      id: bundledTypeScriptLspRuntimeProfileId,
+      packageIds: [bundledTypeScriptLspRuntimePackageId],
+    },
+  ]);
 });
 
 test("LSP package requires profile, module, and Workspace permission and closes with the handle", async () => {
