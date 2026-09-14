@@ -616,6 +616,9 @@ async function executeIteration(
     characterSkillReflector: false,
     additionalSessionCapabilities: source.isolatedTaskBenchSessionCapabilities(),
     modelProviderAdapters: source.isolatedTaskBenchModelProviderAdapters(),
+    modelCredentialResolver: source.store.scopedModelCredentialResolver([
+      prepared.request.modelProfileId,
+    ]),
   });
   const started = performance.now();
   let response: Awaited<ReturnType<CompanionKernel["sendMessage"]>> | undefined;
@@ -880,26 +883,11 @@ function cloneEvaluationConfiguration(
   target: CompanionKernel,
   sourceProfileId: string,
 ): void {
-  const model = source.store.getRawModelApiProfile(sourceProfileId);
-  if (!model) throw new TaskBenchValidationError(`model profile not found: ${sourceProfileId}`);
-  target.patchModelApiConfig({
-    enabled: model.enabled,
-    provider: model.provider,
-    baseUrl: model.baseUrl,
-    model: model.model,
-    visionInputEnabled: model.visionInputEnabled,
-    ...(model.apiKey ? { apiKey: model.apiKey } : {}),
-    ...(model.temperature === undefined ? {} : { temperature: model.temperature }),
-    ...(model.maxTokens === undefined ? {} : { maxTokens: model.maxTokens }),
-    ...(model.contextWindowTokens === undefined ? {} : { contextWindowTokens: model.contextWindowTokens }),
-    ...(model.reasoningEffort === undefined ? {} : { reasoningEffort: model.reasoningEffort }),
-    ...(model.thinkingTokenBudgetField === undefined
-      ? {}
-      : { thinkingTokenBudgetField: model.thinkingTokenBudgetField }),
-    ...(model.thinkingBudgetTokens === undefined
-      ? {}
-      : { thinkingBudgetTokens: model.thinkingBudgetTokens }),
-  });
+  const profile = source.listModelApiProfiles().profiles.find((entry) =>
+    entry.id === sourceProfileId
+  );
+  if (!profile) throw new TaskBenchValidationError(`model profile not found: ${sourceProfileId}`);
+  target.store.installIsolatedModelApiProfile(profile);
   const enabledById = new Map(source.listAgentModules().map((entry) => [entry.id, entry.enabled]));
   for (const module of target.listAgentModules()) {
     const enabled = memoryContextModuleIds.has(module.id)

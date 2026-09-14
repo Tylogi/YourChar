@@ -130,13 +130,17 @@ node --disable-warning=ExperimentalWarning scripts/backup-state.mjs .yourchar /s
 ```
 
 Backups have directory mode `0700`. They may include `model-api.json`,
+`model-credentials.json`,
 `tavily.json`, `vision.json`, `mineru.json`, `git/access.json`,
 `git/credentials/`, legacy `git-repository.json`, and
-`im-runtime/credentials.json`. API configuration, managed Git private keys, and
+`im-runtime/credentials.json`. Model API settings contain only opaque
+references, while `model-credentials.json`, managed Git private keys, and
 IM credentials can contain keys, platform tokens, refresh credentials, or App
 Secrets, so backup storage must be treated as secret. The backup manifest
 records credential-file presence without copying any key or token into the
-manifest. IM credentials are indicated by
+manifest. Model credentials are indicated by `containsModelCredentials` and
+`credentials.modelCredentialStorePresent`; `credentials.modelConfigPresent`
+separately reports the non-secret profile document. IM credentials are indicated by
 `containsImCredentials` and `credentials.imRuntimeCredentialsPresent`;
 `containsImRuntime` also records the Channel Runtime payload.
 MinerU credentials are indicated by `containsMineruCredentials` and

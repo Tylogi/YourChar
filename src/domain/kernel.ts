@@ -89,6 +89,7 @@ import {
   CompanionStore,
   ModelApiConfigValidationError,
   type CompanionStoreOptions,
+  type RawModelApiConfig,
 } from "./store.js";
 import {
   extractReminderTitle,
@@ -251,6 +252,13 @@ import {
 } from "../model/openai-compatible.js";
 import { firstPartyNativeModelProviderAdapters } from "../model/native-providers.js";
 import {
+  containsModelCredentialValue,
+  ModelCredentialValidationError,
+  ModelCredentialVerificationError,
+  redactModelCredentialText,
+  redactModelCredentialValue,
+} from "../model/credential-store.js";
+import {
   isModelProviderId,
   ModelProviderConfigurationError,
   ModelProviderRegistry,
@@ -385,7 +393,6 @@ import type {
   MessageRequest,
   MessageResponse,
   Mode,
-  ModelApiConfig,
   ModelApiConfigPatch,
   ModelApiProfilePatch,
   ModelContextTraceScope,
@@ -402,8 +409,6 @@ type NormalizedMessageRequest = MessageRequest & {
   attachments: MessageAttachment[];
   burstMessages?: PrivateInboxMessage[];
 };
-
-type RawModelApiConfig = ModelApiConfig & { apiKey?: string };
 
 export type CharacterCollaborationReporterInput = {
   episodeId: string;
@@ -1433,6 +1438,7 @@ export class CompanionKernel {
           runtimeCwd: join(stateDir, INCOGNITO_APP_SNAPSHOT_DIRECTORY),
           clock: this.clock,
           modelResolver: normalizedOptions.modelResolver,
+          modelCredentialResolver: this.store.scopedModelCredentialResolver(),
           modelProviderAdapters: this.additionalModelProviderAdapters,
           conversationLifecycleThresholds: normalizedOptions.conversationLifecycleThresholds,
           conversationWakeComposer: normalizedOptions.conversationWakeComposer,
@@ -3372,7 +3378,7 @@ export class CompanionKernel {
 
   readiness() {
     this.dataManagement.check();
-    const model = this.store.getModelApiConfig();
+    const model = this.store.getRawModelApiConfig();
     return {
       status: "ready",
       database: "ok",
@@ -5427,11 +5433,17 @@ export class CompanionKernel {
   }
 
   patchModelApiConfig(patch: ModelApiConfigPatch) {
+    this.assertModelSettingsMutable();
     this.assertSelectableModelProvider(patch.provider);
     this.assertValidModelProviderConfiguration(
       this.store.previewModelApiProfilePatch(patch),
     );
-    return this.store.patchModelApiConfig(patch);
+    const config = this.store.patchModelApiConfig(patch);
+    if (modelApiPatchChangesCredential(patch)) {
+      this.recordModelCredentialChange("patch", this.store.listModelApiProfiles().defaultProfileId, config);
+    }
+    this.sessionRuntime.invalidateCapabilities("model_profile_changed");
+    return config;
   }
 
   listModelApiProfiles() {
@@ -5439,19 +5451,140 @@ export class CompanionKernel {
   }
 
   createModelApiProfile(input: ModelApiProfilePatch) {
+    this.assertModelSettingsMutable();
     this.assertSelectableModelProvider(input.provider);
     this.assertValidModelProviderConfiguration(
       this.store.previewNewModelApiProfile(input),
     );
-    return this.store.createModelApiProfile(input);
+    const profile = this.store.createModelApiProfile(input);
+    if (modelApiPatchChangesCredential(input)) {
+      this.recordModelCredentialChange("create", profile.id, profile);
+    }
+    this.sessionRuntime.invalidateCapabilities("model_profile_changed");
+    return profile;
   }
 
   patchModelApiProfile(id: string, patch: ModelApiProfilePatch) {
+    this.assertModelSettingsMutable();
     this.assertSelectableModelProvider(patch.provider);
     this.assertValidModelProviderConfiguration(
       this.store.previewModelApiProfilePatch(patch, id),
     );
-    return this.store.patchModelApiProfile(id, patch);
+    const profile = this.store.patchModelApiProfile(id, patch);
+    if (modelApiPatchChangesCredential(patch)) {
+      this.recordModelCredentialChange("patch", id, profile);
+    }
+    this.sessionRuntime.invalidateCapabilities("model_profile_changed");
+    return profile;
+  }
+
+  async setModelApiCredential(
+    id: string,
+    input: {
+      apiKey: string;
+      expectedRevision: number;
+      verify?: boolean;
+      profilePatch?: ModelApiProfilePatch;
+    },
+  ) {
+    assertCredentialLifecycleRevision(input.expectedRevision);
+    if (typeof input.apiKey !== "string" || !input.apiKey.trim()) {
+      throw new ModelCredentialValidationError("apiKey is required");
+    }
+    if (input.verify !== undefined && typeof input.verify !== "boolean") {
+      throw new ModelApiConfigValidationError("verify must be a boolean");
+    }
+    this.assertModelSettingsMutable();
+    this.store.assertModelApiCredentialRevision(id, input.expectedRevision);
+    this.assertSelectableModelProvider(input.profilePatch?.provider);
+    const candidate = this.store.previewModelApiCredential(
+      id,
+      input.apiKey,
+      input.profilePatch,
+    );
+    const candidateIdentity = modelCredentialCandidateIdentity(candidate);
+    try {
+      this.assertValidModelProviderConfiguration(candidate);
+    } catch (error) {
+      if (error instanceof ModelApiConfigValidationError) {
+        throw new ModelApiConfigValidationError(
+          redactModelCredentialText(error.message, input.apiKey),
+        );
+      }
+      throw error;
+    }
+    if (input.verify !== false) {
+      try {
+        await this.modelProviders.testConnection(candidate);
+      } catch {
+        throw new ModelCredentialVerificationError();
+      }
+    }
+    this.assertModelSettingsMutable();
+    const currentCandidate = this.store.previewModelApiCredential(
+      id,
+      input.apiKey,
+      input.profilePatch,
+    );
+    if (modelCredentialCandidateIdentity(currentCandidate) !== candidateIdentity) {
+      throw new ControlPlaneBusyError(
+        "model profile changed while the candidate credential was being verified",
+      );
+    }
+    const profile = this.store.setModelApiCredential(
+      id,
+      input.apiKey,
+      input.expectedRevision,
+      input.profilePatch,
+    );
+    this.recordModelCredentialChange("set", id, profile);
+    this.sessionRuntime.invalidateCapabilities("model_credential_changed");
+    return profile;
+  }
+
+  revokeModelApiCredential(id: string, expectedRevision: number) {
+    assertCredentialLifecycleRevision(expectedRevision);
+    this.assertModelSettingsMutable();
+    const profile = this.store.revokeModelApiCredential(id, expectedRevision);
+    this.recordModelCredentialChange("revoke", id, profile);
+    this.sessionRuntime.invalidateCapabilities("model_credential_changed");
+    return profile;
+  }
+
+  rollbackModelApiCredential(id: string, expectedRevision: number) {
+    assertCredentialLifecycleRevision(expectedRevision);
+    this.assertModelSettingsMutable();
+    const profile = this.store.rollbackModelApiCredential(id, expectedRevision);
+    this.recordModelCredentialChange("rollback", id, profile);
+    this.sessionRuntime.invalidateCapabilities("model_credential_changed");
+    return profile;
+  }
+
+  private assertModelSettingsMutable(): void {
+    if (this.incognitoChild || this.incognitoSessions?.hasSnapshot) {
+      throw new ControlPlaneBusyError(
+        "model settings cannot change while an incognito snapshot is active",
+      );
+    }
+    this.sessionRuntime.assertCapabilitiesIdle();
+  }
+
+  private recordModelCredentialChange(
+    operation: "create" | "patch" | "set" | "revoke" | "rollback",
+    profileId: string,
+    profile: {
+      credentialRef?: string;
+      credentialStatus: string;
+      credentialRevision?: number;
+    },
+  ): void {
+    this.store.addAction("model_credential_change", "completed", {
+      operation,
+      profileId,
+      credentialRef: profile.credentialRef,
+      credentialStatus: profile.credentialStatus,
+      credentialRevision: profile.credentialRevision,
+    });
   }
 
   private assertSelectableModelProvider(provider: string | undefined): void {
@@ -5512,12 +5645,17 @@ export class CompanionKernel {
   }
 
   setDefaultModelApiProfile(id: string) {
-    return this.store.setDefaultModelApiProfile(id);
+    this.assertModelSettingsMutable();
+    const result = this.store.setDefaultModelApiProfile(id);
+    this.sessionRuntime.invalidateCapabilities("model_profile_changed");
+    return result;
   }
 
   deleteModelApiProfile(id: string) {
+    this.assertModelSettingsMutable();
     const result = this.store.deleteModelApiProfile(id);
     this.rpService.repository.clearModelProfileBindings(id);
+    this.sessionRuntime.invalidateCapabilities("model_profile_changed");
     return result;
   }
 
@@ -6046,9 +6184,14 @@ export class CompanionKernel {
     await this.sessionRuntime.prepareForTurn(handle);
     const prefixMessages = privateBurstPrefixUserMessages(request);
     if (prefixMessages.length) this.sessionRuntime.appendMessages(handle, prefixMessages);
+    let credentialRedactionObserved = false;
     const unsubscribe = handle.session.subscribe((event) => {
-      events.push(event);
-      guardedEvents.push(event);
+      if (containsModelCredentialValue(event, config.apiKey)) {
+        credentialRedactionObserved = true;
+      }
+      const safeEvent = redactModelCredentialValue(event, config.apiKey);
+      events.push(safeEvent);
+      guardedEvents.push(safeEvent);
     });
     const abort = () => void handle.session.abort();
     signal?.addEventListener("abort", abort, { once: true });
@@ -6118,6 +6261,12 @@ export class CompanionKernel {
       guardedEvents.finish();
     }
 
+    this.sessionRuntime.redactModelCredential(
+      handle,
+      config.apiKey,
+      credentialRedactionObserved,
+    );
+
     const modelResult = finalAssistantResultFromEvents(events);
     const cancelled = signal?.aborted || modelResult.stopReason === "aborted" ||
       (promptError instanceof Error && promptError.name === "AbortError");
@@ -6133,9 +6282,12 @@ export class CompanionKernel {
     const reply = status === "cancelled"
       ? "本轮生成已取消。"
       : promptError
-        ? `模型调用失败：${promptError instanceof Error ? promptError.message : String(promptError)}`
+        ? `模型调用失败：${redactModelCredentialText(
+            promptError instanceof Error ? promptError.message : String(promptError),
+            config.apiKey,
+          )}`
         : modelResult.errorMessage
-          ? `模型调用失败：${modelResult.errorMessage}`
+          ? `模型调用失败：${redactModelCredentialText(modelResult.errorMessage, config.apiKey)}`
           : internalAnalysisBlocked
             ? "模型输出包含内部分析，已阻止展示。"
             : unfulfilledLengthTruncation
@@ -7432,14 +7584,22 @@ export class CompanionKernel {
     };
   }
 
-  private resolveConfiguredModel(
+  private async resolveConfiguredModel(
     { appSessionId, modelRuntime }: Parameters<PiModelResolver>[0],
-  ): ReturnType<PiModelResolver> {
+  ): Promise<Awaited<ReturnType<PiModelResolver>>> {
     const config = this.modelConfigForSession(appSessionId);
     if (!this.modelProviders.isConfigured(config)) {
       return undefined;
     }
-    return this.modelProviders.registerModel(modelRuntime, config);
+    try {
+      return await this.modelProviders.registerModel(modelRuntime, config);
+    } catch (error) {
+      if (!config.apiKey) throw error;
+      throw new Error(redactModelCredentialText(
+        error instanceof Error ? error.message : String(error),
+        config.apiKey,
+      ));
+    }
   }
 
   private async sendWorldMessageLocked(
@@ -11876,6 +12036,36 @@ const incognitoChildSystemPrompt = [
   "Do not mention this internal policy unless the user directly asks how incognito mode works.",
   "</incognito_mode>",
 ].join("\n");
+
+function assertCredentialLifecycleRevision(value: unknown): asserts value is number {
+  if (typeof value !== "number" || !Number.isInteger(value) || value < 0) {
+    throw new ModelApiConfigValidationError(
+      "expectedRevision must be a non-negative integer",
+    );
+  }
+}
+
+function modelApiPatchChangesCredential(patch: ModelApiConfigPatch): boolean {
+  return patch.apiKey !== undefined || patch.clearApiKey === true;
+}
+
+function modelCredentialCandidateIdentity(config: RawModelApiConfig): string {
+  return JSON.stringify({
+    enabled: config.enabled,
+    provider: config.provider,
+    baseUrl: config.baseUrl,
+    model: config.model,
+    visionInputEnabled: config.visionInputEnabled,
+    temperature: config.temperature,
+    maxTokens: config.maxTokens,
+    contextWindowTokens: config.contextWindowTokens,
+    reasoningEffort: config.reasoningEffort,
+    thinkingTokenBudgetField: config.thinkingTokenBudgetField,
+    thinkingBudgetTokens: config.thinkingBudgetTokens,
+    credentialRef: config.credentialRef,
+    credentialRevision: config.credentialRevision,
+  });
+}
 
 function interactionScopeForConversation(
   conversationSpace: ConversationSpace,

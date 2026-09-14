@@ -335,6 +335,9 @@ export async function runFeatureTest(
     startScheduler: false,
     quietHours: false,
     modelProviderAdapters: source.isolatedTaskBenchModelProviderAdapters(),
+    modelCredentialResolver: source.store.scopedModelCredentialResolver([
+      sourceModelProfileId,
+    ]),
   });
   const started = performance.now();
   try {
@@ -420,27 +423,9 @@ function cloneModelBinding(
 ): string | undefined {
   if (!sourceProfileId) return undefined;
   const profile = source.listModelApiProfiles().profiles.find((entry) => entry.id === sourceProfileId);
-  const raw = source.store.getRawModelApiProfile(sourceProfileId);
-  if (!profile || !raw) return undefined;
-  return target.createModelApiProfile({
-    name: `功能测试 · ${profile.name}`,
-    enabled: raw.enabled,
-    provider: raw.provider,
-    baseUrl: raw.baseUrl,
-    model: raw.model,
-    visionInputEnabled: raw.visionInputEnabled,
-    ...(raw.apiKey ? { apiKey: raw.apiKey } : {}),
-    ...(raw.temperature === undefined ? {} : { temperature: raw.temperature }),
-    ...(raw.maxTokens === undefined ? {} : { maxTokens: raw.maxTokens }),
-    ...(raw.contextWindowTokens === undefined ? {} : { contextWindowTokens: raw.contextWindowTokens }),
-    ...(raw.reasoningEffort === undefined ? {} : { reasoningEffort: raw.reasoningEffort }),
-    ...(raw.thinkingTokenBudgetField === undefined
-      ? {}
-      : { thinkingTokenBudgetField: raw.thinkingTokenBudgetField }),
-    ...(raw.thinkingBudgetTokens === undefined
-      ? {}
-      : { thinkingBudgetTokens: raw.thinkingBudgetTokens }),
-  }).id;
+  return profile && target.store.getModelApiProfile(sourceProfileId)
+    ? sourceProfileId
+    : undefined;
 }
 
 function cloneRuntimeConfiguration(
@@ -448,26 +433,11 @@ function cloneRuntimeConfiguration(
   target: CompanionKernel,
   sourceProfileId: string,
 ): void {
-  const model = source.store.getRawModelApiProfile(sourceProfileId);
-  if (!model) throw new Error(`model profile not found: ${sourceProfileId}`);
-  target.patchModelApiConfig({
-    enabled: model.enabled,
-    provider: model.provider,
-    baseUrl: model.baseUrl,
-    model: model.model,
-    visionInputEnabled: model.visionInputEnabled,
-    ...(model.apiKey ? { apiKey: model.apiKey } : {}),
-    ...(model.temperature === undefined ? {} : { temperature: model.temperature }),
-    ...(model.maxTokens === undefined ? {} : { maxTokens: model.maxTokens }),
-    ...(model.contextWindowTokens === undefined ? {} : { contextWindowTokens: model.contextWindowTokens }),
-    ...(model.reasoningEffort === undefined ? {} : { reasoningEffort: model.reasoningEffort }),
-    ...(model.thinkingTokenBudgetField === undefined
-      ? {}
-      : { thinkingTokenBudgetField: model.thinkingTokenBudgetField }),
-    ...(model.thinkingBudgetTokens === undefined
-      ? {}
-      : { thinkingBudgetTokens: model.thinkingBudgetTokens }),
-  });
+  const profile = source.listModelApiProfiles().profiles.find((entry) =>
+    entry.id === sourceProfileId
+  );
+  if (!profile) throw new Error(`model profile not found: ${sourceProfileId}`);
+  target.store.installIsolatedModelApiProfile(profile);
   target.updateUserProfile(source.getUserProfile().markdown);
   const enabledById = new Map(source.listAgentModules().map((entry) => [entry.id, entry.enabled]));
   for (const module of target.listAgentModules()) {

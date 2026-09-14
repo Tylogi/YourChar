@@ -69,6 +69,11 @@ export type ModelApiConfig = {
   visionInputEnabled: boolean;
   apiKeySet: boolean;
   apiKeyMasked: string;
+  /** Opaque host-owned credential handle. The underlying secret is never returned. */
+  credentialRef?: string;
+  credentialStatus: "not_set" | "active" | "missing" | "revoked";
+  credentialRevision?: number;
+  credentialCanRollback: boolean;
   temperature?: number;
   maxTokens?: number;
   contextWindowTokens?: number;
@@ -86,6 +91,8 @@ export type ModelApiConfigPatch = {
   visionInputEnabled?: boolean;
   apiKey?: string;
   clearApiKey?: boolean;
+  /** Compare-and-swap guard for credential rotation or revocation. */
+  expectedCredentialRevision?: number;
   temperature?: number | null;
   maxTokens?: number | null;
   contextWindowTokens?: number | null;

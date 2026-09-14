@@ -42,7 +42,7 @@ try {
     characterAgentSkillPublishedDirectories(backupDatabasePath),
   );
   for (const name of [
-    "conversations.json", "pi-sessions", "pi-agent", "model-api.json", "tavily.json", "vision.json", "mineru.json",
+    "conversations.json", "pi-sessions", "pi-agent", "model-api.json", "model-credentials.json", "tavily.json", "vision.json", "mineru.json",
     "git", "git-worktrees", "git-work-items.json", "git-runtime", "git-repository.json",
     "user-profile.md", "characters", "memory-vault", "memory-vault-history.git", "memory-vault-state.json",
     "memory-vault-migration.json", "memory-vault-journal", "memory-vault-recovery.json",
@@ -89,12 +89,13 @@ try {
     },
     credentials: {
       modelConfigPresent: existsSync(join(staging, "model-api.json")),
+      modelCredentialStorePresent: existsSync(join(staging, "model-credentials.json")),
       tavilyConfigPresent: existsSync(join(staging, "tavily.json")),
       visionConfigPresent: existsSync(join(staging, "vision.json")),
       mineruConfigPresent: existsSync(join(staging, "mineru.json")),
       imRuntimeCredentialsPresent: existsSync(join(staging, "im-runtime", "credentials.json")),
     },
-    containsModelCredentials: existsSync(join(staging, "model-api.json")),
+    containsModelCredentials: existsSync(join(staging, "model-credentials.json")),
     containsTavilyCredentials: existsSync(join(staging, "tavily.json")),
     containsVisionCredentials: existsSync(join(staging, "vision.json")),
     containsMineruCredentials: existsSync(join(staging, "mineru.json")),

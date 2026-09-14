@@ -125,6 +125,10 @@ import type {
   ModelProviderPayloadControls,
   ModelProviderRequestPolicy,
 } from "../model/provider-adapter.js";
+import {
+  containsModelCredentialValue,
+  redactModelCredentialValue,
+} from "../model/credential-store.js";
 import { memoryContextVersion } from "../context/memory-version.js";
 import { estimateTokens, roundMetric, stableHash } from "../context/tokens.js";
 import type { ContextBudgetSnapshot, ContextEconomicsPlan, ContextPlan } from "../context/types.js";
@@ -1276,6 +1280,27 @@ export class PiSessionRuntime {
       persistence.flushed = true;
     }
     this.touch(handle.metadata);
+  }
+
+  redactModelCredential(
+    handle: PiSessionHandle,
+    secret: string | undefined,
+    forceRewrite = false,
+  ): void {
+    if (!secret) return;
+    let changed = false;
+    for (let index = 0; index < handle.session.agent.state.messages.length; index += 1) {
+      const message = handle.session.agent.state.messages[index];
+      if (!containsModelCredentialValue(message, secret)) continue;
+      handle.session.agent.state.messages[index] = redactModelCredentialValue(message, secret);
+      changed = true;
+    }
+    for (const entry of handle.sessionManager.getBranch()) {
+      if (entry.type !== "message" || !containsModelCredentialValue(entry.message, secret)) continue;
+      entry.message = redactModelCredentialValue(entry.message, secret);
+      changed = true;
+    }
+    if (changed || forceRewrite) this.rewritePersistedSession(handle.sessionManager);
   }
 
   rewindToLatestUser(handle: PiSessionHandle): void {

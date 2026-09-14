@@ -1,6 +1,5 @@
-import { readFileSync } from "node:fs";
-import { join } from "node:path";
 import { resolveStateDirectory } from "./state-directory.mjs";
+import { CompanionStore } from "../dist/src/domain/store.js";
 import {
   memoryExtractorUserPrompt,
   parseExtractorOutput,
@@ -11,8 +10,7 @@ import {
   backgroundThinkingPolicy,
 } from "../dist/src/model/background-thinking-policy.js";
 
-const configPath = join(resolveStateDirectory(), "model-api.json");
-const config = activeConfig(JSON.parse(readFileSync(configPath, "utf8")));
+const config = new CompanionStore({ stateDir: resolveStateDirectory() }).getRawModelApiConfig();
 if (!config?.enabled || !config.baseUrl || !config.model) {
   throw new Error("the default model API profile is not configured");
 }
@@ -122,10 +120,3 @@ console.log(JSON.stringify({
   results,
 }, null, 2));
 if (passed !== results.length) process.exitCode = 1;
-
-function activeConfig(raw) {
-  if (raw?.version === 2 && Array.isArray(raw.profiles)) {
-    return raw.profiles.find((profile) => profile.id === raw.defaultProfileId) ?? raw.profiles[0];
-  }
-  return raw;
-}

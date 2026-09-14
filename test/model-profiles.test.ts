@@ -32,7 +32,7 @@ test("legacy singleton model settings migrate to a default profile", () => {
     assert.equal(profiles.profiles[0].apiKeyMasked, "lega...cret");
     assert.equal(JSON.stringify(profiles).includes("legacy-secret"), false);
     const migrated = JSON.parse(readFileSync(join(stateDir, "model-api.json"), "utf8")) as { version?: number };
-    assert.equal(migrated.version, 2);
+    assert.equal(migrated.version, 3);
   } finally {
     rmSync(stateDir, { recursive: true, force: true });
   }

@@ -5938,7 +5938,8 @@ export function renderAppHtml(): string {
               <button id="saveApiSettingsBtn" class="primary" type="button">保存设置</button>
               <button id="testModelBtn" class="secondary" type="button">测试连接</button>
               <button id="discoverModelsBtn" class="secondary" type="button">读取模型</button>
-              <button id="clearApiKeyBtn" class="secondary" type="button">清除 Key</button>
+              <button id="clearApiKeyBtn" class="secondary" type="button">撤销 Key</button>
+              <button id="rollbackApiKeyBtn" class="secondary" type="button" hidden>回滚 Key</button>
               <span id="apiSettingsState" class="muted"></span>
             </div>
           </section>
@@ -6702,6 +6703,8 @@ export function renderAppHtml(): string {
       defaultModelProfileId: "",
       selectedModelProfileId: "",
       loadedModelProviderId: "",
+      loadedModelCredentialRevision: 0,
+      loadedModelCredentialStatus: "not_set",
       discoveredVisionModels: [],
       pendingAttachments: [],
       attachmentUploadQueue: [],
@@ -7349,6 +7352,7 @@ export function renderAppHtml(): string {
       testModelBtn: document.getElementById("testModelBtn"),
       discoverModelsBtn: document.getElementById("discoverModelsBtn"),
       clearApiKeyBtn: document.getElementById("clearApiKeyBtn"),
+      rollbackApiKeyBtn: document.getElementById("rollbackApiKeyBtn"),
       apiSettingsState: document.getElementById("apiSettingsState"),
       modelSettingsTabBtn: document.getElementById("modelSettingsTabBtn"),
       appearanceSettingsTabBtn: document.getElementById("appearanceSettingsTabBtn"),
@@ -7589,6 +7593,7 @@ export function renderAppHtml(): string {
     nodes.testModelBtn.addEventListener("click", testModelConnection);
     nodes.discoverModelsBtn.addEventListener("click", discoverModels);
     nodes.clearApiKeyBtn.addEventListener("click", clearApiKey);
+    nodes.rollbackApiKeyBtn.addEventListener("click", rollbackApiKey);
     nodes.saveTavilyBtn.addEventListener("click", () => saveTavilySettings());
     nodes.testTavilyBtn.addEventListener("click", testTavilyConnection);
     nodes.clearTavilyBtn.addEventListener("click", clearTavilyKey);
@@ -21361,6 +21366,8 @@ export function renderAppHtml(): string {
       nodes.apiProviderDescription.textContent = descriptor?.description ||
         (nodes.apiProvider.value ? "该 Provider 未在当前进程注册，请选择可用 Provider。" : "当前没有可用 Provider。");
       nodes.clearApiKeyBtn.hidden = !fields.has("apiKey");
+      nodes.rollbackApiKeyBtn.hidden = !fields.has("apiKey") ||
+        !state.modelProfiles.find((profile) => profile.id === state.selectedModelProfileId)?.credentialCanRollback;
       updateModelProviderActions();
     }
 
@@ -21432,6 +21439,19 @@ export function renderAppHtml(): string {
       nodes.taskBenchJudgeModel.value = state.taskBenchJudgeModelId;
     }
 
+    function formatModelCredentialState(config, prefix) {
+      const revision = config.credentialRevision ? " · revision " + config.credentialRevision : "";
+      const defaultPrefix = config.isDefault ? "系统默认 · " : "";
+      const status = config.credentialStatus === "active"
+        ? "Key: " + (config.apiKeyMasked || "已保存")
+        : config.credentialStatus === "revoked"
+          ? "Key 已撤销"
+          : config.credentialStatus === "missing"
+            ? "凭据引用缺失（已阻止环境变量回退）"
+            : "Key: 未设置";
+      return (prefix || "") + defaultPrefix + status + revision;
+    }
+
     async function loadApiSettings(preferredId) {
       nodes.apiSettingsState.textContent = "加载中...";
       try {
@@ -21442,6 +21462,8 @@ export function renderAppHtml(): string {
         nodes.apiEnabled.checked = Boolean(config.enabled);
         renderModelProviderOptions(config.provider || "openai_compatible");
         state.loadedModelProviderId = config.provider || "openai_compatible";
+        state.loadedModelCredentialRevision = config.credentialRevision || 0;
+        state.loadedModelCredentialStatus = config.credentialStatus || "not_set";
         applyModelProviderDescriptor();
         nodes.apiVisionInputEnabled.checked = Boolean(config.visionInputEnabled);
         nodes.apiBaseUrl.value = config.baseUrl || "";
@@ -21453,8 +21475,9 @@ export function renderAppHtml(): string {
         nodes.apiThinkingTokenBudgetField.value = config.thinkingTokenBudgetField || "";
         nodes.apiThinkingBudgetTokens.value = config.thinkingBudgetTokens ?? "";
         nodes.apiContextWindowTokens.value = config.contextWindowTokens ?? "";
-        nodes.apiSettingsState.textContent = (config.isDefault ? "系统默认 · " : "") +
-          (config.apiKeySet ? "Key: " + config.apiKeyMasked : "Key: 未设置");
+        nodes.apiSettingsState.textContent = formatModelCredentialState(config);
+        nodes.clearApiKeyBtn.disabled = config.credentialStatus !== "active";
+        nodes.rollbackApiKeyBtn.hidden = !config.credentialCanRollback;
         renderCharacterOptions();
       } catch (error) {
         nodes.apiSettingsState.textContent = error.message || String(error);
@@ -22553,24 +22576,44 @@ export function renderAppHtml(): string {
         thinkingBudgetTokens: fields.has("thinkingBudgetTokens") ? optionalInteger(nodes.apiThinkingBudgetTokens.value) : null,
         contextWindowTokens: fields.has("contextWindowTokens") ? optionalInteger(nodes.apiContextWindowTokens.value) : null
       };
-      if (fields.has("apiKey") && nodes.apiKey.value) {
-        payload.apiKey = nodes.apiKey.value;
-      } else if (provider !== state.loadedModelProviderId) {
-        payload.clearApiKey = true;
-      }
       try {
         if (!state.selectedModelProfileId) throw new Error("请先选择模型配置");
-        const response = await fetch("/api/v1/model-profiles/" + encodeURIComponent(state.selectedModelProfileId), {
-          method: "PATCH",
-          headers: { "content-type": "application/json" },
-          body: JSON.stringify(payload)
-        });
+        const profileUrl = "/api/v1/model-profiles/" + encodeURIComponent(state.selectedModelProfileId);
+        const secret = fields.has("apiKey") ? nodes.apiKey.value : "";
+        const providerChanged = provider !== state.loadedModelProviderId;
+        const response = secret
+          ? await controlPlaneFetch(profileUrl + "/credential", {
+              method: "PUT",
+              body: JSON.stringify({
+                apiKey: secret,
+                expectedRevision: state.loadedModelCredentialRevision,
+                verify: true,
+                profilePatch: payload
+              })
+            })
+          : await fetch(profileUrl, {
+              method: "PATCH",
+              headers: { "content-type": "application/json" },
+              body: JSON.stringify({
+                ...payload,
+                ...(providerChanged && state.loadedModelCredentialStatus === "active"
+                  ? {
+                      clearApiKey: true,
+                      expectedCredentialRevision: state.loadedModelCredentialRevision
+                    }
+                  : {})
+              })
+            });
         const body = await response.json();
         if (!response.ok) throw new Error(body.error || "保存失败");
         const config = body.profile;
         state.loadedModelProviderId = config.provider || provider;
+        state.loadedModelCredentialRevision = config.credentialRevision || 0;
+        state.loadedModelCredentialStatus = config.credentialStatus || "not_set";
         nodes.apiKey.value = "";
-        nodes.apiSettingsState.textContent = config.apiKeySet ? "已保存，Key: " + config.apiKeyMasked : "已保存，Key: 未设置";
+        nodes.apiSettingsState.textContent = formatModelCredentialState(config, "已保存 · ");
+        nodes.clearApiKeyBtn.disabled = config.credentialStatus !== "active";
+        nodes.rollbackApiKeyBtn.hidden = !config.credentialCanRollback;
         await loadModelProfiles(config.id);
         renderCharacterOptions();
         setStatus("API 设置已保存");
@@ -22584,22 +22627,52 @@ export function renderAppHtml(): string {
     }
 
     async function clearApiKey() {
-      nodes.apiSettingsState.textContent = "清除中...";
+      nodes.apiSettingsState.textContent = "撤销中...";
       try {
-        const response = await fetch("/api/v1/model-profiles/" + encodeURIComponent(state.selectedModelProfileId), {
-          method: "PATCH",
-          headers: { "content-type": "application/json" },
-          body: JSON.stringify({ clearApiKey: true })
+        const response = await controlPlaneFetch("/api/v1/model-profiles/" + encodeURIComponent(state.selectedModelProfileId) + "/credential/revoke", {
+          method: "POST",
+          body: JSON.stringify({ expectedRevision: state.loadedModelCredentialRevision })
         });
         const body = await response.json();
-        if (!response.ok) throw new Error(body.error || "清除失败");
+        if (!response.ok) throw new Error(body.error || "撤销失败");
         const config = body.profile;
         nodes.apiKey.value = "";
-        nodes.apiSettingsState.textContent = config.apiKeySet ? "Key: " + config.apiKeyMasked : "Key: 未设置";
-        setStatus("API Key 已清除");
+        state.loadedModelCredentialRevision = config.credentialRevision || 0;
+        state.loadedModelCredentialStatus = config.credentialStatus || "revoked";
+        nodes.apiSettingsState.textContent = formatModelCredentialState(config);
+        nodes.clearApiKeyBtn.disabled = true;
+        nodes.rollbackApiKeyBtn.hidden = !config.credentialCanRollback;
+        await loadModelProfiles(config.id);
+        setStatus("API Key 已撤销");
       } catch (error) {
         nodes.apiSettingsState.textContent = error.message || String(error);
         setStatus(error.message || String(error), true);
+      }
+    }
+
+    async function rollbackApiKey() {
+      nodes.apiSettingsState.textContent = "回滚中...";
+      nodes.rollbackApiKeyBtn.disabled = true;
+      try {
+        const response = await controlPlaneFetch("/api/v1/model-profiles/" + encodeURIComponent(state.selectedModelProfileId) + "/credential/rollback", {
+          method: "POST",
+          body: JSON.stringify({ expectedRevision: state.loadedModelCredentialRevision })
+        });
+        const body = await response.json();
+        if (!response.ok) throw new Error(body.error || "回滚失败");
+        const config = body.profile;
+        state.loadedModelCredentialRevision = config.credentialRevision || 0;
+        state.loadedModelCredentialStatus = config.credentialStatus || "active";
+        nodes.apiSettingsState.textContent = formatModelCredentialState(config, "已回滚 · ");
+        nodes.clearApiKeyBtn.disabled = false;
+        nodes.rollbackApiKeyBtn.hidden = !config.credentialCanRollback;
+        await loadModelProfiles(config.id);
+        setStatus("API Key 已回滚到上一版本");
+      } catch (error) {
+        nodes.apiSettingsState.textContent = error.message || String(error);
+        setStatus(error.message || String(error), true);
+      } finally {
+        nodes.rollbackApiKeyBtn.disabled = false;
       }
     }
 

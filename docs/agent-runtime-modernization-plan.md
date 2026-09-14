@@ -246,12 +246,12 @@ explicitly selected, default-off capability, not promoting a broader Code Mode.
 
 ### P4c — Credential references and rotation
 
-- [ ] Replace profile-embedded API keys with opaque credential references and
+- [x] Replace profile-embedded API keys with opaque credential references and
   a host-owned credential store; migrate existing secrets without returning
   plaintext through APIs, logs, traces, exports, or reports.
-- [ ] Support atomic create/rotate/revoke operations, profile reference checks,
+- [x] Support atomic create/rotate/revoke operations, profile reference checks,
   last-known-good rollback, and explicit missing/revoked states.
-- [ ] Keep normal, secret, incognito, Task Bench, and background request paths
+- [x] Keep normal, secret, incognito, Task Bench, and background request paths
   scoped to the selected reference and prevent runtime credential reuse across
   profiles.
 
@@ -316,5 +316,8 @@ feature counts must not be reported as task-success improvements.
 - [x] P4b first-party Anthropic Messages, Google Generative AI, and OpenAI
   Responses adapters; declarative settings; provider-owned request policy; and
   same-model protocol compatibility coverage.
+- [x] P4c host-owned model credential references, legacy-key migration,
+  verified CAS rotation/revocation/rollback, fail-closed profile ownership, and
+  scoped incognito/evaluation resolution without secret-file copies.
 - [ ] P4 provider and host seams.
 - [ ] P5 event-sourced runtime state.

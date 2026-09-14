@@ -1,5 +1,5 @@
-import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { dirname, join } from "node:path";
+import { existsSync, readFileSync } from "node:fs";
+import { join } from "node:path";
 import { AsyncLocalStorage } from "node:async_hooks";
 import type { Clock } from "../app/clock.js";
 import { SystemClock } from "../app/clock.js";
@@ -14,6 +14,14 @@ import { TraceArchive } from "../storage/trace-archive.js";
 import { modelContextTraceScope } from "./types.js";
 import { isModelReasoningEffort } from "../model/reasoning-effort.js";
 import { isModelProviderId } from "../model/provider-adapter.js";
+import {
+  ModelCredentialConflictError,
+  ModelCredentialStore,
+  ModelCredentialValidationError,
+  type ModelCredentialMetadata,
+  type ModelCredentialResolver,
+} from "../model/credential-store.js";
+import { durableAtomicWrite } from "../memory-vault/durability.js";
 import type {
   ActionRecord,
   ContextLogEntry,
@@ -27,18 +35,29 @@ import type {
   TraceArchiveStatus,
 } from "./types.js";
 
-type StoredModelApiConfig = ModelApiConfig & { apiKey?: string };
+type StoredModelApiConfig = Omit<
+  ModelApiConfig,
+  | "apiKeySet"
+  | "apiKeyMasked"
+  | "credentialStatus"
+  | "credentialRevision"
+  | "credentialCanRollback"
+>;
 type StoredModelApiProfile = StoredModelApiConfig & { id: string; name: string };
 type StoredModelApiDocument = {
-  version: 2;
+  version: 3;
   defaultProfileId: string;
   profiles: StoredModelApiProfile[];
 };
+
+export type RawModelApiConfig = ModelApiConfig & { apiKey?: string };
 
 export type CompanionStoreOptions = {
   stateDir?: string | false;
   clock?: Clock;
   idGenerator?: IdGenerator;
+  /** Trusted resolver used by disposable runtimes; secrets are never copied into their state. */
+  modelCredentialResolver?: ModelCredentialResolver;
 };
 
 const defaultModelApiConfig: StoredModelApiConfig = {
@@ -47,8 +66,6 @@ const defaultModelApiConfig: StoredModelApiConfig = {
   baseUrl: "http://127.0.0.1:8317/v1",
   model: "",
   visionInputEnabled: false,
-  apiKeySet: false,
-  apiKeyMasked: "",
 };
 
 const defaultModelProfileId = "default";
@@ -74,6 +91,7 @@ export class CompanionStore {
   readonly stateDirectoryMigrationNeeded: boolean;
   readonly clock: Clock;
   readonly idGenerator: IdGenerator;
+  private readonly modelCredentials: ModelCredentialStore;
   readonly actions: ActionRecord[] = [];
   readonly contextLogs: ContextLogEntry[] = [];
   readonly modelContextTraces: ModelContextTrace[] = [];
@@ -96,6 +114,11 @@ export class CompanionStore {
     this.idGenerator = options.idGenerator ?? new SystemIdGenerator();
     this.modelApiConfigPath = this.stateDir ? join(this.stateDir, "model-api.json") : undefined;
     this.traceArchive = new TraceArchive(this.stateDir, this.clock);
+    this.modelCredentials = new ModelCredentialStore({
+      stateDir: this.stateDir,
+      clock: this.clock,
+      externalResolver: options.modelCredentialResolver,
+    });
     this.modelApiDocument = this.loadModelApiDocument();
     if (this.modelApiConfigPath && existsSync(this.modelApiConfigPath)) {
       this.persistModelApiConfig();
@@ -276,22 +299,23 @@ export class CompanionStore {
   }
 
   getModelApiConfig(): ModelApiConfig {
-    const { apiKey: _apiKey, id: _id, name: _name, ...safe } = this.requireStoredModelProfile(
-      this.modelApiDocument.defaultProfileId,
+    return this.materializeModelProfile(
+      this.requireStoredModelProfile(this.modelApiDocument.defaultProfileId),
     );
-    return { ...safe };
   }
 
-  getRawModelApiConfig(): ModelApiConfig & { apiKey?: string } {
-    const { id: _id, name: _name, ...config } = this.requireStoredModelProfile(
-      this.modelApiDocument.defaultProfileId,
+  getRawModelApiConfig(): RawModelApiConfig {
+    return this.materializeRawModelProfile(
+      this.requireStoredModelProfile(this.modelApiDocument.defaultProfileId),
     );
-    return { ...config };
   }
 
   patchModelApiConfig(patch: ModelApiConfigPatch): ModelApiConfig {
-    const profile = this.requireStoredModelProfile(this.modelApiDocument.defaultProfileId);
+    const source = this.requireStoredModelProfile(this.modelApiDocument.defaultProfileId);
+    const profile = { ...source };
     applyModelProfilePatch(profile, patch, this.clock.now().toISOString());
+    this.applyModelCredentialPatch(profile, patch);
+    this.replaceStoredModelProfile(profile);
     this.persistModelApiConfig();
     return this.getModelApiConfig();
   }
@@ -299,7 +323,7 @@ export class CompanionStore {
   listModelApiProfiles(): ModelApiProfileCollection {
     return {
       defaultProfileId: this.modelApiDocument.defaultProfileId,
-      profiles: this.modelApiDocument.profiles.map((profile) => safeModelProfile(
+      profiles: this.modelApiDocument.profiles.map((profile) => this.safeModelProfile(
         profile,
         profile.id === this.modelApiDocument.defaultProfileId,
       )),
@@ -308,39 +332,38 @@ export class CompanionStore {
 
   getModelApiProfile(id: string): ModelApiProfile | undefined {
     const profile = this.modelApiDocument.profiles.find((entry) => entry.id === id);
-    return profile ? safeModelProfile(profile, profile.id === this.modelApiDocument.defaultProfileId) : undefined;
+    return profile
+      ? this.safeModelProfile(profile, profile.id === this.modelApiDocument.defaultProfileId)
+      : undefined;
   }
 
-  getRawModelApiProfile(id?: string): StoredModelApiConfig | undefined {
+  getRawModelApiProfile(id?: string): RawModelApiConfig | undefined {
     const profileId = id ?? this.modelApiDocument.defaultProfileId;
     const profile = this.modelApiDocument.profiles.find((entry) => entry.id === profileId);
     if (!profile) return undefined;
-    const { id: _id, name: _name, ...config } = profile;
-    return { ...config };
+    return this.materializeRawModelProfile(profile);
   }
 
   previewModelApiProfilePatch(
     patch: ModelApiProfilePatch,
     id?: string,
-  ): ModelApiConfig & { apiKey?: string } {
+  ): RawModelApiConfig {
     const source = this.requireStoredModelProfile(id ?? this.modelApiDocument.defaultProfileId);
     const candidate = { ...source };
     applyModelProfilePatch(candidate, patch, this.clock.now().toISOString());
-    const { id: _id, name: _name, ...config } = candidate;
-    return config;
+    return this.previewCredentialPatch(candidate, patch);
   }
 
   previewNewModelApiProfile(
     patch: ModelApiProfilePatch,
-  ): ModelApiConfig & { apiKey?: string } {
+  ): RawModelApiConfig {
     const candidate: StoredModelApiProfile = {
       ...defaultModelApiConfig,
       id: "preview",
       name: "preview",
     };
     applyModelProfilePatch(candidate, patch, this.clock.now().toISOString());
-    const { id: _id, name: _name, ...config } = candidate;
-    return config;
+    return this.previewCredentialPatch(candidate, patch);
   }
 
   createModelApiProfile(input: ModelApiProfilePatch): ModelApiProfile {
@@ -352,16 +375,115 @@ export class CompanionStore {
       name,
     };
     applyModelProfilePatch(profile, input, now);
+    this.applyModelCredentialPatch(profile, input);
     this.modelApiDocument.profiles.push(profile);
     this.persistModelApiConfig();
-    return safeModelProfile(profile, false);
+    return this.safeModelProfile(profile, false);
   }
 
   patchModelApiProfile(id: string, patch: ModelApiProfilePatch): ModelApiProfile {
-    const profile = this.requireStoredModelProfile(id);
+    const profile = { ...this.requireStoredModelProfile(id) };
     applyModelProfilePatch(profile, patch, this.clock.now().toISOString());
+    this.applyModelCredentialPatch(profile, patch);
+    this.replaceStoredModelProfile(profile);
     this.persistModelApiConfig();
-    return safeModelProfile(profile, id === this.modelApiDocument.defaultProfileId);
+    return this.safeModelProfile(profile, id === this.modelApiDocument.defaultProfileId);
+  }
+
+  previewModelApiCredential(
+    id: string,
+    apiKey: string,
+    profilePatch: ModelApiProfilePatch = {},
+  ): RawModelApiConfig {
+    assertStructuralCredentialDraft(profilePatch);
+    const profile = { ...this.requireStoredModelProfile(id) };
+    applyModelProfilePatch(profile, profilePatch, this.clock.now().toISOString());
+    return this.previewCredentialPatch(profile, { apiKey });
+  }
+
+  assertModelApiCredentialRevision(id: string, expectedRevision: number): void {
+    const profile = this.requireStoredModelProfile(id);
+    const actualRevision = this.currentCredentialRevision(profile);
+    if (expectedRevision !== actualRevision) {
+      throw new ModelCredentialConflictError(
+        "model credential revision changed",
+        expectedRevision,
+        actualRevision,
+      );
+    }
+  }
+
+  setModelApiCredential(
+    id: string,
+    apiKey: string,
+    expectedRevision?: number,
+    profilePatch: ModelApiProfilePatch = {},
+  ): ModelApiProfile {
+    assertStructuralCredentialDraft(profilePatch);
+    const profile = { ...this.requireStoredModelProfile(id) };
+    applyModelProfilePatch(profile, profilePatch, this.clock.now().toISOString());
+    this.applyModelCredentialPatch(profile, { apiKey, expectedCredentialRevision: expectedRevision });
+    profile.updatedAt = this.clock.now().toISOString();
+    this.replaceStoredModelProfile(profile);
+    this.persistModelApiConfig();
+    return this.safeModelProfile(profile, id === this.modelApiDocument.defaultProfileId);
+  }
+
+  revokeModelApiCredential(id: string, expectedRevision?: number): ModelApiProfile {
+    const profile = this.requireStoredModelProfile(id);
+    if (!profile.credentialRef) {
+      throw new ModelCredentialConflictError(
+        "model profile has no credential to revoke",
+        expectedRevision,
+      );
+    }
+    this.modelCredentials.revoke(profile.credentialRef, id, expectedRevision);
+    profile.updatedAt = this.clock.now().toISOString();
+    this.persistModelApiConfig();
+    return this.safeModelProfile(profile, id === this.modelApiDocument.defaultProfileId);
+  }
+
+  rollbackModelApiCredential(id: string, expectedRevision?: number): ModelApiProfile {
+    const profile = this.requireStoredModelProfile(id);
+    if (!profile.credentialRef) {
+      throw new ModelCredentialConflictError(
+        "model profile has no credential to roll back",
+        expectedRevision,
+      );
+    }
+    this.modelCredentials.rollback(profile.credentialRef, id, expectedRevision);
+    profile.updatedAt = this.clock.now().toISOString();
+    this.persistModelApiConfig();
+    return this.safeModelProfile(profile, id === this.modelApiDocument.defaultProfileId);
+  }
+
+  scopedModelCredentialResolver(profileIds?: readonly string[]): ModelCredentialResolver {
+    const selected = profileIds ? new Set(profileIds) : undefined;
+    return this.modelCredentials.scopedResolver(
+      this.modelApiDocument.profiles.flatMap((profile) =>
+        (!selected || selected.has(profile.id)) && profile.credentialRef
+        ? [{ credentialRef: profile.credentialRef, ownerProfileId: profile.id }]
+        : []),
+    );
+  }
+
+  /** @internal Installs one safe profile into a disposable isolated runtime. */
+  installIsolatedModelApiProfile(profile: ModelApiProfile): ModelApiProfile {
+    const id = profile.id.trim();
+    const name = requiredProfileName(profile.name);
+    if (!id) throw new ModelApiConfigValidationError("model profile id is required");
+    const stored: StoredModelApiProfile = {
+      ...normalizeStoredModelApiConfig(profile),
+      id,
+      name,
+    };
+    this.modelApiDocument = {
+      version: 3,
+      defaultProfileId: id,
+      profiles: [stored],
+    };
+    this.persistModelApiConfig();
+    return this.safeModelProfile(stored, true);
   }
 
   setDefaultModelApiProfile(id: string): ModelApiProfileCollection {
@@ -372,7 +494,7 @@ export class CompanionStore {
   }
 
   deleteModelApiProfile(id: string): ModelApiProfileCollection {
-    this.requireStoredModelProfile(id);
+    const removed = this.requireStoredModelProfile(id);
     if (this.modelApiDocument.profiles.length === 1) {
       throw new Error("at least one model profile is required");
     }
@@ -381,13 +503,136 @@ export class CompanionStore {
       this.modelApiDocument.defaultProfileId = this.modelApiDocument.profiles[0].id;
     }
     this.persistModelApiConfig();
+    if (removed.credentialRef) {
+      this.modelCredentials.remove(removed.credentialRef, removed.id);
+    }
     return this.listModelApiProfiles();
+  }
+
+  private materializeModelProfile(profile: StoredModelApiProfile): ModelApiConfig {
+    const { id: _id, name: _name, ...config } = profile;
+    if (!profile.credentialRef) {
+      return {
+        ...config,
+        apiKeySet: false,
+        apiKeyMasked: "",
+        credentialStatus: "not_set",
+        credentialCanRollback: false,
+      };
+    }
+    const credential = this.modelCredentials.metadata(profile.credentialRef, profile.id);
+    return modelConfigWithCredential(config, credential);
+  }
+
+  private materializeRawModelProfile(profile: StoredModelApiProfile): RawModelApiConfig {
+    const safe = this.materializeModelProfile(profile);
+    if (!profile.credentialRef) return safe;
+    const credential = this.modelCredentials.resolve(profile.credentialRef, profile.id);
+    return {
+      ...safe,
+      ...(credential.status === "active" && credential.apiKey
+        ? { apiKey: credential.apiKey }
+        : {}),
+    };
+  }
+
+  private safeModelProfile(
+    profile: StoredModelApiProfile,
+    isDefault: boolean,
+  ): ModelApiProfile {
+    return { ...this.materializeModelProfile(profile), id: profile.id, name: profile.name, isDefault };
+  }
+
+  private previewCredentialPatch(
+    profile: StoredModelApiProfile,
+    patch: ModelApiConfigPatch,
+  ): RawModelApiConfig {
+    assertCredentialPatchShape(patch);
+    if (typeof patch.apiKey === "string" && patch.apiKey.trim()) {
+      const current = this.materializeModelProfile(profile);
+      const { id: _id, name: _name, ...config } = profile;
+      return {
+        ...config,
+        apiKeySet: true,
+        apiKeyMasked: maskPreviewSecret(patch.apiKey.trim()),
+        credentialRef: profile.credentialRef ?? "model-credential-preview0000000000000000000000000",
+        credentialStatus: "active",
+        credentialRevision: this.currentCredentialRevision(profile) + 1,
+        credentialCanRollback: current.credentialStatus === "active" ||
+          current.credentialStatus === "revoked",
+        apiKey: patch.apiKey.trim(),
+      };
+    }
+    if ((typeof patch.apiKey === "string" && !patch.apiKey.trim()) || patch.clearApiKey) {
+      const current = this.materializeModelProfile(profile);
+      return {
+        ...current,
+        apiKeySet: false,
+        credentialStatus: profile.credentialRef ? "revoked" : "not_set",
+        credentialCanRollback: Boolean(profile.credentialRef && current.apiKeySet),
+      };
+    }
+    return this.materializeRawModelProfile(profile);
+  }
+
+  private applyModelCredentialPatch(
+    profile: StoredModelApiProfile,
+    patch: ModelApiConfigPatch,
+  ): void {
+    assertCredentialPatchShape(patch);
+    if (typeof patch.apiKey === "string" && patch.apiKey.trim()) {
+      const secret = patch.apiKey.trim();
+      if (profile.credentialRef) {
+        const credential = this.modelCredentials.metadata(profile.credentialRef, profile.id);
+        if (credential.status === "missing") {
+          assertNewCredentialRevision(patch.expectedCredentialRevision);
+          profile.credentialRef = this.modelCredentials.replaceMissingReference(
+            profile.id,
+            secret,
+          ).credentialRef;
+        } else {
+          this.modelCredentials.rotate(
+            profile.credentialRef,
+            profile.id,
+            secret,
+            patch.expectedCredentialRevision,
+          );
+        }
+      } else {
+        assertNewCredentialRevision(patch.expectedCredentialRevision);
+        const created = this.modelCredentials.create(profile.id, secret);
+        profile.credentialRef = created.credentialRef;
+      }
+      return;
+    }
+    if ((typeof patch.apiKey === "string" && !patch.apiKey.trim()) || patch.clearApiKey) {
+      if (!profile.credentialRef) {
+        assertNewCredentialRevision(patch.expectedCredentialRevision);
+        return;
+      }
+      this.modelCredentials.revoke(
+        profile.credentialRef,
+        profile.id,
+        patch.expectedCredentialRevision,
+      );
+    }
+  }
+
+  private currentCredentialRevision(profile: StoredModelApiProfile): number {
+    if (!profile.credentialRef) return 0;
+    return this.modelCredentials.metadata(profile.credentialRef, profile.id).revision ?? 0;
   }
 
   private requireStoredModelProfile(id: string): StoredModelApiProfile {
     const profile = this.modelApiDocument.profiles.find((entry) => entry.id === id);
     if (!profile) throw new Error(`model profile not found: ${id}`);
     return profile;
+  }
+
+  private replaceStoredModelProfile(profile: StoredModelApiProfile): void {
+    const index = this.modelApiDocument.profiles.findIndex((entry) => entry.id === profile.id);
+    if (index < 0) throw new Error(`model profile not found: ${profile.id}`);
+    this.modelApiDocument.profiles[index] = profile;
   }
 
   private loadModelApiDocument(): StoredModelApiDocument {
@@ -397,8 +642,20 @@ export class CompanionStore {
 
     try {
       const parsed = JSON.parse(readFileSync(this.modelApiConfigPath, "utf8")) as unknown;
-      return normalizeStoredModelApiDocument(parsed);
-    } catch {
+      const loaded = normalizeStoredModelApiDocument(parsed);
+      for (const profile of loaded.document.profiles) {
+        const recoveredRef = this.modelCredentials.findReferenceForOwner(profile.id);
+        if (!profile.credentialRef && recoveredRef) profile.credentialRef = recoveredRef;
+        const legacyApiKey = loaded.legacyApiKeys.get(profile.id);
+        if (!legacyApiKey || profile.credentialRef) continue;
+        profile.credentialRef = this.modelCredentials.create(profile.id, legacyApiKey).credentialRef;
+      }
+      return loaded.document;
+    } catch (error) {
+      if (
+        error instanceof ModelCredentialValidationError ||
+        error instanceof ModelCredentialConflictError
+      ) throw error;
       return defaultModelApiDocument();
     }
   }
@@ -407,12 +664,14 @@ export class CompanionStore {
     if (!this.modelApiConfigPath) {
       return;
     }
-    mkdirSync(dirname(this.modelApiConfigPath), { recursive: true });
-    writeFileSync(this.modelApiConfigPath, JSON.stringify(this.modelApiDocument, null, 2), {
-      encoding: "utf8",
-      mode: 0o600,
-    });
-    chmodSync(this.modelApiConfigPath, 0o600);
+    durableAtomicWrite(
+      this.modelApiConfigPath,
+      `${JSON.stringify(this.modelApiDocument, null, 2)}\n`,
+      {
+        mode: 0o600,
+        failpointPrefix: "model_api",
+      },
+    );
   }
 }
 
@@ -430,7 +689,7 @@ function assertActionScope(
 
 function defaultModelApiDocument(): StoredModelApiDocument {
   return {
-    version: 2,
+    version: 3,
     defaultProfileId: defaultModelProfileId,
     profiles: [{ ...defaultModelApiConfig, id: defaultModelProfileId, name: "默认模型" }],
   };
@@ -457,7 +716,7 @@ function trimModelContextTraceScope(
   }
 }
 
-function maskSecret(secret: string): string {
+function maskPreviewSecret(secret: string): string {
   if (!secret) return "";
   if (secret.length <= 8) return "****";
   return `${secret.slice(0, 4)}...${secret.slice(-4)}`;
@@ -465,7 +724,6 @@ function maskSecret(secret: string): string {
 
 function normalizeStoredModelApiConfig(value: unknown): StoredModelApiConfig {
   const input = isRecord(value) ? value : {};
-  const apiKey = typeof input.apiKey === "string" ? input.apiKey : undefined;
   const config: StoredModelApiConfig = {
     ...defaultModelApiConfig,
     enabled: typeof input.enabled === "boolean" ? input.enabled : defaultModelApiConfig.enabled,
@@ -475,9 +733,7 @@ function normalizeStoredModelApiConfig(value: unknown): StoredModelApiConfig {
     visionInputEnabled: typeof input.visionInputEnabled === "boolean"
       ? input.visionInputEnabled
       : defaultModelApiConfig.visionInputEnabled,
-    apiKey,
-    apiKeySet: Boolean(apiKey),
-    apiKeyMasked: apiKey ? maskSecret(apiKey) : "",
+    ...normalizedStoredCredentialReference(input),
     updatedAt: typeof input.updatedAt === "string" ? input.updatedAt : undefined,
   };
   if (typeof input.temperature === "number") {
@@ -501,17 +757,38 @@ function normalizeStoredModelApiConfig(value: unknown): StoredModelApiConfig {
   return config;
 }
 
-function normalizeStoredModelApiDocument(value: unknown): StoredModelApiDocument {
+function normalizedStoredCredentialReference(
+  input: Record<string, unknown>,
+): Pick<StoredModelApiConfig, "credentialRef"> {
+  if (!Object.hasOwn(input, "credentialRef")) return {};
+  if (typeof input.credentialRef === "string" && input.credentialRef.trim()) {
+    return { credentialRef: input.credentialRef.trim().slice(0, 256) };
+  }
+  // Preserve the fact that a persisted reference was present so corrupted or
+  // tampered state cannot silently regain access to provider environment keys.
+  return { credentialRef: "invalid-model-credential-reference" };
+}
+
+function normalizeStoredModelApiDocument(value: unknown): {
+  document: StoredModelApiDocument;
+  legacyApiKeys: Map<string, string>;
+} {
   const input = isRecord(value) ? value : {};
-  if (input.version !== 2 || !Array.isArray(input.profiles)) {
+  const legacyApiKeys = new Map<string, string>();
+  if ((input.version !== 2 && input.version !== 3) || !Array.isArray(input.profiles)) {
+    const legacyApiKey = normalizedLegacyApiKey(input.apiKey);
+    if (legacyApiKey) legacyApiKeys.set(defaultModelProfileId, legacyApiKey);
     return {
-      version: 2,
-      defaultProfileId: defaultModelProfileId,
-      profiles: [{
-        ...normalizeStoredModelApiConfig(value),
-        id: defaultModelProfileId,
-        name: "默认模型",
-      }],
+      document: {
+        version: 3,
+        defaultProfileId: defaultModelProfileId,
+        profiles: [{
+          ...normalizeStoredModelApiConfig(value),
+          id: defaultModelProfileId,
+          name: "默认模型",
+        }],
+      },
+      legacyApiKeys,
     };
   }
   const seen = new Set<string>();
@@ -521,20 +798,88 @@ function normalizeStoredModelApiDocument(value: unknown): StoredModelApiDocument
     const name = typeof entry.name === "string" ? entry.name.trim() : "";
     if (!id || !name || seen.has(id)) return [];
     seen.add(id);
+    const legacyApiKey = normalizedLegacyApiKey(entry.apiKey);
+    if (legacyApiKey) legacyApiKeys.set(id, legacyApiKey);
     return [{ ...normalizeStoredModelApiConfig(entry), id, name }];
   });
-  if (!profiles.length) return defaultModelApiDocument();
+  if (!profiles.length) return { document: defaultModelApiDocument(), legacyApiKeys };
   const requestedDefault = typeof input.defaultProfileId === "string" ? input.defaultProfileId : "";
   return {
-    version: 2,
-    defaultProfileId: profiles.some((entry) => entry.id === requestedDefault) ? requestedDefault : profiles[0].id,
-    profiles,
+    document: {
+      version: 3,
+      defaultProfileId: profiles.some((entry) => entry.id === requestedDefault)
+        ? requestedDefault
+        : profiles[0].id,
+      profiles,
+    },
+    legacyApiKeys,
   };
 }
 
-function safeModelProfile(profile: StoredModelApiProfile, isDefault: boolean): ModelApiProfile {
-  const { apiKey: _apiKey, ...safe } = profile;
-  return { ...safe, isDefault };
+function normalizedLegacyApiKey(value: unknown): string | undefined {
+  if (typeof value !== "string") return undefined;
+  const normalized = value.trim();
+  return normalized || undefined;
+}
+
+function modelConfigWithCredential(
+  config: StoredModelApiConfig,
+  credential: ModelCredentialMetadata,
+): ModelApiConfig {
+  const active = credential.status === "active";
+  return {
+    ...config,
+    credentialRef: credential.credentialRef,
+    credentialStatus: credential.status,
+    credentialCanRollback: credential.canRollback,
+    ...(credential.revision !== undefined
+      ? { credentialRevision: credential.revision }
+      : {}),
+    apiKeySet: active,
+    apiKeyMasked: active ? credential.masked : "",
+  };
+}
+
+function assertCredentialPatchShape(patch: ModelApiConfigPatch): void {
+  if (patch.apiKey !== undefined && typeof patch.apiKey !== "string") {
+    throw new ModelApiConfigValidationError("apiKey must be a string");
+  }
+  if (patch.clearApiKey !== undefined && typeof patch.clearApiKey !== "boolean") {
+    throw new ModelApiConfigValidationError("clearApiKey must be a boolean");
+  }
+  if (patch.apiKey !== undefined && patch.clearApiKey === true) {
+    throw new ModelApiConfigValidationError("apiKey and clearApiKey cannot be set together");
+  }
+  if (
+    patch.expectedCredentialRevision !== undefined &&
+    (!Number.isInteger(patch.expectedCredentialRevision) ||
+      patch.expectedCredentialRevision < 0)
+  ) {
+    throw new ModelApiConfigValidationError(
+      "expectedCredentialRevision must be a non-negative integer",
+    );
+  }
+}
+
+function assertStructuralCredentialDraft(patch: ModelApiProfilePatch): void {
+  if (
+    patch.apiKey !== undefined ||
+    patch.clearApiKey !== undefined ||
+    patch.expectedCredentialRevision !== undefined
+  ) {
+    throw new ModelApiConfigValidationError(
+      "profilePatch cannot contain credential fields",
+    );
+  }
+}
+
+function assertNewCredentialRevision(expectedRevision: number | undefined): void {
+  if (expectedRevision === undefined || expectedRevision === 0) return;
+  throw new ModelCredentialConflictError(
+    "model credential revision changed",
+    expectedRevision,
+    0,
+  );
 }
 
 function requiredProfileName(value: unknown): string {
@@ -585,23 +930,6 @@ function applyModelProfilePatch(
   if (typeof patch.baseUrl === "string") profile.baseUrl = patch.baseUrl.trim();
   if (typeof patch.model === "string") profile.model = patch.model.trim();
   if (typeof patch.visionInputEnabled === "boolean") profile.visionInputEnabled = patch.visionInputEnabled;
-  if (typeof patch.apiKey === "string") {
-    const apiKey = patch.apiKey.trim();
-    if (apiKey) {
-      profile.apiKey = apiKey;
-      profile.apiKeySet = true;
-      profile.apiKeyMasked = maskSecret(apiKey);
-    } else {
-      delete profile.apiKey;
-      profile.apiKeySet = false;
-      profile.apiKeyMasked = "";
-    }
-  }
-  if (patch.clearApiKey) {
-    delete profile.apiKey;
-    profile.apiKeySet = false;
-    profile.apiKeyMasked = "";
-  }
   if (patch.temperature === null) delete profile.temperature;
   else if (typeof patch.temperature === "number") profile.temperature = patch.temperature;
   if (patch.maxTokens === null) delete profile.maxTokens;

@@ -34,6 +34,10 @@ import {
   ModelProviderConfigurationError,
   ModelProviderNotFoundError,
   ModelProviderOperationUnsupportedError,
+  ModelCredentialConflictError,
+  ModelCredentialUnavailableError,
+  ModelCredentialValidationError,
+  ModelCredentialVerificationError,
   IncognitoConversationNotFoundError,
   IncognitoOperationUnsupportedError,
   IncognitoUnavailableError,
@@ -447,6 +451,19 @@ export function createHttpServer(options: HttpServerOptions = {}) {
         });
       } else if (error instanceof ModelApiConfigValidationError) {
         sendJson(response, 400, { code: error.code, error: error.message });
+      } else if (error instanceof ModelCredentialValidationError) {
+        sendJson(response, 400, { code: error.code, error: error.message });
+      } else if (error instanceof ModelCredentialConflictError) {
+        sendJson(response, 409, {
+          code: error.code,
+          error: error.message,
+          expectedRevision: error.expectedRevision,
+          actualRevision: error.actualRevision,
+        });
+      } else if (error instanceof ModelCredentialUnavailableError) {
+        sendJson(response, 409, { code: error.code, error: error.message });
+      } else if (error instanceof ModelCredentialVerificationError) {
+        sendJson(response, 502, { code: error.code, error: error.message });
       } else if (error instanceof ModelProviderConfigurationError) {
         sendJson(response, 400, { code: error.code, error: error.message, issues: error.issues });
       } else if (error instanceof ModelProviderNotFoundError) {
@@ -691,6 +708,9 @@ async function route(input: {
       userInsightControl: "POST /api/v1/user-insights/{id}/{confirm|reject|unlock}",
       modelApiSettings: "GET/PATCH /api/settings/model-api",
       modelProviders: "GET /api/v1/model-providers",
+      modelProfiles: "GET/POST/PATCH/DELETE /api/v1/model-profiles[/{id}]",
+      modelCredentials:
+        "PUT /api/v1/model-profiles/{id}/credential; POST /api/v1/model-profiles/{id}/credential/{revoke|rollback}",
       tavilySettings: "GET/PATCH /api/settings/tavily",
       visionSettings: "GET/PATCH /api/settings/vision",
       mineruSettings: "GET/PATCH /api/settings/mineru",
@@ -4582,6 +4602,48 @@ async function route(input: {
     }
   }
 
+  const modelCredentialMatch = pathname.match(
+    /^\/api\/v1\/model-profiles\/([^/]+)\/credential(?:\/(revoke|rollback))?$/,
+  );
+  if (modelCredentialMatch) {
+    const id = decodeURIComponent(modelCredentialMatch[1]);
+    const operation = modelCredentialMatch[2];
+    if (!operation && method === "PUT") {
+      assertLocalControlPlaneMutation(input.request);
+      const body = asRecord(await readJson(input.request));
+      assertOnlyKeys(body, ["apiKey", "expectedRevision", "verify", "profilePatch"], "Model credential");
+      const profilePatch = body.profilePatch === undefined
+        ? undefined
+        : asModelCredentialProfilePatch(body.profilePatch);
+      const profile = await kernel.setModelApiCredential(id, {
+        apiKey: body.apiKey as string,
+        expectedRevision: body.expectedRevision as number,
+        verify: body.verify as boolean | undefined,
+        profilePatch,
+      });
+      sendJson(input.response, 200, { profile });
+      return;
+    }
+    if (operation === "revoke" && method === "POST") {
+      assertLocalControlPlaneMutation(input.request);
+      const body = asRecord(await readJson(input.request));
+      assertOnlyKeys(body, ["expectedRevision"], "Model credential revoke");
+      sendJson(input.response, 200, {
+        profile: kernel.revokeModelApiCredential(id, body.expectedRevision as number),
+      });
+      return;
+    }
+    if (operation === "rollback" && method === "POST") {
+      assertLocalControlPlaneMutation(input.request);
+      const body = asRecord(await readJson(input.request));
+      assertOnlyKeys(body, ["expectedRevision"], "Model credential rollback");
+      sendJson(input.response, 200, {
+        profile: kernel.rollbackModelApiCredential(id, body.expectedRevision as number),
+      });
+      return;
+    }
+  }
+
   const modelProfileMatch = pathname.match(/^\/api\/v1\/model-profiles\/([^/]+)$/);
   if (modelProfileMatch) {
     const id = decodeURIComponent(modelProfileMatch[1]);
@@ -5333,6 +5395,28 @@ function assertOnlyKeys(
   const allowedKeys = new Set(allowed);
   const unexpected = Object.keys(value).find((key) => !allowedKeys.has(key));
   if (unexpected) throw new SyntaxError(`${subject} contains unsupported field: ${unexpected}`);
+}
+
+function asModelCredentialProfilePatch(value: unknown): ModelApiProfilePatch {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    throw new SyntaxError("Model credential profilePatch must be an object");
+  }
+  const patch = value as Record<string, unknown>;
+  assertOnlyKeys(patch, [
+    "name",
+    "enabled",
+    "provider",
+    "baseUrl",
+    "model",
+    "visionInputEnabled",
+    "temperature",
+    "maxTokens",
+    "contextWindowTokens",
+    "reasoningEffort",
+    "thinkingTokenBudgetField",
+    "thinkingBudgetTokens",
+  ], "Model credential profilePatch");
+  return patch as ModelApiProfilePatch;
 }
 
 function requiredGitAccessRevision(value: unknown): number {

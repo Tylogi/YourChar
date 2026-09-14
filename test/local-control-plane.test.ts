@@ -85,9 +85,9 @@ test("a stale browser capability is reissued for one safe same-origin retry", as
   }
 });
 
-test("local control-plane guard accepts same-origin JSON POST, PATCH, and DELETE", async () => {
+test("local control-plane guard accepts same-origin JSON POST, PUT, PATCH, and DELETE", async () => {
   await withProbeServer(async ({ origin, cookie }) => {
-    for (const method of ["POST", "PATCH", "DELETE"]) {
+    for (const method of ["POST", "PUT", "PATCH", "DELETE"]) {
       const response = await fetch(`${origin}/installer-probe`, {
         method,
         headers: {

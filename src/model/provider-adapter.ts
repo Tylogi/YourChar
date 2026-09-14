@@ -11,6 +11,10 @@ import {
   type ThinkingTokenBudgetField,
 } from "@earendil-works/pi-ai";
 import type { ModelReasoningEffort } from "./reasoning-effort.js";
+import {
+  redactModelCredentialText,
+  redactModelCredentialValue,
+} from "./credential-store.js";
 
 export type ModelProviderConfiguration = {
   enabled: boolean;
@@ -19,6 +23,9 @@ export type ModelProviderConfiguration = {
   model: string;
   visionInputEnabled: boolean;
   apiKey?: string;
+  credentialRef?: string;
+  credentialStatus?: "not_set" | "active" | "missing" | "revoked";
+  credentialRevision?: number;
   temperature?: number;
   maxTokens?: number;
   contextWindowTokens?: number;
@@ -247,6 +254,18 @@ export class ModelProviderRegistry {
     const adapter = this.require(config.provider);
     const issues: string[] = [];
     if (!options.allowIncomplete) {
+      if (config.credentialStatus === "revoked") {
+        issues.push("model credential is revoked");
+      } else if (config.credentialStatus === "missing") {
+        issues.push("model credential is missing");
+      } else if (
+        config.credentialRef &&
+        (config.credentialStatus !== "active" || !config.apiKey)
+      ) {
+        issues.push("model credential is missing");
+      }
+    }
+    if (!options.allowIncomplete) {
       for (const field of adapter.configurationFields) {
         if (field.required && configurationFieldMissing(config, field.key)) {
           issues.push(`${field.key} is required`);
@@ -255,7 +274,7 @@ export class ModelProviderRegistry {
     }
     for (const issue of adapter.validateConfiguration?.(config) ?? []) {
       if (typeof issue !== "string") continue;
-      const normalized = issue.trim();
+      const normalized = redactModelCredentialText(issue.trim(), config.apiKey);
       if (normalized && !issues.includes(normalized)) issues.push(normalized.slice(0, 500));
       if (issues.length >= 20) break;
     }
@@ -346,20 +365,25 @@ export class ModelProviderRegistry {
     options: SimpleStreamOptions = {},
   ): Promise<AssistantMessage> {
     this.assertConfiguration(config);
-    const modelRuntime = await ModelRuntime.create({
-      credentials: new InMemoryCredentialStore(),
-      modelsPath: null,
-      refreshOnCreate: false,
-    });
-    const adapter = this.require(config.provider);
-    const model = await adapter.registerModel(modelRuntime, config);
-    const requestOptions = this.prepareRequestOptions(config, options);
-    return modelRuntime.completeSimple(model, context, {
-      ...requestOptions,
-      ...(requestOptions.apiKey === undefined && config.apiKey
-        ? { apiKey: config.apiKey }
-        : {}),
-    });
+    try {
+      const modelRuntime = await ModelRuntime.create({
+        credentials: new InMemoryCredentialStore(),
+        modelsPath: null,
+        refreshOnCreate: false,
+      });
+      const adapter = this.require(config.provider);
+      const model = await adapter.registerModel(modelRuntime, config);
+      const requestOptions = this.prepareRequestOptions(config, options);
+      const message = await modelRuntime.completeSimple(model, context, {
+        ...requestOptions,
+        ...(requestOptions.apiKey === undefined && config.apiKey
+          ? { apiKey: config.apiKey }
+          : {}),
+      });
+      return redactModelCredentialValue(message, config.apiKey);
+    } catch (error) {
+      throw redactModelProviderError(error, config.apiKey);
+    }
   }
 
   endpointIdentity(config: ModelProviderConfiguration): string {
@@ -374,20 +398,52 @@ export class ModelProviderRegistry {
     if (!adapter.testConnection) {
       throw new ModelProviderOperationUnsupportedError(adapter.id, "connection_test");
     }
-    return adapter.testConnection(config);
+    try {
+      return redactModelCredentialValue(await adapter.testConnection(config), config.apiKey);
+    } catch (error) {
+      throw redactModelProviderError(error, config.apiKey);
+    }
   }
 
   async discoverModels(
     config: ModelProviderConfiguration,
   ): Promise<readonly string[]> {
+    const credentialIssue = modelCredentialConfigurationIssue(config);
+    if (credentialIssue) {
+      throw new ModelProviderConfigurationError(config.provider, [credentialIssue]);
+    }
     const adapter = this.require(config.provider);
     if (!adapter.discoverModels) {
       throw new ModelProviderOperationUnsupportedError(adapter.id, "model_discovery");
     }
-    const models = await adapter.discoverModels(config);
-    return [...new Set(models.filter((model) => typeof model === "string" && model.trim())
-      .map((model) => model.trim()))].sort();
+    try {
+      const models = await adapter.discoverModels(config);
+      return [...new Set(models.filter((model) => typeof model === "string" && model.trim())
+        .map((model) => redactModelCredentialText(model.trim(), config.apiKey)))].sort();
+    } catch (error) {
+      throw redactModelProviderError(error, config.apiKey);
+    }
   }
+}
+
+function modelCredentialConfigurationIssue(
+  config: ModelProviderConfiguration,
+): string | undefined {
+  if (config.credentialStatus === "revoked") return "model credential is revoked";
+  if (config.credentialStatus === "missing") return "model credential is missing";
+  if (
+    config.credentialRef &&
+    (config.credentialStatus !== "active" || !config.apiKey)
+  ) return "model credential is missing";
+  return undefined;
+}
+
+function redactModelProviderError(error: unknown, secret: string | undefined): unknown {
+  if (!secret) return error;
+  return new Error(redactModelCredentialText(
+    error instanceof Error ? error.message : String(error),
+    secret,
+  ));
 }
 
 function assertModelProviderAdapter(adapter: ModelProviderAdapter): void {

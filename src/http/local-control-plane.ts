@@ -43,11 +43,16 @@ export function attachLocalControlPlaneCookie(
  * downloaded Skill. Existing API routes remain unchanged until they opt in.
  */
 export function assertLocalControlPlaneMutation(request: IncomingMessage): void {
-  if (request.method !== "POST" && request.method !== "PATCH" && request.method !== "DELETE") {
+  if (
+    request.method !== "POST" &&
+    request.method !== "PUT" &&
+    request.method !== "PATCH" &&
+    request.method !== "DELETE"
+  ) {
     throw new LocalControlPlaneRequestError(
       "LOCAL_CONTROL_METHOD_REJECTED",
       405,
-      "only POST, PATCH, and DELETE control-plane mutations are allowed",
+      "only POST, PUT, PATCH, and DELETE control-plane mutations are allowed",
     );
   }
   const expectedOrigin = requestOrigin(request);

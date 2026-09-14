@@ -99,13 +99,14 @@ test("readiness, model diagnostics, export, and confirmed deletion form a closed
     const exportBody = JSON.parse(exportText) as {
       characters: unknown[];
       scheduleItems: unknown[];
-      actions: unknown[];
+      actions: Array<{ actionType: string }>;
       modelContextTraces: unknown[];
     };
     assert.match(exported.headers.get("content-disposition") ?? "", /yourchar-export\.json/);
     assert.equal(exportBody.characters.length, 1);
     assert.equal(exportBody.scheduleItems.length, 1);
-    assert.equal(exportBody.actions.length, 1);
+    assert.equal(exportBody.actions.length, 2);
+    assert.ok(exportBody.actions.some((action) => action.actionType === "model_credential_change"));
     assert.equal(exportBody.modelContextTraces.length, 2);
     assert.equal(exportText.includes("export-must-not-contain-this"), false);
 

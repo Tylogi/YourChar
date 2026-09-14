@@ -18,3 +18,4 @@ export * from "../incognito/index.js";
 export * from "../document/index.js";
 export * from "../model/provider-adapter.js";
 export * from "../model/native-providers.js";
+export * from "../model/credential-store.js";

@@ -140,6 +140,8 @@ export function validateBackupDirectory(root, manifest) {
   }
   const imRuntimePresent = actualFiles.some((file) => file.path.startsWith("im-runtime/"));
   const imCredentialsPresent = existsSync(join(root, "im-runtime", "credentials.json"));
+  const modelConfigPresent = existsSync(join(root, "model-api.json"));
+  const modelCredentialStorePresent = existsSync(join(root, "model-credentials.json"));
   const mineruConfigPresent = existsSync(join(root, "mineru.json"));
   const gitRegistryPresent = actualFiles.some((file) => file.path === "git/registry.json");
   const gitAccessConfigPresent = actualFiles.some((file) => file.path === "git/access.json");
@@ -152,6 +154,19 @@ export function validateBackupDirectory(root, manifest) {
   const memoryVaultHistoryPresent = actualFiles.some(
     (file) => file.path.startsWith("memory-vault-history.git/"),
   );
+  if (
+    manifest.credentials?.modelConfigPresent !== undefined &&
+    Boolean(manifest.credentials.modelConfigPresent) !== modelConfigPresent
+  ) {
+    throw new Error("backup model configuration manifest does not match payload");
+  }
+  if (
+    manifest.credentials?.modelCredentialStorePresent !== undefined &&
+    (Boolean(manifest.credentials.modelCredentialStorePresent) !== modelCredentialStorePresent ||
+      Boolean(manifest.containsModelCredentials) !== modelCredentialStorePresent)
+  ) {
+    throw new Error("backup model credential manifest does not match payload");
+  }
   if (
     manifest.containsMemoryVaultHistory !== undefined &&
     Boolean(manifest.containsMemoryVaultHistory) !== memoryVaultHistoryPresent

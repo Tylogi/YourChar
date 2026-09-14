@@ -1,6 +1,5 @@
-import { readFileSync } from "node:fs";
-import { join } from "node:path";
 import { resolveStateDirectory } from "./state-directory.mjs";
+import { CompanionStore } from "../dist/src/domain/store.js";
 import {
   memoryExtractorUserPrompt,
   parseExtractorOutput,
@@ -23,8 +22,7 @@ import {
 const modeArg = process.argv.find((argument) => argument.startsWith("--thinking="))?.split("=")[1] ?? "off";
 if (modeArg !== "on" && modeArg !== "off") throw new Error("--thinking must be on or off");
 const smoke = process.argv.includes("--smoke");
-const configPath = join(resolveStateDirectory(), "model-api.json");
-const config = activeConfig(JSON.parse(readFileSync(configPath, "utf8")));
+const config = new CompanionStore({ stateDir: resolveStateDirectory() }).getRawModelApiConfig();
 if (!config?.enabled || !config.baseUrl || !config.model) throw new Error("the default model API profile is not configured");
 
 const baseRelationship = {
@@ -204,11 +202,4 @@ if (passed !== results.length) process.exitCode = 1;
 
 function fallbackBudget(scenario) {
   return scenario === "group_gate" ? 768 : 2_400;
-}
-
-function activeConfig(raw) {
-  if (raw?.version === 2 && Array.isArray(raw.profiles)) {
-    return raw.profiles.find((profile) => profile.id === raw.defaultProfileId) ?? raw.profiles[0];
-  }
-  return raw;
 }
