@@ -281,7 +281,45 @@ privacy scope, cwd admission, and one-session concurrency; rejects client MCP,
 extra roots, and unsupported media; omits raw tool material; and maps cancel to
 both transport abort and the explicit headless lifecycle endpoint.
 
-## 8. Verification strategy
+## 8. P5 implementation slices
+
+### P5a — Typed event ledger and replay
+
+- [x] Add versioned runtime-event envelopes, deterministic payload validation,
+  per-stream ordering, and v1-to-v2 reader migration.
+- [x] Add SHA-256 hash chains, bounded payloads, integrity verification, and
+  replay that never invokes models, tools, providers, or other side effects.
+- [x] Checkpoint the first event and then every 64 events or 256 KiB, retaining
+  only the latest four acceleration snapshots without pruning source events.
+
+### P5b — Projection inventory and automatic capture
+
+- [x] Inventory every durable table as a projection, existing native event
+  ledger, or explicit exclusion, with a deterministic schema hash.
+- [x] Mirror admitted rows through connection-local transactional triggers,
+  including foreign-key-derived scope and binary-safe row encoding.
+- [x] Bootstrap schema-68 state, emit schema migration snapshots, and reconcile
+  writes or deletes made while capture hooks were unavailable.
+
+### P5c — Model-visible and lifecycle boundaries
+
+- [x] Record session creation, updates, archive/restore, and deletion while
+  omitting machine-local Pi file paths.
+- [x] Record complete settled turns and the existing sanitized provider payload
+  so the effective model context and final outcome can be reconstructed.
+- [x] Enforce normal/secret export isolation and physically purge event streams
+  on session, character, and all-user-data deletion; never copy write-only
+  provider settings into the ledger.
+
+### P5d — Operations and exit proof
+
+- [x] Expose typed replay/export APIs and event integrity in Kernel readiness.
+- [x] Document schema evolution, checkpoints, privacy, rollback, and the
+  non-cryptographic integrity threat model.
+- [ ] Run the complete release gate and retain the passing result as the P5
+  exit proof.
+
+## 9. Verification strategy
 
 Each slice must run, at minimum:
 
@@ -296,7 +334,7 @@ For DSH comparisons, use the Task Bench with the same model, context window,
 task fixtures, tool permissions, timeout, and repetition count. Architectural
 feature counts must not be reported as task-success improvements.
 
-## 9. Rollout and rollback
+## 10. Rollout and rollback
 
 - Land every slice as a small commit on a dedicated branch.
 - Preserve the old public tool names and module IDs during P1.
@@ -305,7 +343,7 @@ feature counts must not be reported as task-success improvements.
   capability extraction.
 - A slice is rollback-safe when reverting it requires no user-data migration.
 
-## 10. Current progress
+## 11. Current progress
 
 - [x] Baseline work isolated on `refactor/agent-runtime-capabilities`.
 - [x] P1a session capability lifecycle.
@@ -335,4 +373,8 @@ feature counts must not be reported as task-success improvements.
   passed, and a thin SDK-backed stdio adapter now has explicit capability,
   scope, streaming, and cancellation mappings.
 - [x] P4 provider and host seams.
+- [x] P5a typed versioned event ledger, replay, hash chains, and checkpoints.
+- [x] P5b automatic projection inventory, bootstrap, migration, and change capture.
+- [x] P5c session/turn/model-visible reconstruction with scoped export and purge.
+- [ ] P5d full release-gate exit proof.
 - [ ] P5 event-sourced runtime state.

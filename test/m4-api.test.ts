@@ -66,8 +66,19 @@ test("readiness, model diagnostics, export, and confirmed deletion form a closed
       "sec-fetch-site": "same-origin",
     };
 
-    const readiness = await (await fetch(`${baseUrl}/api/v1/readiness`)).json() as { status: string; database: string };
+    const readiness = await (await fetch(`${baseUrl}/api/v1/readiness`)).json() as {
+      status: string;
+      database: string;
+      runtimeEvents: { status: string; eventCount: number };
+    };
     assert.deepEqual({ status: readiness.status, database: readiness.database }, { status: "ready", database: "ok" });
+    assert.equal(readiness.runtimeEvents.status, "ok");
+    assert.ok(readiness.runtimeEvents.eventCount >= 0);
+    const runtimeEventHealth = await (await fetch(
+      `${baseUrl}/api/v1/runtime-events/health`,
+    )).json() as { health: { ok: boolean; errors: string[] } };
+    assert.deepEqual(runtimeEventHealth.health.errors, []);
+    assert.equal(runtimeEventHealth.health.ok, true);
     const diagnostic = await fetch(`${baseUrl}/api/v1/diagnostics/model/test`, { method: "POST" });
     assert.equal(((await diagnostic.json()) as { ok: boolean }).ok, true);
     const models = await fetch(`${baseUrl}/api/v1/diagnostics/model/models`);

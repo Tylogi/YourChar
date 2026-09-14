@@ -457,6 +457,7 @@ test("backup v3 preserves Vault v4 secret memories and staged restore rejects co
     assert.equal(manifest.schemaVersion, 3);
     assert.equal(manifest.database.schemaVersion, 69);
     assert.equal(manifest.database.integrityCheck, "ok");
+    assert.equal(manifest.database.runtimeEventIntegrity, "ok");
     assert.equal(manifest.vault.projectionConsistent, true);
     assert.equal(manifest.containsMemoryVaultHistory, true);
     assert.ok(manifest.files.some((entry: { path: string }) => entry.path === "memory-vault/reality/user-profile.md"));

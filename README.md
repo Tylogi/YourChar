@@ -41,6 +41,7 @@ and adds the RP companion domain on top:
 - optional single-owner WeChat and Feishu/Lark channels, each routed to a selected character's normal conversation;
 - world-level narrative/Analyzer profiles; World turns never invoke character-bound chat models;
 - event-scoped fixed World prompts with restart-safe append-only history and KV-cache metrics;
+- versioned runtime-event streams with projection replay, hash-chain verification, and bounded checkpoints;
 - first-class World Cards and turn-grouped third-person interactive-fiction rendering;
 - event-end observer-scoped settlement into character records and bounded World chronicles;
 - fictional-state policy that separates World events from real schedule changes;
@@ -72,6 +73,9 @@ native-provider extension boundary are documented in
 The authenticated loopback automation API, TypeScript SDK, replay keys,
 streaming events, cancellation, pagination, and error contract are documented
 in [`docs/headless-api.md`](docs/headless-api.md).
+Runtime event envelopes, automatic projection capture, replay/checkpoint rules,
+scope deletion, and integrity monitoring are documented in
+[`docs/runtime-events.md`](docs/runtime-events.md).
 The reusable MCP module and proactive-event pattern is documented in
 [`docs/mcp-agent-modules.md`](docs/mcp-agent-modules.md).
 Shared/private Agent Skill package lifecycle, character management permission,

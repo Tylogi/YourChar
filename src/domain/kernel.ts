@@ -5238,6 +5238,10 @@ export class CompanionKernel {
     return this.memoryVault.health();
   }
 
+  getRuntimeEventHealth() {
+    return this.runtimeEvents.verifyIntegrity();
+  }
+
   listMemoryVaultHistory(limit?: number) {
     return this.memoryVault.listHistory(limit);
   }

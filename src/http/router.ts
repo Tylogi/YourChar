@@ -2791,6 +2791,11 @@ async function route(input: {
     return;
   }
 
+  if (pathname === "/api/v1/runtime-events/health" && method === "GET") {
+    sendJson(input.response, 200, { health: kernel.getRuntimeEventHealth() });
+    return;
+  }
+
   if (pathname === "/api/v1/memory-vault/health" && method === "GET") {
     sendJson(input.response, 200, { health: kernel.getMemoryVaultHealth() });
     return;

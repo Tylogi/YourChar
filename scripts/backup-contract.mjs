@@ -12,7 +12,7 @@ import { DatabaseSync } from "node:sqlite";
 import { parseDocument } from "yaml";
 
 export const BACKUP_SCHEMA_VERSION = 3;
-export const MAX_DATABASE_SCHEMA_VERSION = 68;
+export const MAX_DATABASE_SCHEMA_VERSION = 69;
 const V1_FRONTMATTER_KEYS = [
   "schemaVersion", "id", "kind", "realm", "scope", "type", "characterId", "sessionId",
   "validity", "confirmed", "sourceSessionId", "sourceMessageId", "createdAt", "updatedAt",
@@ -246,6 +246,8 @@ export function validateBackupDirectory(root, manifest) {
   if (manifest.database.integrityCheck !== database.integrityCheck ||
       manifest.database.schemaVersion !== database.schemaVersion ||
       manifest.database.sha256 !== database.sha256 ||
+      (manifest.database.runtimeEventIntegrity !== undefined &&
+        manifest.database.runtimeEventIntegrity !== database.runtimeEventIntegrity) ||
       manifest.vault.vaultHash !== vault.vaultHash ||
       manifest.vault.projectionHash !== vault.projectionHash ||
       manifest.vault.documentCount !== vault.documentCount ||
@@ -570,7 +572,14 @@ function compareText(left, right) {
 
 export function validateDatabase(path) {
   if (!existsSync(path)) {
-    return { present: false, integrityCheck: "absent", schemaVersion: 0, sha256: null, size: 0 };
+    return {
+      present: false,
+      integrityCheck: "absent",
+      runtimeEventIntegrity: "absent",
+      schemaVersion: 0,
+      sha256: null,
+      size: 0,
+    };
   }
   const database = new DatabaseSync(path, { readOnly: true });
   try {
@@ -582,11 +591,103 @@ export function validateDatabase(path) {
     if (schemaVersion > MAX_DATABASE_SCHEMA_VERSION) {
       throw new Error(`backup database schema ${schemaVersion} is newer than supported ${MAX_DATABASE_SCHEMA_VERSION}`);
     }
+    const runtimeEventIntegrity = validateRuntimeEventLedger(database, schemaVersion);
     const source = readFileSync(path);
-    return { present: true, integrityCheck, schemaVersion, sha256: sha256(source), size: source.byteLength };
+    return {
+      present: true,
+      integrityCheck,
+      runtimeEventIntegrity,
+      schemaVersion,
+      sha256: sha256(source),
+      size: source.byteLength,
+    };
   } finally {
     database.close();
   }
+}
+
+function validateRuntimeEventLedger(database, schemaVersion) {
+  if (schemaVersion < 69) return "unavailable";
+  const zeroHash = "0".repeat(64);
+  const supportedVersions = new Map([
+    ["runtime.projection.upserted", new Set([1, 2])],
+    ["runtime.projection.deleted", new Set([1])],
+    ["runtime.session.snapshotted", new Set([1])],
+    ["runtime.session.deleted", new Set([1])],
+    ["runtime.turn.settled", new Set([1])],
+  ]);
+  const streams = database.prepare(
+    "SELECT * FROM runtime_event_streams ORDER BY stream_id",
+  ).all();
+  for (const stream of streams) {
+    const streamId = String(stream.stream_id);
+    const events = database.prepare(
+      "SELECT * FROM runtime_events WHERE stream_id = ? ORDER BY stream_sequence",
+    ).all(streamId);
+    let previousHash = zeroHash;
+    let expectedSequence = 1;
+    for (const event of events) {
+      const eventType = String(event.event_type);
+      const eventVersion = Number(event.event_version);
+      if (!supportedVersions.get(eventType)?.has(eventVersion)) {
+        throw new Error(`runtime event stream ${streamId} has an unsupported event schema`);
+      }
+      let payload;
+      try {
+        payload = JSON.parse(String(event.payload_json));
+      } catch {
+        throw new Error(`runtime event stream ${streamId} has invalid payload JSON`);
+      }
+      if (!payload || typeof payload !== "object" || Array.isArray(payload)) {
+        throw new Error(`runtime event stream ${streamId} payload is not an object`);
+      }
+      if (Number(event.stream_sequence) !== expectedSequence) {
+        throw new Error(`runtime event stream ${streamId} has a non-contiguous sequence`);
+      }
+      if (String(event.previous_hash) !== previousHash) {
+        throw new Error(`runtime event stream ${streamId} has a broken previous hash`);
+      }
+      const expectedHash = sha256([
+        previousHash,
+        expectedSequence,
+        eventType,
+        eventVersion,
+        String(event.payload_json),
+      ].join("\n"));
+      if (String(event.event_hash) !== expectedHash) {
+        throw new Error(`runtime event stream ${streamId} has a broken event hash`);
+      }
+      previousHash = expectedHash;
+      expectedSequence += 1;
+    }
+    if (
+      Number(stream.last_stream_sequence) !== events.length ||
+      Number(stream.event_count) !== events.length ||
+      String(stream.last_event_hash) !== previousHash
+    ) throw new Error(`runtime event stream ${streamId} head does not match its events`);
+  }
+  const checkpoints = database.prepare(
+    "SELECT * FROM runtime_event_checkpoints ORDER BY stream_id, stream_sequence",
+  ).all();
+  for (const checkpoint of checkpoints) {
+    const stateJson = String(checkpoint.state_json);
+    if (sha256(stateJson) !== String(checkpoint.state_hash)) {
+      throw new Error(`runtime event checkpoint ${checkpoint.stream_id} has a broken state hash`);
+    }
+    const event = database.prepare(`
+      SELECT payload_json, event_hash FROM runtime_events
+      WHERE sequence = ? AND stream_id = ? AND stream_sequence = ?
+    `).get(
+      Number(checkpoint.event_sequence),
+      String(checkpoint.stream_id),
+      Number(checkpoint.stream_sequence),
+    );
+    if (
+      !event || String(event.payload_json) !== stateJson ||
+      String(event.event_hash) !== String(checkpoint.event_hash)
+    ) throw new Error(`runtime event checkpoint ${checkpoint.stream_id} has a broken anchor`);
+  }
+  return "ok";
 }
 
 export function validateVault(root, databaseStatus) {
