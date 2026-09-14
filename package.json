@@ -3,6 +3,18 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
+  "main": "./dist/src/index.js",
+  "types": "./dist/src/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/src/index.d.ts",
+      "import": "./dist/src/index.js"
+    },
+    "./sdk": {
+      "types": "./dist/src/sdk/index.d.ts",
+      "import": "./dist/src/sdk/index.js"
+    }
+  },
   "description": "Local-first runtime for persistent AI characters and digital lives.",
   "scripts": {
     "build": "tsc -p tsconfig.json",

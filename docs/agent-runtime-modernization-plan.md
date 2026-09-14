@@ -257,12 +257,12 @@ explicitly selected, default-off capability, not promoting a broader Code Mode.
 
 ### P4d — Headless API and typed SDK
 
-- [ ] Define a versioned authenticated loopback/headless API for sessions,
+- [x] Define a versioned authenticated loopback/headless API for sessions,
   streaming turns, jobs, goals, workflows, files, and lifecycle control without
   requiring the Web UI or browser cookie bootstrap.
-- [ ] Generate or hand-maintain a typed TypeScript SDK with cancellation,
+- [x] Generate or hand-maintain a typed TypeScript SDK with cancellation,
   idempotency, pagination, event schemas, and stable error types.
-- [ ] Add contract tests that run the same workflow through Kernel, HTTP, and
+- [x] Add contract tests that run the same workflow through Kernel, HTTP, and
   SDK surfaces and verify identical ownership and permission enforcement.
 
 ### P4e — Optional ACP bridge
@@ -319,5 +319,8 @@ feature counts must not be reported as task-success improvements.
 - [x] P4c host-owned model credential references, legacy-key migration,
   verified CAS rotation/revocation/rollback, fail-closed profile ownership, and
   scoped incognito/evaluation resolution without secret-file copies.
+- [x] P4d default-off authenticated loopback API, bounded replay keys, typed
+  TypeScript SDK, validated streaming/cancellation/pagination contracts, and
+  Kernel/HTTP/SDK ownership and permission parity.
 - [ ] P4 provider and host seams.
 - [ ] P5 event-sourced runtime state.

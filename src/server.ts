@@ -17,7 +17,9 @@ const forceShutdownAfterMs = 10_000;
 const hardExitAfterMs = 1_000;
 
 if (!isLoopbackHost(host)) {
-  throw new Error("YourChar has no HTTP authentication and may only bind to a loopback host");
+  throw new Error(
+    "YourChar browser UI may only bind to a loopback host; headless authentication does not authorize a remote bind",
+  );
 }
 
 const imRuntimeMode = resolveImRuntimeMode(process.env, testMode);
