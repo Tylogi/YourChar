@@ -319,6 +319,30 @@ export class CompanionStore {
     return { ...config };
   }
 
+  previewModelApiProfilePatch(
+    patch: ModelApiProfilePatch,
+    id?: string,
+  ): ModelApiConfig & { apiKey?: string } {
+    const source = this.requireStoredModelProfile(id ?? this.modelApiDocument.defaultProfileId);
+    const candidate = { ...source };
+    applyModelProfilePatch(candidate, patch, this.clock.now().toISOString());
+    const { id: _id, name: _name, ...config } = candidate;
+    return config;
+  }
+
+  previewNewModelApiProfile(
+    patch: ModelApiProfilePatch,
+  ): ModelApiConfig & { apiKey?: string } {
+    const candidate: StoredModelApiProfile = {
+      ...defaultModelApiConfig,
+      id: "preview",
+      name: "preview",
+    };
+    applyModelProfilePatch(candidate, patch, this.clock.now().toISOString());
+    const { id: _id, name: _name, ...config } = candidate;
+    return config;
+  }
+
   createModelApiProfile(input: ModelApiProfilePatch): ModelApiProfile {
     const name = requiredProfileName(input.name);
     const now = this.clock.now().toISOString();

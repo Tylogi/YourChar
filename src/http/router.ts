@@ -31,6 +31,7 @@ import {
   ControlPlaneBusyError,
   CharacterDeletionConfirmationError,
   ModelApiConfigValidationError,
+  ModelProviderConfigurationError,
   ModelProviderNotFoundError,
   ModelProviderOperationUnsupportedError,
   IncognitoConversationNotFoundError,
@@ -446,6 +447,8 @@ export function createHttpServer(options: HttpServerOptions = {}) {
         });
       } else if (error instanceof ModelApiConfigValidationError) {
         sendJson(response, 400, { code: error.code, error: error.message });
+      } else if (error instanceof ModelProviderConfigurationError) {
+        sendJson(response, 400, { code: error.code, error: error.message, issues: error.issues });
       } else if (error instanceof ModelProviderNotFoundError) {
         sendJson(response, 400, { code: error.code, error: error.message });
       } else if (error instanceof ModelProviderOperationUnsupportedError) {

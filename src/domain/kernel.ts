@@ -241,24 +241,22 @@ import { visionToolResult } from "../mcp/vision-server.js";
 import { WorkspaceFileService } from "../workspace/file-service.js";
 import { WorkspaceScopeRegistry, type ScopedWorkspace } from "../workspace/scope.js";
 import {
-  applyBackgroundThinkingPolicy,
   backgroundThinkingPolicy,
-  interactiveThinkingTemplateKwargs,
   maxInteractiveThinkingRetries,
   minimumInteractiveThinkingCharacters,
-  requiresInteractiveThinking,
   type BackgroundThinkingScenario,
 } from "../model/background-thinking-policy.js";
 import {
   openAiCompatibleProviderAdapter,
-  openAiCompatibleThinkingOptions,
 } from "../model/openai-compatible.js";
+import { firstPartyNativeModelProviderAdapters } from "../model/native-providers.js";
 import {
   isModelProviderId,
+  ModelProviderConfigurationError,
   ModelProviderRegistry,
   type ModelProviderAdapter,
+  type ModelProviderPayloadControls,
 } from "../model/provider-adapter.js";
-import { applyConfiguredReasoningEffort } from "../model/reasoning-effort.js";
 import {
   RelationshipRepository,
   RelationshipService,
@@ -356,7 +354,6 @@ import {
   MeetingPresetRepository,
   MeetingPresetService,
   type ImportMeetingPresetInput,
-  type MeetingPresetProviderOverrides,
   type UpdateMeetingPresetInput,
 } from "../meeting-preset/index.js";
 import {
@@ -702,6 +699,7 @@ export class CompanionKernel {
     ]);
     this.modelProviders = new ModelProviderRegistry([
       openAiCompatibleProviderAdapter,
+      ...firstPartyNativeModelProviderAdapters,
       ...this.additionalModelProviderAdapters,
     ]);
     const configuredStateDir = this.store.stateDir;
@@ -1239,6 +1237,12 @@ export class CompanionKernel {
         providerPayloadOptions: (appSessionId) => {
           const binding = this.modelBindingForSession(appSessionId);
           const config = binding.config;
+          const providerPolicy = this.modelProviders.isConfigured(config)
+            ? this.modelProviders.interactivePolicy(config)
+            : { thinkingLevel: "off" as const };
+          const requestPolicy = this.modelProviders.isConfigured(config)
+            ? this.modelProviders.requestPolicy(config)
+            : undefined;
           const secret = this.sessionRuntime.getConversationMetadata()
             .some((entry) => entry.id === appSessionId && entry.conversationSpace === "secret");
           const preset = secret
@@ -1254,37 +1258,51 @@ export class CompanionKernel {
             contextWindowTokens: config.contextWindowTokens,
             modelProfileId: binding.profileId,
             model: config.model,
-            chatTemplateKwargs: interactiveThinkingTemplateKwargs(config),
-            requireThinking: requiresInteractiveThinking(config),
+            chatTemplateKwargs: providerPolicy.chatTemplateKwargs,
+            requireThinking: providerPolicy.requirePrivateThinking,
             reasoningEffort: config.reasoningEffort,
             thinkingTokenBudgetField: config.thinkingTokenBudgetField,
             thinkingBudgetTokens: config.thinkingBudgetTokens,
+            thinkingLevel: providerPolicy.thinkingLevel,
+            thinkingBudgets: providerPolicy.thinkingBudgets,
+            requestPolicy,
             // Delegated workers inherit the character's model binding, not a
             // transient in-person meeting preset intended for dialogue style.
             subagent: {
               temperature: config.temperature,
               model: config.model,
-              chatTemplateKwargs: interactiveThinkingTemplateKwargs(config),
+              chatTemplateKwargs: providerPolicy.chatTemplateKwargs,
               reasoningEffort: config.reasoningEffort,
               thinkingTokenBudgetField: config.thinkingTokenBudgetField,
               thinkingBudgetTokens: config.thinkingBudgetTokens,
+              thinkingLevel: providerPolicy.thinkingLevel,
+              thinkingBudgets: providerPolicy.thinkingBudgets,
+              requestPolicy,
             },
           };
         },
         providerPayloadTransform: (input) => {
+          const config = this.modelBindingForSession(input.appSessionId).config;
+          let payload = this.modelProviders.transformPayload(
+            config,
+            input.payload,
+            input.controls,
+          );
           const secret = this.sessionRuntime.getConversationMetadata()
             .some((entry) =>
               entry.id === input.appSessionId && entry.conversationSpace === "secret"
             );
-          if (secret) return input.payload;
-          return this.meetingPresetService.orchestrateProviderPayload({
-            sessionId: input.appSessionId,
-            mode: input.mode,
-            payload: input.payload,
-            currentUserText: input.currentUserText,
-            timezone: input.timezone,
-            now: input.now,
-          });
+          if (input.scope === "interactive" && !secret && isRecord(payload)) {
+            payload = this.meetingPresetService.orchestrateProviderPayload({
+              sessionId: input.appSessionId,
+              mode: input.mode,
+              payload,
+              currentUserText: input.currentUserText,
+              timezone: input.timezone,
+              now: input.now,
+            });
+          }
+          return this.modelProviders.finalizePayload(config, payload);
         },
       });
     if (normalizedOptions.sessionRuntime) {
@@ -2697,9 +2715,23 @@ export class CompanionKernel {
     }, { temperature: overrides?.temperature ?? (input.kind === "memory" ? 0 : 0.7),
       maxTokens, signal: input.signal,
       onPayload: payload => {
-        const configured = applyMeetingPresetProviderOverrides(applyBackgroundThinkingPolicy(payload, binding.config, scenario), overrides) as Record<string, unknown>;
-        configured.max_tokens = maxTokens;
-        return selectedPreset ? this.meetingPresetService.orchestrateDiaryPayload({ preset: selectedPreset, source: input.source, payload: configured }) : configured;
+        let configured = this.modelProviders.transformPayload(binding.config, payload, {
+          temperature: overrides?.temperature ?? (input.kind === "memory" ? 0 : 0.7),
+          topP: overrides?.topP,
+          frequencyPenalty: overrides?.frequencyPenalty,
+          presencePenalty: overrides?.presencePenalty,
+          seed: overrides?.seed,
+          maxTokens,
+          thinkingMode: "off",
+        });
+        if (selectedPreset && isRecord(configured)) {
+          configured = this.meetingPresetService.orchestrateDiaryPayload({
+            preset: selectedPreset,
+            source: input.source,
+            payload: configured,
+          });
+        }
+        return this.modelProviders.finalizePayload(binding.config, configured);
       },
       sessionId: `diary:${input.source.characterId}:${input.source.id}:${input.kind}` });
     if (["error", "aborted", "length"].includes(response.stopReason) || input.signal.aborted) throw new Error("日记生成未完成");
@@ -5396,6 +5428,9 @@ export class CompanionKernel {
 
   patchModelApiConfig(patch: ModelApiConfigPatch) {
     this.assertSelectableModelProvider(patch.provider);
+    this.assertValidModelProviderConfiguration(
+      this.store.previewModelApiProfilePatch(patch),
+    );
     return this.store.patchModelApiConfig(patch);
   }
 
@@ -5405,11 +5440,17 @@ export class CompanionKernel {
 
   createModelApiProfile(input: ModelApiProfilePatch) {
     this.assertSelectableModelProvider(input.provider);
+    this.assertValidModelProviderConfiguration(
+      this.store.previewNewModelApiProfile(input),
+    );
     return this.store.createModelApiProfile(input);
   }
 
   patchModelApiProfile(id: string, patch: ModelApiProfilePatch) {
     this.assertSelectableModelProvider(patch.provider);
+    this.assertValidModelProviderConfiguration(
+      this.store.previewModelApiProfilePatch(patch, id),
+    );
     return this.store.patchModelApiProfile(id, patch);
   }
 
@@ -5423,6 +5464,51 @@ export class CompanionKernel {
     if (!this.modelProviders.has(provider)) {
       throw new ModelApiConfigValidationError(`model provider is not registered: ${provider}`);
     }
+  }
+
+  private assertValidModelProviderConfiguration(config: RawModelApiConfig): void {
+    try {
+      this.modelProviders.assertConfiguration(config, { allowIncomplete: true });
+    } catch (error) {
+      if (error instanceof ModelProviderConfigurationError) {
+        throw new ModelApiConfigValidationError(error.message);
+      }
+      throw error;
+    }
+  }
+
+  private backgroundProviderPayload(
+    config: RawModelApiConfig,
+    scenario: BackgroundThinkingScenario,
+    payload: unknown,
+    controls: ModelProviderPayloadControls = {},
+  ): unknown {
+    const policy = backgroundThinkingPolicy(config, scenario);
+    const transformed = this.modelProviders.transformPayload(config, payload, {
+      maxTokens: policy.maxTokens,
+      thinkingMode: "off",
+      ...controls,
+    });
+    return this.modelProviders.finalizePayload(config, transformed);
+  }
+
+  private interactiveProviderPayload(
+    config: RawModelApiConfig,
+    payload: unknown,
+    controls: ModelProviderPayloadControls = {},
+  ): unknown {
+    const policy = this.modelProviders.interactivePolicy(config);
+    const transformed = this.modelProviders.transformPayload(config, payload, {
+      temperature: config.temperature,
+      maxTokens: config.maxTokens,
+      reasoningEffort: config.reasoningEffort,
+      thinkingTokenBudgetField: config.thinkingTokenBudgetField,
+      thinkingBudgetTokens: config.thinkingBudgetTokens,
+      chatTemplateKwargs: policy.chatTemplateKwargs,
+      thinkingMode: "configured",
+      ...controls,
+    });
+    return this.modelProviders.finalizePayload(config, transformed);
   }
 
   setDefaultModelApiProfile(id: string) {
@@ -5900,7 +5986,7 @@ export class CompanionKernel {
     const events: AgentSessionEvent[] = [];
     const guardedEvents = createGuardedEventForwarder(
       onEvent,
-      requiresInteractiveThinking(config),
+      this.modelProviders.interactivePolicy(config).requirePrivateThinking === true,
     );
     const emitEvent = (event: AgentSessionEvent) => {
       events.push(event);
@@ -6745,7 +6831,12 @@ export class CompanionKernel {
     const thinkingPolicy = backgroundThinkingPolicy(config, "proactive_message");
     const maxTokens = Math.min(320, thinkingPolicy.maxTokens);
     const payload = groupTracePayload(config, systemPrompt, userContent, maxTokens, config.temperature);
-    const transformedPayload = applyBackgroundThinkingPolicy(payload, config, "proactive_message");
+    const transformedPayload = this.backgroundProviderPayload(
+      config,
+      "proactive_message",
+      payload,
+      { temperature: config.temperature, maxTokens },
+    );
     this.store.addModelContextTrace({
       sessionId: input.sessionId,
       mode: input.mode,
@@ -6769,7 +6860,10 @@ export class CompanionKernel {
       sessionId: `conversation-wake:${input.notificationId}`,
       signal: AbortSignal.any([signal, AbortSignal.timeout(60_000)]),
       onPayload: (providerPayload: unknown) =>
-        applyBackgroundThinkingPolicy(providerPayload, config, "proactive_message"),
+        this.backgroundProviderPayload(config, "proactive_message", providerPayload, {
+          temperature: config.temperature,
+          maxTokens,
+        }),
     });
     if (message.stopReason === "error" || message.stopReason === "aborted") {
       throw new Error(message.errorMessage || `conversation wake model stopped: ${message.stopReason}`);
@@ -7135,7 +7229,12 @@ export class CompanionKernel {
     }, {
       temperature: 0, maxTokens, signal,
       sessionId: "conversation-checkpoint:" + input.sessionId,
-      onPayload: payload => ({ ...applyBackgroundThinkingPolicy(payload, config, "conversation_compaction") as Record<string, unknown>, max_tokens: maxTokens }),
+      onPayload: payload => this.backgroundProviderPayload(
+        config,
+        "conversation_compaction",
+        payload,
+        { temperature: 0, maxTokens },
+      ),
     });
     if (!["stop"].includes(message.stopReason)) throw new Error("checkpoint model did not complete");
     const current = this.sessionRuntime.getConversationMetadata().find(entry => entry.id === input.sessionId);
@@ -7162,7 +7261,12 @@ export class CompanionKernel {
         timezone: reminder.timezone }), timestamp: this.clock.now().getTime() }],
     }, { maxTokens: 512, sessionId: "reminder-draft:" + reminder.occurrenceId,
       signal: AbortSignal.any([...(signal ? [signal] : []),AbortSignal.timeout(60_000)]),
-      onPayload: payload => applyBackgroundThinkingPolicy(payload,config,"proactive_message") });
+      onPayload: payload => this.backgroundProviderPayload(
+        config,
+        "proactive_message",
+        payload,
+        { maxTokens: 512 },
+      ) });
     const body = stripReasoningText(agentEventMessageText(message)).trim();
     if (!body || message.stopReason === "error" || message.stopReason === "aborted" || containsInternalAnalysis(body)) throw new Error("reminder draft unavailable");
     return { body, agentGenerated: true };
@@ -7489,6 +7593,7 @@ export class CompanionKernel {
         directorBinding.profileId,
         directorBinding.config,
         this.modelProviders.endpointIdentity(directorBinding.config),
+        this.modelProviders.interactivePolicy(directorBinding.config),
         meetingPresetSignature,
       );
       narrativeContext = this.worldConversationService.repository.getActiveNarrativeContext(worldId);
@@ -7681,14 +7786,22 @@ export class CompanionKernel {
       }, {
         temperature: meetingPresetOverrides?.temperature ?? directorBinding.config.temperature,
         maxTokens,
-        ...openAiCompatibleThinkingOptions(directorBinding.config),
+        ...this.modelProviders.configuredThinkingOptions(directorBinding.config),
         sessionId: narrativeContext.modelSessionId,
         cacheRetention: "short",
         signal: narrativeCall.signal,
         onPayload: (payload: unknown) => {
-          const transformed = applyMeetingPresetProviderOverrides(
-            interactiveTracePayload(directorBinding.config, payload),
-            meetingPresetOverrides,
+          const transformed = this.interactiveProviderPayload(
+            directorBinding.config,
+            payload,
+            {
+              temperature: meetingPresetOverrides?.temperature ?? directorBinding.config.temperature,
+              topP: meetingPresetOverrides?.topP,
+              frequencyPenalty: meetingPresetOverrides?.frequencyPenalty,
+              presencePenalty: meetingPresetOverrides?.presencePenalty,
+              seed: meetingPresetOverrides?.seed,
+              maxTokens,
+            },
           ) as Record<string, unknown>;
           if (!traceRecorded) {
             traceRecorded = true;
@@ -8044,11 +8157,12 @@ export class CompanionKernel {
       mode: "rp",
       turnKind: "world_analysis",
       requestText: input.requestText,
-      payload: backgroundTracePayload(
+      payload: this.backgroundProviderPayload(
         binding.config,
         "world_analysis",
         groupTracePayload(binding.config, systemPrompt, userContent, thinkingPolicy.maxTokens, 0),
-      ),
+        { temperature: 0, maxTokens: thinkingPolicy.maxTokens },
+      ) as Record<string, unknown>,
     });
     const analysisCall = timedCallSignal(WORLD_ANALYSIS_TIMEOUT_MS, input.signal);
     let response;
@@ -8061,10 +8175,11 @@ export class CompanionKernel {
         maxTokens: thinkingPolicy.maxTokens,
         sessionId: `world-analysis:${input.narrativeContextId ?? input.turnId}`,
         signal: analysisCall.signal,
-        onPayload: (payload: unknown) => applyBackgroundThinkingPolicy(
-          payload,
+        onPayload: (payload: unknown) => this.backgroundProviderPayload(
           binding.config,
           "world_analysis",
+          payload,
+          { temperature: 0, maxTokens: thinkingPolicy.maxTokens },
         ),
       });
     } catch (error) {
@@ -8347,11 +8462,12 @@ export class CompanionKernel {
             mode: group.mode,
             turnKind: "group_gate",
             requestText: text,
-            payload: backgroundTracePayload(
+            payload: this.backgroundProviderPayload(
               binding.config,
               "group_gate",
               groupTracePayload(binding.config, gateSystem, gateInput, thinkingPolicy.maxTokens, 0),
-            ),
+              { temperature: 0, maxTokens: thinkingPolicy.maxTokens },
+            ) as Record<string, unknown>,
           });
           modelCalls += 1;
           const gateMessage = await this.modelProviders.complete(binding.config, {
@@ -8362,7 +8478,12 @@ export class CompanionKernel {
             maxTokens: thinkingPolicy.maxTokens,
             sessionId: `group-gate:${started.turn.id}:${characterId}:${characterMessageCount}`,
             signal: groupCallSignal(signal),
-            onPayload: (payload: unknown) => applyBackgroundThinkingPolicy(payload, binding.config, "group_gate"),
+            onPayload: (payload: unknown) => this.backgroundProviderPayload(
+              binding.config,
+              "group_gate",
+              payload,
+              { temperature: 0, maxTokens: thinkingPolicy.maxTokens },
+            ),
           });
           if (gateMessage.stopReason === "error" || gateMessage.stopReason === "aborted") {
             throw new Error(gateMessage.errorMessage || `gate stopped: ${gateMessage.stopReason}`);
@@ -8417,13 +8538,17 @@ export class CompanionKernel {
             mode: group.mode,
             turnKind: "group_reply",
             requestText: text,
-            payload: interactiveTracePayload(binding.config, groupTracePayload(
+            payload: this.interactiveProviderPayload(
               binding.config,
-              replySystem,
-              replyInput,
-              maxTokens,
-              binding.config.temperature,
-            )),
+              groupTracePayload(
+                binding.config,
+                replySystem,
+                replyInput,
+                maxTokens,
+                binding.config.temperature,
+              ),
+              { maxTokens },
+            ) as Record<string, unknown>,
           });
           modelCalls += 1;
           const replyMessage = await this.modelProviders.complete(binding.config, {
@@ -8432,10 +8557,14 @@ export class CompanionKernel {
           }, {
             temperature: binding.config.temperature,
             maxTokens,
-            ...openAiCompatibleThinkingOptions(binding.config),
+            ...this.modelProviders.configuredThinkingOptions(binding.config),
             sessionId: `group-reply:${started.turn.id}:${characterId}:${characterMessageCount}`,
             signal: groupCallSignal(signal),
-            onPayload: (payload: unknown) => interactiveTracePayload(binding.config, payload),
+            onPayload: (payload: unknown) => this.interactiveProviderPayload(
+              binding.config,
+              payload,
+              { maxTokens },
+            ),
           });
           if (replyMessage.stopReason === "error" || replyMessage.stopReason === "aborted") {
             throw new Error(replyMessage.errorMessage || `reply stopped: ${replyMessage.stopReason}`);
@@ -8686,7 +8815,7 @@ export class CompanionKernel {
         : {}),
       turnKind: "character_skill_reflection",
       requestText: input.sourceTaskId,
-      payload: backgroundTracePayload(
+      payload: this.backgroundProviderPayload(
         config,
         "character_skill_reflection",
         groupTracePayload(
@@ -8696,7 +8825,8 @@ export class CompanionKernel {
           thinkingPolicy.maxTokens,
           0,
         ),
-      ),
+        { temperature: 0, maxTokens: thinkingPolicy.maxTokens },
+      ) as Record<string, unknown>,
     });
     const message = await this.modelProviders.complete(config, {
       systemPrompt: stableCharacterSkillReflectionPrompt,
@@ -8710,8 +8840,12 @@ export class CompanionKernel {
       maxTokens: thinkingPolicy.maxTokens,
       sessionId: `${traceSessionId}:${input.sourceTaskId}`,
       signal: input.signal ?? AbortSignal.timeout(90_000),
-      onPayload: (payload: unknown) =>
-        applyBackgroundThinkingPolicy(payload, config, "character_skill_reflection"),
+      onPayload: (payload: unknown) => this.backgroundProviderPayload(
+        config,
+        "character_skill_reflection",
+        payload,
+        { temperature: 0, maxTokens: thinkingPolicy.maxTokens },
+      ),
     });
     if (message.stopReason === "error" || message.stopReason === "aborted") {
       throw new Error(message.errorMessage || `character Skill reflection stopped: ${message.stopReason}`);
@@ -8735,11 +8869,12 @@ export class CompanionKernel {
         : {}),
       turnKind: "memory_extraction",
       requestText: input.userText,
-      payload: backgroundTracePayload(
+      payload: this.backgroundProviderPayload(
         config,
         "memory_extraction",
         groupTracePayload(config, stableMemoryExtractorPrompt, userContent, thinkingPolicy.maxTokens, 0),
-      ),
+        { temperature: 0, maxTokens: thinkingPolicy.maxTokens },
+      ) as Record<string, unknown>,
     });
     const message = await this.modelProviders.complete(config, {
       systemPrompt: stableMemoryExtractorPrompt,
@@ -8752,7 +8887,12 @@ export class CompanionKernel {
       temperature: 0,
       maxTokens: thinkingPolicy.maxTokens,
       sessionId: `memory-extraction:${input.sourceMessageId}`,
-      onPayload: (payload: unknown) => applyBackgroundThinkingPolicy(payload, config, "memory_extraction"),
+      onPayload: (payload: unknown) => this.backgroundProviderPayload(
+        config,
+        "memory_extraction",
+        payload,
+        { temperature: 0, maxTokens: thinkingPolicy.maxTokens },
+      ),
     });
     if (message.stopReason === "error" || message.stopReason === "aborted") {
       throw new Error(message.errorMessage || `memory extractor stopped: ${message.stopReason}`);
@@ -8775,11 +8915,12 @@ export class CompanionKernel {
       mode: input.mode,
       turnKind: "post_turn_analysis",
       requestText: input.userText,
-      payload: backgroundTracePayload(
+      payload: this.backgroundProviderPayload(
         config,
         "post_turn_analysis",
         groupTracePayload(config, systemPrompt, userContent, thinkingPolicy.maxTokens, 0),
-      ),
+        { temperature: 0, maxTokens: thinkingPolicy.maxTokens },
+      ) as Record<string, unknown>,
     });
     const message = await this.modelProviders.complete(config, {
       systemPrompt,
@@ -8792,7 +8933,12 @@ export class CompanionKernel {
       temperature: 0,
       maxTokens: thinkingPolicy.maxTokens,
       sessionId: `post-turn-analysis:${input.sourceContextLogId}`,
-      onPayload: (payload: unknown) => applyBackgroundThinkingPolicy(payload, config, "post_turn_analysis"),
+      onPayload: (payload: unknown) => this.backgroundProviderPayload(
+        config,
+        "post_turn_analysis",
+        payload,
+        { temperature: 0, maxTokens: thinkingPolicy.maxTokens },
+      ),
     });
     if (message.stopReason === "error" || message.stopReason === "aborted") {
       throw new Error(message.errorMessage || `post-turn analyzer stopped: ${message.stopReason}`);
@@ -8937,7 +9083,7 @@ export class CompanionKernel {
       mode: "sms",
       turnKind: "world_actor",
       requestText: input.objective || input.openingMessage || input.purpose,
-      payload: backgroundTracePayload(
+      payload: this.backgroundProviderPayload(
         config,
         "character_interaction",
         groupTracePayload(
@@ -8947,7 +9093,8 @@ export class CompanionKernel {
           thinkingPolicy.maxTokens,
           config.temperature,
         ),
-      ),
+        { temperature: config.temperature, maxTokens: thinkingPolicy.maxTokens },
+      ) as Record<string, unknown>,
     });
     this.characterChannels.recordTargetModelRequest(input.episodeId);
     const message = await this.modelProviders.complete(config, {
@@ -8960,8 +9107,12 @@ export class CompanionKernel {
       signal: input.signal
         ? AbortSignal.any([input.signal, AbortSignal.timeout(60_000)])
         : AbortSignal.timeout(60_000),
-      onPayload: (payload: unknown) =>
-        applyBackgroundThinkingPolicy(payload, config, "character_interaction"),
+      onPayload: (payload: unknown) => this.backgroundProviderPayload(
+        config,
+        "character_interaction",
+        payload,
+        { temperature: config.temperature, maxTokens: thinkingPolicy.maxTokens },
+      ),
     });
     if (message.stopReason === "error" || message.stopReason === "aborted") {
       throw new Error(message.errorMessage || `character interaction stopped: ${message.stopReason}`);
@@ -9061,7 +9212,7 @@ export class CompanionKernel {
       mode: "sms",
       turnKind: "world_actor",
       requestText: input.episode.objective || input.episode.title,
-      payload: backgroundTracePayload(
+      payload: this.backgroundProviderPayload(
         config,
         "character_interaction",
         groupTracePayload(
@@ -9071,7 +9222,8 @@ export class CompanionKernel {
           thinkingPolicy.maxTokens,
           config.temperature,
         ),
-      ),
+        { temperature: config.temperature, maxTokens: thinkingPolicy.maxTokens },
+      ) as Record<string, unknown>,
     });
     const message = await this.modelProviders.complete(config, {
       systemPrompt,
@@ -9083,8 +9235,12 @@ export class CompanionKernel {
       signal: input.signal
         ? AbortSignal.any([input.signal, AbortSignal.timeout(60_000)])
         : AbortSignal.timeout(60_000),
-      onPayload: (payload: unknown) =>
-        applyBackgroundThinkingPolicy(payload, config, "character_interaction"),
+      onPayload: (payload: unknown) => this.backgroundProviderPayload(
+        config,
+        "character_interaction",
+        payload,
+        { temperature: config.temperature, maxTokens: thinkingPolicy.maxTokens },
+      ),
     });
     if (message.stopReason === "error" || message.stopReason === "aborted") {
       throw new Error(message.errorMessage || `character scene composer stopped: ${message.stopReason}`);
@@ -9168,11 +9324,12 @@ export class CompanionKernel {
       mode: "sms",
       turnKind: "world_planning",
       requestText: `${input.characterName} ${input.localDate}`,
-      payload: backgroundTracePayload(
+      payload: this.backgroundProviderPayload(
         config,
         "world_planning",
         groupTracePayload(config, systemPrompt, userContent, thinkingPolicy.maxTokens, 0.2),
-      ),
+        { temperature: 0.2, maxTokens: thinkingPolicy.maxTokens },
+      ) as Record<string, unknown>,
     });
     const message = await this.modelProviders.complete(config, {
       systemPrompt,
@@ -9182,7 +9339,12 @@ export class CompanionKernel {
       maxTokens: thinkingPolicy.maxTokens,
       sessionId: `world-planning:${input.characterId}:${input.localDate}`,
       signal: input.signal,
-      onPayload: (payload: unknown) => applyBackgroundThinkingPolicy(payload, config, "world_planning"),
+      onPayload: (payload: unknown) => this.backgroundProviderPayload(
+        config,
+        "world_planning",
+        payload,
+        { temperature: 0.2, maxTokens: thinkingPolicy.maxTokens },
+      ),
     });
     if (message.stopReason === "error" || message.stopReason === "aborted") {
       throw new Error(message.errorMessage || `world planner stopped: ${message.stopReason}`);
@@ -9607,19 +9769,23 @@ export class CompanionKernel {
       .find((message) => message.role === "assistant")?.text;
     const requestNow = this.clock.now();
     const transformPayload = (payload: unknown): unknown => {
-      const withThinking = applyBackgroundThinkingPolicy(
-        payload,
+      const withParameters = this.modelProviders.transformPayload(
         config,
-        "proactive_message",
-      );
-      const withParameters = applyMeetingPresetProviderOverrides(
-        withThinking,
-        presetOverrides,
+        payload,
+        {
+          temperature,
+          topP: presetOverrides?.topP,
+          frequencyPenalty: presetOverrides?.frequencyPenalty,
+          presencePenalty: presetOverrides?.presencePenalty,
+          seed: presetOverrides?.seed,
+          maxTokens,
+          thinkingMode: "off",
+        },
       );
       if (!withParameters || typeof withParameters !== "object" || Array.isArray(withParameters)) {
-        return withParameters;
+        return this.modelProviders.finalizePayload(config, withParameters);
       }
-      return this.meetingPresetService.orchestrateProviderPayload({
+      const orchestrated = this.meetingPresetService.orchestrateProviderPayload({
         sessionId: input.sessionId,
         mode: "sms",
         payload: withParameters as Record<string, unknown>,
@@ -9628,6 +9794,7 @@ export class CompanionKernel {
         timezone: world.timezone,
         now: requestNow,
       });
+      return this.modelProviders.finalizePayload(config, orchestrated);
     };
     const tracePayload = transformPayload(groupTracePayload(
       config,
@@ -9742,11 +9909,12 @@ export class CompanionKernel {
         mode: "sms",
         turnKind: "proactive_message",
         requestText: input.event.summary,
-        payload: backgroundTracePayload(
+        payload: this.backgroundProviderPayload(
           config,
           "proactive_message",
           groupTracePayload(config, systemPrompt, userContent, thinkingPolicy.maxTokens, config.temperature),
-        ),
+          { temperature: config.temperature, maxTokens: thinkingPolicy.maxTokens },
+        ) as Record<string, unknown>,
       });
       const generate = (content: string, sessionSuffix = "") => this.modelProviders.complete(config, {
         systemPrompt,
@@ -9755,7 +9923,12 @@ export class CompanionKernel {
         temperature: config.temperature,
         maxTokens: thinkingPolicy.maxTokens,
         sessionId: `proactive-message:${input.event.id}${sessionSuffix}`,
-        onPayload: (payload: unknown) => applyBackgroundThinkingPolicy(payload, config, "proactive_message"),
+        onPayload: (payload: unknown) => this.backgroundProviderPayload(
+          config,
+          "proactive_message",
+          payload,
+          { temperature: config.temperature, maxTokens: thinkingPolicy.maxTokens },
+        ),
       });
       let message = await generate(userContent);
       let rawText = agentEventMessageText(message).trim();
@@ -9781,11 +9954,12 @@ export class CompanionKernel {
           mode: "sms",
           turnKind: "proactive_message",
           requestText: `[temporal correction] ${input.event.summary}`,
-          payload: backgroundTracePayload(
+          payload: this.backgroundProviderPayload(
             config,
             "proactive_message",
             groupTracePayload(config, systemPrompt, correctionContent, thinkingPolicy.maxTokens, config.temperature),
-          ),
+            { temperature: config.temperature, maxTokens: thinkingPolicy.maxTokens },
+          ) as Record<string, unknown>,
         });
         message = await generate(correctionContent, ":temporal-correction");
         rawText = agentEventMessageText(message).trim();
@@ -10473,6 +10647,7 @@ function worldNarrativeModelKey(
   profileId: string,
   config: RawModelApiConfig,
   endpointIdentity: string,
+  providerPolicy: unknown,
   meetingPresetSignature?: string,
 ): string {
   return stableRpContextHash({
@@ -10481,7 +10656,7 @@ function worldNarrativeModelKey(
     endpointIdentity,
     model: config.model,
     visionInputEnabled: config.visionInputEnabled,
-    thinkingTemplate: interactiveThinkingTemplateKwargs(config) ?? null,
+    providerPolicy,
     meetingPresetHash: meetingPresetSignature ? stableRpContextHash(meetingPresetSignature) : null,
   });
 }
@@ -10658,69 +10833,16 @@ function worldModelFailureReason(
   return "generation_failed";
 }
 
-function backgroundTracePayload(
-  config: RawModelApiConfig,
-  scenario: BackgroundThinkingScenario,
-  payload: Record<string, unknown>,
-): Record<string, unknown> {
-  return applyBackgroundThinkingPolicy(payload, config, scenario) as Record<string, unknown>;
-}
-
-function applyMeetingPresetProviderOverrides(
-  payload: unknown,
-  overrides?: MeetingPresetProviderOverrides,
-): unknown {
-  if (
-    !payload ||
-    typeof payload !== "object" ||
-    Array.isArray(payload) ||
-    !overrides
-  ) {
-    return payload;
-  }
-  return {
-    ...(payload as Record<string, unknown>),
-    ...(overrides.temperature === undefined
-      ? {}
-      : { temperature: overrides.temperature }),
-    ...(overrides.topP === undefined ? {} : { top_p: overrides.topP }),
-    ...(overrides.frequencyPenalty === undefined
-      ? {}
-      : { frequency_penalty: overrides.frequencyPenalty }),
-    ...(overrides.presencePenalty === undefined
-      ? {}
-      : { presence_penalty: overrides.presencePenalty }),
-    ...(overrides.maxTokens === undefined
-      ? {}
-      : { max_tokens: overrides.maxTokens }),
-    ...(overrides.seed === undefined ? {} : { seed: overrides.seed }),
-  };
-}
-
-function interactiveTracePayload(config: RawModelApiConfig, payload: unknown): Record<string, unknown> {
-  if (!payload || typeof payload !== "object" || Array.isArray(payload)) return {};
-  const current = config.thinkingTokenBudgetField
-    ? { ...(payload as Record<string, unknown>) }
-    : applyConfiguredReasoningEffort(payload, config) as Record<string, unknown>;
-  const templateKwargs = interactiveThinkingTemplateKwargs(config);
-  if (!templateKwargs) return current;
-  const existing = current.chat_template_kwargs
-    && typeof current.chat_template_kwargs === "object"
-    && !Array.isArray(current.chat_template_kwargs)
-    ? current.chat_template_kwargs as Record<string, unknown>
-    : {};
-  return {
-    ...current,
-    chat_template_kwargs: { ...existing, ...templateKwargs },
-  };
-}
-
 function createUserMessage(text: string, timestamp: number): AgentMessage {
   return {
     role: "user",
     content: [{ type: "text", text }],
     timestamp,
   };
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
 }
 
 function combinedPrivateMessageText(messages: readonly PrivateInboxMessage[]): string {

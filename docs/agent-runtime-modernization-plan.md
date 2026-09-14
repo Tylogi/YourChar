@@ -233,15 +233,15 @@ explicitly selected, default-off capability, not promoting a broader Code Mode.
 
 ### P4b — First-party native providers and settings
 
-- [ ] Add first-party native Pi adapters in priority order, beginning with the
+- [x] Add first-party native Pi adapters in priority order, beginning with the
   APIs whose tool use, thinking, streaming, or cache semantics differ from the
   OpenAI-compatible route.
-- [ ] Give adapters declarative configuration fields and validation; expose a
+- [x] Give adapters declarative configuration fields and validation; expose a
   provider selector without leaking credentials or executable definitions.
-- [ ] Move request-payload, reasoning/thinking, usage, timeout, retry, and
+- [x] Move request-payload, reasoning/thinking, usage, timeout, retry, and
   discovery behavior behind provider-owned hooks; retain
   `openai_compatible` for local and compatible endpoints.
-- [ ] Run same-task, same-model compatibility tests where a model is available
+- [x] Run same-task, same-model compatibility tests where a model is available
   through both native and compatible transports.
 
 ### P4c — Credential references and rotation
@@ -313,5 +313,8 @@ feature counts must not be reported as task-success improvements.
 - [x] P3 general execution.
 - [x] P4a provider adapter registry, exact fail-closed selection, and complete
   Kernel/evaluation routing.
+- [x] P4b first-party Anthropic Messages, Google Generative AI, and OpenAI
+  Responses adapters; declarative settings; provider-owned request policy; and
+  same-model protocol compatibility coverage.
 - [ ] P4 provider and host seams.
 - [ ] P5 event-sourced runtime state.

@@ -2,10 +2,7 @@ import type { AssistantMessage } from "@earendil-works/pi-ai";
 import { z } from "zod";
 import type { CompanionKernel } from "../domain/kernel.js";
 import type { ModelApiProfile } from "../domain/types.js";
-import {
-  applyBackgroundThinkingPolicy,
-  backgroundThinkingPolicy,
-} from "../model/background-thinking-policy.js";
+import { backgroundThinkingPolicy } from "../model/background-thinking-policy.js";
 import {
   listFeatureTestCases,
   type FeatureTestResult,
@@ -193,7 +190,14 @@ export async function judgeFeatureTestQuality(
         maxTokens: policy.maxTokens,
         signal: AbortSignal.timeout(120_000),
         sessionId: `quality-judge:${result.caseId}:${result.ranAt}:${attempt}`,
-        onPayload: (payload: unknown) => applyBackgroundThinkingPolicy(payload, raw, "quality_judge"),
+        onPayload: (payload: unknown) => kernel.modelProviders.finalizePayload(
+          raw,
+          kernel.modelProviders.transformPayload(raw, payload, {
+            temperature: 0,
+            maxTokens: policy.maxTokens,
+            thinkingMode: "off",
+          }),
+        ),
       });
       inputTokens += message.usage.input;
       outputTokens += message.usage.output;

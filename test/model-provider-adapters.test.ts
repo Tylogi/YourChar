@@ -33,11 +33,21 @@ test("provider registry validates deployment adapters and fails closed on unknow
   assert.deepEqual(registry.list(), [{
     id: nativeAdapterId,
     label: "Native test provider",
+    description: "Test-only native Pi transport.",
+    configurationFields: [{
+      key: "model",
+      label: "Model",
+      control: "model",
+      required: true,
+      allowCustom: true,
+    }],
     connectionTestSupported: true,
     modelDiscoverySupported: true,
   }]);
   assert.equal(Object.isFrozen(registry.list()), true);
   assert.equal(Object.isFrozen(registry.list()[0]), true);
+  assert.equal(Object.isFrozen(registry.list()[0]?.configurationFields), true);
+  assert.equal(Object.isFrozen(registry.list()[0]?.configurationFields[0]), true);
   assert.equal(JSON.stringify(registry.list()).includes("adapter-secret"), false);
 
   assert.throws(
@@ -53,6 +63,20 @@ test("provider registry validates deployment adapters and fails closed on unknow
   assert.throws(
     () => new ModelProviderRegistry([adapter, adapter]),
     /duplicate model provider adapter: native_test/,
+  );
+  assert.throws(
+    () => new ModelProviderRegistry([{ ...adapter, configurationFields: [] }]),
+    /must declare configurationFields/,
+  );
+  assert.throws(
+    () => new ModelProviderRegistry([{
+      ...adapter,
+      configurationFields: [
+        { key: "model", label: "Model", control: "model", required: true },
+        { key: "model", label: "Duplicate", control: "model", required: true },
+      ],
+    }]),
+    /duplicate configuration field model/,
   );
 });
 
@@ -153,15 +177,32 @@ test("provider descriptors are exposed without credentials and persisted missing
       `http://127.0.0.1:${address.port}/api/v1/model-providers`,
     );
     assert.equal(providersResponse.status, 200);
-    const body = await providersResponse.json() as unknown;
-    assert.deepEqual(body, {
-      providers: [{
-        id: "openai_compatible",
-        label: "OpenAI-compatible",
-        connectionTestSupported: true,
-        modelDiscoverySupported: true,
-      }],
-    });
+    const body = await providersResponse.json() as {
+      providers: Array<{
+        id: string;
+        label: string;
+        description: string;
+        configurationFields: Array<{ key: string; sensitive?: boolean; allowCustom?: boolean }>;
+        connectionTestSupported: boolean;
+        modelDiscoverySupported: boolean;
+      }>;
+    };
+    assert.deepEqual(body.providers.map((provider) => provider.id), [
+      "openai_compatible",
+      "anthropic",
+      "google",
+      "openai",
+    ]);
+    assert.ok(body.providers.every((provider) => provider.description.length > 0));
+    assert.ok(body.providers.every((provider) => provider.configurationFields.length > 0));
+    assert.equal(
+      body.providers.find((provider) => provider.id === "openai_compatible")
+        ?.configurationFields.find((field) => field.key === "model")?.allowCustom,
+      true,
+    );
+    assert.ok(body.providers.slice(1).every((provider) =>
+      provider.configurationFields.find((field) => field.key === "model")?.allowCustom === false
+    ));
     assert.equal(JSON.stringify(body).includes("missing-adapter-secret"), false);
     assert.equal(JSON.stringify(body).includes("must-not-be-contacted"), false);
 
@@ -271,6 +312,14 @@ function nativeTestAdapter(
   return {
     id: nativeAdapterId,
     label: "Native test provider",
+    description: "Test-only native Pi transport.",
+    configurationFields: [{
+      key: "model",
+      label: "Model",
+      control: "model",
+      required: true,
+      allowCustom: true,
+    }],
     isConfigured: (config) => config.model === "native-model",
     createModel: (config) => {
       counters.createModel += 1;

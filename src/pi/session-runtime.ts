@@ -119,9 +119,12 @@ import {
   normalizeActualProviderUsage,
 } from "../context/provider-usage.js";
 import {
-  applyConfiguredReasoningEffort,
   type ModelReasoningEffort,
 } from "../model/reasoning-effort.js";
+import type {
+  ModelProviderPayloadControls,
+  ModelProviderRequestPolicy,
+} from "../model/provider-adapter.js";
 import { memoryContextVersion } from "../context/memory-version.js";
 import { estimateTokens, roundMetric, stableHash } from "../context/tokens.js";
 import type { ContextBudgetSnapshot, ContextEconomicsPlan, ContextPlan } from "../context/types.js";
@@ -349,6 +352,9 @@ export type ProviderPayloadOptions = {
   reasoningEffort?: ModelReasoningEffort;
   thinkingTokenBudgetField?: ThinkingTokenBudgetField;
   thinkingBudgetTokens?: number;
+  thinkingLevel?: ThinkingLevel;
+  thinkingBudgets?: ThinkingBudgets;
+  requestPolicy?: ModelProviderRequestPolicy;
   /** Config-only child settings. These intentionally exclude meeting-preset overrides. */
   subagent?: {
     temperature?: number;
@@ -357,6 +363,9 @@ export type ProviderPayloadOptions = {
     reasoningEffort?: ModelReasoningEffort;
     thinkingTokenBudgetField?: ThinkingTokenBudgetField;
     thinkingBudgetTokens?: number;
+    thinkingLevel?: ThinkingLevel;
+    thinkingBudgets?: ThinkingBudgets;
+    requestPolicy?: ModelProviderRequestPolicy;
   };
 };
 
@@ -368,16 +377,21 @@ const defaultPiThinkingBudgets: ThinkingBudgets = {
 };
 
 function piThinkingLevel(
-  options: Pick<ProviderPayloadOptions, "reasoningEffort" | "thinkingTokenBudgetField">,
+  options: Pick<
+    ProviderPayloadOptions,
+    "reasoningEffort" | "thinkingTokenBudgetField" | "thinkingLevel"
+  >,
 ): ThinkingLevel {
+  if (options.thinkingLevel) return options.thinkingLevel;
   if (!options.thinkingTokenBudgetField || options.reasoningEffort === "none") return "off";
   if (options.reasoningEffort === "ultra") return "max";
   return options.reasoningEffort ?? "medium";
 }
 
 function piThinkingBudgets(
-  options: Pick<ProviderPayloadOptions, "thinkingBudgetTokens">,
+  options: Pick<ProviderPayloadOptions, "thinkingBudgetTokens" | "thinkingBudgets">,
 ): ThinkingBudgets {
+  if (options.thinkingBudgets) return { ...options.thinkingBudgets };
   const budget = options.thinkingBudgetTokens;
   if (budget === undefined) return { ...defaultPiThinkingBudgets };
   return { minimal: budget, low: budget, medium: budget, high: budget };
@@ -472,10 +486,12 @@ export type PiSessionRuntimeOptions = {
     appSessionId: string;
     mode: Mode;
     payload: Record<string, unknown>;
+    scope: "interactive" | "subagent";
+    controls: ModelProviderPayloadControls;
     currentUserText: string;
     timezone: string;
     now: Date;
-  }) => Record<string, unknown>;
+  }) => unknown;
   moduleCatalog: AgentModuleCatalog;
   permissionCatalog: AgentPermissionCatalog;
   memoryLifecycle: MemoryLifecycleService;
@@ -509,6 +525,7 @@ export type PiSessionHandle = {
   workspace: ScopedWorkspace;
   session: AgentSession;
   sessionManager: SessionManager;
+  settingsManager: SettingsManager;
   modelRuntime: ModelRuntime;
   toolState: CompanionToolRuntimeState;
   capabilityMounts: MountedSessionCapability[];
@@ -876,6 +893,11 @@ export class PiSessionRuntime {
     }
     handle.session.agent.thinkingBudgets = piThinkingBudgets(payloadOptions);
     handle.session.setThinkingLevel(piThinkingLevel(payloadOptions));
+    if (payloadOptions.requestPolicy) {
+      handle.settingsManager.applyOverrides({
+        retry: { provider: { ...payloadOptions.requestPolicy } },
+      });
+    }
     this.touch(handle.metadata);
   }
 
@@ -1880,6 +1902,9 @@ export class PiSessionRuntime {
         keepRecentTokens: Math.min(roleplayRecentContextTokens, Math.max(1_024, Math.floor(contextWindow * 0.1))),
       },
       thinkingBudgets: piThinkingBudgets(payloadOptions),
+      ...(payloadOptions.requestPolicy
+        ? { retry: { provider: { ...payloadOptions.requestPolicy } } }
+        : {}),
     });
     const toolState: CompanionToolRuntimeState = {
       store: this.store,
@@ -2132,6 +2157,7 @@ export class PiSessionRuntime {
         workspace,
         session,
         sessionManager,
+        settingsManager,
         modelRuntime,
         toolState,
         capabilityMounts,
@@ -2721,6 +2747,16 @@ export class PiSessionRuntime {
         // to an effectively unbounded SDK request timeout instead of 300000 ms.
         httpIdleTimeoutMs: subagentHttpIdleTimeoutMs,
         thinkingBudgets: piThinkingBudgets(childPayloadOptions),
+        ...(childPayloadOptions.requestPolicy
+          ? {
+              retry: {
+                provider: {
+                  maxRetries: childPayloadOptions.requestPolicy.maxRetries,
+                  maxRetryDelayMs: childPayloadOptions.requestPolicy.maxRetryDelayMs,
+                },
+              },
+            }
+          : {}),
       });
       const sessionManager = SessionManager.inMemory(input.workspace.dir);
       const taskProviderTransport = createSubagentProviderHttpTransport();
@@ -2852,27 +2888,35 @@ export class PiSessionRuntime {
             throw error;
           }
           if (!isRecord(event.payload)) return undefined;
-          const payload = { ...event.payload };
-          if (typeof childPayloadOptions.temperature === "number") {
-            payload.temperature = childPayloadOptions.temperature;
-          }
-          payload.max_tokens = subagentSettings.maxOutputTokens;
-          let configuredPayload = childPayloadOptions.thinkingTokenBudgetField
-            ? payload
-            : applyConfiguredReasoningEffort(payload, {
-                model: childPayloadOptions.model,
-                reasoningEffort: childPayloadOptions.reasoningEffort,
-              }) as Record<string, unknown>;
-          if (childPayloadOptions.chatTemplateKwargs) {
-            configuredPayload.chat_template_kwargs = {
-              ...(isRecord(configuredPayload.chat_template_kwargs) ? configuredPayload.chat_template_kwargs : {}),
-              ...childPayloadOptions.chatTemplateKwargs,
-            };
-          }
-          if (modelCalls === maxTotalModelCalls) {
-            forcedFinalization = true;
-            configuredPayload = forceSubagentFinalizationPayload(configuredPayload);
-          }
+          const finalization = modelCalls === maxTotalModelCalls;
+          if (finalization) forcedFinalization = true;
+          const transformed = this.providerPayloadTransform?.({
+            appSessionId: input.parentSessionId,
+            mode: input.mode,
+            payload: { ...event.payload },
+            scope: "subagent",
+            controls: {
+              temperature: childPayloadOptions.temperature,
+              maxTokens: subagentSettings.maxOutputTokens,
+              reasoningEffort: childPayloadOptions.reasoningEffort,
+              thinkingTokenBudgetField: childPayloadOptions.thinkingTokenBudgetField,
+              thinkingBudgetTokens: childPayloadOptions.thinkingBudgetTokens,
+              chatTemplateKwargs: childPayloadOptions.chatTemplateKwargs,
+              thinkingMode: "configured",
+              ...(finalization
+                ? {
+                    appendSystemInstruction: subagentForcedFinalizationInstruction,
+                    disableTools: true,
+                  }
+                : {}),
+            },
+            currentUserText: input.followupPrompt ?? input.request.task,
+            timezone: input.timezone,
+            now: this.clock.now(),
+          }) ?? event.payload;
+          const configuredPayload = isRecord(transformed)
+            ? transformed
+            : { ...event.payload };
           this.store.addModelContextTrace({
             sessionId: childSessionId,
             mode: input.mode,
@@ -3408,61 +3452,32 @@ export class PiSessionRuntime {
           }
           const options = this.providerPayloadOptions?.(toolState.sessionId) ?? {};
           toolState.interactiveThinkingRequired = options.requireThinking === true;
-          let payload = { ...event.payload };
-          if (typeof options.temperature === "number") {
-            payload.temperature = options.temperature;
-          }
-          if (typeof options.topP === "number") {
-            payload.top_p = options.topP;
-          }
-          if (typeof options.frequencyPenalty === "number") {
-            payload.frequency_penalty = options.frequencyPenalty;
-          }
-          if (typeof options.presencePenalty === "number") {
-            payload.presence_penalty = options.presencePenalty;
-          }
-          if (typeof options.seed === "number") {
-            payload.seed = options.seed;
-          }
-          if (typeof options.maxTokens === "number") {
-            payload.max_tokens = options.maxTokens;
-          }
-          if (!options.thinkingTokenBudgetField) {
-            payload = applyConfiguredReasoningEffort(
-              payload,
-              {
-                model: options.model,
-                reasoningEffort: options.reasoningEffort,
-              },
-            ) as Record<string, unknown>;
-          }
-          if (options.chatTemplateKwargs) {
-            payload.chat_template_kwargs = {
-              ...(isRecord(payload.chat_template_kwargs) ? payload.chat_template_kwargs : {}),
-              ...options.chatTemplateKwargs,
-            };
-          }
-          payload = this.providerPayloadTransform?.({
+          const controls: ModelProviderPayloadControls = {
+            temperature: toolState.lengthRecoveryActive ? 0 : options.temperature,
+            topP: options.topP,
+            frequencyPenalty: options.frequencyPenalty,
+            presencePenalty: options.presencePenalty,
+            seed: options.seed,
+            maxTokens: options.maxTokens,
+            reasoningEffort: options.reasoningEffort,
+            thinkingTokenBudgetField: options.thinkingTokenBudgetField,
+            thinkingBudgetTokens: options.thinkingBudgetTokens,
+            chatTemplateKwargs: options.chatTemplateKwargs,
+            thinkingMode: toolState.lengthRecoveryActive ? "off" : "configured",
+          };
+          const transformed = this.providerPayloadTransform?.({
             appSessionId: toolState.sessionId,
             mode,
-            payload,
+            payload: { ...event.payload },
+            scope: "interactive",
+            controls,
             currentUserText: toolState.currentUserText,
             timezone: toolState.timezone,
             now: this.clock.now(),
-          }) ?? payload;
+          }) ?? event.payload;
+          const payload = isRecord(transformed) ? transformed : { ...event.payload };
           if (toolState.lengthRecoveryActive) {
             toolState.interactiveThinkingRequired = false;
-            payload.temperature = 0;
-            const templateKwargs = isRecord(payload.chat_template_kwargs)
-              ? payload.chat_template_kwargs
-              : undefined;
-            if (options.requireThinking === true || templateKwargs) {
-              payload.chat_template_kwargs = {
-                ...templateKwargs,
-                enable_thinking: false,
-                preserve_thinking: true,
-              };
-            }
           }
           try {
             this.store.addModelContextTrace({
@@ -4635,31 +4650,6 @@ function migrateLegacySleepingConversationWake(metadata: ConversationMetadata): 
   metadata.wakeNotificationAttempts = 0;
   delete metadata.wakeNotificationLastError;
   return true;
-}
-
-function forceSubagentFinalizationPayload(
-  payload: Record<string, unknown>,
-): Record<string, unknown> {
-  const messages = Array.isArray(payload.messages) ? [...payload.messages] : [];
-  const systemIndex = messages.findIndex((message) =>
-    isRecord(message) && message.role === "system" && typeof message.content === "string"
-  );
-  if (systemIndex >= 0) {
-    const current = messages[systemIndex] as Record<string, unknown>;
-    messages[systemIndex] = {
-      ...current,
-      content: `${String(current.content)}\n\n${subagentForcedFinalizationInstruction}`,
-    };
-  } else {
-    messages.unshift({ role: "system", content: subagentForcedFinalizationInstruction });
-  }
-  return {
-    ...payload,
-    messages,
-    tools: [],
-    tool_choice: "none",
-    parallel_tool_calls: false,
-  };
 }
 
 function emptySubagentFailureDiagnostic(

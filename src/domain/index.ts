@@ -17,3 +17,4 @@ export * from "../meeting-preset/index.js";
 export * from "../incognito/index.js";
 export * from "../document/index.js";
 export * from "../model/provider-adapter.js";
+export * from "../model/native-providers.js";

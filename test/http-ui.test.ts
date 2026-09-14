@@ -60,6 +60,9 @@ test("server serves chat UI and debug model traces", async () => {
     assert.match(html, /id="taskBenchJudgeTimeout"/u);
     assert.match(html, /id="taskBenchUploadInput"/u);
     assert.match(html, /id="taskBenchUploadList"/u);
+    assert.match(html, /id="apiProvider"/u);
+    assert.match(html, /data-model-provider-field="baseUrl"/u);
+    assert.match(html, /\/api\/v1\/model-providers/u);
     assert.match(html, /id="exportTaskBenchMarkdownBtn"/u);
     assert.match(html, /\/api\/v1\/task-bench\/uploads/u);
     assert.match(html, /\/api\/v1\/task-bench\/run/u);
@@ -782,6 +785,7 @@ test("server serves chat UI and debug model traces", async () => {
     );
     const initializationCalls: string[] = [];
     const initializeContext: Record<string, any> = {
+      async loadModelProviders() { initializationCalls.push("providers"); },
       async loadModelProfiles() { initializationCalls.push("models"); },
       async loadMeetingPresetCatalog() { initializationCalls.push("presets"); },
       async loadUserAvatarState() { initializationCalls.push("avatar"); },
@@ -1056,13 +1060,13 @@ test("server serves chat UI and debug model traces", async () => {
     assert.match(html, /<option value="xhigh">极高<\/option>/);
     assert.match(html, /<option value="max">最大（max）<\/option>/);
     assert.match(html, /<option value="ultra">超强（ultra）<\/option>/);
-    assert.match(html, /仅支持 reasoning_effort 的兼容 API 生效；不支持时可能返回参数错误/);
+    assert.match(html, /由所选 Provider 映射为模型支持的原生 reasoning \/ thinking 参数/);
     assert.match(html, /nodes\.apiReasoningEffort\.value = config\.reasoningEffort \|\| ""/);
-    assert.match(html, /reasoningEffort: nodes\.apiReasoningEffort\.value \|\| null/);
+    assert.match(html, /reasoningEffort: fields\.has\("reasoningEffort"\) \? nodes\.apiReasoningEffort\.value \|\| null : null/);
     assert.match(html, /nodes\.apiThinkingTokenBudgetField\.value = config\.thinkingTokenBudgetField \|\| ""/);
     assert.match(html, /nodes\.apiThinkingBudgetTokens\.value = config\.thinkingBudgetTokens \?\? ""/);
-    assert.match(html, /thinkingTokenBudgetField: nodes\.apiThinkingTokenBudgetField\.value \|\| null/);
-    assert.match(html, /thinkingBudgetTokens: optionalInteger\(nodes\.apiThinkingBudgetTokens\.value\)/);
+    assert.match(html, /thinkingTokenBudgetField: fields\.has\("thinkingTokenBudgetField"\)/);
+    assert.match(html, /thinkingBudgetTokens: fields\.has\("thinkingBudgetTokens"\)/);
     assert.match(html, /id="systemPromptCustom"/);
     assert.match(html, /id="systemPromptSettingsViewBtn"/);
     assert.match(html, /id="meetingPresetSettingsViewBtn"/);

@@ -5866,32 +5866,37 @@ export function renderAppHtml(): string {
                 <label for="apiProfileName">配置名称</label>
                 <input id="apiProfileName" placeholder="例如：红莉栖专用" />
               </div>
+              <div class="settings-field full">
+                <label for="apiProvider">Provider</label>
+                <select id="apiProvider"></select>
+                <span id="apiProviderDescription" class="muted"></span>
+              </div>
               <label class="checkbox-row full">
                 <input id="apiEnabled" type="checkbox" />
-                <span>启用 OpenAI-compatible API</span>
+                <span>启用该模型配置</span>
               </label>
-              <label class="checkbox-row full">
+              <label class="checkbox-row full" data-model-provider-field="visionInputEnabled">
                 <input id="apiVisionInputEnabled" type="checkbox" />
                 <span>该主模型支持图片输入</span>
               </label>
-              <div class="settings-field full">
+              <div class="settings-field full" data-model-provider-field="baseUrl">
                 <label for="apiBaseUrl">Base URL</label>
                 <input id="apiBaseUrl" placeholder="http://127.0.0.1:8317/v1" />
               </div>
-              <div class="settings-field">
+              <div class="settings-field" data-model-provider-field="model">
                 <label for="apiModel">模型名</label>
                 <select id="apiModel"><option value="">读取模型后选择</option><option value="__custom__">手动输入...</option></select>
                 <input id="apiModelCustom" placeholder="输入模型名" hidden />
               </div>
-              <div class="settings-field">
+              <div class="settings-field" data-model-provider-field="apiKey">
                 <label for="apiKey">API Key</label>
                 <input id="apiKey" type="password" placeholder="留空表示不修改" autocomplete="off" />
               </div>
-              <div class="settings-field">
+              <div class="settings-field" data-model-provider-field="temperature">
                 <label for="apiTemperature">Temperature</label>
                 <input id="apiTemperature" type="number" step="0.1" min="0" max="2" placeholder="可选" />
               </div>
-              <div class="settings-field">
+              <div class="settings-field" data-model-provider-field="reasoningEffort">
                 <label for="apiReasoningEffort">CoT 强度</label>
                 <select id="apiReasoningEffort">
                   <option value="">自动（推荐）</option>
@@ -5904,13 +5909,13 @@ export function renderAppHtml(): string {
                   <option value="max">最大（max）</option>
                   <option value="ultra">超强（ultra）</option>
                 </select>
-                <span class="muted">仅支持 reasoning_effort 的兼容 API 生效；不支持时可能返回参数错误。</span>
+                <span class="muted">由所选 Provider 映射为模型支持的原生 reasoning / thinking 参数。</span>
               </div>
-              <div class="settings-field">
+              <div class="settings-field" data-model-provider-field="maxTokens">
                 <label for="apiMaxTokens">Max Tokens</label>
                 <input id="apiMaxTokens" type="number" min="1" step="1" placeholder="可选" />
               </div>
-              <div class="settings-field">
+              <div class="settings-field" data-model-provider-field="thinkingTokenBudgetField">
                 <label for="apiThinkingTokenBudgetField">原生思考预算协议</label>
                 <select id="apiThinkingTokenBudgetField">
                   <option value="">关闭（兼容优先）</option>
@@ -5920,11 +5925,11 @@ export function renderAppHtml(): string {
                 </select>
                 <span class="muted">仅在服务端明确支持时开启；Pi 会按 CoT 强度限额，并至少为最终答案预留 1024 tokens。</span>
               </div>
-              <div class="settings-field">
+              <div class="settings-field" data-model-provider-field="thinkingBudgetTokens">
                 <label for="apiThinkingBudgetTokens">思考预算 Tokens</label>
                 <input id="apiThinkingBudgetTokens" type="number" min="1" max="1000000" step="1" placeholder="留空使用 Pi 分档默认值" />
               </div>
-              <div class="settings-field">
+              <div class="settings-field" data-model-provider-field="contextWindowTokens">
                 <label for="apiContextWindowTokens">上下文窗口</label>
                 <input id="apiContextWindowTokens" type="number" min="8192" max="2000000" step="1024" placeholder="131072" />
               </div>
@@ -6692,9 +6697,11 @@ export function renderAppHtml(): string {
 	      meetingPresetImportSource: null,
 	      meetingPresetImportOrderOptions: [],
 	      discoveredModels: [],
+      modelProviders: [],
       modelProfiles: [],
       defaultModelProfileId: "",
       selectedModelProfileId: "",
+      loadedModelProviderId: "",
       discoveredVisionModels: [],
       pendingAttachments: [],
       attachmentUploadQueue: [],
@@ -7322,6 +7329,8 @@ export function renderAppHtml(): string {
       apiEnabled: document.getElementById("apiEnabled"),
       apiProfileSelect: document.getElementById("apiProfileSelect"),
       apiProfileName: document.getElementById("apiProfileName"),
+      apiProvider: document.getElementById("apiProvider"),
+      apiProviderDescription: document.getElementById("apiProviderDescription"),
       newApiProfileBtn: document.getElementById("newApiProfileBtn"),
       defaultApiProfileBtn: document.getElementById("defaultApiProfileBtn"),
       deleteApiProfileBtn: document.getElementById("deleteApiProfileBtn"),
@@ -7573,6 +7582,7 @@ export function renderAppHtml(): string {
     nodes.traceContent.addEventListener("click", jumpFromMemoryDiagnostic);
     nodes.saveApiSettingsBtn.addEventListener("click", () => saveApiSettings());
     nodes.apiProfileSelect.addEventListener("change", selectApiProfile);
+    nodes.apiProvider.addEventListener("change", selectModelProvider);
     nodes.newApiProfileBtn.addEventListener("click", createApiProfile);
     nodes.defaultApiProfileBtn.addEventListener("click", setDefaultApiProfile);
     nodes.deleteApiProfileBtn.addEventListener("click", deleteApiProfile);
@@ -10317,6 +10327,7 @@ export function renderAppHtml(): string {
 
 	    async function initializeChat() {
 	      await Promise.all([
+	        loadModelProviders(),
 	        loadModelProfiles(),
 	        loadMeetingPresetCatalog("", false),
 	        loadUserAvatarState()
@@ -21302,6 +21313,65 @@ export function renderAppHtml(): string {
       return String(value || "").replace(/https?:\\/\\/[^\\s"'<>]+/gi, "[redacted-url]").replace(/bearer\\s+[^\\s"'<>]+/gi, "Bearer [redacted]").slice(0, 500);
     }
 
+    async function loadModelProviders() {
+      const response = await fetch("/api/v1/model-providers");
+      const body = await response.json();
+      if (!response.ok) throw new Error(body.error || "Provider 列表加载失败");
+      state.modelProviders = Array.isArray(body.providers) ? body.providers : [];
+      return state.modelProviders;
+    }
+
+    function selectedModelProviderDescriptor() {
+      return state.modelProviders.find((provider) => provider.id === nodes.apiProvider.value);
+    }
+
+    function renderModelProviderOptions(selectedProvider) {
+      const known = state.modelProviders.some((provider) => provider.id === selectedProvider);
+      nodes.apiProvider.innerHTML = (selectedProvider && !known
+        ? '<option value="' + escapeHtml(selectedProvider) + '" disabled>' + escapeHtml(selectedProvider) + '（当前进程不可用）</option>'
+        : '') + state.modelProviders.map((provider) =>
+        '<option value="' + escapeHtml(provider.id) + '">' + escapeHtml(provider.label) + '</option>'
+      ).join("");
+      nodes.apiProvider.value = selectedProvider || state.modelProviders[0]?.id || "";
+    }
+
+    function applyModelProviderDescriptor() {
+      const descriptor = selectedModelProviderDescriptor();
+      const fields = new Map((descriptor?.configurationFields || []).map((field) => [field.key, field]));
+      document.querySelectorAll("[data-model-provider-field]").forEach((wrapper) => {
+        const field = fields.get(wrapper.dataset.modelProviderField);
+        wrapper.hidden = !field;
+        wrapper.title = field?.description || "";
+      });
+      const controls = {
+        baseUrl: nodes.apiBaseUrl,
+        model: nodes.apiModel,
+        apiKey: nodes.apiKey,
+        visionInputEnabled: nodes.apiVisionInputEnabled,
+        temperature: nodes.apiTemperature,
+        reasoningEffort: nodes.apiReasoningEffort,
+        maxTokens: nodes.apiMaxTokens,
+        thinkingTokenBudgetField: nodes.apiThinkingTokenBudgetField,
+        thinkingBudgetTokens: nodes.apiThinkingBudgetTokens,
+        contextWindowTokens: nodes.apiContextWindowTokens
+      };
+      Object.entries(controls).forEach(([key, control]) => {
+        control.setAttribute("aria-required", fields.get(key)?.required ? "true" : "false");
+      });
+      nodes.apiProviderDescription.textContent = descriptor?.description ||
+        (nodes.apiProvider.value ? "该 Provider 未在当前进程注册，请选择可用 Provider。" : "当前没有可用 Provider。");
+      nodes.clearApiKeyBtn.hidden = !fields.has("apiKey");
+      updateModelProviderActions();
+    }
+
+    function updateModelProviderActions() {
+      const descriptor = selectedModelProviderDescriptor();
+      nodes.testModelBtn.disabled = !descriptor?.connectionTestSupported;
+      nodes.testModelBtn.title = descriptor?.connectionTestSupported ? "" : "该 Provider 不支持连接测试";
+      nodes.discoverModelsBtn.disabled = !descriptor?.modelDiscoverySupported;
+      nodes.discoverModelsBtn.title = descriptor?.modelDiscoverySupported ? "" : "该 Provider 不支持模型发现";
+    }
+
     async function loadModelProfiles(preferredId) {
       const response = await fetch("/api/v1/model-profiles");
       const body = await response.json();
@@ -21365,10 +21435,14 @@ export function renderAppHtml(): string {
     async function loadApiSettings(preferredId) {
       nodes.apiSettingsState.textContent = "加载中...";
       try {
+        if (!state.modelProviders.length) await loadModelProviders();
         const config = await loadModelProfiles(preferredId);
         if (!config) throw new Error("至少需要一个模型配置");
         nodes.apiProfileName.value = config.name || "";
         nodes.apiEnabled.checked = Boolean(config.enabled);
+        renderModelProviderOptions(config.provider || "openai_compatible");
+        state.loadedModelProviderId = config.provider || "openai_compatible";
+        applyModelProviderDescriptor();
         nodes.apiVisionInputEnabled.checked = Boolean(config.visionInputEnabled);
         nodes.apiBaseUrl.value = config.baseUrl || "";
         renderModelOptions(config.model || "");
@@ -21391,6 +21465,14 @@ export function renderAppHtml(): string {
       state.selectedModelProfileId = nodes.apiProfileSelect.value;
       state.discoveredModels = [];
       void loadApiSettings(state.selectedModelProfileId);
+    }
+
+    function selectModelProvider() {
+      state.discoveredModels = [];
+      nodes.apiModelCustom.value = "";
+      applyModelProviderDescriptor();
+      renderModelOptions("");
+      nodes.apiSettingsState.textContent = "Provider 已切换；保存后可读取该 Provider 的模型。";
     }
 
     async function createApiProfile() {
@@ -21450,10 +21532,12 @@ export function renderAppHtml(): string {
     }
 
     function renderModelOptions(selectedModel) {
+      const modelField = selectedModelProviderDescriptor()?.configurationFields?.find((field) => field.key === "model");
+      const allowCustom = modelField?.allowCustom === true;
       const models = [...new Set([selectedModel, ...state.discoveredModels].filter(Boolean))];
       nodes.apiModel.innerHTML = '<option value="">读取模型后选择</option>' + models.map((model) =>
         '<option value="' + escapeHtml(model) + '">' + escapeHtml(model) + '</option>'
-      ).join("") + '<option value="__custom__">手动输入...</option>';
+      ).join("") + (allowCustom ? '<option value="__custom__">手动输入...</option>' : '');
       if (selectedModel) {
         nodes.apiModel.value = selectedModel;
       } else if (state.discoveredModels.length) {
@@ -22082,7 +22166,7 @@ export function renderAppHtml(): string {
       } catch (error) {
         nodes.apiSettingsState.textContent = error.message || String(error);
       } finally {
-        nodes.testModelBtn.disabled = false;
+        updateModelProviderActions();
       }
     }
 
@@ -22101,7 +22185,7 @@ export function renderAppHtml(): string {
       } catch (error) {
         nodes.apiSettingsState.textContent = error.message || String(error);
       } finally {
-        nodes.discoverModelsBtn.disabled = false;
+        updateModelProviderActions();
       }
     }
 
@@ -22452,21 +22536,27 @@ export function renderAppHtml(): string {
 
     async function saveApiSettings(rethrow) {
       nodes.apiSettingsState.textContent = "保存中...";
+      const provider = nodes.apiProvider.value;
+      const descriptor = selectedModelProviderDescriptor();
+      const fields = new Set((descriptor?.configurationFields || []).map((field) => field.key));
       const payload = {
         name: nodes.apiProfileName.value.trim(),
         enabled: nodes.apiEnabled.checked,
-        visionInputEnabled: nodes.apiVisionInputEnabled.checked,
-        baseUrl: nodes.apiBaseUrl.value.trim(),
-        model: selectedModelName(),
-        temperature: optionalNumber(nodes.apiTemperature.value),
-        reasoningEffort: nodes.apiReasoningEffort.value || null,
-        maxTokens: optionalInteger(nodes.apiMaxTokens.value),
-        thinkingTokenBudgetField: nodes.apiThinkingTokenBudgetField.value || null,
-        thinkingBudgetTokens: optionalInteger(nodes.apiThinkingBudgetTokens.value),
-        contextWindowTokens: optionalInteger(nodes.apiContextWindowTokens.value)
+        provider,
+        visionInputEnabled: fields.has("visionInputEnabled") ? nodes.apiVisionInputEnabled.checked : false,
+        baseUrl: fields.has("baseUrl") ? nodes.apiBaseUrl.value.trim() : "",
+        model: fields.has("model") ? selectedModelName() : "",
+        temperature: fields.has("temperature") ? optionalNumber(nodes.apiTemperature.value) : null,
+        reasoningEffort: fields.has("reasoningEffort") ? nodes.apiReasoningEffort.value || null : null,
+        maxTokens: fields.has("maxTokens") ? optionalInteger(nodes.apiMaxTokens.value) : null,
+        thinkingTokenBudgetField: fields.has("thinkingTokenBudgetField") ? nodes.apiThinkingTokenBudgetField.value || null : null,
+        thinkingBudgetTokens: fields.has("thinkingBudgetTokens") ? optionalInteger(nodes.apiThinkingBudgetTokens.value) : null,
+        contextWindowTokens: fields.has("contextWindowTokens") ? optionalInteger(nodes.apiContextWindowTokens.value) : null
       };
-      if (nodes.apiKey.value) {
+      if (fields.has("apiKey") && nodes.apiKey.value) {
         payload.apiKey = nodes.apiKey.value;
+      } else if (provider !== state.loadedModelProviderId) {
+        payload.clearApiKey = true;
       }
       try {
         if (!state.selectedModelProfileId) throw new Error("请先选择模型配置");
@@ -22478,6 +22568,7 @@ export function renderAppHtml(): string {
         const body = await response.json();
         if (!response.ok) throw new Error(body.error || "保存失败");
         const config = body.profile;
+        state.loadedModelProviderId = config.provider || provider;
         nodes.apiKey.value = "";
         nodes.apiSettingsState.textContent = config.apiKeySet ? "已保存，Key: " + config.apiKeyMasked : "已保存，Key: 未设置";
         await loadModelProfiles(config.id);

@@ -18,10 +18,7 @@ import {
   userProfileMcpModuleId,
 } from "../modules/catalog.js";
 import type { WorkspaceAccess } from "../modules/types.js";
-import {
-  applyBackgroundThinkingPolicy,
-  backgroundThinkingPolicy,
-} from "../model/background-thinking-policy.js";
+import { backgroundThinkingPolicy } from "../model/background-thinking-policy.js";
 import type { TaskBenchUploadFixture } from "./task-bench-uploads.js";
 
 const maximumTaskCharacters = 30_000;
@@ -799,7 +796,14 @@ async function judgeIteration(
         maxTokens: policy.maxTokens,
         signal: judgeDeadline,
         sessionId: `${reportId}:judge:${run.index}:${attempt}`,
-        onPayload: (payload: unknown) => applyBackgroundThinkingPolicy(payload, raw, "quality_judge"),
+        onPayload: (payload: unknown) => source.modelProviders.finalizePayload(
+          raw,
+          source.modelProviders.transformPayload(raw, payload, {
+            temperature: 0,
+            maxTokens: policy.maxTokens,
+            thinkingMode: "off",
+          }),
+        ),
       });
       inputTokens += message.usage.input;
       outputTokens += message.usage.output;
