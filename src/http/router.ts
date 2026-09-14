@@ -84,6 +84,13 @@ import {
   attachLocalControlPlaneCookie,
   LocalControlPlaneRequestError,
 } from "./local-control-plane.js";
+import {
+  authenticateHeadlessApiRequest,
+  HEADLESS_API_VERSION,
+  HeadlessApiRequestError,
+  mappedHeadlessApiPath,
+  resolveHeadlessApiToken,
+} from "./headless-auth.js";
 import type { AgentSessionEvent } from "@earendil-works/pi-coding-agent";
 import type { SubagentRole } from "../mcp/subagent-server.js";
 import { UserProfileValidationError } from "../profile/service.js";
@@ -212,6 +219,8 @@ export type HttpServerOptions = {
   taskBenchUploads?: TaskBenchUploadRegistry;
   taskBenchReports?: TaskBenchReportRepository;
   imGatewaySecret?: string;
+  /** Set to false to ignore the environment and keep the headless API disabled. */
+  headlessApiToken?: string | false;
 };
 
 const ownedResourceDisposers = new WeakMap<Server, () => void>();
@@ -221,6 +230,7 @@ export function disposeHttpServerOwnedResources(server: Server): void {
 }
 
 export function createHttpServer(options: HttpServerOptions = {}) {
+  const headlessApiToken = resolveHeadlessApiToken(options.headlessApiToken);
   const testMode = options.testMode ?? process.env.RP_AGENT_TEST_MODE === "1";
   const ownsKernel = !options.kernel;
   const kernel = options.kernel ?? new CompanionKernel({
@@ -252,6 +262,7 @@ export function createHttpServer(options: HttpServerOptions = {}) {
         request,
         response,
         imGatewaySecret,
+        headlessApiToken,
       });
     } catch (error) {
       if (response.headersSent || response.writableEnded) {
@@ -259,7 +270,14 @@ export function createHttpServer(options: HttpServerOptions = {}) {
         if (!response.writableEnded) response.destroy(asError(error));
         return;
       }
-      if (error instanceof LocalControlPlaneRequestError) {
+      if (error instanceof HeadlessApiRequestError) {
+        response.setHeader("cache-control", "no-store");
+        response.setHeader("x-yourchar-api-version", HEADLESS_API_VERSION);
+        if (error.status === 401) {
+          response.setHeader("www-authenticate", 'Bearer realm="YourChar Headless API"');
+        }
+        sendJson(response, error.status, { code: error.code, error: error.message });
+      } else if (error instanceof LocalControlPlaneRequestError) {
         if (error.code === "LOCAL_CONTROL_TOKEN_REJECTED") {
           // A browser tab may outlive the server process that issued its
           // HttpOnly capability. Refresh only an otherwise-valid same-origin
@@ -541,10 +559,18 @@ async function route(input: {
   request: IncomingMessage;
   response: ServerResponse;
   imGatewaySecret?: string;
+  headlessApiToken?: string;
 }) {
   const method = input.request.method ?? "GET";
   const url = new URL(input.request.url ?? "/", "http://127.0.0.1");
-  const pathname = normalizePath(url.pathname);
+  let pathname = normalizePath(url.pathname);
+  const mappedHeadlessPath = mappedHeadlessApiPath(pathname);
+  if (mappedHeadlessPath !== undefined) {
+    input.response.setHeader("cache-control", "no-store");
+    input.response.setHeader("x-yourchar-api-version", HEADLESS_API_VERSION);
+    authenticateHeadlessApiRequest(input.request, input.headlessApiToken);
+    pathname = mappedHeadlessPath;
+  }
 
   const asset = method === "GET" ? browserAsset(pathname) : undefined;
   if (asset) {

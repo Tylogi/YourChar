@@ -1,5 +1,6 @@
 import { randomBytes, timingSafeEqual } from "node:crypto";
 import type { IncomingMessage, ServerResponse } from "node:http";
+import { isAuthenticatedHeadlessApiRequest } from "./headless-auth.js";
 
 const controlCookieName = `rp_agent_local_control_${randomBytes(8).toString("hex")}`;
 const controlToken = randomBytes(32).toString("base64url");
@@ -65,6 +66,11 @@ export function assertLocalControlPlaneMutation(request: IncomingMessage): void 
       "application/json with an optional UTF-8 charset is required",
     );
   }
+
+  // Headless requests have already passed the process-owned Bearer check and
+  // loopback peer check at the versioned router boundary. They do not have a
+  // browser Origin, Fetch Metadata, or HttpOnly cookie by design.
+  if (isAuthenticatedHeadlessApiRequest(request)) return;
 
   const fetchSite = singleHeader(request, "sec-fetch-site");
   const fetchMode = singleHeader(request, "sec-fetch-mode");
