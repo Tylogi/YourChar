@@ -3871,6 +3871,117 @@ const migrations: Migration[] = [
         ON session_workflow_events(parent_session_id, workflow_id, sequence DESC);
     `,
   },
+  {
+    version: 69,
+    sql: `
+      CREATE TABLE runtime_event_streams (
+        stream_id TEXT PRIMARY KEY
+          CHECK (length(stream_id) BETWEEN 1 AND 512 AND trim(stream_id) = stream_id),
+        aggregate_type TEXT NOT NULL
+          CHECK (length(aggregate_type) BETWEEN 1 AND 128 AND trim(aggregate_type) = aggregate_type),
+        aggregate_id_json TEXT NOT NULL
+          CHECK (json_valid(aggregate_id_json) AND json_type(aggregate_id_json) = 'array'),
+        conversation_space TEXT
+          CHECK (conversation_space IS NULL OR conversation_space IN ('normal', 'secret')),
+        secret_owner_character_id TEXT,
+        character_id TEXT,
+        session_id TEXT,
+        projection_schema_hash TEXT
+          CHECK (projection_schema_hash IS NULL OR (
+            length(projection_schema_hash) = 64
+            AND projection_schema_hash NOT GLOB '*[^a-f0-9]*'
+          )),
+        last_stream_sequence INTEGER NOT NULL DEFAULT 0 CHECK (last_stream_sequence >= 0),
+        last_event_hash TEXT NOT NULL
+          CHECK (length(last_event_hash) = 64 AND last_event_hash NOT GLOB '*[^a-f0-9]*'),
+        event_count INTEGER NOT NULL DEFAULT 0 CHECK (event_count >= 0),
+        events_since_checkpoint INTEGER NOT NULL DEFAULT 0
+          CHECK (events_since_checkpoint >= 0),
+        bytes_since_checkpoint INTEGER NOT NULL DEFAULT 0
+          CHECK (bytes_since_checkpoint >= 0),
+        checkpoint_stream_sequence INTEGER NOT NULL DEFAULT 0
+          CHECK (checkpoint_stream_sequence BETWEEN 0 AND last_stream_sequence),
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        CHECK (
+          (conversation_space IS NULL AND secret_owner_character_id IS NULL)
+          OR (conversation_space = 'normal' AND secret_owner_character_id IS NULL)
+          OR (conversation_space = 'secret' AND secret_owner_character_id IS NOT NULL)
+        )
+      );
+      CREATE INDEX runtime_event_streams_scope_idx
+        ON runtime_event_streams(conversation_space, secret_owner_character_id, updated_at, stream_id);
+      CREATE INDEX runtime_event_streams_session_idx
+        ON runtime_event_streams(session_id, updated_at, stream_id)
+        WHERE session_id IS NOT NULL;
+      CREATE INDEX runtime_event_streams_character_idx
+        ON runtime_event_streams(character_id, updated_at, stream_id)
+        WHERE character_id IS NOT NULL;
+
+      CREATE TABLE runtime_events (
+        sequence INTEGER PRIMARY KEY AUTOINCREMENT,
+        id TEXT NOT NULL UNIQUE CHECK (length(id) BETWEEN 16 AND 128),
+        stream_id TEXT NOT NULL REFERENCES runtime_event_streams(stream_id) ON DELETE CASCADE,
+        stream_sequence INTEGER NOT NULL CHECK (stream_sequence >= 1),
+        aggregate_type TEXT NOT NULL,
+        event_type TEXT NOT NULL
+          CHECK (length(event_type) BETWEEN 1 AND 128 AND trim(event_type) = event_type),
+        event_version INTEGER NOT NULL CHECK (event_version BETWEEN 1 AND 65535),
+        payload_json TEXT NOT NULL
+          CHECK (json_valid(payload_json) AND json_type(payload_json) = 'object'),
+        conversation_space TEXT
+          CHECK (conversation_space IS NULL OR conversation_space IN ('normal', 'secret')),
+        secret_owner_character_id TEXT,
+        character_id TEXT,
+        session_id TEXT,
+        previous_hash TEXT NOT NULL
+          CHECK (length(previous_hash) = 64 AND previous_hash NOT GLOB '*[^a-f0-9]*'),
+        event_hash TEXT NOT NULL
+          CHECK (length(event_hash) = 64 AND event_hash NOT GLOB '*[^a-f0-9]*'),
+        occurred_at TEXT NOT NULL,
+        UNIQUE (stream_id, stream_sequence),
+        CHECK (
+          (conversation_space IS NULL AND secret_owner_character_id IS NULL)
+          OR (conversation_space = 'normal' AND secret_owner_character_id IS NULL)
+          OR (conversation_space = 'secret' AND secret_owner_character_id IS NOT NULL)
+        )
+      );
+      CREATE INDEX runtime_events_global_idx ON runtime_events(sequence);
+      CREATE INDEX runtime_events_scope_idx
+        ON runtime_events(conversation_space, secret_owner_character_id, sequence);
+      CREATE INDEX runtime_events_session_idx
+        ON runtime_events(session_id, sequence) WHERE session_id IS NOT NULL;
+      CREATE INDEX runtime_events_type_idx ON runtime_events(event_type, sequence);
+
+      CREATE TABLE runtime_event_checkpoints (
+        stream_id TEXT NOT NULL REFERENCES runtime_event_streams(stream_id) ON DELETE CASCADE,
+        stream_sequence INTEGER NOT NULL CHECK (stream_sequence >= 1),
+        event_sequence INTEGER NOT NULL REFERENCES runtime_events(sequence) ON DELETE CASCADE,
+        event_type TEXT NOT NULL,
+        event_version INTEGER NOT NULL CHECK (event_version BETWEEN 1 AND 65535),
+        state_schema_version INTEGER NOT NULL CHECK (state_schema_version >= 1),
+        state_json TEXT NOT NULL
+          CHECK (json_valid(state_json) AND json_type(state_json) = 'object'),
+        state_hash TEXT NOT NULL
+          CHECK (length(state_hash) = 64 AND state_hash NOT GLOB '*[^a-f0-9]*'),
+        event_hash TEXT NOT NULL
+          CHECK (length(event_hash) = 64 AND event_hash NOT GLOB '*[^a-f0-9]*'),
+        created_at TEXT NOT NULL,
+        PRIMARY KEY (stream_id, stream_sequence),
+        UNIQUE (event_sequence)
+      );
+
+      CREATE TABLE runtime_event_capture_catalog (
+        table_name TEXT PRIMARY KEY,
+        schema_hash TEXT NOT NULL
+          CHECK (length(schema_hash) = 64 AND schema_hash NOT GLOB '*[^a-f0-9]*'),
+        classification TEXT NOT NULL
+          CHECK (classification IN ('projection', 'native_event', 'excluded')),
+        detail TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      );
+    `,
+  },
 ];
 
 export class AppDatabase {

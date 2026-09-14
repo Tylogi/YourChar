@@ -19,3 +19,4 @@ export * from "./goals/index.js";
 export * from "./lsp/index.js";
 export * from "./workflows/index.js";
 export * from "./sdk/index.js";
+export * from "./runtime-events/index.js";
