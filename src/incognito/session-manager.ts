@@ -971,6 +971,7 @@ function purgeSecretSnapshotState(database: DatabaseSync, secretSessionIds: stri
   database.exec("PRAGMA secure_delete = ON");
   database.exec("BEGIN IMMEDIATE");
   try {
+    resetRuntimeEventSnapshot(database);
     const tables = database.prepare(`
       SELECT name FROM sqlite_master
       WHERE type IN ('table', 'view') AND name NOT LIKE 'sqlite_%'
@@ -1054,6 +1055,28 @@ function purgeSecretSnapshotState(database: DatabaseSync, secretSessionIds: stri
     if (database.isTransaction) database.exec("ROLLBACK");
     throw error;
   }
+}
+
+function resetRuntimeEventSnapshot(database: DatabaseSync): void {
+  if (!tableExists(database, "runtime_event_streams")) return;
+  // The disposable child needs the sanitized current projection, not the
+  // parent's historical event payloads. Clearing every ledger table avoids
+  // retaining a deleted secret or parent-only row in a checkpoint or tombstone.
+  // Child startup immediately bootstraps a fresh ledger from the scrubbed DB.
+  for (const table of [
+    "runtime_event_checkpoints",
+    "runtime_events",
+    "runtime_event_streams",
+    "runtime_event_capture_catalog",
+  ]) {
+    if (tableExists(database, table)) database.exec(`DELETE FROM "${table}"`);
+  }
+}
+
+function tableExists(database: DatabaseSync, table: string): boolean {
+  return Boolean(database.prepare(`
+    SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?
+  `).get(table));
 }
 
 function auditPayloadConversationSpace(payloadJson: string): "normal" | "secret" | undefined {

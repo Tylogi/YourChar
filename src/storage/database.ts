@@ -3996,13 +3996,16 @@ export class AppDatabase {
       mkdirSync(dirname(path), { recursive: true });
     }
     this.connection = new DatabaseSync(path);
-    if (options.tempStoreMemory) {
-      this.connection.exec("PRAGMA temp_store = MEMORY");
-      const row = this.connection.prepare("PRAGMA temp_store").get() as { temp_store?: number } | undefined;
-      if (Number(row?.temp_store) !== 2) {
-        this.connection.close();
-        throw new Error("failed to confine SQLite temporary state to memory");
-      }
+    // Runtime event capture installs connection-local TEMP triggers. Keep that
+    // schema, and any query spill it causes, off disk for persistent and
+    // disposable databases alike.
+    this.connection.exec("PRAGMA temp_store = MEMORY");
+    const tempStore = this.connection.prepare("PRAGMA temp_store").get() as {
+      temp_store?: number;
+    } | undefined;
+    if (Number(tempStore?.temp_store) !== 2) {
+      this.connection.close();
+      throw new Error("failed to confine SQLite temporary state to memory");
     }
     this.connection.exec("PRAGMA foreign_keys = ON");
     this.connection.exec("PRAGMA busy_timeout = 5000");

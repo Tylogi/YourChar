@@ -37,7 +37,7 @@ type ScopeKind = "conversationSpace" | "secretOwnerCharacterId" | "characterId" 
 
 const zeroHash = "0".repeat(64);
 const maximumTraversalDepth = 5;
-const capturePolicyVersion = 2;
+const capturePolicyVersion = 3;
 const nativeEventTables = new Set([
   "execution_job_output_chunks",
   "session_goal_transitions",
@@ -552,6 +552,21 @@ function specialScopeExpression(
   kind: ScopeKind,
   alias: string,
 ): string | undefined {
+  // This legacy statistics table predates foreign-key enforcement. Treat its
+  // memory_id column as the equivalent of a foreign key so the mirrored row
+  // cannot lose the Vault memory's privacy scope.
+  if (table.name === "memory_retrieval_stats") {
+    const parentColumn: Record<ScopeKind, string> = {
+      conversationSpace: "conversation_space",
+      secretOwnerCharacterId: "secret_owner_character_id",
+      characterId: "character_id",
+      sessionId: "source_session_id",
+    };
+    return `(SELECT scope_memory.${identifier(parentColumn[kind])}
+      FROM main.${identifier("rp_memories")} AS scope_memory
+      WHERE scope_memory.${identifier("id")} IS ${alias}.${identifier("memory_id")}
+      LIMIT 1)`;
+  }
   if (table.name !== "audit_actions") return undefined;
   if (kind === "conversationSpace") {
     return `json_extract(${alias}.${identifier("payload_json")}, '$.__rp_agent_action_scope_v1.conversationSpace')`;

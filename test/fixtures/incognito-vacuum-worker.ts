@@ -44,6 +44,10 @@ try {
     });
   });
   if (mode === "control") {
+    // Runtime capture deliberately keeps its TEMP trigger schema in memory.
+    // Force the unsafe baseline back to FILE so this branch continues to
+    // prove that the descriptor observer can see an ambient VACUUM file.
+    database.connection.exec("PRAGMA temp_store = FILE");
     database.connection.exec("PRAGMA journal_mode = DELETE");
     database.connection.exec(
       "DELETE FROM incognito_vacuum_fixture WHERE conversation_space = 'secret'",

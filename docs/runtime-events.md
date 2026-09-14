@@ -27,7 +27,10 @@ connection are captured in the same SQLite transaction as the source write.
 The capture hooks are connection-local temporary SQLite triggers. This matters
 for rollback: no trigger that depends on newer application functions remains
 in the database when an older binary opens it. Schema 69 is additive and its
-tables can remain inert after a code rollback.
+tables can remain inert after a code rollback. Because the trigger schema is
+temporary, every application connection pins SQLite temporary storage to
+memory so trigger definitions and query spill never create an ambient temp
+file.
 
 File-backed session metadata has an explicit event stream. Its transitions are
 `bootstrap`, `created`, `updated`, `archived`, `restored`, and `deleted`.
@@ -105,8 +108,10 @@ const secret = kernel.runtimeEvents.exportScope("secret", characterId);
 
 Every event inherits normal/secret ownership, character, and session scope from
 the source row. Foreign-key traversal carries that scope into child tables such
-as Subagent runs, execution attempts, and reminder delivery rows. Session and
-turn events set scope explicitly.
+as Subagent runs, execution attempts, and reminder delivery rows. The legacy
+`memory_retrieval_stats` table has no declared foreign key, so capture treats
+its `memory_id` as an explicit ownership link to `rp_memories`. Session and turn
+events set scope explicitly.
 
 Normal export includes only normal and host-global streams. Secret export
 requires the exact owning character and includes only that partition. The user
@@ -118,8 +123,11 @@ Deleting a conversation removes every stream bearing its session ID. Deleting
 a character removes its character/secret streams and all of its session
 streams. Delete-all removes all streams, events, and checkpoints while keeping
 the non-secret schema inventory. SQLite foreign-key cascades make those
-deletions atomic. Incognito kernels may build the same ledger only inside their
-disposable tmpfs snapshot; it is destroyed with that snapshot.
+deletions atomic. An incognito snapshot discards the parent's event ledger
+before removing secret and parent-only projections; child startup then builds a
+fresh ledger from that sanitized state. The rebuilt ledger exists only inside
+the disposable tmpfs snapshot and is destroyed with it, so historical
+checkpoints or tombstones cannot retain excluded data.
 
 Events intentionally survive ordinary observability retention and source-row
 updates so prior model-visible states remain reconstructable. Owner deletion is
