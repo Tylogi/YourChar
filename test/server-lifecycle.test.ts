@@ -1,10 +1,12 @@
 import assert from "node:assert/strict";
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
+import { createHash } from "node:crypto";
 import { mkdtempSync, rmSync } from "node:fs";
 import { createServer as createNetServer } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
+import { DEFAULT_CHARACTER_AVATAR_PATH } from "../src/app/default-character.js";
 import { CompanionKernel } from "../src/domain/kernel.js";
 import { createHttpServer } from "../src/http/router.js";
 
@@ -43,6 +45,15 @@ test("SIGTERM releases the service writer lease for an immediate process restart
     assert.equal(firstCharacters.length, 1);
     assert.equal(firstCharacters[0]?.name, "红莉栖");
     assert.match(firstCharacters[0]?.soulMarkdown ?? "", /脑科学研究者/u);
+    assert.equal(firstCharacters[0]?.avatarUrl, DEFAULT_CHARACTER_AVATAR_PATH);
+    const defaultAvatar = await fetch(`http://127.0.0.1:${port}${DEFAULT_CHARACTER_AVATAR_PATH}`);
+    assert.equal(defaultAvatar.status, 200);
+    assert.equal(defaultAvatar.headers.get("content-type"), "image/jpeg");
+    const defaultAvatarBytes = Buffer.from(await defaultAvatar.arrayBuffer());
+    assert.equal(
+      createHash("sha256").update(defaultAvatarBytes).digest("hex"),
+      "b70b611c34ed30e3858806e64bd6f108765affbb13b56c74f4e86ede1d81bcaf",
+    );
     const defaultCharacterId = firstCharacters[0]!.id;
     const firstExit = await stopService(first, "SIGTERM");
     assert.deepEqual(firstExit, { code: 0, signal: null });
@@ -105,11 +116,12 @@ async function listServiceCharacters(port: number): Promise<Array<{
   id: string;
   name: string;
   soulMarkdown: string;
+  avatarUrl?: string;
 }>> {
   const response = await fetch(`http://127.0.0.1:${port}/api/v1/characters`);
   assert.equal(response.status, 200);
   const body = await response.json() as {
-    characters: Array<{ id: string; name: string; soulMarkdown: string }>;
+    characters: Array<{ id: string; name: string; soulMarkdown: string; avatarUrl?: string }>;
   };
   return body.characters;
 }

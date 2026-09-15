@@ -175,6 +175,7 @@ smoke_state="$build_root/smoke-state"
 smoke_log="$build_root/smoke.log"
 smoke_response="$build_root/smoke-readiness.json"
 smoke_characters="$build_root/smoke-characters.json"
+smoke_avatar="$build_root/smoke-avatar.jpg"
 mkdir -p "$smoke_state"
 YOURCHAR_STATE_DIR="$smoke_state" \
 YOURCHAR_IM_RUNTIME_MODE=off \
@@ -211,11 +212,28 @@ if ! "$runtime_node" -e '
   const character = Array.isArray(value.characters) && value.characters.length === 1
     ? value.characters[0]
     : undefined;
-  if (character?.name !== "红莉栖" || !character?.soulMarkdown?.includes("牧濑红莉栖")) process.exit(1);
+  if (
+    character?.name !== "红莉栖" ||
+    !character?.soulMarkdown?.includes("牧濑红莉栖") ||
+    character?.avatarUrl !== "/assets/default-characters/kurisu-avatar.jpg"
+  ) process.exit(1);
 ' "$smoke_characters"
 then
   echo "Packaged runtime did not seed the expected default character." >&2
   tail -80 "$smoke_log" >&2
+  exit 1
+fi
+if ! /usr/bin/curl --fail --silent --max-time 2 --output "$smoke_avatar" \
+  "http://127.0.0.1:${smoke_port}/assets/default-characters/kurisu-avatar.jpg"
+then
+  echo "Packaged runtime did not serve the bundled default avatar." >&2
+  tail -80 "$smoke_log" >&2
+  exit 1
+fi
+if [[ "$(/usr/bin/shasum -a 256 "$smoke_avatar" | awk '{ print $1 }')" != \
+  "b70b611c34ed30e3858806e64bd6f108765affbb13b56c74f4e86ede1d81bcaf" ]]
+then
+  echo "Packaged default avatar checksum did not match the release source." >&2
   exit 1
 fi
 kill -TERM "$smoke_pid"

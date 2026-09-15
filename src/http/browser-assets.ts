@@ -2,6 +2,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { DEFAULT_CHARACTER_AVATAR_PATH } from "../app/default-character.js";
 
 export type BrowserAsset = {
   body: Buffer;
@@ -45,6 +46,7 @@ const assetPaths: Array<[pathname: string, path: string, contentType: string]> =
   ["/assets/icons/app-icon-192.png", projectAssetPath("icons", "app-icon-192.png"), "image/png"],
   ["/assets/icons/app-icon-512.png", projectAssetPath("icons", "app-icon-512.png"), "image/png"],
   ["/assets/icons/app-icon-1024.png", projectAssetPath("icons", "app-icon-1024.png"), "image/png"],
+  [DEFAULT_CHARACTER_AVATAR_PATH, projectAssetPath("default-characters", "kurisu-avatar.jpg"), "image/jpeg"],
   ...Array.from({ length: 10 }, (_, index): [string, string, string] => [
     `/assets/noto-emoji/files/noto-emoji-${index}-400-normal.woff2`,
     join(emojiPackageDirectory, "files", `noto-emoji-${index}-400-normal.woff2`),

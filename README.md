@@ -185,8 +185,8 @@ runtime, with TypeScript, SQLite, and a Markdown Memory Vault.
   and isolated evaluation tools make changes testable.
 
 The [runtime modernization plan](docs/agent-runtime-modernization-plan.md)
-records the completed milestones. Its **2026-09-15** release gate passed
-**802 tests**, browser workflows, and the sensitive-information scan.
+records the completed milestones. Its **2026-09-16** release gate passed
+**803 tests**, browser workflows, and the sensitive-information scan.
 See [Contributing](CONTRIBUTING.md) for the code map and checks for new changes.
 
 ## Data and privacy

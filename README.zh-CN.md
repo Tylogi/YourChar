@@ -165,7 +165,7 @@ YourChar 基于原始 `@earendil-works/pi-coding-agent` 会话运行时，
 - **检查实际行为：** Provider Trace、事件记录、重放、检查点和隔离评测便于定位问题。
 
 [运行时改造计划](docs/agent-runtime-modernization-plan.md)记录了已完成的阶段。
-**2026-09-15** 的发布检查通过了 **802 项测试**、浏览器流程及敏感信息扫描。
+**2026-09-16** 的发布检查通过了 **803 项测试**、浏览器流程及敏感信息扫描。
 新的改动应按[贡献指南](CONTRIBUTING.md)进行相应验证。
 
 ## 数据与隐私

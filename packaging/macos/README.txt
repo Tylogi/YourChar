@@ -5,9 +5,10 @@ Open YourChar.app to start the private loopback service and use YourChar in its
 native macOS window. The app contains its own Apple Silicon Node.js runtime;
 Node.js does not need to be installed separately.
 
-On a fresh installation, YourChar creates and selects Kurisu (红莉栖) as the
-default character so you can start chatting immediately after configuring a
-model. Existing application data and character choices are left unchanged.
+On a fresh installation, YourChar creates and selects Kurisu (红莉栖), including
+her bundled avatar, as the default character so you can start chatting
+immediately after configuring a model. Existing application data and character
+choices are left unchanged.
 
 Application data:
   ~/Library/Application Support/YourChar

@@ -4,6 +4,10 @@ import { createReadStream } from "node:fs";
 import { pipeline } from "node:stream/promises";
 import { URL } from "node:url";
 import {
+  DEFAULT_CHARACTER_AVATAR_PATH,
+  isDefaultCharacterName,
+} from "../app/default-character.js";
+import {
   CompanionKernel,
   ConversationArchivedError,
   ConversationDeletionConfirmationError,
@@ -6256,11 +6260,14 @@ function avatarUrl(pathname: string, avatar: AvatarAsset | undefined): string | 
 }
 
 function withCharacterAvatar(kernel: CompanionKernel, character: CharacterProfile) {
+  const customAvatarUrl = avatarUrl(
+    `/api/v1/avatars/characters/${encodeURIComponent(character.id)}`,
+    kernel.avatarService.getCharacter(character.id),
+  );
   return {
     ...character,
-    avatarUrl: avatarUrl(
-      `/api/v1/avatars/characters/${encodeURIComponent(character.id)}`,
-      kernel.avatarService.getCharacter(character.id),
+    avatarUrl: customAvatarUrl ?? (
+      isDefaultCharacterName(character.name) ? DEFAULT_CHARACTER_AVATAR_PATH : undefined
     ),
   };
 }

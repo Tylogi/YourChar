@@ -1,6 +1,7 @@
 import type { CharacterProfile, CreateCharacterInput } from "../rp/types.js";
 
 export const DEFAULT_CHARACTER_NAME = "红莉栖";
+export const DEFAULT_CHARACTER_AVATAR_PATH = "/assets/default-characters/kurisu-avatar.jpg";
 
 /**
  * Ordered aliases used when an existing installation already has the bundled
@@ -10,6 +11,11 @@ export const DEFAULT_CHARACTER_NAMES = [
   DEFAULT_CHARACTER_NAME,
   "牧濑红莉栖",
 ] as const;
+
+export function isDefaultCharacterName(name: string): boolean {
+  const normalized = name.trim();
+  return DEFAULT_CHARACTER_NAMES.some((candidate) => candidate === normalized);
+}
 
 export const DEFAULT_CHARACTER_SOUL_MARKDOWN = `# SOUL.md - 牧濑红莉栖
 

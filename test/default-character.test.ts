@@ -4,6 +4,7 @@ import {
   DEFAULT_CHARACTER_NAME,
   DEFAULT_CHARACTER_SOUL_MARKDOWN,
   createDefaultCharacterForNewInstallation,
+  isDefaultCharacterName,
 } from "../src/app/default-character.js";
 import type { CharacterProfile, CreateCharacterInput } from "../src/rp/types.js";
 
@@ -32,6 +33,13 @@ test("default-character bootstrap never changes an existing installation", () =>
   assert.deepEqual(characters, [existing]);
   assert.equal(createDefaultCharacterForNewInstallation(target, true), undefined);
   assert.deepEqual(characters, [existing]);
+});
+
+test("default-character aliases are exact after trimming", () => {
+  assert.equal(isDefaultCharacterName("红莉栖"), true);
+  assert.equal(isDefaultCharacterName(" 牧濑红莉栖 "), true);
+  assert.equal(isDefaultCharacterName("红莉栖助手"), false);
+  assert.equal(isDefaultCharacterName(""), false);
 });
 
 function bootstrapTarget(characters: CharacterProfile[]) {
