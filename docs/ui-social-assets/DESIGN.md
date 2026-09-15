@@ -66,8 +66,10 @@ These are current public WeUI tokens, not a claim of pixel-for-pixel equivalence
 
 The companion `check.mjs` runs isolated browser checks for the prototype: JavaScript syntax, portrait loading and hover preservation, native font stack, constant 16px conversation text, representative foreground/background contrast of at least 4.5:1 in both themes, message input and safe rendering, contact/world/profile flows, theme persistence, and horizontal overflow at 320–1920px viewport widths. Screenshots are written to a fresh temporary directory. No real model, reminder, or messaging service is contacted.
 
-From the repository root in this workspace:
+From the repository root:
 
 ```sh
-CLOAKBROWSER_AUTO_UPDATE=false LD_LIBRARY_PATH=$HOME/.local/share/cloakbrowser-libs/usr/lib/x86_64-linux-gnu node docs/ui-social-assets/check.mjs
+CLOAKBROWSER_AUTO_UPDATE=false LD_LIBRARY_PATH="${CLOAKBROWSER_LIB_DIR:-$HOME/.local/share/cloakbrowser-libs/usr/lib/x86_64-linux-gnu}${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}" node docs/ui-social-assets/check.mjs
 ```
+
+Set `CLOAKBROWSER_LIB_DIR` if the browser libraries are installed elsewhere. Existing `LD_LIBRARY_PATH` entries are preserved.
