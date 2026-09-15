@@ -27,7 +27,7 @@ YourChar 是一款开源、可自行部署的 AI 角色应用。你可以为角�
 <p align="center">
   <picture>
     <source media="(prefers-color-scheme: dark)" srcset="docs/readme-assets/chat-dark-mode.png">
-    <img src="docs/readme-assets/chat-and-reminders.png" alt="YourChar 中与角色的私聊界面" width="760">
+    <img src="docs/readme-assets/chat-and-reminders.png" alt="YourChar 中的角色私聊与日常协助" width="760">
   </picture><br>
   <sub>从日常陪伴，到实际帮忙。</sub><br>
   <sub><a href="docs/readme-assets/chat-and-reminders.png">浅色界面</a> · <a href="docs/readme-assets/chat-dark-mode.png">深色界面</a></sub>
@@ -109,7 +109,7 @@ Linux 用户服务、备份和升级方法见 [运维文档](docs/operations.md)
 | 给两个角色创建有咖啡馆和图书馆的世界，开启自主生活。 | 观察活动安排、地点变化、角色交流，以及经历结束后的日记。 |
 | 开启 Workspace 写入权限后：“把我们的计划保存成 `weekend.md`，发给我。” | 工作区中出现实际文件，对话里收到文件附件。 |
 
-## 看看角色的生活
+## 界面一览
 
 <table>
   <tr>
@@ -125,6 +125,19 @@ Linux 用户服务、备份和升级方法见 [运维文档](docs/operations.md)
     </td>
   </tr>
 </table>
+
+<details>
+<summary>查看日程管理与提醒</summary>
+
+把聊天中的一句请求变成真实提醒，在日历中查看安排与送达状态。
+你的现实日程与角色自己的生活计划分开管理。保持 YourChar 运行，即可按时接收提醒。
+
+<p align="center">
+  <a href="docs/readme-assets/user-schedule-dark-mode.png"><img src="docs/readme-assets/user-schedule-dark-mode.png" alt="YourChar 深色模式下的用户日程，展示月历与提醒送达状态" width="760"></a><br>
+  <sub>把现实中的计划与提醒，整理进同一本日历。</sub>
+</p>
+
+</details>
 
 <details>
 <summary>查看 Agent Workspace</summary>

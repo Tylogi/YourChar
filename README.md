@@ -28,7 +28,7 @@ the same conversation.
 <p align="center">
   <picture>
     <source media="(prefers-color-scheme: dark)" srcset="docs/readme-assets/chat-dark-mode.png">
-    <img src="docs/readme-assets/chat-and-reminders.png" alt="Private conversations with a character in YourChar" width="760">
+    <img src="docs/readme-assets/chat-and-reminders.png" alt="Character conversations and practical help in YourChar" width="760">
   </picture><br>
   <sub>From everyday companionship to practical help. Screenshots show the Chinese interface.</sub><br>
   <sub><a href="docs/readme-assets/chat-and-reminders.png">Light mode</a> · <a href="docs/readme-assets/chat-dark-mode.png">Dark mode</a></sub>
@@ -138,6 +138,20 @@ before trying an optional tool.
     </td>
   </tr>
 </table>
+
+<details>
+<summary>Explore your calendar and reminders</summary>
+
+Turn a request in chat into a real reminder, review your calendar, and check
+delivery status. Your schedule stays separate from a character's own daily
+routine. Keep YourChar running to receive reminders.
+
+<p align="center">
+  <a href="docs/readme-assets/user-schedule-dark-mode.png"><img src="docs/readme-assets/user-schedule-dark-mode.png" alt="YourChar user calendar in dark mode, with a monthly overview and reminder delivery status" width="760"></a><br>
+  <sub>Your real-life plans and reminders, together in a calendar.</sub>
+</p>
+
+</details>
 
 <details>
 <summary>Explore the Agent Workspace</summary>
