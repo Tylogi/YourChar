@@ -48,11 +48,11 @@ test("SIGTERM releases the service writer lease for an immediate process restart
     assert.equal(firstCharacters[0]?.avatarUrl, DEFAULT_CHARACTER_AVATAR_PATH);
     const defaultAvatar = await fetch(`http://127.0.0.1:${port}${DEFAULT_CHARACTER_AVATAR_PATH}`);
     assert.equal(defaultAvatar.status, 200);
-    assert.equal(defaultAvatar.headers.get("content-type"), "image/jpeg");
+    assert.equal(defaultAvatar.headers.get("content-type"), "image/png");
     const defaultAvatarBytes = Buffer.from(await defaultAvatar.arrayBuffer());
     assert.equal(
       createHash("sha256").update(defaultAvatarBytes).digest("hex"),
-      "4b0a73bb70f1558e69afd75afaa45a7590b1be4ef7ba05a3ea4d8cb5df176dff",
+      "0a76ba7859de879edeec379e0c9b29d4a19aacdb817aa493893c5ec7d008f4c3",
     );
     const defaultCharacterId = firstCharacters[0]!.id;
     const firstExit = await stopService(first, "SIGTERM");
