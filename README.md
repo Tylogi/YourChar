@@ -10,7 +10,7 @@
     <strong>Your AI Character, Living With You.</strong><br>
     有记忆、有关系、会生活的 AI 角色。
   </p>
-  <p>AI companions with lasting memory, shared worlds, and tools for everyday life.</p>
+  <p>Self-hosted AI characters with lasting memory, shared worlds, and tools for everyday life.</p>
   <p>
     <a href="#quick-start">Quick start</a> ·
     <a href="#try-it">Try it</a> ·

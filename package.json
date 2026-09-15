@@ -27,7 +27,7 @@
       "import": "./dist/src/runtime-events/index.js"
     }
   },
-  "description": "Local-first runtime for persistent AI characters and digital lives.",
+  "description": "Self-hosted AI characters with lasting memory, shared worlds, and tools for everyday life.",
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "setup:markitdown": "uv sync --project services/markitdown --frozen --python /usr/bin/python3",
