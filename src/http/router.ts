@@ -758,6 +758,8 @@ async function route(input: {
       modelProfiles: "GET/POST/PATCH/DELETE /api/v1/model-profiles[/{id}]",
       modelCredentials:
         "PUT /api/v1/model-profiles/{id}/credential; POST /api/v1/model-profiles/{id}/credential/{revoke|rollback}",
+      modelDiagnostics:
+        "POST /api/v1/diagnostics/model/test; GET /api/v1/diagnostics/model/models; POST /api/v1/diagnostics/model/models for an uncommitted candidate",
       tavilySettings: "GET/PATCH /api/settings/tavily",
       visionSettings: "GET/PATCH /api/settings/vision",
       mineruSettings: "GET/PATCH /api/settings/mineru",
@@ -4818,6 +4820,32 @@ async function route(input: {
   if (pathname === "/api/v1/diagnostics/model/models" && method === "GET") {
     sendJson(input.response, 200, {
       models: await kernel.discoverModels(optionalString(url.searchParams.get("profileId"))),
+    });
+    return;
+  }
+
+  if (pathname === "/api/v1/diagnostics/model/models" && method === "POST") {
+    assertLocalControlPlaneMutation(input.request);
+    const body = asRecord(await readJson(input.request));
+    assertOnlyKeys(
+      body,
+      ["profileId", "apiKey", "expectedRevision", "profilePatch"],
+      "Candidate model discovery",
+    );
+    const profilePatch = body.profilePatch === undefined
+      ? undefined
+      : asModelCredentialProfilePatch(body.profilePatch);
+    sendJson(input.response, 200, {
+      models: await kernel.discoverModelsWithCandidate(
+        requiredString(body.profileId, "profileId"),
+        {
+          ...(body.apiKey === undefined ? {} : { apiKey: body.apiKey as string }),
+          ...(body.expectedRevision === undefined
+            ? {}
+            : { expectedRevision: body.expectedRevision as number }),
+          ...(profilePatch === undefined ? {} : { profilePatch }),
+        },
+      ),
     });
     return;
   }

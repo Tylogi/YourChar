@@ -3425,6 +3425,41 @@ export class CompanionKernel {
     return this.modelProviders.discoverModels(config);
   }
 
+  async discoverModelsWithCandidate(
+    profileId: string,
+    input: {
+      apiKey?: string;
+      expectedRevision?: number;
+      profilePatch?: ModelApiProfilePatch;
+    },
+  ) {
+    const profilePatch = input.profilePatch ?? {};
+    this.assertSelectableModelProvider(profilePatch.provider);
+    let candidate: RawModelApiConfig;
+    if (input.apiKey !== undefined) {
+      if (typeof input.apiKey !== "string" || !input.apiKey.trim()) {
+        throw new ModelCredentialValidationError("apiKey must be a non-empty string when provided");
+      }
+      assertCredentialLifecycleRevision(input.expectedRevision);
+      this.store.assertModelApiCredentialRevision(profileId, input.expectedRevision);
+      candidate = this.store.previewModelApiCredential(
+        profileId,
+        input.apiKey,
+        profilePatch,
+      );
+    } else {
+      candidate = this.store.previewModelApiProfilePatch(profilePatch, profileId);
+    }
+    try {
+      this.assertValidModelProviderConfiguration(candidate);
+      return await this.modelProviders.discoverModels(candidate);
+    } catch (error) {
+      if (!input.apiKey) throw error;
+      const message = error instanceof Error ? error.message : String(error);
+      throw new Error(redactModelCredentialText(message, input.apiKey));
+    }
+  }
+
   async exportUserData(
     conversationSpace: ConversationSpace = "normal",
     secretOwnerCharacterId?: string,
@@ -5537,8 +5572,16 @@ export class CompanionKernel {
     if (input.verify !== false) {
       try {
         await this.modelProviders.testConnection(candidate);
-      } catch {
-        throw new ModelCredentialVerificationError();
+      } catch (error) {
+        const reason = redactModelCredentialText(
+          error instanceof Error ? error.message : String(error),
+          input.apiKey,
+        ).trim().slice(0, 500);
+        throw new ModelCredentialVerificationError(
+          reason
+            ? `candidate model credential verification failed: ${reason}`
+            : undefined,
+        );
       }
     }
     this.assertModelSettingsMutable();

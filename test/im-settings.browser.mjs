@@ -65,7 +65,9 @@ export async function runImSettingsChecks(browser, outputDir) {
         await page.evaluate(() => { setUiMode("settings"); setSettingsTab("im"); });
         await page.waitForFunction(() => state.imRuntimeSettings && !nodes.refreshImChannelsBtn.disabled);
         assert.equal(await page.locator("html").getAttribute("data-theme"), colorScheme);
-        assert.equal(await page.locator('[data-im-card="wechat"] .im-character-avatar').innerText(), "红");
+        const defaultAvatar = page.locator('[data-im-card="wechat"] .im-character-avatar img');
+        assert.equal(await defaultAvatar.count(), 1);
+        assert.match(await defaultAvatar.getAttribute("src"), /\/assets\/default-characters\/kurisu-avatar-crop\.png/u);
         assert.equal(await page.locator('[data-im-card="wechat"] .im-channel-status').innerText(), "已绑定");
         assert.equal(await page.locator('[data-im-card="wechat"] [data-im-action="bind"]').count(), 0);
         assert.equal(await page.locator('[data-im-card="feishu"] [data-im-action="bind"]').isDisabled(), true);

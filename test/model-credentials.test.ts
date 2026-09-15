@@ -169,12 +169,51 @@ test("credential lifecycle verifies before commit and enforces CAS, rollback, an
     assert.equal(unauthorized.status, 403);
     assert.equal(authorizations.length, 0);
 
+    const candidateDiscoveryUrl = `${baseUrl}/api/v1/diagnostics/model/models`;
+    const unauthorizedDiscovery = await jsonRequest(candidateDiscoveryUrl, "POST", {
+      profileId: "default",
+      apiKey: "must-not-be-sent",
+      expectedRevision: 0,
+      profilePatch: { model: "" },
+    });
+    assert.equal(unauthorizedDiscovery.status, 403);
+    assert.equal(authorizations.length, 0);
+
+    const candidateDiscovery = await credentialRequest(candidateDiscoveryUrl, "POST", {
+      profileId: "default",
+      apiKey: "candidate-discovery-key",
+      expectedRevision: 0,
+      profilePatch: {
+        enabled: true,
+        baseUrl: `http://127.0.0.1:${modelAddress.port}/v1`,
+        model: "",
+      },
+    });
+    assert.equal(candidateDiscovery.status, 200);
+    assert.deepEqual(candidateDiscovery.body.models, ["echo-[redacted-model-credential]"]);
+    assert.equal(authorizations.at(-1), "Bearer candidate-discovery-key");
+    assert.equal(kernel.getModelApiConfig().apiKeySet, false);
+    assert.equal(kernel.getModelApiConfig().model, "credential-test-model");
+
+    const callsBeforeInvalid = authorizations.length;
     const invalid = await credentialRequest(credentialUrl, "PUT", {
       expectedRevision: 0,
     });
     assert.equal(invalid.status, 400);
     assert.equal(invalid.body.code, "MODEL_CREDENTIAL_INVALID");
-    assert.equal(authorizations.length, 0);
+    assert.equal(authorizations.length, callsBeforeInvalid);
+
+    const incomplete = await credentialRequest(credentialUrl, "PUT", {
+      apiKey: "incomplete-key",
+      expectedRevision: 0,
+      verify: true,
+      profilePatch: { model: "" },
+    });
+    assert.equal(incomplete.status, 502);
+    assert.equal(incomplete.body.code, "MODEL_CREDENTIAL_VERIFICATION_FAILED");
+    assert.match(String(incomplete.body.error), /model is required/u);
+    assert.equal(JSON.stringify(incomplete.body).includes("incomplete-key"), false);
+    assert.equal(authorizations.length, callsBeforeInvalid);
 
     const created = await credentialRequest(credentialUrl, "PUT", {
       apiKey: "first-key",
@@ -194,6 +233,8 @@ test("credential lifecycle verifies before commit and enforces CAS, rollback, an
     });
     assert.equal(rejected.status, 502);
     assert.equal(rejected.body.code, "MODEL_CREDENTIAL_VERIFICATION_FAILED");
+    assert.match(String(rejected.body.error), /model endpoint returned 401/u);
+    assert.match(String(rejected.body.error), /redacted-model-credential/u);
     assert.equal(JSON.stringify(rejected.body).includes("rejected-key"), false);
     assert.equal(kernel.getModelApiConfig().credentialRevision, 1);
     assert.equal(kernel.store.getRawModelApiConfig().apiKey, "first-key");
@@ -259,7 +300,14 @@ test("credential lifecycle verifies before commit and enforces CAS, rollback, an
 
     const audit = JSON.stringify(kernel.store.allActions());
     const exported = JSON.stringify(await kernel.exportUserData());
-    for (const secret of ["first-key", "second-key", "rejected-key", "stale-key"]) {
+    for (const secret of [
+      "candidate-discovery-key",
+      "incomplete-key",
+      "first-key",
+      "second-key",
+      "rejected-key",
+      "stale-key",
+    ]) {
       assert.equal(audit.includes(secret), false);
       assert.equal(exported.includes(secret), false);
     }

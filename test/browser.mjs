@@ -669,19 +669,27 @@ async function runDesktopWorkflow(browser, baseUrl, outputDir) {
   await page.locator("#scheduleList .schedule-row").filter({ hasText: "傍晚去河岸" }).waitFor({ state: "detached" });
 
   await page.getByRole("button", { name: "设置", exact: true }).click();
-  await page.route("**/api/v1/diagnostics/model/models?**", async (route) => {
+  await page.route("**/api/v1/diagnostics/model/models", async (route) => {
+    assert.equal(route.request().method(), "POST");
+    const candidate = route.request().postDataJSON();
+    assert.equal(candidate.profileId, "default");
+    assert.equal(candidate.profilePatch.model, "");
+    assert.equal(candidate.apiKey, "browser-candidate-key");
     await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ models: ["browser-model-a", "browser-model-b"] }) });
   });
   await page.locator("#apiBaseUrl").fill("http://127.0.0.1:8317/v1");
+  await page.locator("#apiModel").selectOption("");
+  await page.locator("#apiKey").fill("browser-candidate-key");
   await page.getByRole("button", { name: "读取模型", exact: true }).click();
   await page.locator("#apiSettingsState").filter({ hasText: "2 个模型" }).waitFor();
   assert.deepEqual(await page.locator("#apiModel option").allTextContents(), ["读取模型后选择", "browser-model-a", "browser-model-b", "手动输入..."]);
+  await page.locator("#apiKey").fill("");
   await page.locator("#apiModel").selectOption("browser-model-b");
   await page.locator("#apiContextWindowTokens").fill("65536");
   await page.getByRole("button", { name: "保存设置", exact: true }).click();
   await page.locator("#apiSettingsState").filter({ hasText: "已保存" }).waitFor();
   assert.equal(await page.locator("#apiContextWindowTokens").inputValue(), "65536");
-  await page.unroute("**/api/v1/diagnostics/model/models?**");
+  await page.unroute("**/api/v1/diagnostics/model/models");
 
   await page.getByRole("button", { name: "视觉", exact: true }).click();
   await page.locator("#visionSettingsState").filter({ hasText: "Key: 未设置" }).waitFor();

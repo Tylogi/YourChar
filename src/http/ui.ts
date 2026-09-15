@@ -22208,9 +22208,27 @@ export function renderAppHtml(): string {
       nodes.apiSettingsState.textContent = "读取模型中...";
       nodes.discoverModelsBtn.disabled = true;
       try {
+        if (!state.selectedModelProfileId) throw new Error("请先选择模型配置");
         const selectedBefore = selectedModelName();
-        await saveApiSettings(true);
-        const response = await fetch("/api/v1/diagnostics/model/models?profileId=" + encodeURIComponent(state.selectedModelProfileId));
+        const profilePatch = modelProfilePatchFromForm();
+        const baseUrlRequired = selectedModelProviderDescriptor()?.configurationFields?.some((field) =>
+          field.key === "baseUrl" && field.required
+        );
+        if (baseUrlRequired && !profilePatch.baseUrl) throw new Error("请先填写 Base URL");
+        const secret = nodes.apiKey.value;
+        const response = await controlPlaneFetch("/api/v1/diagnostics/model/models", {
+          method: "POST",
+          body: JSON.stringify({
+            profileId: state.selectedModelProfileId,
+            profilePatch,
+            ...(secret
+              ? {
+                  apiKey: secret,
+                  expectedRevision: state.loadedModelCredentialRevision
+                }
+              : {})
+          })
+        });
         const body = await response.json();
         if (!response.ok) throw new Error(body.error || "模型读取失败");
         state.discoveredModels = Array.isArray(body.models) ? body.models : [];
@@ -22221,6 +22239,26 @@ export function renderAppHtml(): string {
       } finally {
         updateModelProviderActions();
       }
+    }
+
+    function modelProfilePatchFromForm() {
+      const provider = nodes.apiProvider.value;
+      const descriptor = selectedModelProviderDescriptor();
+      const fields = new Set((descriptor?.configurationFields || []).map((field) => field.key));
+      return {
+        name: nodes.apiProfileName.value.trim(),
+        enabled: nodes.apiEnabled.checked,
+        provider,
+        visionInputEnabled: fields.has("visionInputEnabled") ? nodes.apiVisionInputEnabled.checked : false,
+        baseUrl: fields.has("baseUrl") ? nodes.apiBaseUrl.value.trim() : "",
+        model: fields.has("model") ? selectedModelName() : "",
+        temperature: fields.has("temperature") ? optionalNumber(nodes.apiTemperature.value) : null,
+        reasoningEffort: fields.has("reasoningEffort") ? nodes.apiReasoningEffort.value || null : null,
+        maxTokens: fields.has("maxTokens") ? optionalInteger(nodes.apiMaxTokens.value) : null,
+        thinkingTokenBudgetField: fields.has("thinkingTokenBudgetField") ? nodes.apiThinkingTokenBudgetField.value || null : null,
+        thinkingBudgetTokens: fields.has("thinkingBudgetTokens") ? optionalInteger(nodes.apiThinkingBudgetTokens.value) : null,
+        contextWindowTokens: fields.has("contextWindowTokens") ? optionalInteger(nodes.apiContextWindowTokens.value) : null
+      };
     }
 
     function exportOkfBundle() {
@@ -22570,28 +22608,22 @@ export function renderAppHtml(): string {
 
     async function saveApiSettings(rethrow) {
       nodes.apiSettingsState.textContent = "保存中...";
-      const provider = nodes.apiProvider.value;
       const descriptor = selectedModelProviderDescriptor();
       const fields = new Set((descriptor?.configurationFields || []).map((field) => field.key));
-      const payload = {
-        name: nodes.apiProfileName.value.trim(),
-        enabled: nodes.apiEnabled.checked,
-        provider,
-        visionInputEnabled: fields.has("visionInputEnabled") ? nodes.apiVisionInputEnabled.checked : false,
-        baseUrl: fields.has("baseUrl") ? nodes.apiBaseUrl.value.trim() : "",
-        model: fields.has("model") ? selectedModelName() : "",
-        temperature: fields.has("temperature") ? optionalNumber(nodes.apiTemperature.value) : null,
-        reasoningEffort: fields.has("reasoningEffort") ? nodes.apiReasoningEffort.value || null : null,
-        maxTokens: fields.has("maxTokens") ? optionalInteger(nodes.apiMaxTokens.value) : null,
-        thinkingTokenBudgetField: fields.has("thinkingTokenBudgetField") ? nodes.apiThinkingTokenBudgetField.value || null : null,
-        thinkingBudgetTokens: fields.has("thinkingBudgetTokens") ? optionalInteger(nodes.apiThinkingBudgetTokens.value) : null,
-        contextWindowTokens: fields.has("contextWindowTokens") ? optionalInteger(nodes.apiContextWindowTokens.value) : null
-      };
+      const payload = modelProfilePatchFromForm();
       try {
         if (!state.selectedModelProfileId) throw new Error("请先选择模型配置");
-        const profileUrl = "/api/v1/model-profiles/" + encodeURIComponent(state.selectedModelProfileId);
         const secret = fields.has("apiKey") ? nodes.apiKey.value : "";
-        const providerChanged = provider !== state.loadedModelProviderId;
+        const baseUrlRequired = descriptor?.configurationFields?.some((field) =>
+          field.key === "baseUrl" && field.required
+        );
+        const modelRequired = descriptor?.configurationFields?.some((field) =>
+          field.key === "model" && field.required
+        );
+        if (secret && baseUrlRequired && !payload.baseUrl) throw new Error("请填写 Base URL");
+        if (secret && modelRequired && !payload.model) throw new Error("请先读取或手动填写模型名");
+        const profileUrl = "/api/v1/model-profiles/" + encodeURIComponent(state.selectedModelProfileId);
+        const providerChanged = payload.provider !== state.loadedModelProviderId;
         const response = secret
           ? await controlPlaneFetch(profileUrl + "/credential", {
               method: "PUT",
