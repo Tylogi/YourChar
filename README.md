@@ -14,7 +14,7 @@
   <p>English · <a href="README.zh-CN.md">简体中文</a></p>
 </div>
 
-YourChar is a self-hosted app for creating AI characters with their own
+YourChar is a self-hosted, open-source app for creating AI characters with their own
 personalities, memories, relationships, and daily activities. Chat with a
 character, build a world together, or ask for help with a real task—all from
 the same conversation.
@@ -191,6 +191,6 @@ and what makes a useful issue or pull request.
 
 ## License and acknowledgements
 
-A project license has not yet been specified in this repository.
-Third-party dependency notices are recorded in
+YourChar is licensed under the [MIT License](LICENSE).
+Third-party dependencies and assets retain their respective licenses; see
 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
