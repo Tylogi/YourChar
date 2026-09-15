@@ -1,8 +1,22 @@
 # Third-Party Notices
 
-This file records selected third-party code and runtime libraries used by
-bundled integrations. It does not replace license metadata shipped with the
-project's package dependencies.
+This file records selected third-party code, runtime libraries, and branding
+assets reused by YourChar. It does not replace license metadata shipped with
+the project's package dependencies.
+
+## Tylogi AI Lab branding
+
+The English and Chinese READMEs use the unmodified light and dark SVG wordmarks
+from TyloQuant.
+
+- Upstream: <https://github.com/Tylogi/TyloQuant>
+- Source revision: [`06c62854`](https://github.com/Tylogi/TyloQuant/tree/06c628543d49b91fbff7b33225d2a601e1dc7928/docs/figures)
+- Assets: [light](docs/readme-assets/tylogi-ai-lab-lockup-light.svg) and [dark](docs/readme-assets/tylogi-ai-lab-lockup-dark.svg)
+- Copyright 2026 Tylogi AI Lab contributors
+- License: Apache-2.0; see the [retained upstream license](docs/readme-assets/tylogi-ai-lab-LICENSE.txt).
+
+This attribution applies to the two SVG assets. YourChar's project license
+remains [MIT](LICENSE).
 
 ## Microsoft MarkItDown
 

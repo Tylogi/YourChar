@@ -1,6 +1,12 @@
 <div align="center">
   <h1>YourChar</h1>
   <p>
+    <picture>
+      <source media="(prefers-color-scheme: dark)" srcset="docs/readme-assets/tylogi-ai-lab-lockup-dark.svg">
+      <img src="docs/readme-assets/tylogi-ai-lab-lockup-light.svg" alt="Tylogi AI Lab" width="280">
+    </picture>
+  </p>
+  <p>
     <strong>Your AI Character, Living With You.</strong><br>
     有记忆、有关系、会生活的 AI 角色。
   </p>
