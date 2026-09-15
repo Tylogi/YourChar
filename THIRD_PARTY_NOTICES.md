@@ -1,5 +1,12 @@
 # Third-Party Notices
 
+## Bundled release runtimes
+
+The self-contained macOS release embeds the official Apple Silicon build of
+Node.js. Its complete upstream `LICENSE` file is distributed inside
+`YourChar.app/Contents/Resources/runtime/LICENSE`; that license also contains
+the notices for third-party components bundled by Node.js.
+
 This file records selected third-party code, runtime libraries, and branding
 assets reused by YourChar. It does not replace license metadata shipped with
 the project's package dependencies.

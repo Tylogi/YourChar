@@ -46,6 +46,8 @@
     "backup": "node --disable-warning=ExperimentalWarning scripts/backup-state.mjs",
     "restore": "node --disable-warning=ExperimentalWarning scripts/restore-state.mjs",
     "migrate:state": "node --disable-warning=ExperimentalWarning scripts/migrate-state-directory.mjs migrate",
+    "test:macos": "npm run build && node --disable-warning=ExperimentalWarning --test dist/test/macos-release-packaging.test.js",
+    "package:macos": "bash scripts/build-macos-release.sh",
     "release:gate": "node scripts/release-gate.mjs",
     "release:gate:real": "node scripts/release-gate.mjs --real"
   },

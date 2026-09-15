@@ -57,6 +57,10 @@ Requires **Node.js 22.19.0 or newer** and npm. Linux is the target for the full
 feature set: sandboxed shell and document conversion use Bubblewrap, and
 incognito snapshots require a verified `tmpfs` filesystem.
 
+For a self-contained Apple Silicon desktop build, see
+[macOS release packaging](docs/macos-release.md). The macOS app includes Node
+and core YourChar features; Linux-only sandboxed tools remain unavailable.
+
 ### 1. Start the app
 
 Clone or download this repository, open a terminal in its root, and run:

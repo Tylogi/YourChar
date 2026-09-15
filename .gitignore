@@ -29,3 +29,4 @@ core.*
 browser-artifacts/
 eval-artifacts/
 backups/
+release/
