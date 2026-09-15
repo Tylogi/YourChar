@@ -1,10 +1,76 @@
-# YourChar
+<div align="center">
+  <h1>YourChar</h1>
+  <p>
+    <strong>Your AI Character, Living With You.</strong><br>
+    <sub>有记忆、有关系、会生活的 AI 角色。</sub>
+  </p>
+  <p>A local-first, open-source runtime for persistent AI characters and digital lives.</p>
+</div>
 
-A local-first, open-source runtime for persistent AI characters and digital
-lives, layered on the original Pi agent runtime.
+<p align="center">
+  <img src="docs/readme-assets/chat-and-reminders.png" alt="YourChar character conversation with a completed real reminder" width="100%">
+</p>
 
-The codebase uses the original `@earendil-works/pi-coding-agent` session runtime
-and adds the RP companion domain on top:
+YourChar turns an AI model into a persistent character—not just a chat window.
+Characters remember shared history, form relationships, keep their own schedules,
+inhabit evolving worlds, and use bounded Agent capabilities while you retain
+control of models, permissions, and data.
+
+## Why YourChar
+
+- **Continuity with evidence.** Durable memory, provenance, rolling context,
+  relationships, scenes, and world history survive long conversations and restarts.
+- **A life beyond the reply.** Characters have places, activities, diaries, and
+  schedules; user reminders use real delivery, retry, and acknowledgement flows.
+- **An Agent when useful.** Least-privilege tools, workspaces, background jobs,
+  subagents, workflows, Skills, and optional code intelligence support real work.
+- **Local-first control.** Bring your own compatible or native model provider,
+  keep the service loopback-only, and choose explicit normal, secret, or
+  disposable incognito boundaries.
+- **Reconstructable behavior.** Typed runtime events, scoped projections, replay,
+  checkpoints, and integrity checks make model-visible state auditable.
+
+## Product tour
+
+<table>
+  <tr>
+    <td width="50%" valign="top">
+      <img src="docs/readme-assets/characters-and-world.png" alt="YourChar characters and shared world map" width="100%"><br>
+      <strong>Characters and shared worlds</strong><br>
+      <sub>Independent identities, memories, relationships, locations, and one evolving world timeline.</sub>
+    </td>
+    <td width="50%" valign="top">
+      <img src="docs/readme-assets/character-schedule.png" alt="YourChar character schedule and activity calendar" width="100%"><br>
+      <strong>Lives that continue between conversations</strong><br>
+      <sub>Character-owned activities remain distinct from the user's real reminders and calendar.</sub>
+    </td>
+  </tr>
+  <tr>
+    <td width="50%" valign="top">
+      <img src="docs/readme-assets/agent-workspace.png" alt="YourChar Agent workspace file manager" width="100%"><br>
+      <strong>Agent workspace</strong><br>
+      <sub>Permission-gated files, isolated shell execution, repositories, documents, and shareable results.</sub>
+    </td>
+    <td width="50%" valign="top">
+      <strong>Private by construction</strong><br>
+      <sub>Per-character partitions, secret conversations, disposable incognito snapshots, scoped exports, and physical deletion are enforced below the prompt layer.</sub>
+      <br><br>
+      <strong>Provider-neutral runtime</strong><br>
+      <sub>OpenAI-compatible, OpenAI Responses, Anthropic Messages, and Google Generative AI adapters share one trusted capability and lifecycle model.</sub>
+      <br><br>
+      <strong>Headless-ready</strong><br>
+      <sub>The authenticated loopback API, typed TypeScript SDK, and optional ACP bridge expose the same durable runtime without requiring the Web UI.</sub>
+    </td>
+  </tr>
+</table>
+
+## Runtime capabilities
+
+YourChar builds the character domain on the original
+`@earendil-works/pi-coding-agent` session runtime.
+
+<details>
+<summary><strong>View the complete capability list</strong></summary>
 
 - provider-neutral agent messages;
 - structured lifecycle events;
@@ -47,7 +113,9 @@ and adds the RP companion domain on top:
 - fictional-state policy that separates World events from real schedule changes;
 - thin HTTP server as an adapter, not the core.
 
-## Commands
+</details>
+
+## Quick start
 
 ```bash
 npm install
@@ -63,9 +131,14 @@ Structured document reading additionally requires `uv`, Python 3.11 or newer,
 and Bubblewrap. `npm run setup:markitdown` creates only the project-local
 `services/markitdown/.venv`; it never installs packages into system Python.
 
+## Documentation
+
 The repository pins Node `22.19.0` in `.nvmrc`. The target product architecture,
 development milestones, and Agent-oriented test contracts are documented in
 [`docs/development-spec.md`](docs/development-spec.md).
+The completed composable-Agent modernization roadmap and its release evidence
+are recorded in
+[`docs/agent-runtime-modernization-plan.md`](docs/agent-runtime-modernization-plan.md).
 The deployment-trusted model adapter registry, exact provider selection,
 first-party Anthropic, Gemini, and OpenAI Responses transports, and
 native-provider extension boundary are documented in
