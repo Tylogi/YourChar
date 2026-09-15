@@ -74,6 +74,36 @@ test("server serves chat UI and debug model traces", async () => {
     const inlineScript = [...html.matchAll(/<script>([\s\S]*?)<\/script>/gu)].at(-1)?.[1] ?? "";
     assert.ok(inlineScript.length > 1_000);
     assert.doesNotThrow(() => new Script(inlineScript, { filename: "rendered-rp-agent-ui.js" }));
+    assert.match(inlineScript, /const defaultCharacterNames = \["红莉栖","牧濑红莉栖"\]/u);
+    const defaultCharacterSelectionScript = inlineScript.match(
+      /function preferredDefaultCharacterId[\s\S]*?(?=\n    async function loadCharacters)/,
+    )?.[0] ?? "";
+    const defaultCharacterSelectionContext: Record<string, any> = {
+      defaultCharacterNames: ["红莉栖", "牧濑红莉栖"],
+      state: {
+        characters: [
+          { id: "custom", name: "用户角色" },
+          { id: "full-kurisu", name: "牧濑红莉栖" },
+          { id: "kurisu", name: "红莉栖" },
+        ],
+      },
+    };
+    new Script(
+      defaultCharacterSelectionScript +
+      "\nthis.preferredDefaultCharacterIdForTest = preferredDefaultCharacterId;",
+    ).runInNewContext(defaultCharacterSelectionContext);
+    assert.equal(defaultCharacterSelectionContext.preferredDefaultCharacterIdForTest(), "kurisu");
+    defaultCharacterSelectionContext.state.characters = [
+      { id: "custom", name: "用户角色" },
+      { id: "full-kurisu", name: "牧濑红莉栖" },
+    ];
+    assert.equal(defaultCharacterSelectionContext.preferredDefaultCharacterIdForTest(), "full-kurisu");
+    defaultCharacterSelectionContext.state.characters = [{ id: "custom", name: "用户角色" }];
+    assert.equal(defaultCharacterSelectionContext.preferredDefaultCharacterIdForTest(), "custom");
+    assert.match(
+      inlineScript,
+      /if \(!state\.selectedCharacterId\) state\.selectedCharacterId = preferredDefaultCharacterId\(\)/u,
+    );
     const taskBenchHistoryScript = inlineScript.match(
       /function renderTaskBenchHistory[\s\S]*?(?=\n    function exportLatestTaskBenchReport)/,
     )?.[0] ?? "";

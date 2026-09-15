@@ -39,6 +39,11 @@ test("SIGTERM releases the service writer lease for an immediate process restart
   try {
     first = spawnService(stateDir, port);
     await waitForHealthy(first, port);
+    const firstCharacters = await listServiceCharacters(port);
+    assert.equal(firstCharacters.length, 1);
+    assert.equal(firstCharacters[0]?.name, "红莉栖");
+    assert.match(firstCharacters[0]?.soulMarkdown ?? "", /脑科学研究者/u);
+    const defaultCharacterId = firstCharacters[0]!.id;
     const firstExit = await stopService(first, "SIGTERM");
     assert.deepEqual(firstExit, { code: 0, signal: null });
     first = undefined;
@@ -48,6 +53,9 @@ test("SIGTERM releases the service writer lease for an immediate process restart
     const response = await fetch(`http://127.0.0.1:${port}/api/health`);
     assert.equal(response.status, 200);
     assert.deepEqual(await response.json(), { status: "ok" });
+    const restartedCharacters = await listServiceCharacters(port);
+    assert.equal(restartedCharacters.length, 1);
+    assert.equal(restartedCharacters[0]?.id, defaultCharacterId);
     const secondExit = await stopService(second, "SIGTERM");
     assert.deepEqual(secondExit, { code: 0, signal: null });
     second = undefined;
@@ -91,6 +99,19 @@ function spawnService(
     },
     stdio: ["pipe", "pipe", "pipe"],
   });
+}
+
+async function listServiceCharacters(port: number): Promise<Array<{
+  id: string;
+  name: string;
+  soulMarkdown: string;
+}>> {
+  const response = await fetch(`http://127.0.0.1:${port}/api/v1/characters`);
+  assert.equal(response.status, 200);
+  const body = await response.json() as {
+    characters: Array<{ id: string; name: string; soulMarkdown: string }>;
+  };
+  return body.characters;
 }
 
 async function waitForHealthy(child: ChildProcessWithoutNullStreams, port: number): Promise<void> {

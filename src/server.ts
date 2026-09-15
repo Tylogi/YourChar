@@ -1,4 +1,6 @@
+import { existsSync } from "node:fs";
 import { join, resolve } from "node:path";
+import { createDefaultCharacterForNewInstallation } from "./app/default-character.js";
 import { EPHEMERAL_STATE_DIRECTORY_NAME } from "./app/state-directory.js";
 import { CompanionKernel, CompanionStore } from "./domain/index.js";
 import {
@@ -24,6 +26,8 @@ if (!isLoopbackHost(host)) {
 
 const imRuntimeMode = resolveImRuntimeMode(process.env, testMode);
 const store = new CompanionStore();
+const databasePath = store.stateDir ? join(store.stateDir, "rp-agent.sqlite") : undefined;
+const isNewInstallation = Boolean(databasePath && !existsSync(databasePath));
 const workspaceDir = resolve(
   store.stateDir
     ? join(store.stateDir, "workspace")
@@ -54,6 +58,10 @@ const kernel = new CompanionKernel({
   agentCapabilityPackages: lspRuntimeConfiguration.packages,
   agentRuntimeProfiles: lspRuntimeConfiguration.profiles,
 });
+const defaultCharacter = createDefaultCharacterForNewInstallation(kernel, isNewInstallation);
+if (defaultCharacter) {
+  console.log(`Created default character: ${defaultCharacter.name}.`);
+}
 
 if (localImGateway) {
   const localCore: LocalImCore = {

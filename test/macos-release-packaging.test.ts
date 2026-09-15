@@ -33,6 +33,8 @@ test("macOS release pipeline is portable, self-contained, and safety-scoped", ()
   assert.match(script, /mkdir -p "\$smoke_state"/u);
   assert.match(script, /--output "\$smoke_response"/u);
   assert.match(script, /api\/v1\/readiness/u);
+  assert.match(script, /api\/v1\/characters/u);
+  assert.match(script, /character\?\.name !== "红莉栖"/u);
   assert.match(script, /hdiutil create/u);
   assert.match(script, /SHA256SUMS\.txt/u);
   assert.match(launcher, /127\.0\.0\.1/u);

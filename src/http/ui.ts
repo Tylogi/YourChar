@@ -1,3 +1,4 @@
+import { DEFAULT_CHARACTER_NAMES } from "../app/default-character.js";
 import { socialThemeCss } from "./ui-social-theme.js";
 import { historyScript } from "./ui-history.js";
 import { appearanceBootstrap, appearanceScript } from "./ui-appearance.js";
@@ -6582,6 +6583,7 @@ export function renderAppHtml(): string {
   <script src="/assets/lucide.min.js"></script>
   <script src="/assets/twemoji.min.js"></script>
   <script>
+    const defaultCharacterNames = ${JSON.stringify(DEFAULT_CHARACTER_NAMES)};
     const state = {
       uiMode: "normal",
       conversationSpace: "normal",
@@ -10645,7 +10647,7 @@ export function renderAppHtml(): string {
       ).join("");
       nodes.newConversationCharacter.innerHTML = '<option value="">请选择角色</option>' + options;
       const preferredCharacter = [state.newConversationPreferredCharacterId, state.selectedCharacterId]
-        .find((id) => id && state.characters.some((entry) => entry.id === id)) || state.characters[0]?.id || "";
+        .find((id) => id && state.characters.some((entry) => entry.id === id)) || preferredDefaultCharacterId();
       nodes.newConversationCharacter.value = preferredCharacter;
       nodes.newConversationWorld.innerHTML = '<option value="">请选择世界</option>' + state.worldConversations.map((conversation) =>
         '<option value="' + escapeHtml(conversation.worldId) + '">' + escapeHtml(conversation.world?.name || "未命名世界") + '</option>'
@@ -12601,6 +12603,14 @@ export function renderAppHtml(): string {
       nodes.dismissSceneInfoBtn.className = editing ? "secondary" : "secondary";
     }
 
+    function preferredDefaultCharacterId() {
+      for (const name of defaultCharacterNames) {
+        const character = state.characters.find((entry) => entry.name?.trim() === name);
+        if (character) return character.id;
+      }
+      return state.characters[0]?.id || "";
+    }
+
     async function loadCharacters() {
       try {
         const [response] = await Promise.all([
@@ -12613,6 +12623,7 @@ export function renderAppHtml(): string {
         if (state.selectedCharacterId && !state.characters.some((entry) => entry.id === state.selectedCharacterId)) {
           state.selectedCharacterId = "";
         }
+        if (!state.selectedCharacterId) state.selectedCharacterId = preferredDefaultCharacterId();
         if (state.workspaceCharacterId && !state.characters.some((entry) => entry.id === state.workspaceCharacterId)) {
           state.workspaceCharacterId = "";
         }

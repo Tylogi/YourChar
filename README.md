@@ -84,11 +84,13 @@ compatible endpoints, plus native OpenAI Responses, Anthropic Messages, and
 Google Generative AI. A model that supports tool calls is needed for Agent
 actions. [Provider setup and profile details →](docs/model-provider-adapters.md)
 
-### 3. Create your first character
+### 3. Start chatting
 
-Open **Characters → New character（角色 → 新建角色）**, give the character
-a name, and edit its `SOUL.md` identity and voice. Start a private chat.
-The character inherits the default model unless you assign another profile.
+A fresh installation creates and selects **Kurisu（红莉栖）** as the default
+character. Once the model is configured, return to Chat and send a message—no
+character setup is required first. You can edit her `SOUL.md` or create your own
+characters from **Characters（角色）**. Each character inherits the default model
+unless you assign another profile.
 
 For a world to explore together, create a World Card and add characters and
 places. The **Creator Assistant（管理 → 创作助手）** can help draft character
@@ -184,7 +186,7 @@ runtime, with TypeScript, SQLite, and a Markdown Memory Vault.
 
 The [runtime modernization plan](docs/agent-runtime-modernization-plan.md)
 records the completed milestones. Its **2026-09-15** release gate passed
-**799 tests**, browser workflows, and the sensitive-information scan.
+**802 tests**, browser workflows, and the sensitive-information scan.
 See [Contributing](CONTRIBUTING.md) for the code map and checks for new changes.
 
 ## Data and privacy

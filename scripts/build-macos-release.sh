@@ -174,6 +174,7 @@ smoke_port="$($runtime_node -e 'const net=require("node:net");const server=net.c
 smoke_state="$build_root/smoke-state"
 smoke_log="$build_root/smoke.log"
 smoke_response="$build_root/smoke-readiness.json"
+smoke_characters="$build_root/smoke-characters.json"
 mkdir -p "$smoke_state"
 YOURCHAR_STATE_DIR="$smoke_state" \
 YOURCHAR_IM_RUNTIME_MODE=off \
@@ -194,6 +195,26 @@ for _ in {1..120}; do
 done
 if [[ "$smoke_ready" != "1" ]]; then
   echo "Packaged runtime did not become ready:" >&2
+  tail -80 "$smoke_log" >&2
+  exit 1
+fi
+if ! /usr/bin/curl --fail --silent --max-time 2 --output "$smoke_characters" \
+  "http://127.0.0.1:${smoke_port}/api/v1/characters"
+then
+  echo "Packaged runtime did not return its default character:" >&2
+  tail -80 "$smoke_log" >&2
+  exit 1
+fi
+if ! "$runtime_node" -e '
+  const fs = require("node:fs");
+  const value = JSON.parse(fs.readFileSync(process.argv[1], "utf8"));
+  const character = Array.isArray(value.characters) && value.characters.length === 1
+    ? value.characters[0]
+    : undefined;
+  if (character?.name !== "红莉栖" || !character?.soulMarkdown?.includes("牧濑红莉栖")) process.exit(1);
+' "$smoke_characters"
+then
+  echo "Packaged runtime did not seed the expected default character." >&2
   tail -80 "$smoke_log" >&2
   exit 1
 fi
