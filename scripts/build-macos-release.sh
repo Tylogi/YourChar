@@ -215,7 +215,7 @@ if ! "$runtime_node" -e '
   if (
     character?.name !== "红莉栖" ||
     !character?.soulMarkdown?.includes("牧濑红莉栖") ||
-    character?.avatarUrl !== "/assets/default-characters/kurisu-avatar.jpg"
+    character?.avatarUrl !== "/assets/default-characters/kurisu-avatar-pixel.jpg"
   ) process.exit(1);
 ' "$smoke_characters"
 then
@@ -224,7 +224,7 @@ then
   exit 1
 fi
 if ! /usr/bin/curl --fail --silent --max-time 2 --output "$smoke_avatar" \
-  "http://127.0.0.1:${smoke_port}/assets/default-characters/kurisu-avatar.jpg"
+  "http://127.0.0.1:${smoke_port}/assets/default-characters/kurisu-avatar-pixel.jpg"
 then
   echo "Packaged runtime did not serve the bundled default avatar." >&2
   tail -80 "$smoke_log" >&2

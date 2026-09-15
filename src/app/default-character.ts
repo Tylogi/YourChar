@@ -1,7 +1,7 @@
 import type { CharacterProfile, CreateCharacterInput } from "../rp/types.js";
 
 export const DEFAULT_CHARACTER_NAME = "红莉栖";
-export const DEFAULT_CHARACTER_AVATAR_PATH = "/assets/default-characters/kurisu-avatar.jpg";
+export const DEFAULT_CHARACTER_AVATAR_PATH = "/assets/default-characters/kurisu-avatar-pixel.jpg";
 
 /**
  * Ordered aliases used when an existing installation already has the bundled

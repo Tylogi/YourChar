@@ -35,7 +35,7 @@ test("macOS release pipeline is portable, self-contained, and safety-scoped", ()
   assert.match(script, /api\/v1\/readiness/u);
   assert.match(script, /api\/v1\/characters/u);
   assert.match(script, /character\?\.name !== "红莉栖"/u);
-  assert.match(script, /assets\/default-characters\/kurisu-avatar\.jpg/u);
+  assert.match(script, /assets\/default-characters\/kurisu-avatar-pixel\.jpg/u);
   assert.match(script, /4b0a73bb70f1558e69afd75afaa45a7590b1be4ef7ba05a3ea4d8cb5df176dff/u);
   assert.match(script, /hdiutil create/u);
   assert.match(script, /SHA256SUMS\.txt/u);
