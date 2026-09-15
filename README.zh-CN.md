@@ -25,10 +25,12 @@ YourChar 是一款开源、可自行部署的 AI 角色应用。你可以为角�
 整理文件或完成任务。模型、能力权限和本地数据都由你管理。
 
 <p align="center">
-  <a href="docs/readme-assets/chat-and-reminders.png">
-    <img src="docs/readme-assets/chat-and-reminders.png" alt="角色在 YourChar 对话中创建真实提醒" width="760">
-  </a><br>
-  <sub>从一句日常对话，到真正保存的提醒。</sub>
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/readme-assets/chat-dark-mode.png">
+    <img src="docs/readme-assets/chat-and-reminders.png" alt="YourChar 中与角色的私聊界面" width="760">
+  </picture><br>
+  <sub>从日常陪伴，到实际帮忙。</sub><br>
+  <sub><a href="docs/readme-assets/chat-and-reminders.png">浅色界面</a> · <a href="docs/readme-assets/chat-dark-mode.png">深色界面</a></sub>
 </p>
 
 ## 为什么是 YourChar
@@ -123,14 +125,6 @@ Linux 用户服务、备份和升级方法见 [运维文档](docs/operations.md)
     </td>
   </tr>
 </table>
-
-<p align="center">
-  <a href="docs/readme-assets/chat-dark-mode.png">
-    <img src="docs/readme-assets/chat-dark-mode.png" alt="YourChar 深色模式中的角色私聊界面" width="760">
-  </a><br>
-  <strong>深色模式，也适合长聊</strong><br>
-  <sub>让对话保持专注，角色与世界信息也始终触手可及。</sub>
-</p>
 
 <details>
 <summary>查看 Agent Workspace</summary>

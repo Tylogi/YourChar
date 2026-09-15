@@ -26,10 +26,12 @@ character, build a world together, or ask for help with a real task—all from
 the same conversation.
 
 <p align="center">
-  <a href="docs/readme-assets/chat-and-reminders.png">
-    <img src="docs/readme-assets/chat-and-reminders.png" alt="A YourChar conversation where a character creates a real reminder" width="760">
-  </a><br>
-  <sub>A conversation that leads to a real reminder. Screenshots show the Chinese interface.</sub>
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/readme-assets/chat-dark-mode.png">
+    <img src="docs/readme-assets/chat-and-reminders.png" alt="Private conversations with a character in YourChar" width="760">
+  </picture><br>
+  <sub>From everyday companionship to practical help. Screenshots show the Chinese interface.</sub><br>
+  <sub><a href="docs/readme-assets/chat-and-reminders.png">Light mode</a> · <a href="docs/readme-assets/chat-dark-mode.png">Dark mode</a></sub>
 </p>
 
 ## What makes YourChar different
@@ -136,14 +138,6 @@ before trying an optional tool.
     </td>
   </tr>
 </table>
-
-<p align="center">
-  <a href="docs/readme-assets/chat-dark-mode.png">
-    <img src="docs/readme-assets/chat-dark-mode.png" alt="A private character conversation in YourChar's dark mode" width="760">
-  </a><br>
-  <strong>Comfortable in dark mode</strong><br>
-  <sub>A focused theme for long conversations, with character and world context always close by.</sub>
-</p>
 
 <details>
 <summary>Explore the Agent Workspace</summary>
