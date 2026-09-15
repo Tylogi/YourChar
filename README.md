@@ -137,6 +137,14 @@ before trying an optional tool.
   </tr>
 </table>
 
+<p align="center">
+  <a href="docs/readme-assets/chat-dark-mode.png">
+    <img src="docs/readme-assets/chat-dark-mode.png" alt="A private character conversation in YourChar's dark mode" width="760">
+  </a><br>
+  <strong>Comfortable in dark mode</strong><br>
+  <sub>A focused theme for long conversations, with character and world context always close by.</sub>
+</p>
+
 <details>
 <summary>Explore the Agent Workspace</summary>
 
