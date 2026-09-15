@@ -231,7 +231,7 @@ then
   exit 1
 fi
 if [[ "$(/usr/bin/shasum -a 256 "$smoke_avatar" | awk '{ print $1 }')" != \
-  "b70b611c34ed30e3858806e64bd6f108765affbb13b56c74f4e86ede1d81bcaf" ]]
+  "4b0a73bb70f1558e69afd75afaa45a7590b1be4ef7ba05a3ea4d8cb5df176dff" ]]
 then
   echo "Packaged default avatar checksum did not match the release source." >&2
   exit 1

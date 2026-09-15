@@ -52,7 +52,7 @@ test("SIGTERM releases the service writer lease for an immediate process restart
     const defaultAvatarBytes = Buffer.from(await defaultAvatar.arrayBuffer());
     assert.equal(
       createHash("sha256").update(defaultAvatarBytes).digest("hex"),
-      "b70b611c34ed30e3858806e64bd6f108765affbb13b56c74f4e86ede1d81bcaf",
+      "4b0a73bb70f1558e69afd75afaa45a7590b1be4ef7ba05a3ea4d8cb5df176dff",
     );
     const defaultCharacterId = firstCharacters[0]!.id;
     const firstExit = await stopService(first, "SIGTERM");
