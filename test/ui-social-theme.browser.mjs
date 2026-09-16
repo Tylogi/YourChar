@@ -9,7 +9,7 @@ import { renderAppHtml } from "../dist/src/http/ui.js";
 export async function runSocialThemeComponentChecks(browser, outputDir) {
   const html = renderAppHtml().replace(/<script\b[^>]*>[\s\S]*?<\/script\s*>/gi, "");
   for (const width of [320, 390, 768, 1024, 1440]) {
-    const page = await browser.newPage({ viewport: { width, height: 900 }, reducedMotion: "reduce" });
+    const page = await browser.newPage({ viewport: { width, height: 900 }, locale: "zh-CN", reducedMotion: "reduce" });
     try {
       await page.route("**/*", route => route.request().resourceType() === "document"
         ? route.fulfill({ status: 200, contentType: "text/html", body: html })

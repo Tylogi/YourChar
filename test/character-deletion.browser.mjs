@@ -17,7 +17,7 @@ export async function runCharacterDeletionChecks(browser, outputDir) {
     const peerSession = await kernel.openCanonicalPrivateConversation(peer.id);
     const server = createHttpServer({ kernel });
     await new Promise(resolvePromise => server.listen(0, "127.0.0.1", resolvePromise));
-    const page = await browser.newPage({ viewport: { width: space === "secret" ? 390 : 1440, height: 1000 }, colorScheme: space === "secret" ? "dark" : "light", reducedMotion: "reduce" });
+    const page = await browser.newPage({ viewport: { width: space === "secret" ? 390 : 1440, height: 1000 }, locale: "zh-CN", colorScheme: space === "secret" ? "dark" : "light", reducedMotion: "reduce" });
     const errors = [];
     page.on("pageerror", error => errors.push(error.message));
     try {

@@ -20,6 +20,7 @@ import { runCreatorChecks } from "./creator.browser.mjs";
 import { runStreamingOrderChecks } from "./streaming-order.browser.mjs";
 import { runReminderDeliveryChecks } from "./reminder-delivery.browser.mjs";
 import { runImSettingsChecks } from "./im-settings.browser.mjs";
+import { runLocaleChecks } from "./locale.browser.mjs";
 
 const artifactsDir = resolve("browser-artifacts");
 mkdirSync(artifactsDir, { recursive: true });
@@ -233,6 +234,7 @@ try {
   await runStreamingOrderChecks(browser, artifactsDir);
   await runReminderDeliveryChecks(browser, artifactsDir);
   await runImSettingsChecks(browser, artifactsDir);
+  await runLocaleChecks(browser);
   await runDesktopWorkflow(browser, baseUrl, artifactsDir);
   await runCompactDesktopWorkflow(browser, baseUrl, artifactsDir);
   await runMobileWorkflow(browser, baseUrl, artifactsDir);
@@ -246,7 +248,7 @@ try {
 }
 
 async function runDesktopWorkflow(browser, baseUrl, outputDir) {
-  const page = await browser.newPage({ viewport: { width: 1440, height: 900 } });
+  const page = await browser.newPage({ viewport: { width: 1440, height: 900 }, locale: "zh-CN" });
   const errors = collectErrors(page);
   const sessionConflicts = [];
   page.on("response", (response) => {
@@ -1668,7 +1670,7 @@ async function runDesktopWorkflow(browser, baseUrl, outputDir) {
 }
 
 async function runMobileWorkflow(browser, baseUrl, outputDir) {
-  const page = await browser.newPage({ viewport: { width: 390, height: 844 }, isMobile: true });
+  const page = await browser.newPage({ viewport: { width: 390, height: 844 }, locale: "zh-CN", isMobile: true });
   const errors = collectErrors(page);
   const mobileMessagesRoute = /\/api\/v1\/sessions\/[^/]+\/messages(?:\?.*)?$/;
   await page.route(mobileMessagesRoute, (route) => route.fulfill({
@@ -2093,7 +2095,7 @@ async function runMobileWorkflow(browser, baseUrl, outputDir) {
 }
 
 async function runCompactDesktopWorkflow(browser, baseUrl, outputDir) {
-  const page = await browser.newPage({ viewport: { width: 1024, height: 768 } });
+  const page = await browser.newPage({ viewport: { width: 1024, height: 768 }, locale: "zh-CN" });
   const errors = collectErrors(page);
   await page.goto(baseUrl, { waitUntil: "domcontentloaded" });
   await page.locator("#normalBtn").waitFor({ state: "visible" });

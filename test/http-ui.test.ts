@@ -128,6 +128,7 @@ test("server serves chat UI and debug model traces", async () => {
       nodes: { taskBenchHistory: taskBenchHistoryNode },
       escapeHtml: (value: unknown) => String(value),
       formatAdaptationScore: (value: unknown) => String(value),
+      uiLocale: () => "zh-CN",
     };
     new Script(
       taskBenchHistoryScript + "\nthis.renderTaskBenchHistoryForTest = renderTaskBenchHistory;",

@@ -25,7 +25,12 @@ export const appearanceCss = `
     .appearance-swatch.light { background: #f5f5f5; color: #242424; }
     .appearance-swatch.dark { background: #242424; color: #f5f5f5; }
     .appearance-swatch.system { background: linear-gradient(90deg, #f5f5f5 50%, #242424 50%); color: #808080; }
-    #appearanceStatus { font-size: 13px; }
+    #appearanceStatus, #localeStatus { font-size: 13px; }
+    .locale-settings-block { max-width: 660px; margin-top: 30px; padding-top: 24px; border-top: 1px solid var(--line); }
+    .locale-settings-block h4 { margin: 0 0 8px; font-size: 15px; }
+    .locale-settings-block > .muted { margin: 0; }
+    .locale-settings-block .appearance-choices { margin-top: 18px; }
+    .appearance-swatch.locale-zh, .appearance-swatch.locale-en { font-size: 20px; font-weight: 700; letter-spacing: .04em; }
     /* Sent text, including Markdown and file cards, stays legible on charcoal. */
     .bubble.user .markdown-body :is(h1, h2, h3, h4, a, blockquote, code) { color: inherit; }
     .bubble.user .markdown-body a { text-decoration: underline; text-underline-offset: 3px; }

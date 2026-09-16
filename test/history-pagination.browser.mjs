@@ -37,7 +37,7 @@ export async function runHistoryPaginationChecks(browser, outputDir) {
   const png = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=", "base64");
   try {
     for (const width of [320, 390, 1440]) {
-      const page = await browser.newPage({ viewport: { width, height: 900 }, reducedMotion: "reduce" });
+      const page = await browser.newPage({ viewport: { width, height: 900 }, locale: "zh-CN", reducedMotion: "reduce" });
       const errors = []; const images = [];
       page.on("pageerror", error => errors.push(error.message));
       await page.route("**/history-images/*.png", route => { images.push(Number(route.request().url().match(/(\d+)\.png$/)[1])); return route.fulfill({ status: 200, contentType: "image/png", body: png }); });

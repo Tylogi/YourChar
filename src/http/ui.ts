@@ -3,6 +3,7 @@ import { socialThemeCss } from "./ui-social-theme.js";
 import { historyScript } from "./ui-history.js";
 import { appearanceBootstrap, appearanceScript } from "./ui-appearance.js";
 import { appearanceCss } from "./ui-appearance-theme.js";
+import { localeBootstrap, localeScript } from "./ui-locale.js";
 import { lifeCss, lifePanelHtml, lifeScript } from "./ui-life.js";
 import { creatorCss, creatorHtml, creatorScript } from "./ui-creator.js";
 import { reminderCss, reminderPolicyHtml, reminderCenterHtml, reminderScript } from "./ui-reminders.js";
@@ -16,6 +17,7 @@ export function renderAppHtml(): string {
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-content" />
   <meta name="theme-color" content="#f5f5f5" />
   <script>${appearanceBootstrap}</script>
+  <script>${localeBootstrap}</script>
   <meta name="apple-mobile-web-app-capable" content="yes" />
   <meta name="apple-mobile-web-app-status-bar-style" content="default" />
   <meta name="apple-mobile-web-app-title" content="YourChar" />
@@ -61,6 +63,7 @@ export function renderAppHtml(): string {
       overflow: hidden;
     }
     [hidden] { display: none !important; }
+    html[data-locale-pending="true"] body { visibility: hidden; }
     .app {
       height: 100vh;
       height: 100dvh;
@@ -5828,7 +5831,7 @@ export function renderAppHtml(): string {
               <button id="searchSettingsTabBtn" type="button">搜索</button>
               <button id="promptSettingsTabBtn" type="button">提示词</button>
               <button id="dataSettingsTabBtn" type="button">数据</button>
-              <button id="appearanceSettingsTabBtn" type="button">外观</button>
+              <button id="appearanceSettingsTabBtn" type="button">外观与语言</button>
             </div>
           </div>
           <section id="appearanceSettingsPanel" class="management-panel settings-panel" hidden>
@@ -5840,6 +5843,16 @@ export function renderAppHtml(): string {
               <button class="appearance-choice" type="button" data-theme-choice="dark" aria-pressed="false"><span class="appearance-swatch dark" aria-hidden="true"><i data-lucide="moon"></i></span><strong>深色</strong><small>柔和的夜间外观</small></button>
             </div>
             <p id="appearanceStatus" class="muted" role="status"></p>
+            <div class="locale-settings-block">
+              <h4>界面语言</h4>
+              <p class="muted">选择 YourChar 的界面语言。角色名称、聊天内容和用户数据不会被翻译。</p>
+              <div id="localeChoices" class="appearance-choices" role="group" aria-label="界面语言">
+                <button class="appearance-choice" type="button" data-locale-choice="system" aria-pressed="true"><span class="appearance-swatch system" aria-hidden="true"><i data-lucide="languages"></i></span><strong>跟随系统</strong><small>随设备自动切换</small></button>
+                <button class="appearance-choice" type="button" data-locale-choice="zh-CN" aria-pressed="false"><span class="appearance-swatch light locale-zh" aria-hidden="true">中</span><strong>简体中文</strong><small>中文界面</small></button>
+                <button class="appearance-choice" type="button" data-locale-choice="en" aria-pressed="false"><span class="appearance-swatch light locale-en" aria-hidden="true">EN</span><strong>English</strong><small>English interface</small></button>
+              </div>
+              <p id="localeStatus" class="muted" role="status"></p>
+            </div>
           </section>
           <section id="imSettingsPanel" class="management-panel settings-panel" hidden>
             <div class="im-settings-head">
@@ -6583,6 +6596,12 @@ export function renderAppHtml(): string {
   <script src="/assets/lucide.min.js"></script>
   <script src="/assets/twemoji.min.js"></script>
   <script>
+    function uiLocale() {
+      return window.yourcharLocale?.locale || document.documentElement.lang || "zh-CN";
+    }
+    function uiText(source) {
+      return window.yourcharLocale?.t(source) || source;
+    }
     const defaultCharacterNames = ${JSON.stringify(DEFAULT_CHARACTER_NAMES)};
     const state = {
       uiMode: "normal",
@@ -7843,12 +7862,19 @@ export function renderAppHtml(): string {
       event.preventDefault();
       await sendMessage();
     });
+    ${localeScript}
     ${historyScript}
     ${appearanceScript}
     ${lifeScript}
     ${creatorScript}
     ${reminderScript}
     ${streamingOrderScript}
+    window.addEventListener("yourchar:localechange", () => {
+      renderMessages();
+      renderScheduleWorkspace();
+      updateReminderEditor();
+      refreshIcons();
+    });
     nodes.messages.addEventListener("toggle", rememberMessageDisclosure, true);
     nodes.messages.addEventListener("click", handleSystemEventAction);
     nodes.messages.addEventListener("click", handleMessageAction);
@@ -9341,7 +9367,7 @@ export function renderAppHtml(): string {
     function renderScheduleCalendar() {
       const cursor = new Date(state.calendarCursor.getFullYear(), state.calendarCursor.getMonth(), 1);
       state.calendarCursor = cursor;
-      nodes.scheduleMonthLabel.textContent = cursor.toLocaleDateString("zh-CN", { year: "numeric", month: "long" });
+      nodes.scheduleMonthLabel.textContent = cursor.toLocaleDateString(uiLocale(), { year: "numeric", month: "long" });
       const offset = (cursor.getDay() + 6) % 7;
       const gridStart = new Date(cursor);
       gridStart.setDate(cursor.getDate() - offset);
@@ -9363,7 +9389,7 @@ export function renderAppHtml(): string {
           key === state.selectedScheduleDate ? "selected" : ""
         ].filter(Boolean).join(" ");
         cells.push('<button class="' + classes + '" type="button" data-date="' + key + '" aria-label="' +
-          escapeHtml(date.toLocaleDateString("zh-CN") + (items.length ? "，" + items.length + " 项日程" : "，无日程")) + '" aria-pressed="' + String(key === state.selectedScheduleDate) + '"' +
+          escapeHtml(date.toLocaleDateString(uiLocale()) + (items.length ? (uiLocale() === "en" ? ", " + items.length + " items" : "，" + items.length + " 项日程") : (uiLocale() === "en" ? ", no items" : "，无日程"))) + '" aria-pressed="' + String(key === state.selectedScheduleDate) + '"' +
           (key === today ? ' aria-current="date"' : '') + '><span class="calendar-day-number">' + date.getDate() + '</span>' +
           '<span class="calendar-events">' + labels + more + '</span></button>');
       }
@@ -9397,7 +9423,7 @@ export function renderAppHtml(): string {
 
     function renderScheduleItems() {
       const selected = parseLocalDateKey(state.selectedScheduleDate);
-      nodes.scheduleAgendaTitle.textContent = selected.toLocaleDateString("zh-CN", { month: "long", day: "numeric", weekday: "long" });
+      nodes.scheduleAgendaTitle.textContent = selected.toLocaleDateString(uiLocale(), { month: "long", day: "numeric", weekday: "long" });
       const selectedItems = scheduleItemsOnDate(state.selectedScheduleDate);
       nodes.scheduleState.textContent = selectedItems.length + " 项";
       if (!selectedItems.length) {
@@ -9459,7 +9485,7 @@ export function renderAppHtml(): string {
     function formatCalendarEvent(item) {
       if (!item.startAt || item.allDay) return item.title;
       try {
-        const time = new Intl.DateTimeFormat("zh-CN", {
+        const time = new Intl.DateTimeFormat(uiLocale(), {
           timeZone: item.timezone,
           hour: "2-digit",
           minute: "2-digit",
@@ -11026,7 +11052,7 @@ export function renderAppHtml(): string {
         attachments: normalizeStructuredAttachments(message.attachments),
         timestampMs: message.createdAt ? new Date(message.createdAt).getTime() : 0,
         at: message.createdAt
-          ? new Date(message.createdAt).toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit" })
+          ? new Date(message.createdAt).toLocaleTimeString(uiLocale(), { hour: "2-digit", minute: "2-digit" })
           : ""
       };
     }
@@ -11095,7 +11121,7 @@ export function renderAppHtml(): string {
       const character = state.characters.find((entry) => entry.id === session.characterId);
       const identity = character?.name || "未绑定角色";
       const date = new Date(session.updatedAt || session.createdAt || 0);
-      const time = Number.isNaN(date.getTime()) ? "" : date.toLocaleString("zh-CN", {
+      const time = Number.isNaN(date.getTime()) ? "" : date.toLocaleString(uiLocale(), {
         month: "2-digit",
         day: "2-digit",
         hour: "2-digit",
@@ -11127,7 +11153,7 @@ export function renderAppHtml(): string {
       const items = state.worldConversations.map((conversation) => {
         const active = state.activeConversationKind === "world" && conversation.worldId === state.activeWorldId;
         const date = new Date(conversation.updatedAt || conversation.createdAt || 0);
-        const time = Number.isNaN(date.getTime()) ? "" : date.toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit" });
+        const time = Number.isNaN(date.getTime()) ? "" : date.toLocaleTimeString(uiLocale(), { hour: "2-digit", minute: "2-digit" });
         const members = (conversation.characterIds || []).map((id) => state.characters.find((entry) => entry.id === id)).filter(Boolean);
         const event = conversation.activeEvent;
         const preview = conversation.meetingScene
@@ -11162,7 +11188,7 @@ export function renderAppHtml(): string {
     function renderCharacterChannelItem(channel) {
       const names = Array.isArray(channel.characterNames) ? channel.characterNames : ["角色", "角色"];
       const date = new Date(channel.lastMessageAt || channel.updatedAt || channel.createdAt || 0);
-      const time = Number.isNaN(date.getTime()) ? "" : date.toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit" });
+      const time = Number.isNaN(date.getTime()) ? "" : date.toLocaleTimeString(uiLocale(), { hour: "2-digit", minute: "2-digit" });
       const status = ({
         queued: "等待中", running: "交流中", completed: "", declined: "未继续",
         failed: "未完成", cancelled: "已取消"
@@ -11215,7 +11241,7 @@ export function renderAppHtml(): string {
       const character = state.characters.find((entry) => entry.id === session.characterId);
       const date = new Date(session.updatedAt || session.createdAt || 0);
       const time = date && !Number.isNaN(date.getTime())
-        ? date.toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit" })
+        ? date.toLocaleTimeString(uiLocale(), { hour: "2-digit", minute: "2-digit" })
         : "";
       const title = session.incognito ? (character?.name || "角色") + " · 无痕" : character?.name || session.title || "未绑定角色";
       const lifecycle = session.sleepState === "sleeping"
@@ -11885,12 +11911,13 @@ export function renderAppHtml(): string {
       nodes.conversationHeaderAvatar.disabled = !available;
       if (available) {
         nodes.conversationHeaderAvatar.dataset.characterProfileId = character.id;
-        nodes.conversationHeaderAvatar.title = "查看" + character.name + "的资料";
-        nodes.conversationHeaderAvatar.setAttribute("aria-label", "查看" + character.name + "的资料");
+        const profileLabel = uiLocale() === "en" ? "View " + character.name + "’s profile" : "查看" + character.name + "的资料";
+        nodes.conversationHeaderAvatar.title = profileLabel;
+        nodes.conversationHeaderAvatar.setAttribute("aria-label", profileLabel);
       } else {
         delete nodes.conversationHeaderAvatar.dataset.characterProfileId;
         nodes.conversationHeaderAvatar.title = "";
-        nodes.conversationHeaderAvatar.setAttribute("aria-label", "当前没有可查看的角色资料");
+        nodes.conversationHeaderAvatar.setAttribute("aria-label", uiLocale() === "en" ? "No character profile is available" : "当前没有可查看的角色资料");
       }
     }
 
@@ -11907,7 +11934,7 @@ export function renderAppHtml(): string {
         const meetingScene = conversation?.meetingScene || state.activeMeetingScene;
         const memberCount = meetingScene?.participantIds?.length || conversation?.characterIds?.length || 0;
         const event = conversation?.activeEvent;
-        nodes.conversationCharacter.textContent = conversation?.world?.name || "共享世界";
+        nodes.conversationCharacter.textContent = conversation?.world?.name || uiText("共享世界");
         nodes.conversationMode.textContent = meetingScene
           ? "现场 · " + memberCount + " 位角色"
           : "世界演绎 · " + memberCount + " 位角色";
@@ -11936,7 +11963,7 @@ export function renderAppHtml(): string {
       if (state.activeConversationKind === "group") {
         const group = state.groupChats.find((entry) => entry.id === state.activeGroupId);
         const members = group?.characterIds.map((id) => state.characters.find((entry) => entry.id === id)).filter(Boolean) || [];
-        nodes.conversationCharacter.textContent = group?.title || "群聊";
+        nodes.conversationCharacter.textContent = group?.title || (uiLocale() === "en" ? "Group chat" : "群聊");
         nodes.conversationMode.textContent = (group?.mode === "rp" ? "群体剧情" : "角色群聊") + " · " + members.length + " 人";
         nodes.conversationHeaderAvatar.classList.add("group");
         nodes.conversationHeaderAvatar.innerHTML = groupAvatarCluster(group);
@@ -11951,7 +11978,7 @@ export function renderAppHtml(): string {
       const character = state.characters.find((entry) => entry.id === state.selectedCharacterId);
       const incognito = incognitoConversationIsActive();
       nodes.conversationHeaderAvatar.classList.remove("group");
-      nodes.conversationCharacter.textContent = character?.name || "未选择角色";
+      nodes.conversationCharacter.textContent = character?.name || uiText("未选择角色");
       nodes.conversationMode.textContent = incognito
         ? "无痕会话"
         : state.conversationSpace === "secret" ? "私密对话" : "角色私聊";
@@ -12389,7 +12416,7 @@ export function renderAppHtml(): string {
       if (state.uiMode !== "schedule") return;
       const characterMode = state.scheduleOwnerType === "character";
       const character = state.characters.find((entry) => entry.id === state.scheduleCharacterId);
-      nodes.conversationCharacter.textContent = characterMode ? (character?.name || "未选择角色") : "我的日程";
+      nodes.conversationCharacter.textContent = characterMode ? (character?.name || uiText("未选择角色")) : (uiLocale() === "en" ? "My schedule" : "我的日程");
       nodes.conversationHeaderAvatar.classList.remove("group");
       nodes.conversationMode.textContent = characterMode ? "角色日程" : "现实日程";
       nodes.conversationHeaderAvatar.style.setProperty("--avatar-hue", avatarHue(characterMode ? character?.name || "角色" : "我"));
@@ -13984,7 +14011,7 @@ export function renderAppHtml(): string {
       const activelyPaused = pausedUntil && Number.isFinite(pausedUntil.getTime()) && pausedUntil.getTime() > Date.now();
       nodes.lifeProactivePause.hidden = !activelyPaused;
       nodes.lifeProactivePauseText.textContent = activelyPaused
-        ? "主动消息已暂停至 " + pausedUntil.toLocaleString("zh-CN")
+        ? (uiLocale() === "en" ? "Proactive messages paused until " : "主动消息已暂停至 ") + pausedUntil.toLocaleString(uiLocale())
         : "";
       nodes.planCharacterLifeBtn.disabled = !life.policy?.enabled || !(life.places || []).length;
       nodes.simulateCharacterMomentBtn.disabled = !(life.places || []).length;
@@ -14013,7 +14040,7 @@ export function renderAppHtml(): string {
         : '<div class="life-empty-row">这个世界还没有地点</div>';
       nodes.lifeEventList.innerHTML = (life.events || []).length
         ? life.events.slice(0, 8).map((event) => '<div class="life-event-row"><strong>' + escapeHtml(event.summary) + '</strong>' +
-            '<time>' + escapeHtml(new Date(event.startsAt).toLocaleString("zh-CN")) + '</time></div>').join("")
+            '<time>' + escapeHtml(new Date(event.startsAt).toLocaleString(uiLocale())) + '</time></div>').join("")
         : '<div class="life-empty-row">还没有发生生活事件</div>';
       nodes.lifeProactiveList.innerHTML = (life.proactiveMessages || []).length
         ? life.proactiveMessages.slice(0, 12).map((message) => {
@@ -14024,7 +14051,7 @@ export function renderAppHtml(): string {
               '<span class="life-decision-badge ' + escapeHtml(tone) + '">' + escapeHtml(proactiveDecisionLabel(message.decisionCode)) + '</span></div>' +
               (detail ? '<p>' + escapeHtml(detail) + '</p>' : '') +
               '<div class="life-proactive-meta"><span>评分 ' + score + '</span><span>·</span><span>' +
-                escapeHtml(new Date(message.updatedAt || message.createdAt).toLocaleString("zh-CN")) + '</span>' +
+                escapeHtml(new Date(message.updatedAt || message.createdAt).toLocaleString(uiLocale())) + '</span>' +
                 (message.feedbackType ? '<span>· ' + escapeHtml(proactiveFeedbackLabel(message.feedbackType)) + '</span>' : '') + '</div></div>';
           }).join("")
         : '<div class="life-empty-row">暂无主动消息候选</div>';
@@ -14041,7 +14068,7 @@ export function renderAppHtml(): string {
       });
       nodes.lifeTopicPolicyList.innerHTML = topicPolicies.size
         ? [...topicPolicies.values()].sort((left, right) => proactiveTopicModeRank(left.mode) - proactiveTopicModeRank(right.mode) ||
-            String(left.topicLabel).localeCompare(String(right.topicLabel), "zh-CN")).map((policy) =>
+            String(left.topicLabel).localeCompare(String(right.topicLabel), uiLocale())).map((policy) =>
             '<div class="life-topic-policy-row"><div><strong>' + escapeHtml(policy.topicLabel || policy.topicKey) + '</strong>' +
               '<div class="life-topic-mode">' + escapeHtml(proactiveTopicModeLabel(policy.mode)) +
               ' · 有帮助 ' + Number(policy.helpfulCount || 0) + ' · 减少 ' + Number(policy.lessOftenCount || 0) + '</div></div>' +
@@ -14067,8 +14094,8 @@ export function renderAppHtml(): string {
 
     function proactiveDecisionHint(message) {
       const details = message?.decisionDetails || {};
-      if (details.availableAfter) return "最早可在 " + new Date(details.availableAfter).toLocaleString("zh-CN") + " 再评估";
-      if (details.pausedUntil) return "暂停至 " + new Date(details.pausedUntil).toLocaleString("zh-CN");
+      if (details.availableAfter) return (uiLocale() === "en" ? "Can be evaluated again after " : "最早可在 ") + new Date(details.availableAfter).toLocaleString(uiLocale()) + (uiLocale() === "en" ? "" : " 再评估");
+      if (details.pausedUntil) return (uiLocale() === "en" ? "Paused until " : "暂停至 ") + new Date(details.pausedUntil).toLocaleString(uiLocale());
       if (details.reason) return String(details.reason);
       return message.text ? String(message.text).slice(0, 120) : "";
     }
@@ -16093,7 +16120,7 @@ export function renderAppHtml(): string {
     function formatImTime(value) {
       if (!value) return "未知";
       const date = new Date(value);
-      return Number.isNaN(date.getTime()) ? "未知" : date.toLocaleString("zh-CN", { hour12: false });
+      return Number.isNaN(date.getTime()) ? uiText("未知") : date.toLocaleString(uiLocale(), { hour12: false });
     }
 
     function imErrorMessage(error) {
@@ -17088,7 +17115,7 @@ export function renderAppHtml(): string {
 
     function formatScheduleTime(value, timezone) {
       try {
-        return new Intl.DateTimeFormat("zh-CN", {
+        return new Intl.DateTimeFormat(uiLocale(), {
           timeZone: timezone,
           month: "2-digit",
           day: "2-digit",
@@ -19824,7 +19851,7 @@ export function renderAppHtml(): string {
             const name = character?.name || names[fallbackIndex] || "角色";
             const time = new Date(message.createdAt);
             const timeLabel = Number.isNaN(time.getTime()) ? "" :
-              time.toLocaleString("zh-CN", {
+              time.toLocaleString(uiLocale(), {
                 month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit"
               });
             return '<div class="character-channel-message">' +
@@ -19880,7 +19907,7 @@ export function renderAppHtml(): string {
                 })[episode.status] || episode.status || "";
             const episodeTime = new Date(episode.completedAt || episode.createdAt);
             const episodeTimeLabel = Number.isNaN(episodeTime.getTime()) ? "" :
-              episodeTime.toLocaleString("zh-CN", {
+              episodeTime.toLocaleString(uiLocale(), {
                 month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit"
               });
             const timingSummary = collaborationTimingSummary(episode, channel, names);
@@ -20037,7 +20064,7 @@ export function renderAppHtml(): string {
         document.getElementById("characterDiaryEntries").innerHTML = (body.entries || []).map(entry => {
           const narrativeJob = entry.jobs.find(job => job.kind === "narrative");
           const memoryJob = entry.jobs.find(job => job.kind === "memory");
-          const date = new Date(entry.occurredAt).toLocaleString("zh-CN", { timeZone: entry.source.timezone });
+          const date = new Date(entry.occurredAt).toLocaleString(uiLocale(), { timeZone: entry.source.timezone });
           const memory = memoryJob?.status === "ready" ? (entry.memory || []) : [];
           return '<article class="diary-entry"><header><strong>' + escapeHtml(entry.title) + '</strong><small>' + escapeHtml(date + ' · ' + entry.source.worldName + (entry.invalidated ? ' · 经历已撤销，不再进入角色记忆' : '')) + '</small></header>' +
             '<div class="diary-prose markdown-body">' + (entry.narrative ? renderMarkdown(entry.narrative) : '<p class="muted">阅读版：' + escapeHtml(jobLabels[narrativeJob?.status] || "待整理") + '</p>') + '</div>' +
@@ -21271,7 +21298,7 @@ export function renderAppHtml(): string {
       nodes.taskBenchHistory.innerHTML = '<details' + (historyWasOpen ? ' open' : '') + '><summary>已保存评测历史 · ' + state.taskBenchReports.length + ' 次' + loadingLabel + errorLabel + '</summary>' +
         '<table class="feature-test-history-table"><thead><tr><th>评测</th><th>时间</th><th>目标</th><th>模式</th><th>通过率</th><th>Judge</th><th>综合</th></tr></thead><tbody>' +
         state.taskBenchReports.map((report) => '<tr class="' + (report.id === selectedId ? 'active' : '') + '"><td><button class="task-bench-history-open" type="button" data-task-bench-report-id="' + escapeHtml(report.id || "") + '" title="' + escapeHtml(report.name || "临时任务") + '">' + escapeHtml(report.name || "临时任务") + '</button></td><td>' +
-          escapeHtml(report.ranAt ? new Date(report.ranAt).toLocaleString("zh-CN", { hour12: false }) : "--") + '</td><td>' +
+          escapeHtml(report.ranAt ? new Date(report.ranAt).toLocaleString(uiLocale(), { hour12: false }) : "--") + '</td><td>' +
           escapeHtml(report.target?.profileName || report.target?.model || "未知") + '</td><td>' +
           escapeHtml(report.targetMode === "character" ? report.character?.name || "角色" : "通用 Agent") + '</td><td>' +
           escapeHtml(Math.round(Number(report.summary?.passRate || 0) * 100) + "%") + '</td><td>' +

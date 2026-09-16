@@ -66,7 +66,9 @@ export const reminderScript = String.raw`
       const p=readScheduleReminderPolicy(), start=nodes.scheduleStart.value && new Date(nodes.scheduleStart.value);
       reminderNode("scheduleReminderCustomChannels").hidden=p.channelMode !== "custom";
       reminderNode("scheduleReminderFollowHint").hidden=p.channelMode === "custom";
-      reminderNode("scheduleReminderPreview").textContent=start && Number.isFinite(start.getTime()) && p.enabled ? "通知时间："+new Date(start.getTime()-p.leadMinutes*60000).toLocaleString("zh-CN")+"；后台提前 "+p.prepareMinutes+" 分钟准备。" : "明确说几点提醒，就选择“按约定时间”；事件需要提前提醒时，再设置提前量。";
+      reminderNode("scheduleReminderPreview").textContent=start && Number.isFinite(start.getTime()) && p.enabled
+        ? (uiLocale() === "en" ? "Notification: " : "通知时间：") + new Date(start.getTime()-p.leadMinutes*60000).toLocaleString(uiLocale()) + (uiLocale() === "en" ? "; preparing " + p.prepareMinutes + " minutes early." : "；后台提前 "+p.prepareMinutes+" 分钟准备。")
+        : (uiLocale() === "en" ? "For reminders at an exact time, choose “At the scheduled time”. Use a lead time for events." : "明确说几点提醒，就选择“按约定时间”；事件需要提前提醒时，再设置提前量。");
     }
     reminderNode("reminderInboxBtn").addEventListener("click",openReminderInbox); reminderNode("openReminderToastBtn").addEventListener("click",openReminderInbox);
     reminderNode("closeReminderInboxBtn").addEventListener("click",()=>reminderNode("reminderInboxDialog").close()); reminderNode("dismissReminderToastBtn").addEventListener("click",()=>{reminderNode("reminderToast").hidden=true;});

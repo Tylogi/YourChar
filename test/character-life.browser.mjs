@@ -20,7 +20,7 @@ export async function runCharacterLifeChecks(browser, outputDir) {
     await kernel.openCanonicalPrivateConversation(bob.id);
     const server = createHttpServer({ kernel });
     await new Promise(resolvePromise => server.listen(0, "127.0.0.1", resolvePromise));
-    const page = await browser.newPage({ viewport: { width: theme === "dark" ? 390 : 1280, height: 980 }, colorScheme: theme, reducedMotion: "reduce" });
+    const page = await browser.newPage({ viewport: { width: theme === "dark" ? 390 : 1280, height: 980 }, locale: "zh-CN", colorScheme: theme, reducedMotion: "reduce" });
     const errors = [];
     page.on("pageerror", error => errors.push(error.message));
     try {

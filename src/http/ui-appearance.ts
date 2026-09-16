@@ -33,12 +33,16 @@ export const appearanceScript = String.raw`
         button.setAttribute("aria-pressed", String(button.dataset.themeChoice === appearance.preference));
       });
       const dark = document.documentElement.dataset.theme === "dark";
-      document.getElementById("appearanceStatus").textContent = (appearance.preference === "system" ? "跟随系统 · 当前为" : "当前为") + (dark ? "深色外观" : "浅色外观") + "，选择会保存在此浏览器。";
+      const english = window.yourcharLocale?.locale === "en";
+      document.getElementById("appearanceStatus").textContent = english
+        ? (appearance.preference === "system" ? "Following system · currently " : "Currently ") + (dark ? "dark" : "light") + ". This choice is saved in this browser."
+        : (appearance.preference === "system" ? "跟随系统 · 当前为" : "当前为") + (dark ? "深色外观" : "浅色外观") + "，选择会保存在此浏览器。";
     }
     document.getElementById("appearanceChoices").addEventListener("click", event => {
       const button = event.target.closest("[data-theme-choice]");
       if (button) window.yourcharAppearance.apply(button.dataset.themeChoice, true);
     });
     window.addEventListener("yourchar:themechange", updateAppearanceControls);
+    window.addEventListener("yourchar:localechange", updateAppearanceControls);
     updateAppearanceControls();
 `;

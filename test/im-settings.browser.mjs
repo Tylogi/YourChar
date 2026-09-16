@@ -56,7 +56,7 @@ export async function runImSettingsChecks(browser, outputDir) {
       await kernel.startImBinding("wechat");
       const server = createHttpServer({ kernel });
       await new Promise(resolve => server.listen(0, "127.0.0.1", resolve));
-      const page = await browser.newPage({ viewport: { width, height: 1000 }, colorScheme, reducedMotion: "reduce" });
+      const page = await browser.newPage({ viewport: { width, height: 1000 }, locale: "zh-CN", colorScheme, reducedMotion: "reduce" });
       const errors = [];
       page.on("pageerror", error => errors.push(error.message));
       try {

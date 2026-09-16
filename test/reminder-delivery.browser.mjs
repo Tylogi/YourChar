@@ -12,7 +12,7 @@ export async function runReminderDeliveryChecks(browser,outputDir) {
     const character=runtime.kernel.createCharacter({name:"提醒测试角色"});
     const session=await runtime.kernel.openCanonicalPrivateConversation(character.id);
     const server=createHttpServer({kernel:runtime.kernel}); await new Promise(resolve=>server.listen(0,"127.0.0.1",resolve));
-    const page=await browser.newPage({viewport:{width,height:900},colorScheme,reducedMotion:"reduce"});const errors=[];page.on("pageerror",error=>errors.push(error.message));
+    const page=await browser.newPage({viewport:{width,height:900},locale:"zh-CN",colorScheme,reducedMotion:"reduce"});const errors=[];page.on("pageerror",error=>errors.push(error.message));
     try{
       await page.goto("http://127.0.0.1:"+server.address().port,{waitUntil:"domcontentloaded"});
       await page.waitForFunction(()=>state.characters.length===1);

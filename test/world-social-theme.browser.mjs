@@ -19,7 +19,7 @@ export async function runWorldSocialThemeChecks(browser, outputDir) {
   const origin = `http://127.0.0.1:${server.address().port}`;
   try {
     for (const width of [320, 390, 768, 1024, 1440]) {
-      const page = await browser.newPage({ viewport: { width, height: 900 }, reducedMotion: "reduce" });
+      const page = await browser.newPage({ viewport: { width, height: 900 }, locale: "zh-CN", reducedMotion: "reduce" });
       const errors = [];
       page.on("pageerror", error => errors.push(error.message));
       try {

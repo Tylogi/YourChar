@@ -74,6 +74,7 @@ test("the retained month calendar renders 42 dates with selected/today states an
     scheduleItemsOnDate: (key: string) => key === selected ? [{ kind: "event", title: '<img src=x> "下午见"', status: "scheduled" }] : [],
     scheduleItemDisplayState: (item: { status: string }) => item.status,
     formatCalendarEvent: (item: { title: string }) => item.title,
+    uiLocale: () => "zh-CN",
     escapeHtml: (value: unknown) => String(value).replace(/[&<>"']/g, character => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[character]!),
   };
   new Script(script + "\nrenderScheduleCalendar();").runInNewContext(context);

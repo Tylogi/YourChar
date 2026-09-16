@@ -255,7 +255,7 @@ export const historyScript = String.raw`
         historySearchNext = body.next || null;
         document.getElementById("historySearchResults").insertAdjacentHTML("beforeend", results.map(result => {
           const name = ["user"].includes(result.role) ? "你" : result.role === "director" ? "旁白" : state.characters.find(character => character.id === result.senderId)?.name || (result.role === "assistant" ? document.getElementById("conversationCharacter").textContent : "会话记录");
-          return '<button class="history-search-result" type="button" data-history-result="' + escapeHtml(result.id) + '"><span>' + escapeHtml(name + ' · ' + new Date(result.timestamp).toLocaleString("zh-CN")) + '</span><p>' + highlightHistorySnippet(String(result.snippet || "")) + '</p></button>';
+          return '<button class="history-search-result" type="button" data-history-result="' + escapeHtml(result.id) + '"><span>' + escapeHtml(name + ' · ' + new Date(result.timestamp).toLocaleString(uiLocale())) + '</span><p>' + highlightHistorySnippet(String(result.snippet || "")) + '</p></button>';
         }).join(""));
         const count = document.getElementById("historySearchResults").children.length;
         status.textContent = count ? "已显示 " + count + " 条结果，点击定位原消息" : "没有找到匹配的聊天记录";

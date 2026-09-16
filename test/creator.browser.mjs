@@ -12,7 +12,7 @@ export async function runCreatorChecks(browser, outputDir) {
     const kernel = runtime.kernel;
     const server = createHttpServer({ kernel });
     await new Promise(resolvePromise => server.listen(0, "127.0.0.1", resolvePromise));
-    const page = await browser.newPage({ viewport: { width: theme === "dark" ? 390 : 1440, height: 1000 }, colorScheme: theme, reducedMotion: "reduce" });
+    const page = await browser.newPage({ viewport: { width: theme === "dark" ? 390 : 1440, height: 1000 }, locale: "zh-CN", colorScheme: theme, reducedMotion: "reduce" });
     const errors = [];
     page.on("pageerror", error => errors.push(error.message));
     try {

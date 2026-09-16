@@ -14,7 +14,7 @@ export async function runStreamingOrderChecks(browser, outputDir) {
     const session = await kernel.openCanonicalPrivateConversation(character.id, space);
     const server = createHttpServer({ kernel });
     await new Promise(resolvePromise => server.listen(0, "127.0.0.1", resolvePromise));
-    const page = await browser.newPage({ viewport: { width, height: 960 }, colorScheme: width === 390 ? "dark" : "light", reducedMotion: "reduce" });
+    const page = await browser.newPage({ viewport: { width, height: 960 }, locale: "zh-CN", colorScheme: width === 390 ? "dark" : "light", reducedMotion: "reduce" });
     const errors = [];
     page.on("pageerror", error => errors.push(error.message));
     const t = Date.now();

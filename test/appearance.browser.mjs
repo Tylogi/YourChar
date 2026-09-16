@@ -23,7 +23,7 @@ export async function runAppearanceChecks(browser, outputDir) {
   const origin = `http://127.0.0.1:${server.address().port}`;
   try {
     for (const width of [320, 390, 1440]) {
-      const page = await browser.newPage({ viewport: { width, height: 900 }, colorScheme: "dark", reducedMotion: "reduce" });
+      const page = await browser.newPage({ viewport: { width, height: 900 }, locale: "zh-CN", colorScheme: "dark", reducedMotion: "reduce" });
       const errors = []; page.on("pageerror", error => errors.push(error.message));
       try {
         await page.goto(origin, { waitUntil: "domcontentloaded" });

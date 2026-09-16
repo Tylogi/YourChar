@@ -38,6 +38,7 @@ export async function runWorldMapChecks(browser, outputDir) {
     for (const width of [320, 390, 1440]) {
       const page = await browser.newPage({
         viewport: { width, height: 1000 },
+        locale: "zh-CN",
         colorScheme: width === 390 ? "dark" : "light",
         reducedMotion: "reduce",
       });

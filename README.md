@@ -72,6 +72,10 @@ npm run dev
 
 Open **[http://127.0.0.1:8765](http://127.0.0.1:8765)**.
 The app builds automatically and stores state in `.yourchar/` by default.
+Choose **Settings → Appearance & language** to follow the device language or
+use Simplified Chinese or English explicitly. The preference is stored in the
+current browser; character names, conversations, and user-authored data keep
+their original language.
 
 ### 2. Connect a model
 

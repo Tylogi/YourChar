@@ -33,7 +33,7 @@ export async function runDiaryBrowserChecks(browser, outputDir) {
   try {
     for (const width of [320, 390, 1440]) {
       kernel.characterDiaries.updateSettings(alice.id, { narrativeEnabled: true, preset: "", presetMode: "inherit" });
-      const page = await browser.newPage({ viewport: { width, height: 900 }, reducedMotion: "reduce" });
+      const page = await browser.newPage({ viewport: { width, height: 900 }, locale: "zh-CN", reducedMotion: "reduce" });
       const errors = [];
       page.on("pageerror", error => errors.push(error.message));
       try {
