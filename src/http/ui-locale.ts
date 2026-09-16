@@ -39,7 +39,7 @@ export const englishUiMessages: Readonly<Record<string, string>> = Object.freeze
   "聊天": "Chat",
   "日程": "Schedule",
   "角色": "Characters",
-  "管理": "Management",
+  "管理": "Manage",
   "调试": "Debug",
   "会话": "Conversations",
   "世界": "Worlds",

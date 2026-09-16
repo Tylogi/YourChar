@@ -52,7 +52,7 @@ test("English catalog covers the primary product navigation and never treats use
   assert.equal(englishUiMessages["聊天"], "Chat");
   assert.equal(englishUiMessages["日程"], "Schedule");
   assert.equal(englishUiMessages["角色"], "Characters");
-  assert.equal(englishUiMessages["管理"], "Management");
+  assert.equal(englishUiMessages["管理"], "Manage");
   assert.equal(englishUiMessages["外观与语言"], "Appearance & language");
   assert.equal(englishUiMessages["设置，这是用户写的内容"], undefined);
 });

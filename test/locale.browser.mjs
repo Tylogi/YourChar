@@ -35,7 +35,8 @@ export async function runLocaleChecks(browser) {
     assert.equal(await page.locator("#normalBtn span").textContent(), "Chat");
     assert.equal(await page.locator("#scheduleBtn span").textContent(), "Schedule");
     assert.equal(await page.locator("#charactersBtn span").textContent(), "Characters");
-    assert.equal(await page.locator("#managementBtn span").textContent(), "Management");
+    assert.equal(await page.locator("#managementBtn span").textContent(), "Manage");
+    assert.equal(await page.locator("#managementBtn").evaluate(element => getComputedStyle(element).fontSize), "10px");
     assert.equal(await page.locator("#settingsBtn span").textContent(), "Settings");
     assert.equal(await page.locator("#conversationCharacter").textContent(), "设置", "character names are user data");
     assert.equal((await page.locator(".bubble.user .markdown-body").textContent()).trim(), "聊天", "user messages are not translated");
@@ -108,12 +109,32 @@ export async function runLocaleChecks(browser) {
     await page.locator('[data-locale-choice="en"]').click();
     await page.waitForFunction(() => document.documentElement.lang === "en" && document.querySelector("#normalBtn span")?.textContent === "Chat");
     assert.equal(await page.evaluate(() => localStorage.getItem("yourchar.locale")), "en");
+    await assertChineseSettingsTabStaysSingleLine(browser, origin);
     assert.deepEqual(errors, []);
     console.log("Locale settings checks passed (system/zh-CN/en)");
   } finally {
     await page.close();
     await new Promise(resolvePromise => server.close(resolvePromise));
     runtime.dispose();
+  }
+}
+
+async function assertChineseSettingsTabStaysSingleLine(browser, origin) {
+  for (const width of [700, 920]) {
+    const page = await browser.newPage({ viewport: { width, height: 700 }, locale: "zh-CN", reducedMotion: "reduce" });
+    try {
+      await page.addInitScript(() => localStorage.setItem("yourchar.locale", "zh-CN"));
+      await page.goto(origin, { waitUntil: "domcontentloaded" });
+      await page.locator("#settingsBtn").click();
+      const lines = await page.locator("#appearanceSettingsTabBtn").evaluate(element => {
+        const range = document.createRange();
+        range.selectNodeContents(element);
+        return new Set([...range.getClientRects()].map(rect => Math.round(rect.top))).size;
+      });
+      assert.equal(lines, 1, `Chinese appearance/language tab wraps at ${width}px`);
+    } finally {
+      await page.close();
+    }
   }
 }
 

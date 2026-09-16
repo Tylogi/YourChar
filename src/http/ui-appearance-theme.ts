@@ -14,6 +14,9 @@ export const appearanceCss = `
     :root[data-theme="light"] { color-scheme: light; }
     input, select, textarea { background: var(--panel); color: var(--text); }
     .settings-tabs { grid-template-columns: repeat(9, minmax(0, 1fr)); }
+    :root[data-locale="en"] .nav-segmented button { font-size: 10px; letter-spacing: -.01em; }
+    :root[data-locale="en"] .nav-segmented button span { white-space: nowrap; }
+    :root[data-locale="zh-CN"] #appearanceSettingsTabBtn { white-space: nowrap; }
     .appearance-choices { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 14px; max-width: 660px; margin: 24px 0; }
     .appearance-choice { display: grid; justify-items: center; gap: 8px; min-width: 0; padding: 14px 10px; border: 1px solid var(--line); border-radius: 10px; background: var(--panel); color: var(--text); cursor: pointer; }
     .appearance-choice:hover { background: var(--list); }
@@ -126,6 +129,13 @@ export const appearanceCss = `
     :root[data-theme="dark"] .markdown-body :is(th, td, hr) { border-color: var(--line); }
     :root[data-theme="dark"] .trace-json { background: var(--rail); color: var(--text); }
     :root[data-theme="dark"] dialog::backdrop { background: #00000099; }
+    @media (min-width: 901px) {
+      :root[data-locale="zh-CN"] .settings-tabs { grid-template-columns: repeat(8, minmax(0, 1fr)) minmax(104px, 1.25fr); }
+    }
+    @media (min-width: 601px) and (max-width: 900px) {
+      :root[data-locale="zh-CN"] .settings-tabs { grid-template-columns: repeat(5, minmax(0, 1fr)); }
+      :root[data-locale="zh-CN"] #appearanceSettingsTabBtn { grid-column: span 2; }
+    }
     @media (max-width: 600px) {
       .settings-tabs { grid-template-columns: repeat(3, minmax(0, 1fr)); }
       .appearance-choices { gap: 8px; }
