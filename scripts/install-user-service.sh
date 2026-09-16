@@ -3,21 +3,8 @@ set -euo pipefail
 
 project_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 node_path="$(command -v node)"
-uv_path="$(command -v uv || true)"
-if [[ -z "$uv_path" && -x "$project_dir/.tools/uv" ]]; then
-  uv_path="$project_dir/.tools/uv"
-fi
-if [[ -z "$uv_path" ]]; then
-  echo "uv is required to install the isolated MarkItDown document worker." >&2
-  echo "Install uv, then rerun this installer; system Python will not be modified." >&2
-  exit 1
-fi
-if [[ ! -x /usr/bin/python3 ]]; then
-  echo "Python 3.11 or newer is required at /usr/bin/python3 for the sandboxed MarkItDown worker." >&2
-  exit 1
-fi
 if [[ ! -x /usr/bin/bwrap ]]; then
-  echo "Bubblewrap is required at /usr/bin/bwrap for sandboxed Agent shell execution." >&2
+  echo "Bubblewrap is required at /usr/bin/bwrap for sandboxed Agent shell and document conversion." >&2
   exit 1
 fi
 unit_dir="${XDG_CONFIG_HOME:-$HOME/.config}/systemd/user"
@@ -115,7 +102,6 @@ fi
 migration_action="$("$node_path" --disable-warning=ExperimentalWarning \
   "$project_dir/scripts/migrate-state-directory.mjs" preflight "$project_dir")"
 
-"$uv_path" sync --project "$project_dir/services/markitdown" --frozen --python /usr/bin/python3
 npm --prefix "$project_dir" run build
 
 if [[ "$migration_action" == "migrate" ]]; then

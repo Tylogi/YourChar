@@ -3,10 +3,11 @@ import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
+import { strToU8, zipSync } from "fflate";
 import {
   DocumentConversionError,
   DocumentConversionService,
-  type MarkItDownRunner,
+  type OfficeParserRunner,
 } from "../src/document/index.js";
 import { createTestRuntime } from "../src/testing/index.js";
 import { WorkspaceFileService } from "../src/workspace/file-service.js";
@@ -15,12 +16,12 @@ test("document conversion is bounded, cache-scoped, and rejects invalid signatur
   const root = mkdtempSync(join(tmpdir(), "yourchar-document-service-"));
   const workspace = new WorkspaceFileService(root);
   let calls = 0;
-  const runner: MarkItDownRunner = async ({ absolutePath }) => {
+  const runner: OfficeParserRunner = async ({ absolutePath }) => {
     calls += 1;
     const source = readFileSync(absolutePath, "utf8");
     return {
       version: 1,
-      engine: "markitdown",
+      engine: "officeparser",
       title: "Fixture",
       markdown: `# Converted\n\n${source}\n\nlast line`,
     };
@@ -80,7 +81,7 @@ test("read_document is permission-gated, wraps untrusted content, and audits no 
   const documentService = new DocumentConversionService({
     runner: async ({ absolutePath }) => ({
       version: 1,
-      engine: "markitdown",
+      engine: "officeparser",
       title: "Prompt Safety",
       markdown: readFileSync(absolutePath, "utf8"),
     }),
@@ -126,20 +127,37 @@ test("read_document is permission-gated, wraps untrusted content, and audits no 
   }
 });
 
-test("real MarkItDown worker converts a PDF inside a network-isolated Bubblewrap sandbox", {
+test("real officeparser worker converts supported binary documents inside a network-isolated Bubblewrap sandbox", {
   skip: !new DocumentConversionService().isAvailable(),
 }, async () => {
-  const workspaceDir = mkdtempSync(join(tmpdir(), "yourchar-markitdown-real-"));
+  const workspaceDir = mkdtempSync(join(tmpdir(), "yourchar-officeparser-real-"));
   const workspace = new WorkspaceFileService(workspaceDir);
   const service = new DocumentConversionService();
+  const fixtures = [
+    ["fixture.pdf", simplePdf("OFFICEPARSER PDF SENTINEL"), /OFFICEPARSER PDF SENTINEL/],
+    ["fixture.docx", officeArchive({
+      "word/document.xml": `<?xml version="1.0"?><w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body><w:p><w:r><w:t>OFFICEPARSER DOCX SENTINEL</w:t></w:r></w:p></w:body></w:document>`,
+    }), /OFFICEPARSER DOCX SENTINEL/],
+    ["fixture.pptx", officeArchive({
+      "ppt/presentation.xml": `<?xml version="1.0"?><p:presentation xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main"/>`,
+      "ppt/slides/slide1.xml": `<?xml version="1.0"?><p:sld xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main" xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main"><p:cSld><p:spTree><p:sp><p:txBody><a:bodyPr/><a:lstStyle/><a:p><a:r><a:t>OFFICEPARSER PPTX SENTINEL</a:t></a:r></a:p></p:txBody></p:sp></p:spTree></p:cSld></p:sld>`,
+    }), /OFFICEPARSER PPTX SENTINEL/],
+    ["fixture.xlsx", officeArchive({
+      "xl/workbook.xml": `<?xml version="1.0"?><workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><sheets><sheet name="Fixture" sheetId="1" r:id="rId1"/></sheets></workbook>`,
+      "xl/_rels/workbook.xml.rels": `<?xml version="1.0"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet1.xml"/></Relationships>`,
+      "xl/worksheets/sheet1.xml": `<?xml version="1.0"?><worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><sheetData><row r="1"><c r="A1" t="inlineStr"><is><t>OFFICEPARSER XLSX SENTINEL</t></is></c></row></sheetData></worksheet>`,
+    }), /OFFICEPARSER XLSX SENTINEL/],
+  ] as const;
   try {
-    writeFileSync(join(workspaceDir, "fixture.pdf"), simplePdf("MARKITDOWN PDF SENTINEL"), { mode: 0o600 });
-    const result = await service.read({ path: "fixture.pdf", limit: 20 }, {
-      workspaceFiles: workspace,
-      cacheNamespace: "real-worker",
-    });
-    assert.equal(result.engine, "markitdown");
-    assert.match(result.markdown, /MARKITDOWN PDF SENTINEL/);
+    for (const [name, bytes, expected] of fixtures) {
+      writeFileSync(join(workspaceDir, name), bytes, { mode: 0o600 });
+      const result = await service.read({ path: name, limit: 20 }, {
+        workspaceFiles: workspace,
+        cacheNamespace: `real-worker:${name}`,
+      });
+      assert.equal(result.engine, "officeparser");
+      assert.match(result.markdown, expected);
+    }
 
     const controller = new AbortController();
     controller.abort();
@@ -155,6 +173,12 @@ test("real MarkItDown worker converts a PDF inside a network-isolated Bubblewrap
     rmSync(workspaceDir, { recursive: true, force: true });
   }
 });
+
+function officeArchive(files: Record<string, string>): Buffer {
+  return Buffer.from(zipSync(Object.fromEntries(
+    Object.entries(files).map(([path, contents]) => [path, strToU8(contents)]),
+  )));
+}
 
 function simplePdf(text: string): Buffer {
   const escaped = text.replaceAll("\\", "\\\\").replaceAll("(", "\\(").replaceAll(")", "\\)");

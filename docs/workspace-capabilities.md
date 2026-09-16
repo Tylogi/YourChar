@@ -75,18 +75,18 @@ authorized exactly, and only a real, dedicated package directory grants access
 to referenced resources below it. This prevents one normal Skill from reading
 an adjacent private-only Skill. Skill packages are always read-only.
 
-`read_document` converts Workspace-relative PDF, DOCX, PPTX, XLS/XLSX, HTML,
-CSV, and common text documents to bounded Markdown chunks with Microsoft
-MarkItDown. The Python worker runs in its own uv-managed environment inside a
-network-isolated Bubblewrap sandbox. It receives only one read-only source file,
-the read-only worker environment, temporary storage, and the minimum system
-runtime; it does not receive the Workspace directory, state directory, model
-credentials, host environment, or network namespace. Converted content is
-wrapped as untrusted document data and cached only in bounded process memory.
+`read_document` converts Workspace-relative PDF, DOCX, PPTX, XLSX, HTML, CSV,
+and common text documents to bounded Markdown chunks with `officeparser`. The
+Node.js worker runs inside a network-isolated Bubblewrap sandbox. It receives
+only one read-only source file, read-only runtime dependencies, temporary
+storage, and the minimum system runtime; it does not receive the Workspace
+directory, state directory, model credentials, host environment, or network
+namespace. Converted content is wrapped as untrusted document data and cached
+only in bounded process memory.
 Normal, per-character secret, and disposable incognito Workspaces use distinct
-cache namespaces. Empty-text PDFs fail explicitly as OCR candidates; the first
-integration does not pass Vision credentials to Python or silently upload a
-scanned document.
+cache namespaces. Empty-text PDFs fail explicitly as OCR candidates; the local
+worker does not receive Vision credentials or silently upload a scanned
+document.
 
 All paths supplied to workspace tools must be relative. The implementation
 resolves real paths and rejects symlink, directory, and parent-directory
@@ -236,7 +236,7 @@ integration suite executes Bubblewrap, checks read-only/read-write mounts,
 rejects path escape, confirms host paths are absent, and verifies that profile
 and SOUL write tools follow independent switches. Document tests additionally
 verify format signatures, bounded chunks, cache separation, untrusted-data
-wrapping, cancellation, and a real no-network MarkItDown worker conversion.
+wrapping, cancellation, and a real no-network `officeparser` worker conversion.
 
 Normal and per-character secret Workspace files are included in operational
 backups. They are not returned by the JSON export and are not removed by the

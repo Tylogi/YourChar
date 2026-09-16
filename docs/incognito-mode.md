@@ -38,7 +38,7 @@ Incognito mode deliberately disables persistent or externally observable Agent
 capabilities such as schedules, reminders, world automation, character
 collaboration, IM delivery, Skill installation, subagents, shell, Workspace
 attachments, web/search/vision tools, profile and SOUL writes, and memory
-proposals. Local Workspace read/write/edit and network-isolated MarkItDown
+proposals. Local Workspace read/write/edit and network-isolated `officeparser`
 document conversion remain inside the tmpfs overlay. Meeting interaction
 remains available because its database and
 event history are part of the disposable child runtime. The normal source

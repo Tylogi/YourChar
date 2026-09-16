@@ -25,16 +25,15 @@ from TyloQuant.
 This attribution applies to the two SVG assets. YourChar's project license
 remains [MIT](LICENSE).
 
-## Microsoft MarkItDown
+## officeparser
 
-YourChar uses Microsoft MarkItDown 0.1.x in an isolated local Python worker to
-convert supported Workspace documents into Markdown.
+YourChar uses officeparser 7.8.0 in an isolated local Node.js worker to convert
+supported Workspace documents into Markdown.
 
-- Upstream: <https://github.com/microsoft/markitdown>
+- Upstream: <https://github.com/harshankur/officeParser>
 - License: MIT
-- Local integration: only PDF, DOCX, PPTX, XLS/XLSX, HTML, CSV, and text
-  conversion dependencies are installed; plugins and network-oriented extras
-  are disabled.
+- Local integration: PDF, DOCX, PPTX, XLSX, HTML, and CSV conversion runs with
+  attachments and OCR disabled.
 
 ## Twemoji
 

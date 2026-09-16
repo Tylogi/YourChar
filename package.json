@@ -30,7 +30,6 @@
   "description": "Self-hosted AI characters with lasting memory, shared worlds, and tools for everyday life.",
   "scripts": {
     "build": "tsc -p tsconfig.json",
-    "setup:markitdown": "uv sync --project services/markitdown --frozen --python /usr/bin/python3",
     "dev": "npm run build && node --disable-warning=ExperimentalWarning dist/src/server.js",
     "start": "node --disable-warning=ExperimentalWarning dist/src/server.js",
     "acp": "node --disable-warning=ExperimentalWarning dist/src/acp/stdio.js",
@@ -77,6 +76,7 @@
     "linkedom": "^0.18.13",
     "lucide": "^1.24.0",
     "marked": "^18.0.6",
+    "officeparser": "7.8.0",
     "qrcode": "^1.5.4",
     "twemoji-svg": "^17.0.2",
     "typebox": "1.3.7",
@@ -85,5 +85,8 @@
     "undici": "8.5.0",
     "yaml": "2.9.0",
     "zod": "4.4.3"
+  },
+  "overrides": {
+    "pdfjs-dist": "6.2.108"
   }
 }

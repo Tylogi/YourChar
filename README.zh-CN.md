@@ -88,15 +88,9 @@ npm run dev
 <details>
 <summary>可选：文档工具与常驻运行</summary>
 
-PDF / Office 文档转换还需要 `uv`、Python 3.11+ 和 `/usr/bin/bwrap`。
-安装这些依赖后执行：
-
-```bash
-npm run setup:markitdown
-```
-
-该命令会建立 `services/markitdown/.venv`。基础聊天不依赖文档转换环境，
-使用相关工具时再在 Agent 管理中开启 Workspace 等权限。
+PDF / Office 文档转换在 Linux 上还需要 `/usr/bin/bwrap`；`npm ci` 会安装
+`officeparser` 文档工作进程。基础聊天不依赖文档转换环境，使用相关工具时再在
+Agent 管理中开启 Workspace 等权限。
 
 提醒与后台活动需要 YourChar 持续运行。
 Linux 用户服务、备份和升级方法见 [运维文档](docs/operations.md)。

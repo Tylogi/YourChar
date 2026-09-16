@@ -121,7 +121,7 @@ export npm_config_fund=false
   "$node_distribution/bin/node" scripts/scan-sensitive.mjs
 )
 
-for path in dist assets skills services/markitdown; do
+for path in dist assets skills; do
   /usr/bin/ditto "$source_root/$path" "$application_root/$path"
 done
 for path in package.json package-lock.json LICENSE THIRD_PARTY_NOTICES.md README.md README.zh-CN.md; do

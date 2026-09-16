@@ -1,6 +1,6 @@
 # MinerU Document MCP
 
-MinerU support is an optional, explicitly enabled document-processing capability. It complements the local MarkItDown reader: MarkItDown performs lightweight conversion inside YourChar's network-isolated sandbox, while MinerU can preserve richer PDF layout, formulas, tables, and OCR through a separately operated API.
+MinerU support is an optional, explicitly enabled document-processing capability. It complements the local `officeparser` reader: `officeparser` performs lightweight conversion inside YourChar's network-isolated sandbox, while MinerU can preserve richer PDF layout, formulas, tables, and OCR through a separately operated API.
 
 ## Setup
 

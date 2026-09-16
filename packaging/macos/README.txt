@@ -24,7 +24,7 @@ listening on 127.0.0.1:8765, the app attaches without taking ownership of it.
 macOS limitations
 -----------------
 
-The sandboxed Shell, local MarkItDown worker, and sandboxed TypeScript LSP use
+The sandboxed Shell, local officeparser worker, and sandboxed TypeScript LSP use
 Linux Bubblewrap and are unavailable in this macOS build. Core conversations,
 memory, characters, worlds, schedules, reminders, model providers, Workspace
 file operations, and supported network integrations remain available.

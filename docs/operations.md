@@ -3,15 +3,14 @@
 ## Managed user service
 
 Sandboxed Agent shell and structured document conversion require Bubblewrap at
-`/usr/bin/bwrap`. The MarkItDown worker also requires `uv` and Python 3.11 or
-newer. On Debian or Ubuntu install Bubblewrap before the service, install `uv`
-for the service user, and synchronize the project-local worker environment:
+`/usr/bin/bwrap`. The Node.js `officeparser` worker is installed with the other
+application dependencies. On Debian or Ubuntu install Bubblewrap before the
+service:
 
 ```bash
 sudo apt-get install bubblewrap
 /usr/bin/bwrap --version
-uv --version
-npm run setup:markitdown
+npm ci
 ```
 
 The scheduler is reliable only while the process is running. Install the user
@@ -22,8 +21,7 @@ chmod +x scripts/install-user-service.sh
 scripts/install-user-service.sh
 ```
 
-The installer first performs a frozen `uv sync` for
-`services/markitdown`, builds the current checkout, writes
+The installer builds the current checkout, writes
 `~/.config/systemd/user/rp-agent.service`, enables it, and starts it on
 `127.0.0.1:8765`. It preflights the state paths before creating anything. When
 only `.rp-agent` exists, the installer stops the old unit, verifies the Vault

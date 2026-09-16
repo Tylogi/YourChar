@@ -1,10 +1,6 @@
 node_modules/
 dist/
 coverage/
-.venv/
-.tools/
-__pycache__/
-*.py[cod]
 .env
 .env.*
 !.env.example

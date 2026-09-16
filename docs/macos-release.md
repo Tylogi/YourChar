@@ -19,7 +19,7 @@ runtime. Users do not need to install Node.js.
 
 The packaged app supports the core conversation, memory, character, world,
 schedule, reminder, model-provider, Workspace file, and network-integration
-features. Sandboxed Shell, the local MarkItDown worker, and the sandboxed
+features. Sandboxed Shell, the local `officeparser` worker, and the sandboxed
 TypeScript LSP require Linux Bubblewrap and remain unavailable on macOS.
 
 ## Build on Apple Silicon

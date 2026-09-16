@@ -34,7 +34,7 @@ first installation, or [Operations](operations.md) for deployment and backup.
 - persistent, retryable post-turn Memory Coordinator jobs with trusted review;
 - permission-gated workspace file tools and a Bubblewrap-isolated shell;
 - optional SSH Git access that keeps cloned repositories in a fixed Workspace tree;
-- a network-isolated MarkItDown worker for bounded PDF and Office document reading;
+- a network-isolated `officeparser` worker for bounded PDF and Office document reading;
 - optional MinerU API parsing for richer document layout, formulas, tables, and OCR, behind a separate MCP switch;
 - independently authorized User Profile and character SOUL editing;
 - collapsible per-message execution progress without exposing hidden model reasoning;

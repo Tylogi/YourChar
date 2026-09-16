@@ -15,7 +15,8 @@ import {
   statSync,
   writeFileSync,
 } from "node:fs";
-import { basename, extname, join, resolve } from "node:path";
+import { basename, extname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import type { WorkspaceFileService } from "../workspace/file-service.js";
 import type {
   DocumentConversion,
@@ -47,28 +48,26 @@ const supportedExtensions = new Set([
   ".pdf",
   ".pptx",
   ".txt",
-  ".xls",
   ".xlsx",
   ".xml",
   ".yaml",
   ".yml",
 ]);
 
-type MarkItDownWorkerResponse = {
+type OfficeParserWorkerResponse = {
   version: 1;
-  engine: "markitdown";
+  engine: "officeparser";
   title?: string | null;
   markdown: string;
 };
 
-export type MarkItDownRunner = (
+export type OfficeParserRunner = (
   input: { absolutePath: string; extension: string; bytes: Buffer },
   signal?: AbortSignal,
-) => Promise<MarkItDownWorkerResponse>;
+) => Promise<OfficeParserWorkerResponse>;
 
 export type DocumentConversionServiceOptions = {
-  workerDir?: string;
-  runner?: MarkItDownRunner;
+  runner?: OfficeParserRunner;
   timeoutMs?: number;
 };
 
@@ -78,18 +77,19 @@ export type DocumentWorkspaceContext = {
 };
 
 export class DocumentConversionService {
-  private readonly workerDir: string;
-  private readonly runner: MarkItDownRunner;
+  private readonly workerPath = fileURLToPath(new URL("./officeparser.js", import.meta.url));
+  private readonly nodeModulesDir = join(process.cwd(), "node_modules");
+  private readonly runner: OfficeParserRunner;
   private readonly customRunner: boolean;
   private readonly cache = new Map<string, DocumentConversion>();
   private cachedBytes = 0;
   private activeConversions = 0;
 
   constructor(options: DocumentConversionServiceOptions = {}) {
-    this.workerDir = resolve(options.workerDir ?? join(process.cwd(), "services", "markitdown"));
     this.customRunner = options.runner !== undefined;
-    this.runner = options.runner ?? ((input, signal) => runMarkItDownWorker(
-      this.workerDir,
+    this.runner = options.runner ?? ((input, signal) => runOfficeParserWorker(
+      this.workerPath,
+      this.nodeModulesDir,
       input,
       options.timeoutMs ?? defaultTimeoutMs,
       signal,
@@ -99,8 +99,8 @@ export class DocumentConversionService {
   isAvailable(): boolean {
     if (this.customRunner) return true;
     return existsSync(bubblewrapPath) &&
-      existsSync(join(this.workerDir, "worker.py")) &&
-      existsSync(join(this.workerDir, ".venv", "bin", "python"));
+      existsSync(this.workerPath) &&
+      existsSync(join(this.nodeModulesDir, "officeparser", "package.json"));
   }
 
   async read(
@@ -132,7 +132,7 @@ export class DocumentConversionService {
         );
       }
       this.activeConversions += 1;
-      let response: MarkItDownWorkerResponse;
+      let response: OfficeParserWorkerResponse;
       try {
         response = await this.runner({
           absolutePath: source.absolutePath,
@@ -148,12 +148,12 @@ export class DocumentConversionService {
         throw new DocumentConversionError(
           "DOCUMENT_OCR_REQUIRED",
           extension === ".pdf"
-            ? "MarkItDown found no readable text in this PDF; it may be scanned and require OCR"
-            : "MarkItDown returned no readable document text",
+            ? "officeparser found no readable text in this PDF; it may be scanned and require OCR"
+            : "officeparser returned no readable document text",
         );
       }
       conversion = {
-        engine: "markitdown",
+        engine: "officeparser",
         ...(response.title
           ? { title: response.title.trim().replace(/\s+/gu, " ").slice(0, 500) }
           : {}),
@@ -226,9 +226,6 @@ function assertSupportedSource(extension: string, bytes: Buffer): void {
   if ([".docx", ".pptx", ".xlsx"].includes(extension) && !isZipSignature(signature)) {
     throw new DocumentConversionError("DOCUMENT_SIGNATURE_INVALID", "the Office document signature is invalid");
   }
-  if (extension === ".xls" && !signature.equals(Buffer.from([0xd0, 0xcf, 0x11, 0xe0, 0xa1, 0xb1, 0x1a, 0xe1]))) {
-    throw new DocumentConversionError("DOCUMENT_SIGNATURE_INVALID", "the legacy Excel signature is invalid");
-  }
 }
 
 function isZipSignature(signature: Buffer): boolean {
@@ -300,43 +297,48 @@ function integerInRange(value: number, minimum: number, maximum: number, name: s
   return value;
 }
 
-function assertWorkerResponse(value: MarkItDownWorkerResponse): void {
+function assertWorkerResponse(value: OfficeParserWorkerResponse): void {
   if (
     !value || typeof value !== "object" || value.version !== 1 ||
-    value.engine !== "markitdown" || typeof value.markdown !== "string" ||
+    value.engine !== "officeparser" || typeof value.markdown !== "string" ||
     (value.title !== undefined && value.title !== null && typeof value.title !== "string")
   ) {
-    throw new DocumentConversionError("DOCUMENT_OUTPUT_INVALID", "MarkItDown returned an invalid response");
+    throw new DocumentConversionError("DOCUMENT_OUTPUT_INVALID", "officeparser returned an invalid response");
   }
   if (Buffer.byteLength(value.markdown, "utf8") > maximumConvertedMarkdownBytes) {
     throw new DocumentConversionError("DOCUMENT_OUTPUT_INVALID", "converted Markdown exceeds the 8 MiB limit");
   }
 }
 
-async function runMarkItDownWorker(
-  workerDir: string,
+async function runOfficeParserWorker(
+  workerPath: string,
+  nodeModulesDir: string,
   input: { absolutePath: string; extension: string; bytes: Buffer },
   timeoutMs: number,
   signal?: AbortSignal,
-): Promise<MarkItDownWorkerResponse> {
+): Promise<OfficeParserWorkerResponse> {
   if (signal?.aborted) {
     throw new DocumentConversionError("DOCUMENT_CONVERSION_ABORTED", "document conversion was cancelled");
   }
-  const resolvedWorkerDir = safeRealDirectory(workerDir);
-  const pythonPath = join(resolvedWorkerDir, ".venv", "bin", "python");
-  const workerPath = join(resolvedWorkerDir, "worker.py");
-  if (!existsSync(pythonPath) || !existsSync(workerPath)) {
-    throw new DocumentConversionError(
-      "DOCUMENT_RUNTIME_UNAVAILABLE",
-      "MarkItDown is not installed; run npm run setup:markitdown",
-    );
-  }
   if (!existsSync(bubblewrapPath)) {
-    throw new DocumentConversionError("DOCUMENT_RUNTIME_UNAVAILABLE", "Bubblewrap is required for MarkItDown");
+    throw new DocumentConversionError("DOCUMENT_RUNTIME_UNAVAILABLE", "Bubblewrap is required for officeparser");
+  }
+  const resolvedWorkerPath = safeRealFile(workerPath, "officeparser worker");
+  const resolvedNodeModulesDir = safeRealDirectory(nodeModulesDir, "Node.js dependency directory");
+  const resolvedPackagePath = safeRealFile(
+    join(resolvedNodeModulesDir, "..", "package.json"),
+    "package manifest",
+  );
+  const resolvedNodePath = safeRealFile(process.execPath, "Node.js executable");
+  if (!existsSync(join(resolvedNodeModulesDir, "officeparser", "package.json"))) {
+    throw new DocumentConversionError("DOCUMENT_RUNTIME_UNAVAILABLE", "officeparser is not installed; run npm ci");
   }
   const snapshot = createTmpfsSnapshot(input.extension, input.bytes);
   const sourcePath = snapshot.path;
   const sandboxSource = `/input/document${input.extension}`;
+  const sandboxRoot = "/opt/yourchar-document";
+  const sandboxNodePath = `${sandboxRoot}/node`;
+  const sandboxWorkerPath = `${sandboxRoot}/officeparser.js`;
   const args = [
     "--die-with-parent",
     "--new-session",
@@ -350,31 +352,30 @@ async function runMarkItDownWorker(
     "--tmpfs", "/tmp",
     "--dir", "/tmp/home",
     "--dir", "/input",
-    "--ro-bind", resolvedWorkerDir, "/opt/yourchar-markitdown",
+    "--dir", "/opt",
+    "--dir", sandboxRoot,
+    "--ro-bind", resolvedNodePath, sandboxNodePath,
+    "--ro-bind", resolvedWorkerPath, sandboxWorkerPath,
+    "--ro-bind", resolvedPackagePath, `${sandboxRoot}/package.json`,
+    "--ro-bind", resolvedNodeModulesDir, `${sandboxRoot}/node_modules`,
     "--ro-bind", sourcePath, sandboxSource,
     "--chdir", "/tmp",
     "--clearenv",
-    "--setenv", "PATH", "/opt/yourchar-markitdown/.venv/bin:/usr/bin:/bin",
+    "--setenv", "PATH", "/usr/bin:/bin",
     "--setenv", "HOME", "/tmp/home",
     "--setenv", "LANG", "C.UTF-8",
-    "--setenv", "PYTHONDONTWRITEBYTECODE", "1",
-    "--setenv", "PYTHONNOUSERSITE", "1",
+    "--setenv", "NODE_ENV", "production",
     "--",
-    "/opt/yourchar-markitdown/.venv/bin/python",
-    "/opt/yourchar-markitdown/worker.py",
-    sandboxSource,
-  ];
-  const pythonIndex = args.lastIndexOf("/opt/yourchar-markitdown/.venv/bin/python");
-  args.splice(
-    pythonIndex,
-    0,
     "/usr/bin/prlimit",
     "--as=1610612736",
     "--cpu=90",
     "--core=0",
     "--nofile=128",
     "--",
-  );
+    sandboxNodePath,
+    sandboxWorkerPath,
+    sandboxSource,
+  ];
   let child;
   try {
     child = spawn(bubblewrapPath, args, {
@@ -432,29 +433,29 @@ async function runMarkItDownWorker(
       child.once("close", resolveExit);
     });
     if (timedOut) {
-      throw new DocumentConversionError("DOCUMENT_CONVERSION_TIMEOUT", "MarkItDown conversion timed out");
+      throw new DocumentConversionError("DOCUMENT_CONVERSION_TIMEOUT", "officeparser conversion timed out");
     }
     if (aborted) {
       throw new DocumentConversionError("DOCUMENT_CONVERSION_ABORTED", "document conversion was cancelled");
     }
     if (overflow) {
-      throw new DocumentConversionError("DOCUMENT_OUTPUT_INVALID", "MarkItDown output exceeded the safe limit");
+      throw new DocumentConversionError("DOCUMENT_OUTPUT_INVALID", "officeparser output exceeded the safe limit");
     }
     if (exitCode !== 0) {
       const detail = Buffer.concat(stderr).toString("utf8").trim().slice(0, 1000);
       throw new DocumentConversionError(
         "DOCUMENT_CONVERSION_FAILED",
-        `MarkItDown could not convert ${basename(input.absolutePath)}${detail ? `: ${detail}` : ""}`,
+        `officeparser could not convert ${basename(input.absolutePath)}${detail ? `: ${detail}` : ""}`,
       );
     }
     let value: unknown;
     try {
       value = JSON.parse(Buffer.concat(stdout).toString("utf8"));
     } catch {
-      throw new DocumentConversionError("DOCUMENT_OUTPUT_INVALID", "MarkItDown returned malformed JSON");
+      throw new DocumentConversionError("DOCUMENT_OUTPUT_INVALID", "officeparser returned malformed JSON");
     }
-    assertWorkerResponse(value as MarkItDownWorkerResponse);
-    return value as MarkItDownWorkerResponse;
+    assertWorkerResponse(value as OfficeParserWorkerResponse);
+    return value as OfficeParserWorkerResponse;
   } finally {
     clearTimeout(timeout);
     signal?.removeEventListener("abort", abort);
@@ -509,14 +510,24 @@ function createTmpfsSnapshot(extension: string, bytes: Buffer): { dir: string; p
   }
 }
 
-function safeRealDirectory(path: string): string {
+function safeRealDirectory(path: string, label: string): string {
   if (!existsSync(path)) {
-    throw new DocumentConversionError("DOCUMENT_RUNTIME_UNAVAILABLE", "MarkItDown worker directory is missing");
+    throw new DocumentConversionError("DOCUMENT_RUNTIME_UNAVAILABLE", `${label} is missing`);
   }
   const real = realpathSync(path);
-  const stats = statSync(real);
-  if (!stats.isDirectory()) {
-    throw new DocumentConversionError("DOCUMENT_RUNTIME_UNAVAILABLE", "MarkItDown worker path is not a directory");
+  if (!statSync(real).isDirectory()) {
+    throw new DocumentConversionError("DOCUMENT_RUNTIME_UNAVAILABLE", `${label} is not a directory`);
+  }
+  return real;
+}
+
+function safeRealFile(path: string, label: string): string {
+  if (!existsSync(path)) {
+    throw new DocumentConversionError("DOCUMENT_RUNTIME_UNAVAILABLE", `${label} is missing`);
+  }
+  const real = realpathSync(path);
+  if (!statSync(real).isFile()) {
+    throw new DocumentConversionError("DOCUMENT_RUNTIME_UNAVAILABLE", `${label} is not a file`);
   }
   return real;
 }

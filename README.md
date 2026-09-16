@@ -99,16 +99,10 @@ and world settings for you to review.
 <details>
 <summary>Optional: document tools and a persistent service</summary>
 
-PDF/Office conversion additionally needs `uv`, Python 3.11+, and
-`/usr/bin/bwrap`. After installing those prerequisites:
-
-```bash
-npm run setup:markitdown
-```
-
-This creates `services/markitdown/.venv`. Basic chat does not require the
-document worker. Enable Workspace access and other tools in Agent management
-when you want to use them.
+PDF/Office conversion additionally needs `/usr/bin/bwrap` on Linux. The
+`officeparser` document worker is installed by `npm ci`; basic chat does not
+require it. Enable Workspace access and other tools in Agent management when
+you want to use them.
 
 Keep YourChar running for reminders and background activities.
 See [Operations](docs/operations.md) for the Linux user service, backups, and
