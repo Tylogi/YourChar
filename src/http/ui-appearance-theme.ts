@@ -138,6 +138,7 @@ export const appearanceCss = `
     }
     @media (max-width: 600px) {
       .settings-tabs { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+      :root[data-locale="en"] #appearanceSettingsTabBtn { white-space: normal; }
       .appearance-choices { gap: 8px; }
       .appearance-choice { padding: 10px 6px; }
       .appearance-choice small { font-size: 11px; }

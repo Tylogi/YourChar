@@ -110,6 +110,7 @@ export async function runLocaleChecks(browser) {
     await page.waitForFunction(() => document.documentElement.lang === "en" && document.querySelector("#normalBtn span")?.textContent === "Chat");
     assert.equal(await page.evaluate(() => localStorage.getItem("yourchar.locale")), "en");
     await assertChineseSettingsTabStaysSingleLine(browser, origin);
+    await assertEnglishMobileSettingsTabWrapsCleanly(browser, origin);
     assert.deepEqual(errors, []);
     console.log("Locale settings checks passed (system/zh-CN/en)");
   } finally {
@@ -135,6 +136,29 @@ async function assertChineseSettingsTabStaysSingleLine(browser, origin) {
     } finally {
       await page.close();
     }
+  }
+}
+
+async function assertEnglishMobileSettingsTabWrapsCleanly(browser, origin) {
+  const page = await browser.newPage({ viewport: { width: 390, height: 700 }, locale: "en-US", reducedMotion: "reduce" });
+  try {
+    await page.addInitScript(() => localStorage.setItem("yourchar.locale", "en"));
+    await page.goto(origin, { waitUntil: "domcontentloaded" });
+    await page.locator("#settingsBtn").click();
+    const layout = await page.locator("#appearanceSettingsTabBtn").evaluate(element => {
+      const bounds = element.getBoundingClientRect();
+      const range = document.createRange();
+      range.selectNodeContents(element);
+      const lines = [...range.getClientRects()];
+      return {
+        lineCount: new Set(lines.map(rect => Math.round(rect.top))).size,
+        contained: lines.every(rect => rect.left >= bounds.left - 1 && rect.right <= bounds.right + 1),
+      };
+    });
+    assert.equal(layout.lineCount, 2);
+    assert.equal(layout.contained, true);
+  } finally {
+    await page.close();
   }
 }
 
