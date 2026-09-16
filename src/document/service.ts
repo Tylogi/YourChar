@@ -367,7 +367,7 @@ async function runOfficeParserWorker(
     "--setenv", "NODE_ENV", "production",
     "--",
     "/usr/bin/prlimit",
-    "--as=1610612736",
+    "--as=2147483648",
     "--cpu=90",
     "--core=0",
     "--nofile=128",

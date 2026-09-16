@@ -1,8 +1,10 @@
 import assert from "node:assert/strict";
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { spawnSync } from "node:child_process";
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
+import { fileURLToPath } from "node:url";
 import { strToU8, zipSync } from "fflate";
 import {
   DocumentConversionError,
@@ -124,6 +126,32 @@ test("read_document is permission-gated, wraps untrusted content, and audits no 
   } finally {
     runtime.dispose();
     rmSync(workspaceDir, { recursive: true, force: true });
+  }
+});
+
+test("officeparser PDF conversion fits the sandbox address-space limit", {
+  skip: process.platform !== "linux" || !existsSync("/usr/bin/prlimit"),
+}, () => {
+  const root = mkdtempSync(join(tmpdir(), "yourchar-officeparser-memory-"));
+  const source = join(root, "fixture.pdf");
+  try {
+    writeFileSync(source, simplePdf("OFFICEPARSER PDF MEMORY SENTINEL"), { mode: 0o600 });
+    const result = spawnSync("/usr/bin/prlimit", [
+      "--as=2147483648",
+      "--cpu=90",
+      "--core=0",
+      "--nofile=128",
+      "--",
+      process.execPath,
+      fileURLToPath(new URL("../src/document/officeparser.js", import.meta.url)),
+      source,
+    ], { encoding: "utf8", timeout: 30_000, maxBuffer: 20 * 1024 * 1024 });
+    assert.equal(result.status, 0, result.stderr);
+    const response = JSON.parse(result.stdout) as { engine: string; markdown: string };
+    assert.equal(response.engine, "officeparser");
+    assert.match(response.markdown, /OFFICEPARSER PDF MEMORY SENTINEL/);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
   }
 });
 

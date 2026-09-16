@@ -1,6 +1,8 @@
 import { readFile } from "node:fs/promises";
 import { extname } from "node:path";
-import { OfficeParser, type SupportedFileType } from "officeparser";
+import type { SupportedFileType } from "officeparser";
+
+type OfficeParserClass = typeof import("officeparser").OfficeParser;
 
 const maximumMarkdownBytes = 8 * 1024 * 1024;
 const officeTypes: Partial<Record<string, SupportedFileType>> = {
@@ -28,7 +30,10 @@ async function main(): Promise<number> {
     let markdown: string;
     const fileType = officeTypes[extension];
     if (fileType) {
-      const ast = await OfficeParser.parseOffice(bytes, {
+      const parser = fileType === "pdf"
+        ? await textOnlyPdfParser()
+        : (await import("officeparser")).OfficeParser;
+      const ast = await parser.parseOffice(bytes, {
         fileType,
         extractAttachments: false,
         includeRawContent: false,
@@ -75,6 +80,14 @@ async function main(): Promise<number> {
     console.error(`${error instanceof Error ? error.name : "Error"}: ${message}`);
     return 1;
   }
+}
+
+async function textOnlyPdfParser(): Promise<OfficeParserClass> {
+  if (!("DOMMatrix" in globalThis)) {
+    // ponytail: text extraction does not render; this only satisfies PDF.js module initialization.
+    Object.defineProperty(globalThis, "DOMMatrix", { value: class DOMMatrix {} });
+  }
+  return (await import("officeparser/slim")).OfficeParser;
 }
 
 process.exitCode = await main();

@@ -3385,6 +3385,7 @@ export class CompanionKernel {
     this.dataManagement.check();
     const model = this.store.getRawModelApiConfig();
     const runtimeEvents = this.runtimeEvents.verifyIntegrity();
+    const documentConversionAvailable = this.documentService.isAvailable();
     return {
       status: "ready",
       database: "ok",
@@ -3395,7 +3396,7 @@ export class CompanionKernel {
       visionConfigured: this.visionService.isConfigured(),
       mineruConfigured: this.mineruService.isConfigured(),
       gitConfigured: this.gitService.isConfigured(),
-      officeparserAvailable: this.documentService.isAvailable(),
+      documentConversionAvailable,
       imGatewayConfigured: this.imIntegrations.gateway.configured,
       worldCount: this.worldService.listWorlds(true).length,
       notificationChannel: this.notificationChannel,

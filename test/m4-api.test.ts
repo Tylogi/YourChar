@@ -69,9 +69,11 @@ test("readiness, model diagnostics, export, and confirmed deletion form a closed
     const readiness = await (await fetch(`${baseUrl}/api/v1/readiness`)).json() as {
       status: string;
       database: string;
+      documentConversionAvailable: boolean;
       runtimeEvents: { status: string; eventCount: number };
     };
     assert.deepEqual({ status: readiness.status, database: readiness.database }, { status: "ready", database: "ok" });
+    assert.equal(typeof readiness.documentConversionAvailable, "boolean");
     assert.equal(readiness.runtimeEvents.status, "ok");
     assert.ok(readiness.runtimeEvents.eventCount >= 0);
     const runtimeEventHealth = await (await fetch(
