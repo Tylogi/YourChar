@@ -14,6 +14,7 @@
   <p>
     <a href="#quick-start">Quick start</a> ·
     <a href="#try-it">Try it</a> ·
+    <a href="docs/blog/building-reliable-agent-memory.en.md">Memory tutorial</a> ·
     <a href="docs/README.md">Documentation</a> ·
     <a href="CONTRIBUTING.md">Contribute</a>
   </p>
@@ -50,6 +51,18 @@ the same conversation.
 - **Your choice of model and data.** Use a local model endpoint or a supported
   hosted provider. Conversations and memory live in your state directory,
   with export, backup, and separate private-conversation controls.
+
+## Build a reliable agent memory system
+
+How do you keep an agent's memories trustworthy when users correct facts,
+ask it to forget, or a write is interrupted? Our engineering tutorial follows
+the implementation in YourChar: source evidence, correction and forgetting,
+context budgets, and crash recovery. The patterns apply to personal assistants
+and long-running agents, too.
+
+[Read the tutorial →](docs/blog/building-reliable-agent-memory.en.md) ·
+[简体中文](docs/blog/building-reliable-agent-memory.md) ·
+[Run the lab — no model API key needed](docs/blog/building-reliable-agent-memory.en.md#hands-on-lab)
 
 ## Quick start
 
@@ -178,10 +191,6 @@ and repository access have separate permission controls.
 
 YourChar builds on the original `@earendil-works/pi-coding-agent` session
 runtime, with TypeScript, SQLite, and a Markdown Memory Vault.
-
-Read the engineering tutorial: [Building a reliable Agent memory system (中文)](docs/blog/building-reliable-agent-memory.md),
-from evidence-backed capture and correction to retrieval budgets and crash recovery,
-with a runnable example that needs no model API key.
 
 - **Extend capabilities:** register trusted packages with explicit tools,
   settings, context contributions, and cleanup.

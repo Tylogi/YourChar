@@ -14,6 +14,7 @@
   <p>
     <a href="#快速开始">快速开始</a> ·
     <a href="#试着这样开始">体验示例</a> ·
+    <a href="docs/blog/building-reliable-agent-memory.md">记忆系统教程</a> ·
     <a href="docs/README.md">文档</a> ·
     <a href="CONTRIBUTING.md">参与贡献</a>
   </p>
@@ -44,6 +45,16 @@ YourChar 是一款开源、可自行部署的 AI 角色应用。你可以为角�
   委派任务；工具遵循你授予的权限。角色自己的生活日程与用户的真实日历分开。
 - **模型与数据由你选择。** 接入本地模型服务或支持的云端 Provider，
   将对话和记忆保存在本地，并使用导出、备份和独立的私密会话。
+
+## 如何构建可靠的 Agent 记忆系统
+
+用户改口了，旧记忆怎样失效？要求遗忘后，模型还会看到什么？写到一半崩溃了，
+应该恢复哪个版本？这篇工程教程结合 YourChar 源码，拆解原话证据、纠错与遗忘、
+上下文预算和崩溃恢复。这些设计同样适用于个人助手和长期任务 Agent。
+
+[阅读完整教程 →](docs/blog/building-reliable-agent-memory.md) ·
+[English](docs/blog/building-reliable-agent-memory.en.md) ·
+[直接动手实验：无需模型 API Key](docs/blog/building-reliable-agent-memory.md#hands-on-lab)
 
 ## 快速开始
 
@@ -160,10 +171,6 @@ Linux 用户服务、备份和升级方法见 [运维文档](docs/operations.md)
 
 YourChar 基于原始 `@earendil-works/pi-coding-agent` 会话运行时，
 使用 TypeScript、SQLite 和 Markdown Memory Vault。
-
-工程教程：[如何构建可靠的 Agent 记忆系统](docs/blog/building-reliable-agent-memory.md)。
-从原话证据、记忆纠错到检索预算与崩溃恢复，结合 YourChar 源码拆解，
-附带无需模型 API Key 的可运行实验。
 
 - **扩展能力：** 注册可信能力包，声明工具、设置、上下文和资源清理行为。
 - **运行长任务：** 子 Agent、后台 Shell、目标和工作流支持预算、取消与恢复策略。

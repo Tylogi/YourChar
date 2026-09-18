@@ -8,7 +8,9 @@ Some feature guides are currently written in Chinese.
 
 ## Engineering articles
 
-- [Building a reliable Agent memory system (中文)](blog/building-reliable-agent-memory.md): a hands-on walkthrough of evidence-backed capture, correction and forgetting, retrieval budgets, and crash recovery in YourChar, with a runnable example that needs no model API key.
+- **Building a reliable agent memory system** — [English](blog/building-reliable-agent-memory.en.md) · [简体中文](blog/building-reliable-agent-memory.md): evidence-backed capture, correction and forgetting, retrieval budgets, and crash recovery in YourChar. Includes a runnable lab that needs no model API key.
+
+For contributors: [sharing copy and publication notes](blog/memory-tutorial-sharing.md).
 
 ## Install and operate
 

@@ -1,8 +1,10 @@
-# 如何构建可靠的 Agent 记忆系统：YourChar 的工程实践
+# 如何构建可靠的 Agent 记忆系统
 
-Tylogi AI Lab · 2026-09-17 · 中文工程教程
+YourChar 的工程实践 · Tylogi AI Lab · 2026-09-17（更新：2026-09-18）
 
-[YourChar 项目](../../README.zh-CN.md) · [文档目录](../README.md) · [GitHub 源码](https://github.com/Tylogi/YourChar)
+简体中文 · [English](building-reliable-agent-memory.en.md)
+
+[YourChar 项目](../../README.zh-CN.md) · [文档目录](../README.md) · [GitHub 源码](https://github.com/Tylogi/YourChar) · [直接运行实验](#hands-on-lab)
 
 用户告诉 AI：“我平时不吃香菜。”几天后，让它安排一顿晚餐，它能想起这句话。这是一个不错的记忆演示。
 
@@ -13,6 +15,14 @@ Tylogi AI Lab · 2026-09-17 · 中文工程教程
 本文以开源项目 **YourChar** 的实现为例，从一条偏好的写入讲到上下文失效和崩溃恢复。你可以把这些设计用在个人助手、长期任务 Agent 或多角色应用中。文章面向已经做过简单 Agent、熟悉基本数据库操作的开发者；后面有一个无需模型 API Key 的本地实验。
 
 实现基线为提交 `81f33b5`。文中的对话均为合成示例；标为“简化示意”的代码用于解释设计，不能直接作为完整 Vault 文档导入。
+
+## 阅读路线
+
+- **设计写入规则：** [记忆契约](#memory-contract)、[候选与确认](#capture)、[纠错与遗忘](#lifecycle)。
+- **保证长期可用：** [权威存储](#source-of-truth)、[崩溃恢复](#recovery)、[可解释召回](#retrieval)、[上下文失效](#context)。
+- **动手检验：** [可撤回的洞察](#insights)、[无需 API Key 的实验](#hands-on-lab)、[迁移到自己的 Agent](#apply-it)。
+
+<a id="memory-contract"></a>
 
 ## 1. 先定义什么可以成为记忆
 
@@ -55,6 +65,8 @@ type Memory = {
 因此，在 RP 会话里，“剧情里的我是一位船长”不会仅因为包含“我是”就获得写入现实记忆的权限。提取任务的 realm 由运行时绑定，模型输出不能修改它。角色记忆必须带合法的角色归属；私密记忆必须带私密空间的所有者。
 
 完整类型和校验分别在 [记忆类型](../../src/rp/types.ts)、[Vault 元数据](../../src/memory-vault/types.ts) 和 [MemoryLifecycleService](../../src/memory-coordinator/lifecycle.ts)。
+
+<a id="capture"></a>
 
 ## 2. 让模型提取候选，让程序决定如何收录
 
@@ -118,6 +130,8 @@ flowchart TD
 
 实现入口：[Coordinator](../../src/memory-coordinator/coordinator.ts)、[提取协议](../../src/memory-coordinator/extractor.ts)、[Agent 记忆工具](../../src/mcp/memory-server.ts)。
 
+<a id="lifecycle"></a>
+
 ## 3. 把纠错和遗忘当成正式操作
 
 如果系统只会新增记忆，用得越久就越容易积累冲突。用户先说“工作日七点起床”，后来在管理界面改成“工作日八点起床”，应当产生可解释的替换关系：
@@ -149,6 +163,8 @@ memory-B 记录 supersedes = memory-A
 
 代码可从 [确认、纠错与遗忘](../../src/memory-coordinator/lifecycle.ts) 读起。
 
+<a id="source-of-truth"></a>
+
 ## 4. 给记忆确定一个权威数据源
 
 YourChar 选择 Markdown Vault 作为记忆的权威存储。文件由严格的 YAML 元数据和正文组成，方便用户阅读、迁移，以及在 Obsidian 一类编辑器中维护。部分目录如下：
@@ -178,6 +194,8 @@ SQLite 中的记忆行和 FTS 索引由这些文档投影得到。索引不一�
 有效外部修改在安全同步时被接受，索引随之更新；无效结构、重复 ID、错误路径或符号链接则会被拒绝。外部编辑器不受应用写入租约控制，因此仍应避免多个程序并发覆盖同一文档。这套机制针对应用观察到的版本冲突，不是通用的多人协同编辑协议。
 
 实现入口：[文件存储与 CAS](../../src/memory-vault/store.ts)、[严格文档解析](../../src/memory-vault/codec.ts)、[Vault 同步服务](../../src/memory-vault/service.ts)。
+
+<a id="recovery"></a>
 
 ## 5. 为“写到一半”设计恢复路径
 
@@ -216,6 +234,8 @@ prepared
 
 实现入口：[操作日志](../../src/memory-vault/journal.ts)、[持久化写入](../../src/memory-vault/durability.ts)、[写入者租约](../../src/memory-vault/writer-lock.ts)、[本地版本历史](../../src/memory-vault/history.ts)。更完整的恢复与备份约定见 [Memory R5](../memory-architecture-r5.md)。
 
+<a id="retrieval"></a>
+
 ## 6. 让召回过程可以解释
 
 存储可靠之后，才轮到“这次应该想起什么”。YourChar 当前使用词法检索：Key、Tag、正文匹配，SQLite FTS5/BM25，以及包含中文二元词组的重叠评分。这里没有 Embedding 索引或神经重排器。
@@ -251,6 +271,8 @@ recency = 1 / (1 + ageDays / 30)
 
 实现入口：[自动召回与评分](../../src/context/memory-retriever.ts)、[数据库检索](../../src/rp/repository.ts)。
 
+<a id="context"></a>
+
 ## 7. 管理已经进入上下文的记忆
 
 一个常见的遗漏是：数据库里纠正了记忆，但上轮发送给模型的旧内容还留在会话历史里。下一轮即使检索到了新记录，模型仍可能同时看到两个版本。
@@ -276,6 +298,8 @@ YourChar 因此记录上下文中存留的记忆 ID 和版本摘要。摘要覆�
 
 实现入口：[上下文规划](../../src/context/planner.ts)、[记忆版本](../../src/context/memory-version.ts)、[会话运行时](../../src/pi/session-runtime.ts)。
 
+<a id="insights"></a>
+
 ## 8. 从事实记录走向可撤回的用户洞察
 
 长期应用还会积累日程和行为数据。一次设置“提醒我读论文”，不应直接变成“用户每天读论文”。YourChar 把这一层单独建模为 User Insight：先保存观察，再判断是否足够支持某个有限的结论。
@@ -287,6 +311,8 @@ YourChar 因此记录上下文中存留的记忆 ID 和版本摘要。摘要覆�
 人物记忆也有独立的整理层：已确认的 `person` 事实可以汇入可编辑的 Markdown 人物档案，保留来源记忆 ID、称呼、别名和可见范围；查询时按需要生成简短片段。这里保留证据与档案的联系，避免摘要演化成找不到出处的描述。
 
 实现入口：[User Insight](../../src/user-insight/coordinator.ts)、[人物档案整理](../../src/memory-vault/service.ts)。
+
+<a id="hands-on-lab"></a>
 
 ## 9. 亲手验证一次“记住、纠错、遗忘”
 
@@ -380,6 +406,8 @@ npm run test:memory-durability
 
 工程断言与模型效果也要分开报告。仓库另有 `npm run eval:memory-daily`，会向配置好的兼容模型端点发送合成语料，评估类型覆盖、原话证据和负例；它需要模型配置，会产生实际推理调用。不能把脚本模型测试通过当成任意模型都能准确提取记忆的证明。
 
+<a id="apply-it"></a>
+
 ## 把这套设计用到自己的 Agent 中
 
 可以按依赖关系逐步建设：先定义来源、范围和状态，再实现候选与确认、同范围纠错和幂等写入；接着实现可解释检索与预算，并验证旧记忆会从下一次请求中失效；最后针对实际存储方式补齐恢复、并发写入约束和备份验证。每一步都应当有一个具体的失败场景对应它。
@@ -387,3 +415,5 @@ npm run test:memory-durability
 YourChar 当前仍有需要继续测量和改进的地方：词法检索会漏掉语义相近但用词不同的查询，候选池有限，日常信息与敏感信息的规则也不可能覆盖所有表达。未来加入向量召回或重排时，应该用真实漏召回样本验证收益，同时保留来源、范围、确认状态和版本失效这些约束。
 
 这个实现值得借鉴的地方，是把模型提取、用户控制、上下文管理和存储恢复连接成了一条可检查的数据路径。你可以从 [YourChar 源码](https://github.com/Tylogi/YourChar) 和文中的实验开始，给它一条需要记住的事实，再尝试纠正它、忘记它、让一次写入中断。欢迎把能够复现的失败案例和改进带回项目，让这些设计在更多模型和更长的真实使用中得到检验。
+
+[运行本地实验](#hands-on-lab) · [体验 YourChar](../../README.zh-CN.md#快速开始) · [反馈问题或贡献改进](../../CONTRIBUTING.md) · [English edition](building-reliable-agent-memory.en.md)
