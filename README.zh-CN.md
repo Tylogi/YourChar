@@ -161,6 +161,10 @@ Linux 用户服务、备份和升级方法见 [运维文档](docs/operations.md)
 YourChar 基于原始 `@earendil-works/pi-coding-agent` 会话运行时，
 使用 TypeScript、SQLite 和 Markdown Memory Vault。
 
+工程教程：[如何构建可靠的 Agent 记忆系统](docs/blog/building-reliable-agent-memory.md)。
+从原话证据、记忆纠错到检索预算与崩溃恢复，结合 YourChar 源码拆解，
+附带无需模型 API Key 的可运行实验。
+
 - **扩展能力：** 注册可信能力包，声明工具、设置、上下文和资源清理行为。
 - **运行长任务：** 子 Agent、后台 Shell、目标和工作流支持预算、取消与恢复策略。
 - **接入其他应用：** 通过带认证的本地 API、TypeScript SDK 或可选 ACP 桥接调用运行时。

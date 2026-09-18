@@ -6,6 +6,10 @@ Start with the [quick start](../README.md#quick-start) to run the app and create
 a character. This index groups the detailed guides by what you want to do.
 Some feature guides are currently written in Chinese.
 
+## Engineering articles
+
+- [Building a reliable Agent memory system (中文)](blog/building-reliable-agent-memory.md): a hands-on walkthrough of evidence-backed capture, correction and forgetting, retrieval budgets, and crash recovery in YourChar, with a runnable example that needs no model API key.
+
 ## Install and operate
 
 - [Model providers](model-provider-adapters.md): profiles, native transports, credential management, and routing.

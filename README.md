@@ -179,6 +179,10 @@ and repository access have separate permission controls.
 YourChar builds on the original `@earendil-works/pi-coding-agent` session
 runtime, with TypeScript, SQLite, and a Markdown Memory Vault.
 
+Read the engineering tutorial: [Building a reliable Agent memory system (中文)](docs/blog/building-reliable-agent-memory.md),
+from evidence-backed capture and correction to retrieval budgets and crash recovery,
+with a runnable example that needs no model API key.
+
 - **Extend capabilities:** register trusted packages with explicit tools,
   settings, context contributions, and cleanup.
 - **Run longer tasks:** durable subagents, background shell jobs, goals, and
