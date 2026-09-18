@@ -108,6 +108,7 @@ import type { WorldAutonomyCoordinator } from "../world/coordinator.js";
 import type { CharacterInteractionCoordinator } from "../world/character-interaction-coordinator.js";
 import type { InteractionService } from "../interaction/service.js";
 import type { ContextEconomicsRepository } from "../context/economics-repository.js";
+import type { UsageService } from "../usage/service.js";
 import type { RuntimeEventStore } from "../runtime-events/store.js";
 import type { WorkspaceFileService } from "../workspace/file-service.js";
 import {
@@ -352,6 +353,7 @@ export type ProviderPayloadOptions = {
   contextWindowTokens?: number;
   modelProfileId?: string;
   model?: string;
+  provider?: string;
   chatTemplateKwargs?: Record<string, string | number | boolean | null>;
   requireThinking?: boolean;
   reasoningEffort?: ModelReasoningEffort;
@@ -501,6 +503,7 @@ export type PiSessionRuntimeOptions = {
   permissionCatalog: AgentPermissionCatalog;
   memoryLifecycle: MemoryLifecycleService;
   contextEconomics: ContextEconomicsRepository;
+  usageService?: UsageService;
   workspaceDir: string;
   workspaceFiles: WorkspaceFileService;
   workspaceWriteGuard?: (additionalBytes: number) => void;
@@ -635,6 +638,7 @@ export class PiSessionRuntime {
   private readonly permissionCatalog: AgentPermissionCatalog;
   private readonly memoryLifecycle: MemoryLifecycleService;
   private readonly contextEconomics: ContextEconomicsRepository;
+  private readonly usageService?: UsageService;
   private readonly workspaceFiles: WorkspaceFileService;
   private readonly workspaceWriteGuard?: (additionalBytes: number) => void;
   private readonly workspaceRegistry: WorkspaceScopeRegistry;
@@ -701,6 +705,7 @@ export class PiSessionRuntime {
     this.permissionCatalog = options.permissionCatalog;
     this.memoryLifecycle = options.memoryLifecycle;
     this.contextEconomics = options.contextEconomics;
+    this.usageService = options.usageService;
     this.workspaceFiles = options.workspaceFiles;
     this.workspaceWriteGuard = options.workspaceWriteGuard;
     this.workspaceRegistry = options.workspaceRegistry ?? new WorkspaceScopeRegistry(
@@ -3441,6 +3446,16 @@ export class PiSessionRuntime {
               } catch {
                 // Usage observability must never affect the response lifecycle.
               }
+            }
+            try {
+              const usageOptions = this.providerPayloadOptions?.(toolState.sessionId);
+              this.usageService?.recordModelCall({
+                provider: usageOptions?.provider,
+                model: usageOptions?.model ?? "",
+                usage: event.message.usage,
+              });
+            } catch {
+              // Usage accounting must never affect the response lifecycle.
             }
           }
           if (event.message.role !== "assistant") return undefined;

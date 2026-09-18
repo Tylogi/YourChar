@@ -364,7 +364,7 @@ test("schema 51 upgrades safely to the current diary schema and pending diary wo
     const path = join(dir, "migration.sqlite");
     const old = new AppDatabase(path, { maxMigrationVersion: 51 }); old.close();
     const upgraded = new AppDatabase(path);
-    assert.equal((upgraded.connection.prepare("SELECT max(version) AS version FROM schema_migrations").get() as { version: number }).version, 69);
+    assert.equal((upgraded.connection.prepare("SELECT max(version) AS version FROM schema_migrations").get() as { version: number }).version, 71);
     upgraded.close();
     let owner = ""; let id = "";
     const first = createTestRuntime({ stateDir: dir, seed: "diary-first", diaryGenerator: generate });

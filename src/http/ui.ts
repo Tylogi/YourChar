@@ -7,6 +7,7 @@ import { localeBootstrap, localeScript } from "./ui-locale.js";
 import { lifeCss, lifePanelHtml, lifeScript } from "./ui-life.js";
 import { creatorCss, creatorHtml, creatorScript } from "./ui-creator.js";
 import { reminderCss, reminderPolicyHtml, reminderCenterHtml, reminderScript } from "./ui-reminders.js";
+import { usageCss, usagePanelHtml, usageScript } from "./ui-usage.js";
 import { streamingOrderScript } from "./streaming-order.js";
 
 export function renderAppHtml(): string {
@@ -5040,6 +5041,7 @@ export function renderAppHtml(): string {
   <style id="yourchar-life-theme">${lifeCss}</style>
   <style id="yourchar-creator-theme">${creatorCss}</style>
   <style id="yourchar-reminder-theme">${reminderCss}</style>
+  <style id="yourchar-usage-theme">${usageCss}</style>
 </head>
 <body>
   <div class="app">
@@ -5049,6 +5051,7 @@ export function renderAppHtml(): string {
         <div class="segmented nav-segmented" aria-label="UI mode">
           <button id="normalBtn" class="active" type="button"><i data-lucide="message-circle" aria-hidden="true"></i><span>聊天</span></button>
           <button id="scheduleBtn" type="button"><i data-lucide="calendar-days" aria-hidden="true"></i><span>日程</span></button>
+          <button id="usageBtn" type="button"><i data-lucide="gauge" aria-hidden="true"></i><span>用量</span></button>
           <button id="charactersBtn" type="button"><i data-lucide="users-round" aria-hidden="true"></i><span>角色</span></button>
           <button id="managementBtn" type="button"><i data-lucide="blocks" aria-hidden="true"></i><span>管理</span></button>
           <button id="settingsBtn" type="button"><i data-lucide="settings" aria-hidden="true"></i><span>设置</span></button>
@@ -5215,6 +5218,7 @@ export function renderAppHtml(): string {
           </form>
         </dialog>
       </section>
+${usagePanelHtml}
       <section id="charactersPage" class="settings-page" hidden>
         <div class="character-shell">
           <div class="character-head">
@@ -6628,6 +6632,7 @@ export function renderAppHtml(): string {
       scheduleOwnerType: "user",
       scheduleCharacterId: "",
       scheduleMobileView: "agenda",
+      usageSummary: null,
       scheduleItems: [],
       editingScheduleId: null,
       characters: [],
@@ -6845,6 +6850,32 @@ export function renderAppHtml(): string {
       chatPane: document.getElementById("chatPane"),
       mainPane: document.getElementById("mainPane"),
       schedulePage: document.getElementById("schedulePage"),
+      usageBtn: document.getElementById("usageBtn"),
+      usagePage: document.getElementById("usagePage"),
+      usageMonthInput: document.getElementById("usageMonthInput"),
+      usageRefreshBtn: document.getElementById("usageRefreshBtn"),
+      usageState: document.getElementById("usageState"),
+      usageCost: document.getElementById("usageCost"),
+      usageCostHint: document.getElementById("usageCostHint"),
+      usageCalls: document.getElementById("usageCalls"),
+      usageInput: document.getElementById("usageInput"),
+      usageOutput: document.getElementById("usageOutput"),
+      usageCacheRead: document.getElementById("usageCacheRead"),
+      usageCacheWrite: document.getElementById("usageCacheWrite"),
+      usageBudgetInput: document.getElementById("usageBudgetInput"),
+      usageBudgetSaveBtn: document.getElementById("usageBudgetSaveBtn"),
+      usageBudgetState: document.getElementById("usageBudgetState"),
+      usageBudgetFill: document.getElementById("usageBudgetFill"),
+      usageBudgetText: document.getElementById("usageBudgetText"),
+      usagePricingHint: document.getElementById("usagePricingHint"),
+      usageModelTable: document.getElementById("usageModelTable"),
+      usagePriceModel: document.getElementById("usagePriceModel"),
+      usagePriceInput: document.getElementById("usagePriceInput"),
+      usagePriceOutput: document.getElementById("usagePriceOutput"),
+      usagePriceCacheRead: document.getElementById("usagePriceCacheRead"),
+      usagePriceCacheWrite: document.getElementById("usagePriceCacheWrite"),
+      usagePriceSaveBtn: document.getElementById("usagePriceSaveBtn"),
+      usagePriceState: document.getElementById("usagePriceState"),
       charactersPage: document.getElementById("charactersPage"),
       managementPage: document.getElementById("managementPage"),
       settingsPage: document.getElementById("settingsPage"),
@@ -7527,6 +7558,7 @@ export function renderAppHtml(): string {
 
     nodes.normalBtn.addEventListener("click", () => setUiMode("normal"));
     nodes.scheduleBtn.addEventListener("click", () => setUiMode("schedule"));
+    nodes.usageBtn.addEventListener("click", () => setUiMode("usage"));
     nodes.charactersBtn.addEventListener("click", () => setUiMode("characters"));
     nodes.managementBtn.addEventListener("click", () => setUiMode("management"));
     nodes.settingsBtn.addEventListener("click", () => setUiMode("settings"));
@@ -7868,6 +7900,7 @@ export function renderAppHtml(): string {
     ${lifeScript}
     ${creatorScript}
     ${reminderScript}
+    ${usageScript}
     ${streamingOrderScript}
     window.addEventListener("yourchar:localechange", () => {
       renderMessages();
@@ -8094,6 +8127,7 @@ export function renderAppHtml(): string {
       updateContextBudgetChrome();
       nodes.normalBtn.classList.toggle("active", mode === "normal");
       nodes.scheduleBtn.classList.toggle("active", mode === "schedule");
+      nodes.usageBtn.classList.toggle("active", mode === "usage");
       nodes.charactersBtn.classList.toggle("active", mode === "characters");
       nodes.managementBtn.classList.toggle("active", mode === "management");
       nodes.settingsBtn.classList.toggle("active", mode === "settings");
@@ -8101,6 +8135,7 @@ export function renderAppHtml(): string {
       nodes.mainPane.dataset.mode = mode;
       nodes.chatPane.hidden = mode !== "normal";
       nodes.schedulePage.hidden = mode !== "schedule";
+      nodes.usagePage.hidden = mode !== "usage";
       nodes.charactersPage.hidden = mode !== "characters";
       nodes.managementPage.hidden = mode !== "management";
       nodes.settingsPage.hidden = mode !== "settings";
@@ -8117,6 +8152,7 @@ export function renderAppHtml(): string {
         renderScheduleScope();
         loadScheduleItems();
       }
+      if (mode === "usage") void loadUsage();
       if (mode === "normal") {
         nodes.conversationListToggle.hidden = false;
         updateChatIdentity();

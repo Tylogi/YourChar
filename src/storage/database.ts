@@ -3983,6 +3983,34 @@ const migrations: Migration[] = [
       );
     `,
   },
+  {
+    version: 70,
+    sql: `
+      CREATE TABLE usage_events (
+        id TEXT PRIMARY KEY,
+        provider TEXT NOT NULL,
+        model TEXT NOT NULL,
+        month TEXT NOT NULL,
+        input_tokens INTEGER NOT NULL DEFAULT 0 CHECK (input_tokens >= 0),
+        output_tokens INTEGER NOT NULL DEFAULT 0 CHECK (output_tokens >= 0),
+        cache_read_tokens INTEGER NOT NULL DEFAULT 0 CHECK (cache_read_tokens >= 0),
+        cache_write_tokens INTEGER NOT NULL DEFAULT 0 CHECK (cache_write_tokens >= 0),
+        created_at TEXT NOT NULL
+      );
+      CREATE INDEX usage_events_month_idx ON usage_events(month);
+    `,
+  },
+  {
+    version: 71,
+    sql: `
+      CREATE TABLE usage_settings (
+        id TEXT PRIMARY KEY CHECK (id = 'default'),
+        monthly_budget_yuan REAL CHECK (monthly_budget_yuan IS NULL OR monthly_budget_yuan >= 0),
+        price_overrides_json TEXT NOT NULL DEFAULT '{}' CHECK (json_valid(price_overrides_json)),
+        updated_at TEXT NOT NULL
+      );
+    `,
+  },
 ];
 
 export class AppDatabase {
@@ -4076,6 +4104,14 @@ export class AppDatabase {
       !applied.has(42) &&
       !this.columnExists("character_skill_versions", "conversation_space")
     ) staleVersions.push(38);
+    // Earlier development builds reused 70/71 for an unrelated feature. Re-run the
+    // usage migrations when their tables are missing so those databases self-heal.
+    if (maxMigrationVersion >= 70 && applied.has(70) && !this.tableExists("usage_events")) {
+      staleVersions.push(70);
+    }
+    if (maxMigrationVersion >= 71 && applied.has(71) && !this.tableExists("usage_settings")) {
+      staleVersions.push(71);
+    }
     if (!staleVersions.length) return;
     this.transaction(() => {
       const remove = this.connection.prepare("DELETE FROM schema_migrations WHERE version = ?");

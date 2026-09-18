@@ -133,7 +133,9 @@ Per-character relationship inspection/reset uses
 `/api/v1/relationship-coordinator/*`.
 Read-only retrieval evaluation uses `/api/v1/context-plan/preview` and
 `/api/v1/memory-retrieval/preview`; lightweight provider metrics use
-`/api/debug/context-economics`. Metadata-only Vault durability status uses
+`/api/debug/context-economics`. Real provider token usage, its equivalent API
+cost, and the monthly budget are read from `/api/v1/usage` and configured
+through `POST /api/v1/usage/settings`. Metadata-only Vault durability status uses
 `/api/v1/memory-vault/health` and `/api/v1/memory-vault/recovery`.
 Tavily Key and optional HTTPS proxy status use `/api/settings/tavily`; its
 connection diagnostic uses `POST /api/v1/diagnostics/tavily/test`.

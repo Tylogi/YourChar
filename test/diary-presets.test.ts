@@ -164,7 +164,7 @@ test("schema 52 migration preserves old diary instructions and enables inheritan
       const old = current.connection.prepare("SELECT * FROM character_diary_settings WHERE character_id='custom'").get()!;
       assert.equal(old.preset, "我之前精心写的文风"); assert.equal(old.narrative_enabled, 0); assert.equal(old.preset_mode, "none");
       assert.equal(current.connection.prepare("SELECT preset_mode FROM character_diary_settings WHERE character_id='default'").get()!.preset_mode, "inherit");
-      assert.equal(current.connection.prepare("SELECT max(version) AS v FROM schema_migrations").get()!.v, 69);
+      assert.equal(current.connection.prepare("SELECT max(version) AS v FROM schema_migrations").get()!.v, 71);
     } finally { current.close(); }
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });

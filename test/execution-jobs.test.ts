@@ -388,7 +388,7 @@ test("shutdown stages shell work as idle and only trusted explicit retry replays
       Number((second.kernel.database.connection.prepare(
         "SELECT MAX(version) AS version FROM schema_migrations",
       ).get() as { version: number }).version),
-      69,
+      71,
     );
   } finally {
     if (server) await new Promise<void>((resolve) => server!.close(() => resolve()));

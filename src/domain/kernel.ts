@@ -96,6 +96,7 @@ import {
   parseReminderTime,
   TimeResolutionError,
 } from "./time.js";
+import { UsageService } from "../usage/service.js";
 import { ScheduleRepository } from "../schedule/repository.js";
 import { quietHoursFromEnvironment, type QuietHoursPolicy } from "../schedule/quiet-hours.js";
 import { ScheduleScheduler } from "../schedule/scheduler.js";
@@ -614,6 +615,8 @@ export class CompanionKernel {
   readonly database: AppDatabase;
   /** Append-only reconstruction ledger for durable projections and model-visible turns. */
   readonly runtimeEvents: RuntimeEventStore;
+  /** 真实模型调用的用量账本与月预算。 */
+  readonly usageService: UsageService;
   readonly scheduleService: ScheduleService;
   readonly rpService: RpService;
   readonly groupChatService: GroupChatService;
@@ -705,11 +708,20 @@ export class CompanionKernel {
     this.additionalModelProviderAdapters = Object.freeze([
       ...(normalizedOptions.modelProviderAdapters ?? []),
     ]);
-    this.modelProviders = new ModelProviderRegistry([
-      openAiCompatibleProviderAdapter,
-      ...firstPartyNativeModelProviderAdapters,
-      ...this.additionalModelProviderAdapters,
-    ]);
+    this.modelProviders = new ModelProviderRegistry(
+      [
+        openAiCompatibleProviderAdapter,
+        ...firstPartyNativeModelProviderAdapters,
+        ...this.additionalModelProviderAdapters,
+      ],
+      (event) => {
+        try {
+          this.usageService?.recordModelCall(event);
+        } catch {
+          // Usage accounting must never affect the model call lifecycle.
+        }
+      },
+    );
     const configuredStateDir = this.store.stateDir;
     const runtimeCwd = resolve(normalizedOptions.runtimeCwd ?? process.cwd());
     const workspaceDir = resolve(
@@ -735,6 +747,7 @@ export class CompanionKernel {
         this.store.stateDir ? join(this.store.stateDir, "rp-agent.sqlite") : ":memory:",
         { tempStoreMemory: this.incognitoChild },
       );
+    this.usageService = new UsageService(this.database, this.clock, this.store.idGenerator);
     this.runtimeEvents = new RuntimeEventStore(this.database, this.clock);
     this.agentRuntimeConfiguration = new AgentRuntimeConfigurationManager(
       this.database,
@@ -1222,6 +1235,7 @@ export class CompanionKernel {
         moduleCatalog: this.moduleCatalog,
         permissionCatalog: this.permissionCatalog,
         memoryLifecycle: this.memoryLifecycle,
+        usageService: this.usageService,
         contextEconomics: this.contextEconomics,
         workspaceDir,
         workspaceFiles: this.workspaceFiles,
@@ -1268,6 +1282,7 @@ export class CompanionKernel {
             contextWindowTokens: config.contextWindowTokens,
             modelProfileId: binding.profileId,
             model: config.model,
+            provider: config.provider,
             chatTemplateKwargs: providerPolicy.chatTemplateKwargs,
             requireThinking: providerPolicy.requirePrivateThinking,
             reasoningEffort: config.reasoningEffort,

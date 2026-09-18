@@ -56,6 +56,7 @@ import type {
   CharacterOwnedSkillUpdateInput,
   ModelContextTraceScope,
 } from "../domain/index.js";
+import { sanitizePriceOverrides, type ModelPrice } from "../usage/index.js";
 import type {
   CreateScheduleItemInput,
   ScheduleItemKind,
@@ -2358,6 +2359,29 @@ async function route(input: {
     sendJson(input.response, 200, {
       occurrences: kernel.listReminderOccurrences(decodeURIComponent(occurrencesMatch[1])),
     });
+    return;
+  }
+
+  if (pathname === "/api/v1/usage" && method === "GET") {
+    const configured = kernel.store.getModelApiConfig();
+    sendJson(input.response, 200, kernel.usageService.summary(
+      url.searchParams.get("month") ?? undefined,
+      { provider: configured.provider, model: configured.model },
+    ));
+    return;
+  }
+
+  if (pathname === "/api/v1/usage/settings" && method === "POST") {
+    const body = asRecord(await readJson(input.request));
+    const patch: { monthlyBudgetYuan?: number | null; priceOverrides?: Record<string, ModelPrice> } = {};
+    if ("monthlyBudgetYuan" in body) {
+      const raw = body.monthlyBudgetYuan;
+      patch.monthlyBudgetYuan = raw === null || raw === undefined || raw === "" ? null : Number(raw);
+    }
+    if ("priceOverrides" in body) {
+      patch.priceOverrides = sanitizePriceOverrides(body.priceOverrides);
+    }
+    sendJson(input.response, 200, kernel.usageService.saveSettings(patch));
     return;
   }
 

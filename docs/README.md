@@ -16,6 +16,7 @@ For contributors: [sharing copy and publication notes](blog/memory-tutorial-shar
 
 - [Model providers](model-provider-adapters.md): profiles, native transports, credential management, and routing.
 - [Operations](operations.md): the Linux user service, state migration, backups, restore, and diagnostics.
+- [LLM usage and cost](llm-usage-cost.md): the token ledger, per-provider aggregation, price overrides, and the monthly budget.
 - [Runtime reference](runtime-reference.md): environment variables, HTTP routes, capability inventory, and compatibility history.
 - [WeChat and Feishu/Lark](im-channels.md): single-owner channels, character routing, and reminder delivery.
 - [Private mode](private-mode.md) and [Incognito](incognito-mode.md): durable partitions and disposable conversations.

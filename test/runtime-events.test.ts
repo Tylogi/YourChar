@@ -24,7 +24,7 @@ test("runtime event streams migrate typed payloads and replay from bounded check
     const version = database.connection.prepare(
       "SELECT max(version) AS version FROM schema_migrations",
     ).get() as { version: number };
-    assert.equal(Number(version.version), 69);
+    assert.equal(Number(version.version), 71);
 
     events.append({
       streamId: "projection:example:one",

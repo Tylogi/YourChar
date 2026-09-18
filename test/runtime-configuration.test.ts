@@ -43,7 +43,7 @@ test("schemas 58-69 add runtime, execution, goals, workflows, and event capture 
         Number((upgraded.connection.prepare(
           "SELECT MAX(version) AS version FROM schema_migrations",
         ).get() as { version: number }).version),
-        69,
+        71,
       );
       const manager = new AgentRuntimeConfigurationManager(
         upgraded,

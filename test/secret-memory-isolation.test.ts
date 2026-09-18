@@ -598,7 +598,7 @@ test("v37 upgrades pre-space memory storage as normal and rebuilds scoped FTS", 
       const schema = migrated.connection.prepare(
         "SELECT MAX(version) AS version FROM schema_migrations",
       ).get() as { version: number };
-      assert.equal(Number(schema.version), 69);
+      assert.equal(Number(schema.version), 71);
       const row = migrated.connection.prepare(
         `SELECT conversation_space, secret_owner_character_id, idempotency_key
          FROM rp_memories WHERE id = ?`,

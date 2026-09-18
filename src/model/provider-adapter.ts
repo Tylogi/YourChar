@@ -142,6 +142,13 @@ export type ModelProviderAdapter = {
   ): Promise<readonly string[]>;
 };
 
+/** 每次真实模型调用结束后回报一次用量，用于账单统计。 */
+export type ModelProviderUsageObserver = (event: {
+  provider: string;
+  model: string;
+  usage?: AssistantMessage["usage"];
+}) => void;
+
 export class ModelProviderRegistryError extends Error {
   readonly code = "MODEL_PROVIDER_REGISTRY_INVALID";
 
@@ -201,7 +208,10 @@ export class ModelProviderRegistry {
   private readonly adaptersById = new Map<string, ModelProviderAdapter>();
   private readonly descriptors: readonly ModelProviderDescriptor[];
 
-  constructor(adapters: readonly ModelProviderAdapter[]) {
+  constructor(
+    adapters: readonly ModelProviderAdapter[],
+    private readonly observeUsage?: ModelProviderUsageObserver,
+  ) {
     for (const adapter of adapters) {
       assertModelProviderAdapter(adapter);
       if (this.adaptersById.has(adapter.id)) {
@@ -380,7 +390,17 @@ export class ModelProviderRegistry {
           ? { apiKey: config.apiKey }
           : {}),
       });
-      return redactModelCredentialValue(message, config.apiKey);
+      const result = redactModelCredentialValue(message, config.apiKey);
+      try {
+        this.observeUsage?.({
+          provider: config.provider,
+          model: config.model,
+          usage: result.usage,
+        });
+      } catch {
+        // Usage accounting must never affect the model call lifecycle.
+      }
+      return result;
     } catch (error) {
       throw redactModelProviderError(error, config.apiKey);
     }
