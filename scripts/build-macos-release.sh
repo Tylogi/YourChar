@@ -13,8 +13,8 @@ Usage:
 Environment:
   MACOS_OUTPUT_DIR       Artifact directory (default: ./release)
   MACOS_NODE_CACHE_DIR   Cache for the verified Node archive
-  MACOS_RUN_FULL_TESTS=1 Run the Linux-oriented full suite instead of the macOS gate
-  MACOS_SKIP_TESTS=1     Build without running the macOS packaging test
+  MACOS_RUN_FULL_TESTS=1 Run the full suite in addition to the native macOS gate
+  MACOS_SKIP_TESTS=1     Build without tests (local iteration only, not for release)
 
 The output is ad-hoc signed and not notarized. Run this command on arm64 macOS.
 EOF
@@ -108,10 +108,11 @@ export npm_config_fund=false
   npm ci
   if [[ "${MACOS_SKIP_TESTS:-0}" == "1" ]]; then
     npm run build
-  elif [[ "${MACOS_RUN_FULL_TESTS:-0}" == "1" ]]; then
-    npm test
   else
     npm run test:macos
+    if [[ "${MACOS_RUN_FULL_TESTS:-0}" == "1" ]]; then
+      npm test
+    fi
   fi
   npm prune --omit=dev
   npm ls --omit=dev --depth=0

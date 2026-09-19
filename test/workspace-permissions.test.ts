@@ -6,18 +6,19 @@ import { join, relative } from "node:path";
 import test from "node:test";
 import { strToU8, zipSync } from "fflate";
 import { VirtualClock } from "../src/app/clock.js";
+import { shellSandboxAvailability } from "../src/execution/shell-sandbox.js";
 import { CompanionKernel } from "../src/domain/index.js";
 import { createHttpServer } from "../src/http/router.js";
 import { CharacterAgentSkillPackageService } from "../src/modules/character-skill-packages.js";
 import { AppDatabase } from "../src/storage/database.js";
 import { createTestRuntime, ScriptedModelController } from "../src/testing/index.js";
 
-test("permission defaults are conservative and profile write can be disabled independently", async () => {
+test("Workspace defaults to read-write while shell and privileged character mutations remain opt-in", async () => {
   const workspaceDir = mkdtempSync(join(tmpdir(), "rp-agent-workspace-default-"));
   const runtime = createTestRuntime({ seed: "permission-defaults", workspaceDir });
   try {
     assert.deepEqual(runtime.kernel.getAgentPermissions(), {
-      workspaceAccess: "off",
+      workspaceAccess: "read_write",
       shellEnabled: false,
       networkEnabled: false,
       userProfileWriteEnabled: true,
@@ -27,6 +28,8 @@ test("permission defaults are conservative and profile write can be disabled ind
       characterMemoryWriteEnabled: false,
       workspaceDir,
       shellAvailable: true,
+      shellBackend: shellSandboxAvailability().backend,
+      shellNetworkIsolationAvailable: shellSandboxAvailability().networkIsolation,
     });
     runtime.model.enqueue([
       { kind: "assistant_text", text: "第一轮" },
@@ -34,10 +37,10 @@ test("permission defaults are conservative and profile write can be disabled ind
     ]);
     await runtime.kernel.sendMessage("permission-defaults", { mode: "sms", text: "你好" });
     const defaults = runtime.model.requests[0].toolNames;
-    assert.equal(defaults.includes("read"), false);
-    assert.equal(defaults.includes("list_workspace"), false);
-    assert.equal(defaults.includes("write"), false);
-    assert.equal(defaults.includes("edit"), false);
+    assert.equal(defaults.includes("read"), true);
+    assert.equal(defaults.includes("list_workspace"), true);
+    assert.equal(defaults.includes("write"), true);
+    assert.equal(defaults.includes("edit"), true);
     assert.equal(defaults.includes("bash"), false);
     assert.equal(defaults.includes("update_user_profile"), true);
 
@@ -51,6 +54,24 @@ test("permission defaults are conservative and profile write can be disabled ind
     runtime.dispose();
     rmSync(workspaceDir, { recursive: true, force: true });
   }
+});
+
+test("default Workspace tools can read and write in a small model window without enabling Shell", async () => {
+  const workspaceDir = mkdtempSync(join(tmpdir(), "yourchar-default-workspace-use-"));
+  const runtime = createTestRuntime({ seed: "default-workspace-use", workspaceDir });
+  try {
+    runtime.kernel.patchModelApiConfig({ contextWindowTokens: 32_768, maxTokens: 2_048 });
+    runtime.model.enqueue([
+      { kind: "tool_call", name: "write", arguments: { path: "plan.md", content: "# Weekend\n" } },
+      { kind: "tool_call", name: "read", arguments: { path: "plan.md" } },
+      { kind: "assistant_text", text: "计划已保存。" },
+    ]);
+    const response = await runtime.kernel.sendMessage("default-workspace-use", { mode: "sms", text: "保存并读回周末计划" });
+    assert.equal(response.status, "completed");
+    assert.equal(readFileSync(join(workspaceDir, "plan.md"), "utf8"), "# Weekend\n");
+    assert.match(JSON.stringify(runtime.model.requests.at(-1)?.messages), /# Weekend/);
+    assert.equal(runtime.kernel.getAgentPermissions().shellEnabled, false);
+  } finally { runtime.dispose(); rmSync(workspaceDir, { recursive: true, force: true }); }
 });
 
 test("workspace tools enforce read-only and read-write boundaries", async () => {
@@ -251,6 +272,8 @@ test("agent permission API persists settings and prevents network without shell"
       characterMemoryWriteEnabled: false,
       workspaceDir: join(stateDir, "workspace"),
       shellAvailable: true,
+      shellBackend: shellSandboxAvailability().backend,
+      shellNetworkIsolationAvailable: shellSandboxAvailability().networkIsolation,
     });
     const disabled = restarted.patchAgentPermissions({ shellEnabled: false });
     assert.equal(disabled.networkEnabled, false);

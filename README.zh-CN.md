@@ -59,11 +59,12 @@ YourChar 是一款开源、可自行部署的 AI 角色应用。你可以为角�
 ## 快速开始
 
 需要 **Node.js 22.19.0 或更新版本**和 npm。完整功能以 Linux 为目标环境：
-沙盒 Shell 与文档转换依赖 Bubblewrap，无痕快照需要可验证的 `tmpfs` 内存文件系统。
+Linux 沙盒 Shell 与文档转换依赖 Bubblewrap，无痕快照需要可验证的 `tmpfs` 内存文件系统。
 
 需要免装 Node 的 Apple Silicon 桌面版，可参考
 [macOS Release 打包说明](docs/macos-release.md)。macOS 应用包含 YourChar 核心功能，
-但 Linux 专属的沙盒工具不可用。
+原生 Seatbelt Shell 已实现，[Mac 实机验证待完成](docs/native-sandbox-plan.md)；
+文档转换、沙盒 LSP 和无痕隔离仍依赖 Linux。
 
 ### 1. 启动应用
 
@@ -109,7 +110,8 @@ npm run setup:markitdown
 ```
 
 该命令会建立 `services/markitdown/.venv`。基础聊天不依赖文档转换环境，
-使用相关工具时再在 Agent 管理中开启 Workspace 等权限。
+角色默认可读写专用 Workspace，已保存的关闭或只读选择不会被覆盖；
+Shell 等高权限工具仍需在 Agent 管理中单独开启。
 
 提醒与后台活动需要 YourChar 持续运行。
 Linux 用户服务、备份和升级方法见 [运维文档](docs/operations.md)。
@@ -125,7 +127,7 @@ Linux 用户服务、备份和升级方法见 [运维文档](docs/operations.md)
 | “记住，帮我规划一天的时候，我喜欢简短的清单。” | 在记忆管理中查看保存的条目，再在后续对话中提及。 |
 | “十分钟后提醒我起来活动一下。” | 日程中出现真实提醒；保持应用运行，到时收到应用内通知。 |
 | 给两个角色创建有咖啡馆和图书馆的世界，开启自主生活。 | 观察活动安排、地点变化、角色交流，以及经历结束后的日记。 |
-| 开启 Workspace 写入权限后：“把我们的计划保存成 `weekend.md`，发给我。” | 工作区中出现实际文件，对话里收到文件附件。 |
+| “把我们的计划保存成 `weekend.md`，发给我。” | 工作区中出现实际文件，对话里收到文件附件（默认已允许 Workspace 读写）。 |
 
 ## 界面一览
 

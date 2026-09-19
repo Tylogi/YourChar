@@ -458,6 +458,8 @@ test("planned pressure starts near ninety percent of a small simulated window, n
   // Keep all measured warning/planned-pressure assertions below as the contract.
   const runtime = createTestRuntime({ seed: "r4-planned-pressure" });
   try {
+    // Keep the fixed token padding independent of newly enabled file tools.
+    runtime.kernel.patchAgentPermissions({ workspaceAccess: "off" });
     runtime.kernel.patchModelApiConfig({ contextWindowTokens: 32_768, maxTokens: 2_048 });
     runtime.model.enqueue([
       {
@@ -798,6 +800,8 @@ test("planned and manual context compaction do not send a wake notification", as
     },
   });
   try {
+    // Exercise planned (not preflight) pressure with the calibrated tool set.
+    runtime.kernel.patchAgentPermissions({ workspaceAccess: "off" });
     runtime.kernel.patchModelApiConfig({ contextWindowTokens: 32_768, maxTokens: 2_048 });
     const character = runtime.kernel.createCharacter({ name: "静默整理角色" });
     runtime.model.enqueue([

@@ -67,12 +67,14 @@ and long-running agents, too.
 ## Quick start
 
 Requires **Node.js 22.19.0 or newer** and npm. Linux is the target for the full
-feature set: sandboxed shell and document conversion use Bubblewrap, and
+feature set: its sandboxed shell and document conversion use Bubblewrap, and
 incognito snapshots require a verified `tmpfs` filesystem.
 
 For a self-contained Apple Silicon desktop build, see
 [macOS release packaging](docs/macos-release.md). The macOS app includes Node
-and core YourChar features; Linux-only sandboxed tools remain unavailable.
+and core YourChar features. A native Seatbelt Shell provider is implemented,
+with [Mac verification pending](docs/native-sandbox-plan.md); document conversion,
+sandboxed LSP, and incognito isolation still require Linux.
 
 ### 1. Start the app
 
@@ -124,8 +126,9 @@ npm run setup:markitdown
 ```
 
 This creates `services/markitdown/.venv`. Basic chat does not require the
-document worker. Enable Workspace access and other tools in Agent management
-when you want to use them.
+document worker. Characters have read/write Workspace access by default; saved
+off/read-only choices are preserved. Shell and other privileged tools remain
+opt-in under Agent management.
 
 Keep YourChar running for reminders and background activities.
 See [Operations](docs/operations.md) for the Linux user service, backups, and
@@ -143,7 +146,7 @@ before trying an optional tool.
 | “Remember that I prefer a short checklist when planning my day.” | Inspect the saved entry in Memory, then refer to it in a later conversation. |
 | “Remind me in ten minutes to take a break.” | A real schedule entry and an in-app reminder while YourChar is running. |
 | Give two characters a world with a café and a library; enable their autonomous life settings. | Activity plans, changing locations, conversations, and diaries as experiences settle. |
-| With Workspace write access enabled: “Save our plan as `weekend.md` and share it with me.” | An actual file in the Workspace and an attachment in the reply. |
+| “Save our plan as `weekend.md` and share it with me.” | An actual file in the Workspace and an attachment in the reply (read/write access is the default). |
 
 ## A look inside
 

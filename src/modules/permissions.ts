@@ -1,7 +1,8 @@
-import { accessSync, chmodSync, constants, mkdirSync } from "node:fs";
+import { chmodSync, mkdirSync } from "node:fs";
 import { resolve } from "node:path";
 import type { Clock } from "../app/clock.js";
 import type { AppDatabase } from "../storage/database.js";
+import { shellSandboxAvailability } from "../execution/shell-sandbox.js";
 import type {
   AgentPermissions,
   AgentPermissionsPatch,
@@ -21,8 +22,6 @@ const permissionKeys = {
   realityMemoryWrite: "permission:reality-memory-write",
   characterMemoryWrite: "permission:character-memory-write",
 } as const;
-
-const bubblewrapPath = "/usr/bin/bwrap";
 
 export class AgentPermissionCatalog {
   readonly workspaceDir: string;
@@ -44,20 +43,28 @@ export class AgentPermissionCatalog {
         .all() as SettingRow[])
         .map((row) => [row.module_id, Boolean(row.enabled)]),
     );
-    const workspaceRead = settings.get(permissionKeys.workspaceRead) ?? false;
-    const workspaceWrite = settings.get(permissionKeys.workspaceWrite) ?? false;
-    const shellEnabled = settings.get(permissionKeys.shell) ?? false;
+    const hasWorkspaceChoice = settings.has(permissionKeys.workspaceRead) || settings.has(permissionKeys.workspaceWrite);
+    const workspaceRead = settings.get(permissionKeys.workspaceRead) ?? !hasWorkspaceChoice;
+    const workspaceWrite = settings.get(permissionKeys.workspaceWrite) ?? !hasWorkspaceChoice;
+    const sandbox = shellSandboxAvailability();
+    const networkPreference = settings.get(permissionKeys.network) ?? true;
+    // An existing explicit offline policy must never become an online native
+    // shell silently. Such installations re-enable Shell with informed consent.
+    const shellEnabled = (settings.get(permissionKeys.shell) ?? false) && (networkPreference || sandbox.networkIsolation);
     return {
       workspaceAccess: workspaceAccessFrom(workspaceRead, workspaceWrite),
       shellEnabled,
-      networkEnabled: shellEnabled && (settings.get(permissionKeys.network) ?? false),
+      networkEnabled: shellEnabled && networkPreference,
       userProfileWriteEnabled: settings.get(permissionKeys.userProfileWrite) ?? true,
       characterSoulWriteEnabled: settings.get(permissionKeys.characterSoulWrite) ?? false,
       characterSkillManageEnabled: settings.get(permissionKeys.characterSkillManage) ?? false,
       realityMemoryWriteEnabled: settings.get(permissionKeys.realityMemoryWrite) ?? false,
       characterMemoryWriteEnabled: settings.get(permissionKeys.characterMemoryWrite) ?? false,
       workspaceDir: this.workspaceDir,
-      shellAvailable: isBubblewrapAvailable(),
+      shellAvailable: sandbox.available,
+      shellBackend: sandbox.backend,
+      shellNetworkIsolationAvailable: sandbox.networkIsolation,
+      ...(sandbox.reason ? { shellUnavailableReason: sandbox.reason } : {}),
     };
   }
 
@@ -68,12 +75,19 @@ export class AgentPermissionCatalog {
       ...current,
       ...patch,
     };
+    const storedNetwork = this.database.connection.prepare("SELECT enabled FROM agent_module_settings WHERE module_id = ?")
+      .get(permissionKeys.network) as { enabled: number } | undefined;
+    const networkPreference = patch.networkEnabled ?? (storedNetwork ? Boolean(storedNetwork.enabled) : true);
+    next.networkEnabled = next.shellEnabled && networkPreference;
     if (!next.shellEnabled) next.networkEnabled = false;
     if (next.shellEnabled && !next.shellAvailable) {
-      throw new AgentPermissionValidationError("Bubblewrap is unavailable; shell execution cannot be enabled");
+      throw new AgentPermissionValidationError(current.shellUnavailableReason ?? "A working sandbox is required before shell execution can be enabled");
     }
     if (patch.networkEnabled === true && !next.shellEnabled) {
       throw new AgentPermissionValidationError("shell execution must be enabled before shell network access");
+    }
+    if (next.shellEnabled && !networkPreference && !current.shellNetworkIsolationAvailable) {
+      throw new AgentPermissionValidationError("This native sandbox uses the host network. Enable shell networking or leave Shell disabled.");
     }
 
     const access = workspaceFlags(next.workspaceAccess);
@@ -81,7 +95,7 @@ export class AgentPermissionCatalog {
       this.persist(permissionKeys.workspaceRead, access.read);
       this.persist(permissionKeys.workspaceWrite, access.write);
       this.persist(permissionKeys.shell, next.shellEnabled);
-      this.persist(permissionKeys.network, next.networkEnabled);
+      this.persist(permissionKeys.network, networkPreference);
       this.persist(permissionKeys.userProfileWrite, next.userProfileWriteEnabled);
       this.persist(permissionKeys.characterSoulWrite, next.characterSoulWriteEnabled);
       this.persist(permissionKeys.characterSkillManage, next.characterSkillManageEnabled);
@@ -207,14 +221,5 @@ function assertPatch(patch: AgentPermissionsPatch): void {
     if (patch[key] !== undefined && typeof patch[key] !== "boolean") {
       throw new AgentPermissionValidationError(`${key} must be a boolean`);
     }
-  }
-}
-
-function isBubblewrapAvailable(): boolean {
-  try {
-    accessSync(bubblewrapPath, constants.X_OK);
-    return true;
-  } catch {
-    return false;
   }
 }

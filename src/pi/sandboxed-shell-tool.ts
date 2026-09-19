@@ -1,13 +1,12 @@
-import { spawn } from "node:child_process";
 import { createHash } from "node:crypto";
-import { realpathSync } from "node:fs";
 import { defineTool, type ToolDefinition } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 import type { CompanionStore } from "../domain/store.js";
 import type { ActionRecord } from "../domain/types.js";
 import type { WorkspaceAccess } from "../modules/types.js";
+import { bubblewrapArguments, spawnSandboxedShell, type ShellSandboxBackend } from "../execution/shell-sandbox.js";
 
-export const bubblewrapPath = "/usr/bin/bwrap";
+export { bubblewrapPath } from "../execution/shell-sandbox.js";
 const maxOutputBytes = 64 * 1024;
 const defaultTimeoutMs = 30_000;
 
@@ -20,6 +19,7 @@ export type SandboxedShellContext = {
   workspaceDir: string;
   workspaceAccess: WorkspaceAccess;
   networkEnabled: boolean;
+  protectedPaths?: readonly string[];
   store: CompanionStore;
   sessionId: string;
   actions: () => ActionRecord[];
@@ -38,8 +38,10 @@ export function createSandboxedShellTool(
     name: "bash",
     label: "Run sandboxed shell",
     description:
-      `Run a Bash command in an OS sandbox. Only /workspace is exposed (${context.workspaceAccess}); ` +
-      `host files are hidden and network is ${networkEnabledAtCreation ? "enabled" : "disabled"}.`,
+      `Run a Bash command in a file-confined OS sandbox (${context.workspaceAccess}). ` +
+      `Use workspace-relative paths; on macOS the working directory is the native Workspace path, ` +
+      `and on Linux/WSL2 it is /workspace. Private host files and application credentials are not exposed. ` +
+      `Network is ${networkEnabledAtCreation ? "enabled (host network)" : "disabled"}.`,
     parameters: bashParameters,
     executionMode: "sequential",
     async execute(_toolCallId, input, signal) {
@@ -64,6 +66,7 @@ export function createSandboxedShellTool(
         aborted: result.aborted,
         outputTruncated: result.truncated,
         networkEnabled,
+        sandboxBackend: result.backend,
       }));
       const status = result.timedOut
         ? "Command timed out"
@@ -90,13 +93,11 @@ async function runSandboxedCommand(
   timedOut: boolean;
   aborted: boolean;
   truncated: boolean;
+  backend: ShellSandboxBackend;
 }> {
-  const args = sandboxArguments(context, command, networkEnabled);
-  const child = spawn(bubblewrapPath, args, {
-    detached: true,
-    stdio: ["ignore", "pipe", "pipe"],
-    env: { PATH: "/usr/bin:/bin", LANG: "C.UTF-8" },
-  });
+  signal?.throwIfAborted();
+  const running = spawnSandboxedShell({ ...context, networkEnabled }, command);
+  const child = running.child;
   const chunks: Buffer[] = [];
   let retainedBytes = 0;
   let truncated = false;
@@ -112,18 +113,9 @@ async function runSandboxedCommand(
     }
     if (chunk.length > remaining) truncated = true;
   };
-  child.stdout.on("data", append);
-  child.stderr.on("data", append);
-
-  const terminate = () => {
-    if (child.pid) {
-      try {
-        process.kill(-child.pid, "SIGKILL");
-      } catch {
-        child.kill("SIGKILL");
-      }
-    }
-  };
+  child.stdout?.on("data", append);
+  child.stderr?.on("data", append);
+  const terminate = running.terminate;
   const timeout = setTimeout(() => {
     timedOut = true;
     terminate();
@@ -133,6 +125,7 @@ async function runSandboxedCommand(
     terminate();
   };
   signal?.addEventListener("abort", abort, { once: true });
+  if (signal?.aborted) abort();
   try {
     const exitCode = await new Promise<number | null>((resolve, reject) => {
       child.once("error", reject);
@@ -144,6 +137,7 @@ async function runSandboxedCommand(
       timedOut,
       aborted,
       truncated,
+      backend: running.backend,
     };
   } finally {
     clearTimeout(timeout);
@@ -156,50 +150,7 @@ export function sandboxArguments(
   command: string,
   networkEnabled = effectiveNetworkEnabled(context),
 ): string[] {
-  const args = [
-    "--die-with-parent",
-    "--new-session",
-    "--unshare-all",
-  ];
-  if (networkEnabled) args.push("--share-net");
-  args.push(
-    "--ro-bind", "/usr", "/usr",
-    "--symlink", "usr/bin", "/bin",
-    "--symlink", "usr/lib", "/lib",
-    "--symlink", "usr/lib64", "/lib64",
-    "--proc", "/proc",
-    "--dev", "/dev",
-    "--tmpfs", "/tmp",
-    "--dir", "/tmp/home",
-  );
-  if (context.workspaceAccess === "read_write") {
-    args.push("--bind", realpathSync(context.workspaceDir), "/workspace");
-  } else if (context.workspaceAccess === "read_only") {
-    args.push("--ro-bind", realpathSync(context.workspaceDir), "/workspace");
-  } else {
-    args.push("--dir", "/workspace");
-  }
-  if (networkEnabled) {
-    for (const path of [
-      "/etc/resolv.conf",
-      "/etc/hosts",
-      "/etc/nsswitch.conf",
-      "/etc/gai.conf",
-      "/etc/ssl/certs",
-    ]) {
-      args.push("--ro-bind-try", path, path);
-    }
-  }
-  args.push(
-    "--chdir", "/workspace",
-    "--clearenv",
-    "--setenv", "PATH", "/usr/bin:/bin",
-    "--setenv", "HOME", "/tmp/home",
-    "--setenv", "LANG", "C.UTF-8",
-    "--",
-    "/usr/bin/bash", "--noprofile", "--norc", "-c", command,
-  );
-  return args;
+  return bubblewrapArguments({ ...context, networkEnabled }, command);
 }
 
 function effectiveNetworkEnabled(context: SandboxedShellPolicy): boolean {

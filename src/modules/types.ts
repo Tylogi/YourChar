@@ -15,6 +15,9 @@ export type AgentPermissions = {
   characterMemoryWriteEnabled: boolean;
   workspaceDir: string;
   shellAvailable: boolean;
+  shellBackend?: "bubblewrap" | "seatbelt" | "wsl2-bubblewrap" | null;
+  shellNetworkIsolationAvailable?: boolean;
+  shellUnavailableReason?: string;
 };
 
 export type AgentPermissionsPatch = Partial<

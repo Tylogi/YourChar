@@ -646,6 +646,7 @@ test("MinerU MCP is separately module- and Workspace-gated and wraps untrusted M
     mineruService: service,
   });
   try {
+    runtime.kernel.patchAgentPermissions({ workspaceAccess: "off" });
     writeFileSync(join(workspaceDir, "paper.pdf"), pdfFixture, { mode: 0o600 });
     runtime.model.enqueue([
       { kind: "assistant_text", text: "当前未启用。" },

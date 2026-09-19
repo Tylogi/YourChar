@@ -10,6 +10,12 @@ export type UiLocale = Exclude<UiLocalePreference, "system">;
  * changing user-provided values or the application's persistence contracts.
  */
 export const englishUiMessages: Readonly<Record<string, string>> = Object.freeze({
+  "角色默认可读写专用 Workspace；不会覆盖你已保存的关闭或只读设置": "Characters can read and write their scoped Workspace by default. Saved off or read-only choices are preserved.",
+  "在系统沙箱中执行命令；保护私有文件与凭证，启用时默认允许联网": "Run commands in an OS sandbox that protects private files and credentials. Networking is allowed by default when enabled.",
+  "此平台使用宿主网络；如需断网，请关闭终端执行": "This platform uses the host network. Turn off Shell execution if you require offline operation.",
+  "沙箱可用": "Sandbox available",
+  "沙箱不可用，终端执行无法启用": "Sandbox unavailable; Shell execution cannot be enabled",
+  "启用终端执行？命令默认可以联网，并可能发送当前可见的对话、记忆和 Workspace 内容。私有文件与凭证仍受沙箱保护。": "Enable Shell execution? Commands can use the network by default and may send visible conversation, memory, and Workspace content to external services. Private files and credentials remain protected by the sandbox.",
   "设置": "Settings",
   "设置视图": "Settings views",
   "外观": "Appearance",

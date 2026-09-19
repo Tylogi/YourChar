@@ -22,6 +22,8 @@ test("macOS release pipeline is portable, self-contained, and safety-scoped", ()
   assert.match(help, /Apple Silicon macOS/u);
   assert.equal(packageJson.scripts["package:macos"], "bash scripts/build-macos-release.sh");
   assert.match(packageJson.scripts["test:macos"], /macos-release-packaging\.test\.js/u);
+  assert.match(packageJson.scripts["test:macos"], /YOURCHAR_REQUIRE_NATIVE_SANDBOX=1/u);
+  assert.match(packageJson.scripts["test:macos"], /shell-sandbox\.test\.js/u);
   assert.match(script, /git -C "\$repo_root" archive --format=tar HEAD/u);
   assert.match(script, /SHASUMS256/u);
   assert.match(script, /npm ci/u);

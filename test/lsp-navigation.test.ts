@@ -354,6 +354,7 @@ test("LSP package requires profile, module, and Workspace permission and closes 
     }],
   });
   try {
+    runtime.kernel.patchAgentPermissions({ workspaceAccess: "off" });
     const module = runtime.kernel.listAgentModules().find((entry) => entry.id === "mcp:lsp-navigation");
     assert.equal(module?.enabled, false);
     assert.deepEqual(

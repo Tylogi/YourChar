@@ -797,6 +797,7 @@ export class CompanionKernel {
         );
         this.workflowCoordinatorInstance?.onChildTerminal("shell", job.id);
       },
+      configuredStateDir ? [configuredStateDir] : [],
     );
     this.executionJobCapability = createExecutionJobCapability({
       service: this.executionJobs,

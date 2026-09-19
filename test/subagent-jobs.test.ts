@@ -678,6 +678,7 @@ test("a completed Subagent transcript supports a scoped follow-up after process 
     seed: "subagent-continuation-first",
   });
   try {
+    first.kernel.patchAgentPermissions({ workspaceAccess: "off" });
     first.kernel.setAgentModuleEnabled("mcp:subagent", true);
     first.model.enqueue([{ kind: "assistant_text", text: "持久父会话已建立。" }]);
     await first.kernel.sendMessage(parentSessionId, {

@@ -31,24 +31,29 @@ another space's Workspace.
 
 | Permission | Default | Effect |
 |---|---|---|
-| Workspace access | Off | `off`, `read_only`, or `read_write` |
-| Sandboxed shell | Off | Registers blocking `bash` plus durable background execution tools using Bubblewrap |
-| Shell network | Off | With explicit user authorization, shares the host network namespace for sandboxed Shell commands |
+| Workspace access | Read-write | `off`, `read_only`, or `read_write`; existing explicit choices are preserved |
+| Sandboxed shell | Off | Registers blocking `bash` plus durable background execution tools through an OS sandbox provider |
+| Shell network | On when newly enabling Shell | Allows host networking; existing explicit offline choices are preserved where enforceable |
 | User Profile auto-edit | On | Registers `update_user_profile` while User Profile MCP is enabled |
 | Character SOUL auto-edit | Off | Registers the character-bound SOUL MCP in RP sessions |
 
-Workspace access and shell execution are intentionally independent. A shell may
-run with an empty transient `/workspace`, a read-only workspace bind, or a
-read-write workspace bind. Disabling shell automatically disables shell network.
-Enabling network while shell is disabled is rejected.
+Workspace access and shell execution are intentionally independent. File tools
+are available without enabling Shell. On Linux/WSL2, a shell may run with an empty
+transient `/workspace`, a read-only workspace bind, or a read-write workspace bind.
+On macOS, it starts at the authorized host Workspace path (or a temporary empty
+directory when access is off); commands should prefer relative paths. Disabling
+Shell disables its effective network permission without erasing the saved
+network preference. Enabling network while Shell is disabled is rejected.
 
-Shell network is an explicit, persistent user choice. Before enabling it, the UI
+Shell network is a persistent user choice. Before enabling Shell or its network, the UI
 warns that the Agent can contact arbitrary external services and may transmit
 conversation context, memories, Skill-influenced content, or Workspace data
 visible in the current turn. Once accepted, private data, private conversations,
 incognito overlays, enabled character-private Skills, and autonomous workflows
 do not silently rewrite or narrow that choice. Disabling Shell still disables
-Shell network. Host-side Tavily, Web Reader, Vision, and model-provider clients
+Shell network. Native macOS Shell requires host networking; an existing offline
+preference leaves Shell disabled until the user explicitly enables networking.
+Host-side Tavily, Web Reader, Vision, and model-provider clients
 retain their own independent module/configuration boundaries.
 
 Permission overrides use reserved `permission:*` rows in
@@ -111,7 +116,12 @@ original HTML remains available as a download.
 
 ## 4. Shell sandbox
 
-Linux shell execution requires `/usr/bin/bwrap`. The sandbox:
+Foreground and background Shell execution share a fail-closed policy/provider
+boundary inspired by DSH. This is an architectural adaptation, not a dependency
+on the complete DSH runtime. There is no unrestricted host-shell fallback.
+
+Linux shell execution requires a working `/usr/bin/bwrap`, not just an installed
+binary. The sandbox:
 
 - starts with a new process, IPC, PID, UTS, cgroup, and network namespace;
 - exposes `/usr` read-only plus minimal `/proc`, `/dev`, and temporary storage;
@@ -119,12 +129,35 @@ Linux shell execution requires `/usr/bin/bwrap`. The sandbox:
   level;
 - does not mount `/home`, the application repository, state root, User Profile,
   SOUL.md files, model credentials, or the host environment;
-- clears environment variables and supplies only `PATH`, `HOME`, and `LANG`;
-- keeps network isolated unless the separate network switch is explicitly
-  enabled by the user;
+- clears environment variables and supplies only `PATH`, `HOME`, `TMPDIR`, and `LANG`;
+- isolates the network when the saved network preference is off; newly enabled
+  Shell defaults to networking, after the UI's confirmation;
 - limits blocking `bash` runtime to 120 seconds and captured output to 64 KiB;
 - records a command hash and length, exit status, duration, timeout, truncation,
   and network mode in the action audit without retaining command text.
+
+macOS uses `/usr/bin/sandbox-exec` (Seatbelt) with a default-deny profile. It allows
+read-only system runtimes, a per-command temporary home, and the selected
+Workspace according to its permission. The application environment, other
+Workspaces, private state files, and host credential files are not on its file
+read allowlist. Commands use the host network; this backend does not advertise
+network isolation. Cancellation targets the process group; this is not a VM and
+does not promise to reap deliberately detached processes. Descendants still
+inherit the file-access policy. Native macOS integration checks are required by
+`npm run test:macos` before release.
+
+Windows has an experimental WSL2 + Bubblewrap transition provider. It requires a
+running default WSL2 distribution with `/usr/bin/bwrap`, `/usr/bin/bash`,
+`/usr/bin/setsid`, and `/usr/bin/wslpath`. It converts the selected Windows
+Workspace path, applies the Linux policy, and uses a stdin lifetime lease to
+stop guest work when the launcher disconnects. It is not a native Windows shell;
+commands run in Linux. Windows end-to-end validation remains pending. DSH's
+native write-only Windows token is not used because it cannot protect private
+file reads. See [migration status](native-sandbox-plan.md) for verification limits.
+
+Runtime directories and protected state/Workspace roots must not overlap. The
+launcher rejects such configurations rather than broadening access. Only
+trusted application code selects these roots; the model cannot modify policy.
 
 When Shell is enabled outside incognito, the same handle also receives
 `start_shell_job`, `list_execution_jobs`, `get_execution_job`, and
@@ -144,12 +177,14 @@ job becomes `idle`, its interrupted run becomes `abandoned`, and only the
 trusted local control plane may retry it. A retry intersects the original grant
 with current permissions, so access can narrow but never widen.
 
-This boundary controls host filesystem mounts but does not make untrusted code
+This boundary controls host filesystem access but does not make untrusted code
 harmless to files in a read-write Workspace. When Shell network is enabled,
-Bubblewrap shares the host network namespace: commands may access public and
+the command uses host networking: commands may access public and
 local services and may send any current-context or Workspace information the
 Agent can express. Private mode and Skill loading preserve the user's choice;
-they do not provide an outbound confidentiality guarantee.
+they do not provide an outbound confidentiality guarantee. File confinement is
+not a firewall for local APIs or credential agents exposed over the host network;
+those services must enforce their own authentication and authorization.
 
 ## 5. Durable goals, plans, and todos
 
@@ -225,14 +260,14 @@ Example:
 {
   "workspaceAccess": "read_write",
   "shellEnabled": true,
-  "networkEnabled": false,
+  "networkEnabled": true,
   "userProfileWriteEnabled": true,
   "characterSoulWriteEnabled": false
 }
 ```
 
 Tests must verify both tool registration and actual isolation behavior. The
-integration suite executes Bubblewrap, checks read-only/read-write mounts,
+native integration suite executes the current platform's provider, checks read-only/read-write access,
 rejects path escape, confirms host paths are absent, and verifies that profile
 and SOUL write tools follow independent switches. Document tests additionally
 verify format signatures, bounded chunks, cache separation, untrusted-data

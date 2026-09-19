@@ -326,6 +326,7 @@ test("custom system prompts persist as a bounded behavior layer behind immutable
 
     const runtime = createTestRuntime({ seed: "custom-system-prompt" });
     try {
+      runtime.kernel.patchAgentPermissions({ workspaceAccess: "off" });
       const character = runtime.kernel.createCharacter({ name: "提示词角色" });
       runtime.kernel.updateSystemPrompt("sms", custom);
       runtime.model.enqueue([{ kind: "assistant_text", text: "我先给结论。" }]);

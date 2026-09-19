@@ -5549,7 +5549,7 @@ export function renderAppHtml(): string {
                 <div class="permission-row">
                   <div>
                     <div class="module-name">文件访问</div>
-                    <div class="module-description">Agent 对专用 workspace 的访问级别</div>
+                    <div class="module-description">角色默认可读写专用 Workspace；不会覆盖你已保存的关闭或只读设置</div>
                   </div>
                   <div id="workspaceAccessControls" class="segmented permission-access" aria-label="Workspace 文件访问权限">
                     <button type="button" data-workspace-access="off">关闭</button>
@@ -5560,7 +5560,7 @@ export function renderAppHtml(): string {
                 <div class="permission-row">
                   <div>
                     <div class="module-name">终端执行</div>
-                    <div class="module-description">在 Bubblewrap 沙箱中执行命令</div>
+                    <div class="module-description">在系统沙箱中执行命令；保护私有文件与凭证，启用时默认允许联网</div>
                   </div>
                   <label class="toggle"><span id="shellPermissionLabel">已关闭</span><input id="shellPermissionInput" type="checkbox" data-permission="shellEnabled" /></label>
                 </div>
@@ -16326,15 +16326,19 @@ export function renderAppHtml(): string {
       setPermissionToggle(nodes.characterMemoryWritePermissionInput, nodes.characterMemoryWritePermissionLabel, permissions.characterMemoryWriteEnabled);
       setPermissionControlsDisabled(false);
       nodes.shellPermissionInput.disabled = !permissions.shellAvailable;
-      nodes.networkPermissionInput.disabled = !permissions.shellEnabled;
-      const networkPermissionHint = !permissions.shellEnabled
+      const networkIsolation = permissions.shellNetworkIsolationAvailable !== false;
+      nodes.networkPermissionInput.disabled = !permissions.shellEnabled || !networkIsolation;
+      const networkPermissionHint = !networkIsolation
+        ? "此平台使用宿主网络；如需断网，请关闭终端执行"
+        : !permissions.shellEnabled
         ? "请先启用终端执行"
         : "开启后 Agent 可自由访问网络，并可能向外部服务发送当前可见的对话、记忆和 Workspace 内容";
       nodes.networkPermissionInput.title = networkPermissionHint;
       nodes.networkPermissionInput.closest(".toggle").title = networkPermissionHint;
+      const sandboxName = { bubblewrap: "Bubblewrap", seatbelt: "macOS Seatbelt", "wsl2-bubblewrap": "WSL2 / Bubblewrap" }[permissions.shellBackend] || "Sandbox";
       nodes.permissionRuntime.textContent = permissions.shellAvailable
-        ? "Bubblewrap 可用"
-        : "Bubblewrap 不可用，终端执行无法启用";
+        ? sandboxName + " · " + uiText("沙箱可用")
+        : uiText("沙箱不可用，终端执行无法启用") + (permissions.shellUnavailableReason ? " · " + permissions.shellUnavailableReason : "");
     }
 
     function setPermissionToggle(input, label, enabled) {
@@ -16358,6 +16362,13 @@ export function renderAppHtml(): string {
     async function toggleAgentPermission(event) {
       const input = event.target.closest("input[data-permission]");
       if (!input) return;
+      if (input.dataset.permission === "shellEnabled" && input.checked) {
+        const confirmed = window.confirm(uiText("启用终端执行？命令默认可以联网，并可能发送当前可见的对话、记忆和 Workspace 内容。私有文件与凭证仍受沙箱保护。"));
+        if (!confirmed) { renderAgentPermissions(); return; }
+        await patchAgentPermissions({ shellEnabled: true,
+          ...(state.agentPermissions?.shellNetworkIsolationAvailable === false ? { networkEnabled: true } : {}) });
+        return;
+      }
       if (
         input.dataset.permission === "networkEnabled" &&
         input.checked &&

@@ -325,7 +325,7 @@ test("shutdown stages shell work as idle and only trusted explicit retry replays
   let server: ReturnType<typeof createHttpServer> | undefined;
   try {
     first = createTestRuntime({ stateDir, workspaceDir, seed: "execution-recovery-first" });
-    first.kernel.patchAgentPermissions({ workspaceAccess: "read_write", shellEnabled: true });
+    first.kernel.patchAgentPermissions({ workspaceAccess: "read_write", shellEnabled: true, networkEnabled: false });
     first.model.enqueue([{ kind: "assistant_text", text: "父会话已建立。" }]);
     await first.kernel.sendMessage(parentSessionId, { mode: "sms", text: "建立会话" });
     const created = first.kernel.startExecutionJob(parentSessionId, {

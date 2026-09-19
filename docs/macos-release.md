@@ -19,8 +19,12 @@ runtime. Users do not need to install Node.js.
 
 The packaged app supports the core conversation, memory, character, world,
 schedule, reminder, model-provider, Workspace file, and network-integration
-features. Sandboxed Shell, the local MarkItDown worker, and the sandboxed
-TypeScript LSP require Linux Bubblewrap and remain unavailable on macOS.
+features. Sandboxed Shell now has a native Seatbelt provider; its read/write
+Workspace boundary and private-file protection must pass the native release
+tests on the build Mac. Shell is opt-in and uses host networking on macOS.
+The local MarkItDown worker, sandboxed TypeScript LSP, and incognito Linux
+isolation are not made portable by this Shell change. See the
+[migration status](native-sandbox-plan.md) for outstanding real-machine validation.
 
 ## Build on Apple Silicon
 
@@ -53,8 +57,11 @@ release/SHA256SUMS.txt
 Use `MACOS_OUTPUT_DIR` to choose another artifact directory. Set
 `MACOS_RUN_FULL_TESTS=1` to additionally run the complete Linux-oriented test
 suite on a suitably provisioned host. The normal macOS build uses its portable
-packaging test because Bubblewrap-specific integration tests cannot run on
-macOS. A one-off local iteration can use `MACOS_SKIP_TESTS=1`; do not use that
+packaging tests plus required native sandbox and permission tests because
+Bubblewrap-specific integration tests cannot run on macOS. The sandbox gate
+must execute real commands, not merely generate a Seatbelt profile; an unavailable
+native backend fails the release gate. A one-off local iteration can use
+`MACOS_SKIP_TESTS=1`; do not use that
 option for a published release. The source commit should still pass the full
 suite in Linux CI before publication.
 

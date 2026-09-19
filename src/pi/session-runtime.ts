@@ -2064,6 +2064,7 @@ export class PiSessionRuntime {
           workspaceDir: workspace.dir,
           workspaceAccess: permissions.workspaceAccess,
           networkEnabled: permissions.networkEnabled,
+          protectedPaths: this.stateDir ? [this.stateDir] : [],
           store: this.store,
           sessionId: metadata.id,
           actions: () => toolState.actions,

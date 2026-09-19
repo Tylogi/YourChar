@@ -1,4 +1,4 @@
-import { spawn, type ChildProcess } from "node:child_process";
+import type { ChildProcess } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
 import { realpathSync } from "node:fs";
 import { StringDecoder } from "node:string_decoder";
@@ -6,10 +6,7 @@ import type { Clock } from "../app/clock.js";
 import type { IdGenerator } from "../app/id-generator.js";
 import type { ConversationSpace, Mode } from "../domain/types.js";
 import type { WorkspaceAccess } from "../modules/types.js";
-import {
-  bubblewrapPath,
-  sandboxArguments,
-} from "../pi/sandboxed-shell-tool.js";
+import { spawnSandboxedShell } from "./shell-sandbox.js";
 import type { AppDatabase } from "../storage/database.js";
 
 export const maximumExecutionCommandCharacters = 32_768;
@@ -197,6 +194,7 @@ type ActiveExecution = {
   attempt: number;
   claimToken: string;
   child: ChildProcess;
+  terminate: () => void;
   timeout?: NodeJS.Timeout;
   retainedBytes: number;
   nextSequence: number;
@@ -262,6 +260,7 @@ export class ExecutionJobService {
     private readonly clock: Clock,
     private readonly idGenerator: IdGenerator,
     private readonly onTerminal?: ExecutionJobTerminalListener,
+    private readonly protectedPaths: readonly string[] = [],
   ) {
     this.stageInterruptedJobs();
   }
@@ -452,7 +451,7 @@ export class ExecutionJobService {
     const active = this.active.get(jobId);
     if (active && active.parentSessionId === parentSessionId) {
       active.stopReason = "interrupted";
-      terminate(active.child);
+      active.terminate();
       await active.completion;
       return this.requireSummary(parentSessionId, jobId);
     }
@@ -533,20 +532,16 @@ export class ExecutionJobService {
     });
 
     let child: ChildProcess;
+    let terminate: () => void;
     try {
-      child = spawn(
-        bubblewrapPath,
-        sandboxArguments({
-          workspaceDir: before.workspace_dir,
-          workspaceAccess,
-          networkEnabled,
-        }, before.command_text, networkEnabled),
-        {
-          detached: true,
-          stdio: ["ignore", "pipe", "pipe"],
-          env: { PATH: "/usr/bin:/bin", LANG: "C.UTF-8" },
-        },
-      );
+      const running = spawnSandboxedShell({
+        workspaceDir: before.workspace_dir,
+        workspaceAccess,
+        networkEnabled,
+        protectedPaths: this.protectedPaths,
+      }, before.command_text);
+      child = running.child;
+      terminate = running.terminate;
     } catch {
       const summary = this.finalizeClaim(jobId, attempt, claimToken, null, "spawn_error");
       if (summary) this.notifyTerminal(summary);
@@ -563,6 +558,7 @@ export class ExecutionJobService {
       attempt,
       claimToken,
       child,
+      terminate,
       retainedBytes: 0,
       nextSequence: 0,
       outputTruncated: false,
@@ -576,7 +572,7 @@ export class ExecutionJobService {
     };
     active.timeout = setTimeout(() => {
       active.stopReason = "timeout";
-      terminate(child);
+      terminate();
     }, before.timeout_seconds * 1_000);
     active.timeout.unref?.();
     this.active.set(jobId, active);
@@ -598,7 +594,7 @@ export class ExecutionJobService {
       this.captureDecodedOutput(active, stream, active.decoders[stream].write(chunk));
     } catch {
       active.stopReason = "runtime_error";
-      terminate(active.child);
+      active.terminate();
     }
   }
 
@@ -778,7 +774,7 @@ export class ExecutionJobService {
       `).run(now, active.jobId, active.attempt);
     });
     this.active.delete(active.jobId);
-    terminate(active.child);
+    active.terminate();
     active.resolveCompletion();
   }
 
@@ -993,17 +989,4 @@ function utf8PrefixLength(buffer: Buffer, limit: number): number {
   let boundary = limit;
   while (boundary > 0 && (buffer[boundary] & 0xc0) === 0x80) boundary -= 1;
   return boundary;
-}
-
-function terminate(child: ChildProcess): void {
-  if (!child.pid) return;
-  try {
-    process.kill(-child.pid, "SIGKILL");
-  } catch {
-    try {
-      child.kill("SIGKILL");
-    } catch {
-      // A process that already exited will settle through its close event.
-    }
-  }
 }

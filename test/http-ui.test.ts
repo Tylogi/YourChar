@@ -1950,6 +1950,12 @@ test("server serves chat UI and debug model traces", async () => {
       "begin_meeting",
       "end_meeting",
       "search_memory",
+      "read",
+      "read_document",
+      "list_workspace",
+      "share_workspace_file",
+      "write",
+      "edit",
     ]);
 
     const traces = await fetch(`${baseUrl}/api/debug/model-traces`);

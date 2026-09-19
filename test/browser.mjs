@@ -21,6 +21,7 @@ import { runStreamingOrderChecks } from "./streaming-order.browser.mjs";
 import { runReminderDeliveryChecks } from "./reminder-delivery.browser.mjs";
 import { runImSettingsChecks } from "./im-settings.browser.mjs";
 import { runLocaleChecks } from "./locale.browser.mjs";
+import { runPermissionChecks } from "./permissions.browser.mjs";
 import { runNavigationChecks } from "./navigation.browser.mjs";
 
 const artifactsDir = resolve("browser-artifacts");
@@ -236,6 +237,7 @@ try {
   await runReminderDeliveryChecks(browser, artifactsDir);
   await runImSettingsChecks(browser, artifactsDir);
   await runLocaleChecks(browser);
+  await runPermissionChecks(browser);
   await runNavigationChecks(browser, artifactsDir);
   await runDesktopWorkflow(browser, baseUrl, artifactsDir);
   await runCompactDesktopWorkflow(browser, baseUrl, artifactsDir);
