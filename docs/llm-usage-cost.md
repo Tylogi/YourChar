@@ -1,7 +1,8 @@
 # LLM usage and cost
 
 YourChar keeps a monthly ledger of real provider token usage and estimates the
-equivalent API cost in CNY. The **用量** (Usage) page in the left rail shows it.
+equivalent API cost in CNY. Open **管理 → 用量** (Manage → Usage) to view it.
+The left rail's **文件** (Files) entry opens the Workspace file manager directly.
 
 ## What is recorded
 

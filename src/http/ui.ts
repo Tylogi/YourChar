@@ -4686,7 +4686,7 @@ export function renderAppHtml(): string {
       flex-wrap: wrap;
     }
     .workspace-file-location { min-width: 0; display: grid; gap: 4px; }
-    .workspace-file-location h3 { margin: 0; }
+    .workspace-file-location h2 { margin: 0; font-size: 22px; font-weight: 600; }
     .workspace-file-location code { color: var(--muted); font-size: 11px; overflow-wrap: anywhere; }
     .workspace-file-actions { display: flex; align-items: center; gap: 7px; }
     .workspace-file-state { min-height: 18px; margin: 8px 0; }
@@ -5051,8 +5051,8 @@ export function renderAppHtml(): string {
         <div class="segmented nav-segmented" aria-label="UI mode">
           <button id="normalBtn" class="active" type="button"><i data-lucide="message-circle" aria-hidden="true"></i><span>聊天</span></button>
           <button id="scheduleBtn" type="button"><i data-lucide="calendar-days" aria-hidden="true"></i><span>日程</span></button>
-          <button id="usageBtn" type="button"><i data-lucide="gauge" aria-hidden="true"></i><span>用量</span></button>
           <button id="charactersBtn" type="button"><i data-lucide="users-round" aria-hidden="true"></i><span>角色</span></button>
+          <button id="workspaceFilesBtn" type="button"><i data-lucide="folder-open" aria-hidden="true"></i><span>文件</span></button>
           <button id="managementBtn" type="button"><i data-lucide="blocks" aria-hidden="true"></i><span>管理</span></button>
           <button id="settingsBtn" type="button"><i data-lucide="settings" aria-hidden="true"></i><span>设置</span></button>
           <button id="debugBtn" type="button"><i data-lucide="activity" aria-hidden="true"></i><span>Debug</span></button>
@@ -5218,7 +5218,6 @@ export function renderAppHtml(): string {
           </form>
         </dialog>
       </section>
-${usagePanelHtml}
       <section id="charactersPage" class="settings-page" hidden>
         <div class="character-shell">
           <div class="character-head">
@@ -5496,6 +5495,26 @@ ${usagePanelHtml}
           </section>
         </div>
       </section>
+      <section id="workspaceFilesPage" class="settings-page" hidden>
+        <div class="management-shell">
+          <section id="workspaceFilesPanel" class="management-panel">
+            <div class="workspace-file-head">
+              <div class="workspace-file-location">
+                <h2>Workspace 文件</h2>
+                <code id="workspaceFilePath">/</code>
+              </div>
+              <div class="workspace-file-actions">
+                <input id="workspaceFileUploadInput" type="file" multiple hidden />
+                <button id="workspaceFileUpBtn" class="secondary icon-button" type="button" title="上一级" aria-label="上一级"><i data-lucide="corner-left-up" aria-hidden="true"></i></button>
+                <button id="workspaceFileRefreshBtn" class="secondary icon-button" type="button" title="刷新文件" aria-label="刷新文件"><i data-lucide="refresh-cw" aria-hidden="true"></i></button>
+                <button id="workspaceFileUploadBtn" class="primary" type="button"><i data-lucide="upload" aria-hidden="true"></i><span>上传</span></button>
+              </div>
+            </div>
+            <div id="workspaceFileState" class="muted workspace-file-state"></div>
+            <div id="workspaceFileList" class="workspace-file-list"></div>
+          </section>
+        </div>
+      </section>
       <section id="managementPage" class="settings-page" hidden>
         <div class="management-shell">
           <div class="management-head">
@@ -5505,7 +5524,7 @@ ${usagePanelHtml}
               <button id="modulesTabBtn" class="active" type="button">能力模块</button>
               <button id="profileTabBtn" type="button">用户画像</button>
               <button id="memoryManagementTabBtn" type="button">记忆</button>
-              <button id="workspaceFilesTabBtn" type="button">文件</button>
+              <button id="usageTabBtn" type="button">用量</button>
             </div>
           </div>
           ${creatorHtml}
@@ -5669,22 +5688,7 @@ ${usagePanelHtml}
             <div class="schedule-head" style="margin-top:18px;"><h3>最近捕获任务</h3><span id="memoryJobCount" class="muted"></span></div>
             <div id="memoryJobList" class="memory-job-list"></div>
           </section>
-          <section id="workspaceFilesPanel" class="management-panel" hidden>
-            <div class="workspace-file-head">
-              <div class="workspace-file-location">
-                <h3>Workspace 文件</h3>
-                <code id="workspaceFilePath">/</code>
-              </div>
-              <div class="workspace-file-actions">
-                <input id="workspaceFileUploadInput" type="file" multiple hidden />
-                <button id="workspaceFileUpBtn" class="secondary icon-button" type="button" title="上一级" aria-label="上一级"><i data-lucide="corner-left-up" aria-hidden="true"></i></button>
-                <button id="workspaceFileRefreshBtn" class="secondary icon-button" type="button" title="刷新文件" aria-label="刷新文件"><i data-lucide="refresh-cw" aria-hidden="true"></i></button>
-                <button id="workspaceFileUploadBtn" class="primary" type="button"><i data-lucide="upload" aria-hidden="true"></i><span>上传</span></button>
-              </div>
-            </div>
-            <div id="workspaceFileState" class="muted workspace-file-state"></div>
-            <div id="workspaceFileList" class="workspace-file-list"></div>
-          </section>
+          ${usagePanelHtml}
         </div>
       </section>
       <aside id="debugPane" hidden>
@@ -6843,6 +6847,7 @@ ${usagePanelHtml}
       normalBtn: document.getElementById("normalBtn"),
       scheduleBtn: document.getElementById("scheduleBtn"),
       charactersBtn: document.getElementById("charactersBtn"),
+      workspaceFilesBtn: document.getElementById("workspaceFilesBtn"),
       managementBtn: document.getElementById("managementBtn"),
       settingsBtn: document.getElementById("settingsBtn"),
       debugBtn: document.getElementById("debugBtn"),
@@ -6850,8 +6855,8 @@ ${usagePanelHtml}
       chatPane: document.getElementById("chatPane"),
       mainPane: document.getElementById("mainPane"),
       schedulePage: document.getElementById("schedulePage"),
-      usageBtn: document.getElementById("usageBtn"),
-      usagePage: document.getElementById("usagePage"),
+      workspaceFilesPage: document.getElementById("workspaceFilesPage"),
+      usagePanel: document.getElementById("usagePanel"),
       usageMonthInput: document.getElementById("usageMonthInput"),
       usageRefreshBtn: document.getElementById("usageRefreshBtn"),
       usageState: document.getElementById("usageState"),
@@ -6882,7 +6887,7 @@ ${usagePanelHtml}
       modulesTabBtn: document.getElementById("modulesTabBtn"),
       profileTabBtn: document.getElementById("profileTabBtn"),
       memoryManagementTabBtn: document.getElementById("memoryManagementTabBtn"),
-      workspaceFilesTabBtn: document.getElementById("workspaceFilesTabBtn"),
+      usageTabBtn: document.getElementById("usageTabBtn"),
       modulesPanel: document.getElementById("modulesPanel"),
       profilePanel: document.getElementById("profilePanel"),
       memoryManagementPanel: document.getElementById("memoryManagementPanel"),
@@ -7558,8 +7563,8 @@ ${usagePanelHtml}
 
     nodes.normalBtn.addEventListener("click", () => setUiMode("normal"));
     nodes.scheduleBtn.addEventListener("click", () => setUiMode("schedule"));
-    nodes.usageBtn.addEventListener("click", () => setUiMode("usage"));
     nodes.charactersBtn.addEventListener("click", () => setUiMode("characters"));
+    nodes.workspaceFilesBtn.addEventListener("click", () => setUiMode("files"));
     nodes.managementBtn.addEventListener("click", () => setUiMode("management"));
     nodes.settingsBtn.addEventListener("click", () => setUiMode("settings"));
     nodes.debugBtn.addEventListener("click", () => setUiMode("debug"));
@@ -7567,7 +7572,7 @@ ${usagePanelHtml}
     nodes.modulesTabBtn.addEventListener("click", () => setManagementTab("modules"));
     nodes.profileTabBtn.addEventListener("click", () => setManagementTab("profile"));
     nodes.memoryManagementTabBtn.addEventListener("click", () => setManagementTab("memory"));
-    nodes.workspaceFilesTabBtn.addEventListener("click", () => setManagementTab("files"));
+    nodes.usageTabBtn.addEventListener("click", () => setManagementTab("usage"));
     nodes.refreshModulesBtn.addEventListener("click", loadCapabilityManagement);
     nodes.runtimeProfileSelect.addEventListener("change", activateAgentRuntimeProfile);
     nodes.moduleList.addEventListener("change", toggleAgentModule);
@@ -8127,15 +8132,15 @@ ${usagePanelHtml}
       updateContextBudgetChrome();
       nodes.normalBtn.classList.toggle("active", mode === "normal");
       nodes.scheduleBtn.classList.toggle("active", mode === "schedule");
-      nodes.usageBtn.classList.toggle("active", mode === "usage");
       nodes.charactersBtn.classList.toggle("active", mode === "characters");
+      nodes.workspaceFilesBtn.classList.toggle("active", mode === "files");
       nodes.managementBtn.classList.toggle("active", mode === "management");
       nodes.settingsBtn.classList.toggle("active", mode === "settings");
       nodes.debugBtn.classList.toggle("active", mode === "debug");
       nodes.mainPane.dataset.mode = mode;
       nodes.chatPane.hidden = mode !== "normal";
       nodes.schedulePage.hidden = mode !== "schedule";
-      nodes.usagePage.hidden = mode !== "usage";
+      nodes.workspaceFilesPage.hidden = mode !== "files";
       nodes.charactersPage.hidden = mode !== "characters";
       nodes.managementPage.hidden = mode !== "management";
       nodes.settingsPage.hidden = mode !== "settings";
@@ -8152,7 +8157,7 @@ ${usagePanelHtml}
         renderScheduleScope();
         loadScheduleItems();
       }
-      if (mode === "usage") void loadUsage();
+      if (mode === "files") void loadWorkspaceFiles();
       if (mode === "normal") {
         nodes.conversationListToggle.hidden = false;
         updateChatIdentity();
@@ -8177,11 +8182,11 @@ ${usagePanelHtml}
       nodes.modulesTabBtn.classList.toggle("active", tab === "modules");
       nodes.profileTabBtn.classList.toggle("active", tab === "profile");
       nodes.memoryManagementTabBtn.classList.toggle("active", tab === "memory");
-      nodes.workspaceFilesTabBtn.classList.toggle("active", tab === "files");
+      nodes.usageTabBtn.classList.toggle("active", tab === "usage");
       nodes.modulesPanel.hidden = tab !== "modules";
       nodes.profilePanel.hidden = tab !== "profile";
       nodes.memoryManagementPanel.hidden = tab !== "memory";
-      nodes.workspaceFilesPanel.hidden = tab !== "files";
+      nodes.usagePanel.hidden = tab !== "usage";
       nodes.managementPage.scrollTop = 0;
       if (tab === "modules") loadCapabilityManagement();
       if (tab === "profile") {
@@ -8189,7 +8194,7 @@ ${usagePanelHtml}
         loadUserInsights();
       }
       if (tab === "memory") loadManagedMemories();
-      if (tab === "files") loadWorkspaceFiles();
+      if (tab === "usage") void loadUsage();
     }
 
     function loadManagement() {
@@ -9952,7 +9957,7 @@ ${usagePanelHtml}
       nodes.chatAttachmentInput.disabled = incognito;
       nodes.attachFileBtn.title = incognito ? "无痕会话不支持附件" : "上传附件";
       nodes.attachFileBtn.setAttribute("aria-label", nodes.attachFileBtn.title);
-      for (const control of [nodes.scheduleBtn, nodes.charactersBtn, nodes.managementBtn, nodes.settingsBtn, nodes.debugBtn]) {
+      for (const control of [nodes.scheduleBtn, nodes.charactersBtn, nodes.workspaceFilesBtn, nodes.managementBtn, nodes.settingsBtn, nodes.debugBtn]) {
         control.disabled = navigationLocked;
         control.title = state.incognitoTransitioning || state.privateModeTransitioning
           ? "正在切换对话模式"
@@ -10996,7 +11001,7 @@ ${usagePanelHtml}
       updateWorkspaceManagerAvailability();
       setConversationListOpen(false);
       renderConversationList();
-      if (state.uiMode === "management" && state.managementTab === "files") void loadWorkspaceFiles();
+      if (state.uiMode === "files") void loadWorkspaceFiles();
       const scope = captureDirectConversationScope();
       if (!scope || scope.spaceEpoch !== expectedEpoch || scope.viewEpoch !== view.epoch) return;
       if (scope.characterId && !scope.incognito) openPrivateInboxEvents(scope.sessionId, scope.viewEpoch);

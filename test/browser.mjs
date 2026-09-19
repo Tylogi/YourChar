@@ -21,6 +21,7 @@ import { runStreamingOrderChecks } from "./streaming-order.browser.mjs";
 import { runReminderDeliveryChecks } from "./reminder-delivery.browser.mjs";
 import { runImSettingsChecks } from "./im-settings.browser.mjs";
 import { runLocaleChecks } from "./locale.browser.mjs";
+import { runNavigationChecks } from "./navigation.browser.mjs";
 
 const artifactsDir = resolve("browser-artifacts");
 mkdirSync(artifactsDir, { recursive: true });
@@ -235,6 +236,7 @@ try {
   await runReminderDeliveryChecks(browser, artifactsDir);
   await runImSettingsChecks(browser, artifactsDir);
   await runLocaleChecks(browser);
+  await runNavigationChecks(browser, artifactsDir);
   await runDesktopWorkflow(browser, baseUrl, artifactsDir);
   await runCompactDesktopWorkflow(browser, baseUrl, artifactsDir);
   await runMobileWorkflow(browser, baseUrl, artifactsDir);
@@ -443,7 +445,8 @@ async function runDesktopWorkflow(browser, baseUrl, outputDir) {
   await assertInteractiveBounds(page);
   await page.screenshot({ path: resolve(outputDir, "management-memory.png"), fullPage: false });
 
-  await page.getByRole("button", { name: "文件", exact: true }).click();
+  await page.locator("#workspaceFilesBtn").click();
+  await page.locator("#workspaceFilesPage").waitFor({ state: "visible" });
   await page.locator("#workspaceFilesPanel").waitFor({ state: "visible" });
   await page.locator("#workspaceFileUploadInput").setInputFiles({
     name: "browser-note.md",
@@ -465,7 +468,8 @@ async function runDesktopWorkflow(browser, baseUrl, outputDir) {
   await page.locator("#sessionActionDialog").getByRole("button", { name: "删除", exact: true }).click();
   await renamedWorkspaceNote.waitFor({ state: "detached" });
   await assertInteractiveBounds(page);
-  await page.screenshot({ path: resolve(outputDir, "management-files.png"), fullPage: false });
+  await assertPanelInsideMain(page, "#workspaceFilesPage");
+  await page.screenshot({ path: resolve(outputDir, "workspace-files.png"), fullPage: false });
 
   await page.getByRole("button", { name: "日程", exact: true }).click();
   await page.locator("#schedulePage").waitFor({ state: "visible" });

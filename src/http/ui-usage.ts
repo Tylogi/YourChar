@@ -1,5 +1,5 @@
 export const usageCss = `
-.usage-shell { display: grid; gap: 14px; padding: 0 4px 24px; min-width: 0; }
+.usage-shell { display: grid; gap: 14px; min-width: 0; }
 .usage-cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 10px; }
 .usage-card { border: 1px solid var(--line); border-radius: 12px; padding: 10px 12px; display: grid; gap: 4px; background: var(--panel); }
 .usage-card-label { font-size: 12px; color: var(--muted); }
@@ -30,11 +30,11 @@ export const usageCss = `
 `;
 
 export const usagePanelHtml = `
-      <section id="usagePage" class="settings-page" hidden>
+      <section id="usagePanel" class="management-panel" hidden>
         <div class="usage-shell">
           <div class="schedule-head">
             <div>
-              <h2>用量与花费</h2>
+              <h3>用量与花费</h3>
               <div id="usageScopeSummary" class="schedule-scope-summary">本月真实模型调用的 token 与花费（输入 / 输出 / 缓存读 / 缓存写，不含思考 token；模型没返回用量就不记录）</div>
             </div>
             <div class="schedule-toolbar">

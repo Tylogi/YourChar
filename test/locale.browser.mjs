@@ -35,6 +35,7 @@ export async function runLocaleChecks(browser) {
     assert.equal(await page.locator("#normalBtn span").textContent(), "Chat");
     assert.equal(await page.locator("#scheduleBtn span").textContent(), "Schedule");
     assert.equal(await page.locator("#charactersBtn span").textContent(), "Characters");
+    assert.equal(await page.locator("#workspaceFilesBtn span").textContent(), "Files");
     assert.equal(await page.locator("#managementBtn span").textContent(), "Manage");
     assert.equal(await page.locator("#managementBtn").evaluate(element => getComputedStyle(element).fontSize), "10px");
     assert.equal(await page.locator("#settingsBtn span").textContent(), "Settings");
@@ -60,7 +61,7 @@ export async function runLocaleChecks(browser) {
 
     if (process.env.YOURCHAR_LOCALE_AUDIT === "1") {
       const audit = {};
-      for (const [name, selector] of [["chat", "#normalBtn"], ["schedule", "#scheduleBtn"], ["characters", "#charactersBtn"], ["management", "#managementBtn"]]) {
+      for (const [name, selector] of [["chat", "#normalBtn"], ["schedule", "#scheduleBtn"], ["characters", "#charactersBtn"], ["files", "#workspaceFilesBtn"], ["management", "#managementBtn"]]) {
         await page.locator(selector).click();
         await page.evaluate(() => new Promise(resolvePromise => requestAnimationFrame(() => requestAnimationFrame(resolvePromise))));
         audit[name] = await visibleChineseUi(page);
@@ -79,7 +80,7 @@ export async function runLocaleChecks(browser) {
         audit["characters:" + name] = await visibleChineseUi(page);
       }
       await page.locator("#managementBtn").click();
-      for (const [name, selector] of [["creator", "#creatorTabBtn"], ["modules", "#modulesTabBtn"], ["profile", "#profileTabBtn"], ["memory", "#memoryManagementTabBtn"], ["files", "#workspaceFilesTabBtn"]]) {
+      for (const [name, selector] of [["creator", "#creatorTabBtn"], ["modules", "#modulesTabBtn"], ["profile", "#profileTabBtn"], ["memory", "#memoryManagementTabBtn"], ["usage", "#usageTabBtn"]]) {
         await page.locator(selector).click();
         await page.evaluate(() => new Promise(resolvePromise => requestAnimationFrame(() => requestAnimationFrame(resolvePromise))));
         audit["management:" + name] = await visibleChineseUi(page);
