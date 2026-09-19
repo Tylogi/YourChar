@@ -22,9 +22,11 @@ schedule, reminder, model-provider, Workspace file, and network-integration
 features. Sandboxed Shell now has a native Seatbelt provider; its read/write
 Workspace boundary and private-file protection must pass the native release
 tests on the build Mac. Shell is opt-in and uses host networking on macOS.
+The native gate passed on Apple Silicon with macOS 26.6.2 and Node 22.19.0;
+this does not mean an updated installer has already been published.
 The local MarkItDown worker, sandboxed TypeScript LSP, and incognito Linux
 isolation are not made portable by this Shell change. See the
-[migration status](native-sandbox-plan.md) for outstanding real-machine validation.
+[migration status](native-sandbox-plan.md) for validation evidence and the remaining Windows checks.
 
 ## Build on Apple Silicon
 
@@ -64,6 +66,16 @@ native backend fails the release gate. A one-off local iteration can use
 `MACOS_SKIP_TESTS=1`; do not use that
 option for a published release. The source commit should still pass the full
 suite in Linux CI before publication.
+
+The native test gate runs serially, including foreground/background lifecycle
+tests. For a bounded-heap validation on a shared Mac, run:
+
+```bash
+NODE_OPTIONS=--max-old-space-size=2048 npm run test:macos
+```
+
+Keep a single validation checkout, eject old installer volumes, and archive old
+build bundles separately. Do not remove Application Support data to clean builds.
 
 ## Signing and publication
 

@@ -72,8 +72,8 @@ incognito snapshots require a verified `tmpfs` filesystem.
 
 For a self-contained Apple Silicon desktop build, see
 [macOS release packaging](docs/macos-release.md). The macOS app includes Node
-and core YourChar features. A native Seatbelt Shell provider is implemented,
-with [Mac verification pending](docs/native-sandbox-plan.md); document conversion,
+and core YourChar features. The native Seatbelt Shell provider has passed
+[Apple Silicon integration tests](docs/native-sandbox-plan.md); document conversion,
 sandboxed LSP, and incognito isolation still require Linux.
 
 ### 1. Start the app

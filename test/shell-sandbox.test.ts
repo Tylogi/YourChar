@@ -90,6 +90,13 @@ test("Seatbelt policy is read-confined, preserves write modes and never claims o
   const profile = seatbeltProfile(policy, "/private/var/tmp/yourchar-shell-test");
   assert.match(profile, /\(deny default\)/);
   assert.match(profile, /\(allow network\*\)/);
+  assert.ok(profile.includes('(allow file-read-data (literal "/"))'));
+  assert.ok(!profile.includes('(subpath "/")'), "startup access must not expose the host filesystem");
+  const metadataRule = profile.split("\n").find(line => line.startsWith("(allow file-read-metadata"))!;
+  for (const alias of ["/etc", "/var", "/tmp"]) {
+    assert.ok(metadataRule.includes(`(literal "${alias}")`));
+    assert.ok(!profile.includes(`(subpath "${alias}")`), "alias metadata must not grant recursive access");
+  }
   assert.match(profile, /\(allow file-read\*.*\/Users\/test\/state\/workspace/);
   const writeRule = profile.split("\n").find(line => line.startsWith("(allow file-write*"))!;
   assert.doesNotMatch(writeRule, /state\/workspace/);
@@ -177,6 +184,10 @@ test("native shell reaches host networking only when policy permits it", { skip:
     const online = await run(f.policy, command);
     assert.equal(online.code, 0, online.stderr);
     assert.equal(online.stdout, "fixture-network-ok");
+    const hostname = await run(f.policy,
+      `test -r /etc/hosts && curl -fsS --max-time 1 http://localhost:${address.port}`);
+    assert.equal(hostname.code, 0, hostname.stderr);
+    assert.equal(hostname.stdout, "fixture-network-ok");
     if (availability.networkIsolation) {
       const offline = await run({ ...f.policy, networkEnabled: false }, command);
       assert.notEqual(offline.code, 0);

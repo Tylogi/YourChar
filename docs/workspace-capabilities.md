@@ -141,7 +141,10 @@ read-only system runtimes, a per-command temporary home, and the selected
 Workspace according to its permission. The application environment, other
 Workspaces, private state files, and host credential files are not on its file
 read allowlist. Commands use the host network; this backend does not advertise
-network isolation. Cancellation targets the process group; this is not a VM and
+network isolation. The profile permits reading the root directory itself and
+metadata on system aliases (`/etc`, `/var`, `/tmp`) for startup and DNS; these
+literal rules do not authorize reading their descendants. Cancellation targets
+the process group; this is not a VM and
 does not promise to reap deliberately detached processes. Descendants still
 inherit the file-access policy. Native macOS integration checks are required by
 `npm run test:macos` before release.

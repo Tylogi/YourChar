@@ -129,7 +129,9 @@ export function seatbeltProfile(policy: ShellSandboxPolicy, scratchDir: string, 
     ...(policy.workspaceAccess === "off" ? [] : [policy.workspaceDir])];
   const writes = [scratchDir, ...(policy.workspaceAccess === "read_write" ? [policy.workspaceDir] : [])];
   // Permit path traversal/stat for approved roots without exposing ancestor contents.
-  const metadata = new Set<string>();
+  // macOS resolves these public aliases before reading canonical /private paths.
+  // In particular, denying metadata on /etc or /var breaks system DNS lookup.
+  const metadata = new Set<string>(["/etc", "/var", "/tmp"]);
   for (const path of reads) {
     let ancestor = dirname(path);
     while (true) {
@@ -146,6 +148,9 @@ export function seatbeltProfile(policy: ShellSandboxPolicy, scratchDir: string, 
     "(allow signal (target same-sandbox))", "(allow mach-priv-task-port (target same-sandbox))",
     "(allow sysctl-read)", "(allow network*)", "(allow ipc-posix-shm)", "(allow ipc-posix-sem)",
     '(allow mach-lookup (global-name "com.apple.system.opendirectoryd.libinfo") (global-name "com.apple.system.opendirectoryd.membership") (global-name "com.apple.bsd.dirhelper") (global-name "com.apple.logd") (global-name "com.apple.trustd.agent"))',
+    // macOS shell startup needs to open the root directory itself. A literal
+    // permits that lookup without granting access to its descendants.
+    '(allow file-read-data (literal "/"))',
     `(allow file-read-metadata ${[...metadata].map(path => `(literal ${sbplString(path)})`).join(" ")})`,
     `(allow file-read* ${reads.map(path => `(subpath ${sbplString(path)})`).join(" ")})`,
     `(allow file-write* ${writes.map(path => `(subpath ${sbplString(path)})`).join(" ")} (literal \"/dev/null\"))`,

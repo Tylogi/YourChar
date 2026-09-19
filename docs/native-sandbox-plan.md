@@ -32,7 +32,7 @@ Baseline: `2395fe5`; development branch: `feature/dsh-native-sandbox`.
   English translations, API behavior, and documentation.
 - [x] Linux integration tests, platform-independent policy tests, permission
   and locale browser tests, full regression suite, and sensitive-information scan.
-- [ ] macOS native smoke tests on the build Mac; required before publishing a release.
+- [x] macOS native smoke tests on the build Mac; required before publishing a release.
 - [ ] Windows/WSL2 end-to-end tests, including path translation and launcher loss.
 
 ## Verification and rollout
@@ -54,12 +54,43 @@ behavior. A subprocess test verifies that an unsupported platform never falls
 back to an unrestricted shell. Browser checks use mocked platform metadata for
 the macOS UI branch; they do not establish native Seatbelt containment.
 
-The macOS gate includes the actual native sandbox tests and fails if the backend
-is unavailable. Running this command on Linux exercises Bubblewrap, not Seatbelt.
-Mac SSH connection attempts timed out at the proxy during this implementation;
-no remote files, service, or release were changed. No Windows test host was
-available. Both real-machine checks above remain open, and no Mac release should
-be published from this change until the native gate passes there.
+Validation on Apple Silicon, macOS 26.6.2, Node 22.19.0 (2026-09-20):
+
+- `npm run test:macos`: **16 passed, 0 failed, 2 skipped**. The skips are the
+  Linux-only Bubblewrap argument test and WSL supervisor test, not Seatbelt tests.
+- The native gate covers real Workspace read/write, read-only/off permissions,
+  private credential and sibling Workspace protection, symlink escape attempts,
+  environment filtering, localhost networking, and process-group interruption.
+- Five additional portable integration tests cover the foreground tool and
+  durable background service: bounded/audited output, session-scoped pagination,
+  timeout, cancellation, and retries with narrowed permissions.
+- A separate live HTTPS smoke request to `https://example.com` returned **200**
+  through the native provider with normal DNS resolution and certificate checking.
+  External internet availability is deliberately not a unit-test dependency.
+- An isolated fresh-state server reported `ready` and `shellSandbox: ok`, seeded
+  the default Kurisu character, served the expected bundled avatar checksum, and
+  exited cleanly on SIGTERM. No real model credentials or user state were loaded.
+- The first run exposed a startup `SIGABRT`, then an external DNS failure. The
+  fix permits reading the root directory itself and metadata on `/etc`, `/var`,
+  and `/tmp` aliases. It does **not** grant recursive root reads, arbitrary home
+  access, or additional Mach services. Isolation tests were rerun after both fixes.
+- Tests run serially; validation used `NODE_OPTIONS=--max-old-space-size=2048`.
+  The build-plus-gate invocation reported a maximum RSS of about **1.38 GiB**.
+  No model inference was started.
+
+The macOS gate includes actual native execution and fails if the backend is
+unavailable. Running it on Linux exercises Bubblewrap, not Seatbelt. This is a
+source-level validation on one macOS version, not a newly packaged, installed,
+signed, or published release. Existing installed app and user data were preserved;
+old build copies were moved into a recoverable archive before testing.
+
+After the macOS fixes, the Linux full suite was rerun with
+`YOURCHAR_REQUIRE_NATIVE_SANDBOX=1`: **840 passed, 0 failed, 0 skipped**.
+The sensitive-information scan passed (556 source files), `git diff --check`
+passed, and the existing Linux service still reported `ready`.
+
+No Windows test host was available. Windows/WSL2 end-to-end validation is the one
+remaining checklist item; the Linux supervisor test does not close that item.
 
 Work is isolated on the development branch. The existing main checkout and
 running Linux service remain unchanged. Document conversion, LSP, and incognito

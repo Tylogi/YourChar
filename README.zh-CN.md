@@ -63,7 +63,7 @@ Linux 沙盒 Shell 与文档转换依赖 Bubblewrap，无痕快照需要可验�
 
 需要免装 Node 的 Apple Silicon 桌面版，可参考
 [macOS Release 打包说明](docs/macos-release.md)。macOS 应用包含 YourChar 核心功能，
-原生 Seatbelt Shell 已实现，[Mac 实机验证待完成](docs/native-sandbox-plan.md)；
+原生 Seatbelt Shell 已通过 [Apple Silicon 实机验证](docs/native-sandbox-plan.md)；
 文档转换、沙盒 LSP 和无痕隔离仍依赖 Linux。
 
 ### 1. 启动应用
