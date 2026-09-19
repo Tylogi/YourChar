@@ -22,6 +22,7 @@ import { runReminderDeliveryChecks } from "./reminder-delivery.browser.mjs";
 import { runImSettingsChecks } from "./im-settings.browser.mjs";
 import { runLocaleChecks } from "./locale.browser.mjs";
 import { runNavigationChecks } from "./navigation.browser.mjs";
+import { runModelSettingsLayoutChecks } from "./model-settings-layout.browser.mjs";
 
 const artifactsDir = resolve("browser-artifacts");
 mkdirSync(artifactsDir, { recursive: true });
@@ -237,6 +238,7 @@ try {
   await runImSettingsChecks(browser, artifactsDir);
   await runLocaleChecks(browser);
   await runNavigationChecks(browser, artifactsDir);
+  await runModelSettingsLayoutChecks(browser, artifactsDir);
   await runDesktopWorkflow(browser, baseUrl, artifactsDir);
   await runCompactDesktopWorkflow(browser, baseUrl, artifactsDir);
   await runMobileWorkflow(browser, baseUrl, artifactsDir);

@@ -464,6 +464,57 @@ export function renderAppHtml(): string {
       border-bottom: 1px solid var(--line);
     }
     .model-profile-bar select { min-width: 0; width: 100%; }
+    /* Keep optional hints/custom-model inputs from stretching adjacent fields. */
+    #modelSettingsPanel .settings-grid {
+      align-items: start;
+      gap: 16px 20px;
+    }
+    #modelSettingsPanel .settings-field {
+      min-width: 0;
+      align-content: start;
+    }
+    #modelSettingsPanel :is(select, input:not([type="checkbox"])) {
+      min-width: 0;
+      width: 100%;
+      height: var(--control-height);
+    }
+    #modelSettingsPanel .settings-field > label {
+      line-height: 1.5;
+    }
+    #modelSettingsPanel .settings-field > .muted {
+      line-height: 1.5;
+      overflow-wrap: anywhere;
+    }
+    .model-config-options {
+      grid-column: 1 / -1;
+      display: flex;
+      align-items: center;
+      flex-wrap: wrap;
+      gap: 12px 24px;
+      min-width: 0;
+    }
+    #modelSettingsPanel .checkbox-row {
+      min-width: 0;
+      margin: 0;
+      line-height: 1.5;
+    }
+    #modelSettingsPanel .checkbox-row input {
+      flex: 0 0 16px;
+      margin: 0;
+      padding: 0;
+    }
+    #modelSettingsPanel .settings-actions {
+      gap: 10px;
+      margin-top: 20px;
+      padding-top: 16px;
+      border-top: 1px solid var(--line);
+    }
+    #apiSettingsState {
+      flex-basis: 100%;
+      min-width: 0;
+      line-height: 1.5;
+      overflow-wrap: anywhere;
+    }
     .new-conversation-kind { margin: 0; padding: 0; border: 0; }
     .new-conversation-kind legend { margin-bottom: 7px; color: var(--muted); font-size: 12px; }
     .group-conversation-fields { display: grid; gap: 12px; }
@@ -5890,17 +5941,19 @@ export function renderAppHtml(): string {
               </div>
               <div class="settings-field full">
                 <label for="apiProvider">Provider</label>
-                <select id="apiProvider"></select>
+                <select id="apiProvider" aria-describedby="apiProviderDescription"></select>
                 <span id="apiProviderDescription" class="muted"></span>
               </div>
-              <label class="checkbox-row full">
-                <input id="apiEnabled" type="checkbox" />
-                <span>启用该模型配置</span>
-              </label>
-              <label class="checkbox-row full" data-model-provider-field="visionInputEnabled">
-                <input id="apiVisionInputEnabled" type="checkbox" />
-                <span>该主模型支持图片输入</span>
-              </label>
+              <div class="model-config-options">
+                <label class="checkbox-row">
+                  <input id="apiEnabled" type="checkbox" />
+                  <span>启用该模型配置</span>
+                </label>
+                <label class="checkbox-row" data-model-provider-field="visionInputEnabled">
+                  <input id="apiVisionInputEnabled" type="checkbox" />
+                  <span>该主模型支持图片输入</span>
+                </label>
+              </div>
               <div class="settings-field full" data-model-provider-field="baseUrl">
                 <label for="apiBaseUrl">Base URL</label>
                 <input id="apiBaseUrl" placeholder="http://127.0.0.1:8317/v1" />
@@ -5908,7 +5961,7 @@ export function renderAppHtml(): string {
               <div class="settings-field" data-model-provider-field="model">
                 <label for="apiModel">模型名</label>
                 <select id="apiModel"><option value="">读取模型后选择</option><option value="__custom__">手动输入...</option></select>
-                <input id="apiModelCustom" placeholder="输入模型名" hidden />
+                <input id="apiModelCustom" aria-label="输入模型名" placeholder="输入模型名" hidden />
               </div>
               <div class="settings-field" data-model-provider-field="apiKey">
                 <label for="apiKey">API Key</label>
@@ -5920,7 +5973,7 @@ export function renderAppHtml(): string {
               </div>
               <div class="settings-field" data-model-provider-field="reasoningEffort">
                 <label for="apiReasoningEffort">CoT 强度</label>
-                <select id="apiReasoningEffort">
+                <select id="apiReasoningEffort" aria-describedby="apiReasoningEffortHint">
                   <option value="">自动（推荐）</option>
                   <option value="none">关闭</option>
                   <option value="minimal">最低</option>
@@ -5931,7 +5984,7 @@ export function renderAppHtml(): string {
                   <option value="max">最大（max）</option>
                   <option value="ultra">超强（ultra）</option>
                 </select>
-                <span class="muted">由所选 Provider 映射为模型支持的原生 reasoning / thinking 参数。</span>
+                <span id="apiReasoningEffortHint" class="muted">由所选 Provider 映射为模型支持的原生 reasoning / thinking 参数。</span>
               </div>
               <div class="settings-field" data-model-provider-field="maxTokens">
                 <label for="apiMaxTokens">Max Tokens</label>
@@ -5939,13 +5992,13 @@ export function renderAppHtml(): string {
               </div>
               <div class="settings-field" data-model-provider-field="thinkingTokenBudgetField">
                 <label for="apiThinkingTokenBudgetField">原生思考预算协议</label>
-                <select id="apiThinkingTokenBudgetField">
+                <select id="apiThinkingTokenBudgetField" aria-describedby="apiThinkingTokenBudgetHint">
                   <option value="">关闭（兼容优先）</option>
                   <option value="thinking_token_budget">vLLM · thinking_token_budget</option>
                   <option value="thinking_budget">Qwen / SGLang · thinking_budget</option>
                   <option value="thinking_budget_tokens">llama.cpp · thinking_budget_tokens</option>
                 </select>
-                <span class="muted">仅在服务端明确支持时开启；Pi 会按 CoT 强度限额，并至少为最终答案预留 1024 tokens。</span>
+                <span id="apiThinkingTokenBudgetHint" class="muted">仅在服务端明确支持时开启；Pi 会按 CoT 强度限额，并至少为最终答案预留 1024 tokens。</span>
               </div>
               <div class="settings-field" data-model-provider-field="thinkingBudgetTokens">
                 <label for="apiThinkingBudgetTokens">思考预算 Tokens</label>
@@ -5962,7 +6015,7 @@ export function renderAppHtml(): string {
               <button id="discoverModelsBtn" class="secondary" type="button">读取模型</button>
               <button id="clearApiKeyBtn" class="secondary" type="button">撤销 Key</button>
               <button id="rollbackApiKeyBtn" class="secondary" type="button" hidden>回滚 Key</button>
-              <span id="apiSettingsState" class="muted"></span>
+              <span id="apiSettingsState" class="muted" role="status" aria-live="polite"></span>
             </div>
           </section>
           <section id="visionSettingsPanel" class="management-panel settings-panel" hidden>
