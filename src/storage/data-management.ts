@@ -193,6 +193,8 @@ export class DataManagementRepository {
         DELETE FROM task_bench_reports;
         DELETE FROM model_context_traces;
         DELETE FROM context_log_summaries;
+        DELETE FROM usage_events;
+        DELETE FROM usage_settings;
         DELETE FROM audit_actions;
         DELETE FROM runtime_event_streams;
       `);

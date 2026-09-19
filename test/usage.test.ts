@@ -33,6 +33,25 @@ function close(server: Server): Promise<void> {
     server.close((error) => (error ? reject(error) : resolve())));
 }
 
+/** 浏览器 UI 打开页面时拿到的 HttpOnly 控制面能力，写接口都靠它。 */
+async function controlPlaneCookie(origin: string): Promise<string> {
+  const response = await fetch(origin);
+  const cookie = response.headers.get("set-cookie")?.split(";", 1)[0];
+  await response.body?.cancel();
+  if (!cookie) throw new Error("server did not issue a control-plane cookie");
+  return cookie;
+}
+
+function mutationHeaders(origin: string, cookie: string): Record<string, string> {
+  return {
+    "content-type": "application/json",
+    origin,
+    cookie,
+    "sec-fetch-mode": "cors",
+    "sec-fetch-site": "same-origin",
+  };
+}
+
 test("model prices resolve from the catalog and unknown models stay unpriced", () => {
   assert.deepEqual(resolveModelPrice("deepseek-chat"), {
     input: 2,
@@ -178,7 +197,7 @@ test("usage HTTP endpoints report the month and persist settings", async () => {
 
     const saved = await (await fetch(`${origin}/api/v1/usage/settings`, {
       method: "POST",
-      headers: { "content-type": "application/json" },
+      headers: mutationHeaders(origin, await controlPlaneCookie(origin)),
       body: JSON.stringify({ monthlyBudgetYuan: 1 }),
     })).json() as { monthlyBudgetYuan: number | null };
     assert.equal(saved.monthlyBudgetYuan, 1);
@@ -292,4 +311,157 @@ test("invalid prices and budgets never reach storage", () => {
     cacheRead: 0,
     cacheWrite: 0,
   });
+});
+
+test("usage settings mutations require the local control-plane capability", async () => {
+  const kernel = newKernel();
+  kernel.usageService.recordModelCall({
+    provider: "openai_compatible",
+    model: "deepseek-chat",
+    usage: { input: 1_000_000, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 1_000_000 },
+  });
+  const server = createHttpServer({ kernel });
+  await listen(server);
+  try {
+    const origin = originOf(server);
+    const cookie = await controlPlaneCookie(origin);
+    const endpoint = `${origin}/api/v1/usage/settings`;
+    const body = JSON.stringify({
+      monthlyBudgetYuan: 0,
+      priceOverrides: { "deepseek-chat": { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 } },
+    });
+
+    // 未授权请求一律拒绝：既不能改预算，也不能把单价改成 0 来抹掉花费。
+    const unauthorized = [
+      ["no cookie", { "content-type": "application/json" }],
+      ["origin without cookie", { "content-type": "application/json", origin }],
+      ["text/plain without cookie", { "content-type": "text/plain" }],
+      ["origin and text/plain without cookie", { "content-type": "text/plain", origin }],
+    ] as const;
+    for (const [label, headers] of unauthorized) {
+      const response = await fetch(endpoint, { method: "POST", headers, body });
+      await response.body?.cancel();
+      assert.ok(
+        response.status === 403 || response.status === 415,
+        `${label} should be rejected, got ${response.status}`,
+      );
+      assert.deepEqual(kernel.usageService.settings(), { monthlyBudgetYuan: null, priceOverrides: {} }, label);
+      const summary = kernel.usageService.summary(undefined, { provider: "", model: "deepseek-chat" });
+      assert.equal(summary.costYuan, 2, label);
+    }
+
+    const authorized = await fetch(endpoint, {
+      method: "POST",
+      headers: mutationHeaders(origin, cookie),
+      body,
+    });
+    assert.equal(authorized.status, 200);
+    const saved = await authorized.json() as { monthlyBudgetYuan: number | null };
+    assert.equal(saved.monthlyBudgetYuan, 0);
+    assert.deepEqual(kernel.usageService.settings().priceOverrides["deepseek-chat"], {
+      input: 0,
+      output: 0,
+      cacheRead: 0,
+      cacheWrite: 0,
+    });
+
+    // 授权后的请求也不能被未授权请求改写回去。
+    const tamper = await fetch(endpoint, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ monthlyBudgetYuan: 999 }),
+    });
+    await tamper.body?.cancel();
+    assert.equal(tamper.status, 403);
+    assert.equal(kernel.usageService.settings().monthlyBudgetYuan, 0);
+  } finally {
+    await close(server);
+    kernel.dispose();
+  }
+});
+
+test("deleting all user data clears the usage ledger and the usage settings", async () => {
+  const kernel = newKernel();
+  const service = kernel.usageService;
+  service.recordModelCall({
+    provider: "openai_compatible",
+    model: "deepseek-chat",
+    usage: { input: 1_000_000, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 1_000_000 },
+  });
+  service.saveSettings({
+    monthlyBudgetYuan: 5,
+    priceOverrides: { "my-local-model": { input: 1, output: 2, cacheRead: 0, cacheWrite: 0 } },
+  });
+  assert.equal(service.summary(undefined, { provider: "", model: "" }).calls, 1);
+
+  await kernel.deleteAllUserData();
+
+  const summary = service.summary(undefined, { provider: "", model: "deepseek-chat" });
+  assert.equal(summary.calls, 0);
+  assert.deepEqual(summary.models, []);
+  assert.equal(summary.costYuan, 0);
+  assert.equal(summary.unpricedCalls, 0);
+  assert.deepEqual(summary.bucket, { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 });
+  assert.equal(summary.budget.limitYuan, null);
+  assert.equal(summary.budget.exceeded, false);
+  assert.deepEqual(summary.settings.priceOverrides, {});
+  assert.equal(summary.settings.monthlyBudgetYuan, null);
+  assert.deepEqual(service.settings(), { monthlyBudgetYuan: null, priceOverrides: {} });
+
+  const events = kernel.database.connection.prepare(
+    "SELECT COUNT(*) AS total FROM usage_events",
+  ).get() as { total: number };
+  const settings = kernel.database.connection.prepare(
+    "SELECT COUNT(*) AS total FROM usage_settings",
+  ).get() as { total: number };
+  assert.equal(events.total, 0);
+  assert.equal(settings.total, 0);
+
+  // 删除之后模型名和已删除单价也不能从聚合接口里再读出来。
+  assert.equal(resolveModelPrice("my-local-model"), null);
+  kernel.dispose();
+});
+
+test("budget semantics separate an unset budget from a zero budget", () => {
+  const free = newKernel().usageService;
+  const spent = newKernel().usageService;
+  spent.recordModelCall({
+    model: "deepseek-chat",
+    usage: { input: 1_000_000, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 1_000_000 },
+  });
+  const configured = { provider: "", model: "deepseek-chat" };
+  const budgetOf = (service: typeof free) => service.summary(undefined, configured).budget;
+
+  // 1. null 预算 + 0 花费
+  free.saveSettings({ monthlyBudgetYuan: null });
+  const unsetEmpty = budgetOf(free);
+  assert.deepEqual(unsetEmpty, { limitYuan: null, usedYuan: 0, remainingYuan: null, ratio: null, exceeded: false });
+
+  // 2. null 预算 + 有花费
+  const unsetSpent = budgetOf(spent);
+  assert.deepEqual(unsetSpent, { limitYuan: null, usedYuan: 2, remainingYuan: null, ratio: null, exceeded: false });
+
+  // 3. 0 元预算 + 0 花费
+  free.saveSettings({ monthlyBudgetYuan: 0 });
+  assert.deepEqual(budgetOf(free), { limitYuan: 0, usedYuan: 0, remainingYuan: 0, ratio: 0, exceeded: false });
+
+  // 4. 0 元预算 + 有花费
+  spent.saveSettings({ monthlyBudgetYuan: 0 });
+  const zeroSpent = budgetOf(spent);
+  assert.deepEqual(zeroSpent, { limitYuan: 0, usedYuan: 2, remainingYuan: -2, ratio: 1, exceeded: true });
+  assert.ok(Number.isFinite(zeroSpent.ratio) && Number.isFinite(zeroSpent.remainingYuan!));
+
+  // 5. 正常预算，未超
+  spent.saveSettings({ monthlyBudgetYuan: 100 });
+  assert.deepEqual(budgetOf(spent), { limitYuan: 100, usedYuan: 2, remainingYuan: 98, ratio: 0.02, exceeded: false });
+
+  // 6. 正常预算，刚好花完（沿用 existing 的「达到上限即算超支」规则）
+  spent.saveSettings({ monthlyBudgetYuan: 2 });
+  assert.deepEqual(budgetOf(spent), { limitYuan: 2, usedYuan: 2, remainingYuan: 0, ratio: 1, exceeded: true });
+
+  // 7. 正常预算，超出
+  spent.saveSettings({ monthlyBudgetYuan: 1 });
+  const over = budgetOf(spent);
+  assert.deepEqual(over, { limitYuan: 1, usedYuan: 2, remainingYuan: -1, ratio: 2, exceeded: true });
+  assert.ok(Number.isFinite(over.ratio));
 });

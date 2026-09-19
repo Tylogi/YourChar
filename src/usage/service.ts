@@ -151,7 +151,8 @@ function buildBudget(limitYuan: number | null, usedYuan: number): UsageBudget {
     usedYuan: round(usedYuan),
     remainingYuan: round(limitYuan - usedYuan),
     ratio: Math.round(ratio * 10000) / 10000,
-    exceeded: usedYuan >= limitYuan && limitYuan > 0,
+    // 0 元预算也是预算：花过钱就算超支；「未设置预算」由上面的 null 分支处理。
+    exceeded: usedYuan >= limitYuan && usedYuan > 0,
   };
 }
 

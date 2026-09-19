@@ -29,6 +29,10 @@ Migration 70 adds `usage_events` (append-only ledger); migration 71 adds
 `usage_settings`, whose single `default` row holds the monthly budget and price
 overrides.
 
+Usage follows the existing data lifecycle: **删除全部用户数据** now clears both
+tables, so the ledger, the budget, and the price overrides all fall back to the
+empty defaults. There is no separate retention, TTL, or cleanup job for usage.
+
 ## Pricing
 
 `src/usage/pricing.ts` ships a catalog of CNY-per-million-token prices. A model
@@ -45,9 +49,15 @@ row is written.
 warns from 80% of the cap and flags an over-budget month. A budget never blocks a
 model call.
 
+An unset budget (`null`) means "no cap". A budget of `0` is a real cap: a month
+with no recorded cost is fine, but any recorded cost at all marks it as over
+budget.
+
 ## HTTP
 
 - `GET /api/v1/usage?month=YYYY-MM` — tokens, per provider/model rows, cost, and
   budget state; defaults to the current month.
 - `POST /api/v1/usage/settings` — `{ monthlyBudgetYuan, priceOverrides }`; an
-  omitted field keeps its stored value.
+  omitted field keeps its stored value. Like every other local mutation it runs
+  through `assertLocalControlPlaneMutation`, so a request without the
+  control-plane cookie is rejected before anything is written.

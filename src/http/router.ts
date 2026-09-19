@@ -2372,6 +2372,7 @@ async function route(input: {
   }
 
   if (pathname === "/api/v1/usage/settings" && method === "POST") {
+    assertLocalControlPlaneMutation(input.request);
     const body = asRecord(await readJson(input.request));
     const patch: { monthlyBudgetYuan?: number | null; priceOverrides?: Record<string, ModelPrice> } = {};
     if ("monthlyBudgetYuan" in body) {
