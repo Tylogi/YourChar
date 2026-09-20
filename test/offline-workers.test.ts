@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { execFileSync } from "node:child_process";
+import { execFileSync, spawn } from "node:child_process";
 import { once } from "node:events";
 import { existsSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { createServer } from "node:net";
@@ -53,6 +53,34 @@ test("memory storage rejects disk temp, keeps private permissions and disposes",
   } finally { memory.dispose(); }
   memory.dispose();
   assert.equal(existsSync(path), false);
+});
+
+test("macOS reclaims only an owned RAM volume after an abrupt owner exit", { skip: process.platform !== "darwin" }, async () => {
+  const module = new URL("../src/execution/memory-directory.js", import.meta.url).href;
+  const child = spawn(process.execPath, ["--input-type=module", "-e", `
+    const {createMemoryDirectory}=await import(${JSON.stringify(module)});
+    const memory=createMemoryDirectory('yourchar-crash-test-');
+    console.log(memory.path);
+    setInterval(()=>{},1000);
+  `], { stdio: ["ignore", "pipe", "pipe"] });
+  const closed = once(child, "close");
+  let buffer = "";
+  const path = await new Promise<string>((resolvePath, reject) => {
+    const timeout = setTimeout(() => { child.kill("SIGKILL"); reject(new Error("RAM fixture startup timeout")); }, 20_000);
+    child.stdout.on("data", chunk => {
+      buffer += chunk;
+      if (buffer.includes("\n")) { clearTimeout(timeout); resolvePath(buffer.trim()); }
+    });
+    child.once("error", error => { clearTimeout(timeout); reject(error); });
+  });
+  child.kill("SIGKILL");
+  await closed;
+  assert.equal(existsSync(path), true, "abrupt death leaves a recovery candidate");
+  execFileSync(process.execPath, ["--input-type=module", "-e", `
+    const {createMemoryDirectory}=await import(${JSON.stringify(module)});
+    createMemoryDirectory('yourchar-recovery-test-').dispose();
+  `], { timeout: 30_000 });
+  assert.equal(existsSync(path), false, "fresh process reclaims the verified dead owner's RAM volume");
 });
 
 test("native offline worker denies network, host reads, symlink escapes and workspace writes", async () => {
