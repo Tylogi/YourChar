@@ -20,7 +20,7 @@ export async function connectMcpServerToPi(
   } = {},
 ): Promise<McpPiBridge> {
   const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
-  const client = new Client({ name: clientName, version: "0.1.0" });
+  const client = new Client({ name: clientName, version: "0.2.0" });
   await server.connect(serverTransport);
   try {
     await client.connect(clientTransport);

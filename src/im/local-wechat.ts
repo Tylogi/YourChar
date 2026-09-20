@@ -1797,7 +1797,7 @@ function recoveredBindingSession(credential: PersistedWechatCredential): ImGatew
 function baseInfo(): { channel_version: string; bot_agent: string } {
   return {
     channel_version: connectorVersion,
-    bot_agent: "YourChar/0.1.0",
+    bot_agent: "YourChar/0.2.0",
   };
 }
 

@@ -10,6 +10,12 @@ her bundled avatar, as the default character so you can start chatting
 immediately after configuring a model. Existing application data and character
 choices are left unchanged.
 
+To upgrade, quit YourChar with Command-Q, back up the application data directory,
+then replace /Applications/YourChar.app with this app. Do not delete the data
+directory. Eject the installer disk image and launch the app from Applications.
+Closing a window alone does not quit YourChar; also stop any separately running
+YourChar backend before upgrading. There is no automatic updater in this preview.
+
 Application data:
   ~/Library/Application Support/YourChar
 
@@ -38,9 +44,14 @@ worlds, schedules and network integrations remain available.
 Signing
 -------
 
-Development builds are ad-hoc signed and are not notarized. A public download
-should be signed with an Apple Developer ID Application certificate and
-notarized before distribution.
+This preview is ad-hoc signed and is not Apple-notarized. macOS may block its
+first launch. Only if you trust the source and have verified the download,
+follow Apple's instructions to allow this specific app; do not disable
+Gatekeeper globally:
+  https://support.apple.com/en-us/102445
+
+A notarized distribution will require an Apple Developer ID Application
+certificate and Apple's notarization service.
 
 YourChar is licensed under MIT. See the bundled LICENSE and
 THIRD_PARTY_NOTICES.md. The embedded Node.js runtime retains its own LICENSE.

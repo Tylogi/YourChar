@@ -66,11 +66,12 @@ and long-running agents, too.
 
 ## Quick start
 
-Requires **Node.js 22.19.0 or newer** and npm. Linux uses Bubblewrap for sandboxed
+Running from source requires **Node.js 22.19.0 or newer** and npm. Linux uses Bubblewrap for sandboxed
 workers and verified `tmpfs` for disposable state.
 
-For a self-contained Apple Silicon desktop build, see
-[macOS release packaging](docs/macos-release.md) (macOS 13+). The app bundles
+For Apple Silicon (macOS 13+), [download the macOS preview](https://github.com/Tylogi/YourChar/releases/tag/v0.2.0-macos-preview.1)
+and read the [installation and upgrade guide](docs/macos-release.md#install-or-upgrade).
+This preview is ad-hoc signed, not Apple-notarized. The app bundles
 Node and Python; document conversion and TypeScript LSP use offline Seatbelt,
 and incognito uses a private RAM volume. Windows uses a WSL2-hosted backend;
 its real-machine acceptance is pending. See [platform setup and checks](docs/cross-platform-workers.md).

@@ -6,6 +6,44 @@ production npm dependencies, the bundled Skills, and a verified Node.js arm64
 runtime, plus a self-contained CPython/MarkItDown worker. Users do not need to
 install Node.js, Python, or uv.
 
+## Install or upgrade
+
+Download the DMG or ZIP from the
+[v0.2.0 macOS preview release](https://github.com/Tylogi/YourChar/releases/tag/v0.2.0-macos-preview.1).
+It requires **Apple Silicon and macOS 13 or newer**; it is not an Intel or
+Windows installer. See the [release notes](releases/v0.2.0-macos-preview.1.md).
+
+1. Quit any running YourChar app with **YourChar → Quit YourChar** (`⌘Q`). Closing
+   its window alone does not stop the backend. Quit any separately started
+   YourChar backend too, so the new app does not attach to an older service.
+2. For an upgrade, back up `~/Library/Application Support/YourChar` after quitting.
+3. Open the DMG and drag `YourChar.app` into **Applications**, choosing **Replace**
+   if prompted. Alternatively, extract the ZIP and copy the app to Applications.
+4. Eject the DMG and open `/Applications/YourChar.app`. Configure a model on a
+   fresh installation; an upgrade retains existing settings and conversations.
+
+Only the app bundle is replaced. Do **not** delete Application Support to upgrade;
+keeping the old app and the pre-upgrade data backup also makes rollback possible.
+This preview does not include an automatic updater.
+
+`SHA256SUMS.txt` contains checksums for both installer formats. After downloading
+both assets and the checksum file into the same directory, run:
+
+```bash
+shasum -a 256 -c SHA256SUMS.txt
+```
+
+If downloading only one format, compare `shasum -a 256 <downloaded-file>` with
+that file's entry instead. Checksums verify file integrity; they do not replace
+Apple notarization or establish the publisher's identity.
+
+This preview is **ad-hoc signed and not notarized**. macOS may block its first
+launch. Only if you trust the source and have verified the download, follow
+[Apple's app-opening guidance](https://support.apple.com/en-us/102445) to allow
+this particular app in **System Settings → Privacy & Security → Open Anyway**.
+Do not disable Gatekeeper globally. A damaged-app or malware warning should be
+investigated rather than treated as an ordinary unidentified-developer warning.
+
 ## Runtime behavior
 
 - Double-clicking `YourChar.app` starts the server on `127.0.0.1:8765` and
@@ -23,8 +61,9 @@ schedule, reminder, model-provider, Workspace file, and network-integration
 features. Sandboxed Shell now has a native Seatbelt provider; its read/write
 Workspace boundary and private-file protection must pass the native release
 tests on the build Mac. Shell is opt-in and uses host networking on macOS.
-The native gate passed on Apple Silicon with macOS 26.6.2 and Node 22.19.0;
-this does not mean an updated installer has already been published.
+The native gate is verified on Apple Silicon with macOS 26.6.2 and Node 22.19.0.
+The deployment minimum is macOS 13; older supported macOS versions have not yet
+been tested on a physical machine.
 Document conversion and TypeScript LSP have a separate **offline** Seatbelt
 provider. Incognito and worker scratch use verified private RAM volumes, with no
 disk fallback. See [worker adaptation](cross-platform-workers.md) for the exact
@@ -87,9 +126,10 @@ build bundles separately. Do not remove Application Support data to clean builds
 ## Signing and publication
 
 The current builder ad-hoc signs the complete bundle and verifies its nested
-code. This is suitable for internal testing but is not a public macOS release:
-there is no signing identity on the build host and the result is not notarized.
-Before publishing broadly, add a secure CI or release-host workflow using an
+code. GitHub downloads are explicitly labelled **previews**: there is no
+Developer ID signing identity on the build host and the result is not notarized.
+They should not be described as Apple-verified or free of Gatekeeper warnings.
+For a notarized distribution, add a secure CI or release-host workflow using an
 Apple **Developer ID Application** certificate, hardened-runtime-compatible
 entitlements for the embedded Node runtime, `notarytool`, and stapling. Never
 commit the certificate, private key, App Store Connect key, or notarization
