@@ -158,7 +158,7 @@ function recoverStaleVolumes(): void {
 
 function run(command: string, args: string[], input?: string): string {
   return execFileSync(command, args, { encoding: "utf8", timeout: 15_000, maxBuffer: 4 * 1024 * 1024,
-    env: { PATH: "/usr/bin:/bin:/usr/sbin:/sbin", LC_ALL: "C" }, input, stdio: ["pipe", "pipe", "pipe"] });
+    env: { PATH: "/usr/bin:/bin:/usr/sbin:/sbin", LC_ALL: "C", TZ: "UTC" }, input, stdio: ["pipe", "pipe", "pipe"] });
 }
 
 function plist(command: string, args: string[]): Record<string, any> {

@@ -39,6 +39,19 @@ test("worker path mapping is bounded and does not alter source text", () => {
   assert.doesNotMatch(profile, /\(allow network|subpath "\/Users"|subpath "\/opt\/homebrew"/);
 });
 
+test("owner process identity is stable across timezone changes", () => {
+  const previous = process.env.TZ;
+  try {
+    const identity = processIdentity(process.pid);
+    assert.ok(identity);
+    process.env.TZ = "Pacific/Honolulu";
+    assert.equal(processIdentity(process.pid), identity);
+  } finally {
+    if (previous === undefined) delete process.env.TZ;
+    else process.env.TZ = previous;
+  }
+});
+
 test("memory storage rejects disk temp, keeps private permissions and disposes", () => {
   const disk = mkdtempSync(join(tmpdir(), "yourchar-worker-disk-"));
   try { assert.throws(() => assertMemoryBacked(disk)); }
