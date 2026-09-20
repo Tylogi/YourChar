@@ -76,3 +76,9 @@ a machine that has never had it does.
 Updating extracts the application payload over `/opt/yourchar` and leaves state
 alone; `wsl --unregister YourChar` deletes the distribution and therefore the
 state with it, so export data before removing a distribution.
+## Running the payload on a user's machine
+
+The payload is not started by hand. `packaging/windows/launcher/` contains
+`YourChar.exe`, which imports this archive into a private WSL2 distribution,
+starts the backend, waits for readiness, opens the UI and stops the backend again
+on exit. See `packaging/windows/launcher/README.md`.

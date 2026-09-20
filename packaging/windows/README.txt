@@ -70,3 +70,9 @@ Not included yet
 There is no Windows launcher or installer in this payload. Starting YourChar
 still means running one wsl.exe command; the double-clickable application that
 wraps it is the next step.
+Windows launcher
+----------------
+packaging/windows/launcher/ holds YourChar.exe, the double-click entry point that
+imports this payload into WSL2 and runs it. Build it with
+`powershell -File packaging/windows/launcher/build.ps1` after building the payload.
+See packaging/windows/launcher/README.md.

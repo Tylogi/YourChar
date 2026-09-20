@@ -32,3 +32,4 @@ browser-artifacts/
 eval-artifacts/
 backups/
 release/
+packaging/windows/launcher/out/
