@@ -82,8 +82,9 @@ an adjacent private-only Skill. Skill packages are always read-only.
 
 `read_document` converts Workspace-relative PDF, DOCX, PPTX, XLS/XLSX, HTML,
 CSV, and common text documents to bounded Markdown chunks with Microsoft
-MarkItDown. The Python worker runs in its own uv-managed environment inside a
-network-isolated Bubblewrap sandbox. It receives only one read-only source file,
+MarkItDown. Development uses a uv-managed Python environment; macOS releases
+include a relocatable Python runtime and the frozen dependencies. The worker
+runs offline under Bubblewrap on Linux/WSL2 or Seatbelt on macOS. It receives only one read-only source file,
 the read-only worker environment, temporary storage, and the minimum system
 runtime; it does not receive the Workspace directory, state directory, model
 credentials, host environment, or network namespace. Converted content is
@@ -91,7 +92,8 @@ wrapped as untrusted document data and cached only in bounded process memory.
 Normal, per-character secret, and disposable incognito Workspaces use distinct
 cache namespaces. Empty-text PDFs fail explicitly as OCR candidates; the first
 integration does not pass Vision credentials to Python or silently upload a
-scanned document.
+scanned document. Input staging and macOS worker scratch use verified RAM storage,
+not ordinary disk temporary files. See [cross-platform workers](cross-platform-workers.md).
 
 All paths supplied to workspace tools must be relative. The implementation
 resolves real paths and rejects symlink, directory, and parent-directory

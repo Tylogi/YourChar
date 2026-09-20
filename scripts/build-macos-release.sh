@@ -100,12 +100,14 @@ runtime_node="$runtime_root/bin/node"
 chmod 755 "$runtime_node"
 
 git -C "$repo_root" archive --format=tar HEAD | /usr/bin/tar -xf - -C "$source_root"
+export YOURCHAR_BUILD_UV="${YOURCHAR_BUILD_UV:-$(command -v uv)}"
 export PATH="$node_distribution/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
 export npm_config_audit=false
 export npm_config_fund=false
 (
   cd "$source_root"
   npm ci
+  npm run bundle:markitdown
   if [[ "${MACOS_SKIP_TESTS:-0}" == "1" ]]; then
     npm run build
   else
@@ -151,7 +153,7 @@ done
   -parse-as-library \
   -O \
   -whole-module-optimization \
-  -target arm64-apple-macos11.0 \
+  -target arm64-apple-macos13.0 \
   -framework AppKit \
   -framework WebKit \
   "$source_root/packaging/macos/YourCharLauncher.swift" \
@@ -171,6 +173,15 @@ chmod 755 "$contents/MacOS/YourChar"
 [[ "$(/usr/bin/lipo -archs "$contents/MacOS/YourChar")" == "arm64" ]]
 [[ "$(/usr/bin/lipo -archs "$runtime_node")" == "arm64" ]]
 
+# Re-test the relocated, pruned and signed payload, not just the build tree.
+(
+  cd "$application_root"
+  YOURCHAR_REQUIRE_WORKERS=1 "$runtime_node" --disable-warning=ExperimentalWarning \
+    --test --test-concurrency=1 \
+    --test-name-pattern='real MarkItDown worker|bundled TypeScript LSP resolves' \
+    dist/test/document-reader.test.js dist/test/lsp-navigation.test.js
+)
+
 smoke_port="$($runtime_node -e 'const net=require("node:net");const server=net.createServer();server.listen(0,"127.0.0.1",()=>{console.log(server.address().port);server.close();});')"
 smoke_state="$build_root/smoke-state"
 smoke_log="$build_root/smoke.log"
@@ -188,7 +199,7 @@ smoke_ready=0
 for _ in {1..120}; do
   if /usr/bin/curl --fail --silent --max-time 1 --output "$smoke_response" \
     "http://127.0.0.1:${smoke_port}/api/v1/readiness" &&
-    "$runtime_node" -e 'const fs=require("node:fs");try{const value=JSON.parse(fs.readFileSync(process.argv[1],"utf8"));process.exit(value.status==="ready"&&value.database==="ok"?0:1);}catch{process.exit(1);}' "$smoke_response"
+    "$runtime_node" -e 'const fs=require("node:fs");try{const value=JSON.parse(fs.readFileSync(process.argv[1],"utf8"));process.exit(value.status==="ready"&&value.database==="ok"&&value.markitdownAvailable===true?0:1);}catch{process.exit(1);}' "$smoke_response"
   then
     smoke_ready=1
     break

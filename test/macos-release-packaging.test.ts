@@ -49,6 +49,11 @@ test("macOS release pipeline is portable, self-contained, and safety-scoped", ()
   assert.match(launcher, /runtime\/bin\/node/u);
   assert.match(launcher, /WebKit/u);
   assert.match(plist, /ai\.tylogi\.yourchar/u);
-  assert.match(plist, /<string>11\.0<\/string>/u);
+  assert.match(plist, /<string>13\.0<\/string>/u);
+  assert.match(script, /npm run bundle:markitdown/u);
+  assert.match(script, /markitdownAvailable===true/u);
+  assert.match(script, /--test-name-pattern='real MarkItDown worker\|bundled TypeScript LSP resolves'/u);
+  assert.match(packageJson.scripts["test:macos"], /YOURCHAR_REQUIRE_WORKERS=1/u);
+  assert.match(packageJson.scripts["test:macos"], /offline-workers\.test\.js/u);
   assert.doesNotMatch([script, launcher, plist].join("\n"), /\/home\/|\/Users\//u);
 });

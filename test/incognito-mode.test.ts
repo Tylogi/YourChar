@@ -9,12 +9,13 @@ import {
   readFileSync,
   readlinkSync,
   readdirSync,
+  realpathSync,
   rmSync,
   truncateSync,
   writeFileSync,
 } from "node:fs";
 import type { Server } from "node:http";
-import { tmpdir } from "node:os";
+import { tmpdir as systemTmpdir } from "node:os";
 import { join, relative } from "node:path";
 import test from "node:test";
 import { Worker } from "node:worker_threads";
@@ -31,8 +32,10 @@ import { relationshipStateMcpModuleId } from "../src/modules/catalog.js";
 import { CharacterAgentSkillPackageService } from "../src/modules/character-skill-packages.js";
 import { AppDatabase } from "../src/storage/database.js";
 import { createTestRuntime, ScriptedModelController } from "../src/testing/runtime.js";
+import { createMemoryDirectory } from "../src/execution/memory-directory.js";
 
 const tmpfsRoot = "/dev/shm";
+const tmpdir = () => realpathSync(systemTmpdir());
 const snapshotPrefix = "yourchar-incognito-";
 
 test("incognito inherits a stable transcript, supports meetings, and leaves parent state unchanged", async () => {
@@ -700,7 +703,7 @@ test("snapshot inherits ordinary workspace files but excludes workspace/repos fr
   }
 });
 
-test("startup cleans only a stale owned direct-child tmpfs snapshot", () => {
+test("startup cleans only a stale owned direct-child tmpfs snapshot", { skip: process.platform !== "linux" }, () => {
   const stateDir = mkdtempSync(join(tmpdir(), "yourchar-incognito-orphan-state-"));
   const orphan = join(tmpfsRoot, `${snapshotPrefix}${randomUUID()}`);
   mkdirSync(orphan, { mode: 0o700 });
@@ -863,7 +866,8 @@ test("runtime quota rejects an oversized disposable overlay before child access"
 });
 
 test("incognito child SQLite connections keep temporary state in memory", () => {
-  const stateDir = mkdtempSync(join(tmpfsRoot, "yourchar-incognito-child-sqlite-"));
+  const memory = createMemoryDirectory("yourchar-incognito-child-sqlite-");
+  const stateDir = memory.path;
   let child: CompanionKernel | undefined;
   try {
     child = new CompanionKernel({
@@ -880,11 +884,11 @@ test("incognito child SQLite connections keep temporary state in memory", () => 
     assert.equal(Number(row?.temp_store), 2);
   } finally {
     child?.dispose();
-    rmSync(stateDir, { recursive: true, force: true });
+    memory.dispose();
   }
 });
 
-test("large snapshot VACUUM never opens an ambient SQLite temp file", async () => {
+test("large snapshot VACUUM never opens an ambient SQLite temp file", { skip: process.platform !== "linux" }, async () => {
   const control = await observeVacuumFileDescriptors("control");
   assert.equal(
     control.some((path) => path.includes("/var/tmp/etilqs_")),
@@ -941,9 +945,12 @@ function closeServer(server: Server): Promise<void> {
 }
 
 function listSnapshotRoots(): string[] {
-  return readdirSync(tmpfsRoot)
+  const roots = process.platform === "darwin"
+    ? readdirSync(tmpdir()).filter(name => name.startsWith("yourchar-memory-")).map(name => join(tmpdir(), name))
+    : [tmpfsRoot];
+  return roots.flatMap(root => readdirSync(root)
     .filter((name) => name.startsWith(snapshotPrefix))
-    .map((name) => join(tmpfsRoot, name))
+    .map((name) => join(root, name)))
     .sort();
 }
 

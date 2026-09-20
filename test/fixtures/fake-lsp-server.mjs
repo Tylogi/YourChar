@@ -1,7 +1,10 @@
 import { existsSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 
 let buffer = Buffer.alloc(0);
 const documents = new Map();
+let workspacePath;
 
 process.stdin.on("data", (chunk) => {
   buffer = Buffer.concat([buffer, chunk]);
@@ -27,6 +30,7 @@ function drain() {
 function handle(message) {
   const method = message.method;
   if (method === "initialize") {
+    workspacePath = fileURLToPath(message.params.rootUri);
     respond(message.id, {
       capabilities: {
         definitionProvider: true,
@@ -77,7 +81,7 @@ function handle(message) {
   if (method === "textDocument/hover") {
     let workspaceWritable = true;
     try {
-      writeFileSync("/workspace/lsp-must-stay-read-only.txt", "forbidden");
+      writeFileSync(join(workspacePath, "lsp-must-stay-read-only.txt"), "forbidden");
     } catch {
       workspaceWritable = false;
     }

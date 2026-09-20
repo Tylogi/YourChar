@@ -1,11 +1,8 @@
-import {
-  spawn,
-  type ChildProcessWithoutNullStreams,
-} from "node:child_process";
+import type { ChildProcessWithoutNullStreams } from "node:child_process";
 import { createHash } from "node:crypto";
 import { existsSync, realpathSync } from "node:fs";
 import { isAbsolute, posix } from "node:path";
-import { bubblewrapPath } from "../pi/sandboxed-shell-tool.js";
+import { spawnOfflineWorker, workerWorkspaceUri, mapWorkerConfiguration, type OfflineWorker } from "../execution/offline-worker.js";
 import {
   LspError,
   type LspDocumentSnapshot,
@@ -103,6 +100,7 @@ class StdioLspProvider implements LspProvider {
   private readonly pending = new Map<JsonRpcId, PendingRequest>();
   private readonly documents = new Map<string, DocumentState>();
   private child?: ChildProcessWithoutNullStreams;
+  private worker?: OfflineWorker;
   private processClosed?: Promise<void>;
   private startPromise?: Promise<void>;
   private closePromise?: Promise<void>;
@@ -130,23 +128,23 @@ class StdioLspProvider implements LspProvider {
     }
     await waitFor(this.start(), signal);
     await this.syncDocument(request.document, signal);
-    const textDocument = { uri: request.document.uri };
+    const textDocument = { uri: this.wireUri(request.document.uri) };
     const position = request.position;
     let raw: unknown;
     switch (request.operation) {
       case "goToDefinition":
         raw = await this.sendRequest("textDocument/definition", { textDocument, position }, signal);
-        return locationsResult(raw);
+        return this.locations(raw);
       case "findReferences":
         raw = await this.sendRequest("textDocument/references", {
           textDocument,
           position,
           context: { includeDeclaration: true },
         }, signal);
-        return locationsResult(raw);
+        return this.locations(raw);
       case "goToImplementation":
         raw = await this.sendRequest("textDocument/implementation", { textDocument, position }, signal);
-        return locationsResult(raw);
+        return this.locations(raw);
       case "hover":
         raw = await this.sendRequest("textDocument/hover", { textDocument, position }, signal);
         return hoverResult(raw);
@@ -158,6 +156,19 @@ class StdioLspProvider implements LspProvider {
     this.disposed = true;
     this.closePromise = this.closeProcess();
     return this.closePromise;
+  }
+
+  private wireUri(uri: string): string {
+    return workerWorkspaceUri(uri, this.scope.workspaceDir, "to-worker");
+  }
+
+  private locations(raw: unknown): LspProviderResult {
+    const result = locationsResult(raw);
+    if (result.kind !== "locations" || process.platform !== "darwin") return result;
+    return { ...result, locations: result.locations.map(location => {
+      try { return { ...location, uri: workerWorkspaceUri(location.uri, this.scope.workspaceDir, "from-worker") }; }
+      catch { return { ...location, uri: "file:///outside-workspace/rejected" }; }
+    }) };
   }
 
   private async start(): Promise<void> {
@@ -178,11 +189,13 @@ class StdioLspProvider implements LspProvider {
   private async startProcess(): Promise<void> {
     let child: ChildProcessWithoutNullStreams;
     try {
-      child = spawn(bubblewrapPath, sandboxArguments(this.scope, this.options), {
-        detached: true,
-        stdio: ["pipe", "pipe", "pipe"],
-        env: {},
+      this.worker = spawnOfflineWorker({
+        command: this.options.command,
+        args: this.options.args,
+        binds: [...this.options.readOnlyBinds, { source: this.scope.workspaceDir, target: "/workspace" }],
+        cwd: "/workspace",
       });
+      child = this.worker.child;
     } catch (error) {
       throw new LspError("LSP_PROVIDER_FAILED", `LSP provider ${this.id} could not spawn`, error);
     }
@@ -203,8 +216,8 @@ class StdioLspProvider implements LspProvider {
       processId: null,
       clientInfo: { name: "YourChar", version: "0.1" },
       rootPath: null,
-      rootUri: this.scope.workspaceUri,
-      workspaceFolders: [{ uri: this.scope.workspaceUri, name: "workspace" }],
+      rootUri: this.wireUri(this.scope.workspaceUri),
+      workspaceFolders: [{ uri: this.wireUri(this.scope.workspaceUri), name: "workspace" }],
       capabilities: {
         workspace: { configuration: false, workspaceFolders: true },
         textDocument: {
@@ -217,7 +230,7 @@ class StdioLspProvider implements LspProvider {
       },
       ...(this.options.initializationOptions === undefined
         ? {}
-        : { initializationOptions: this.options.initializationOptions }),
+        : { initializationOptions: mapWorkerConfiguration(this.options.initializationOptions, this.worker!.mapPath) }),
     });
     if (!result || typeof result !== "object") {
       throw new LspError("LSP_MALFORMED_RESPONSE", `LSP provider ${this.id} returned invalid initialize data`);
@@ -235,7 +248,7 @@ class StdioLspProvider implements LspProvider {
       this.documents.set(document.uri, { digest, version: 1 });
       await this.sendNotification("textDocument/didOpen", {
         textDocument: {
-          uri: document.uri,
+          uri: this.wireUri(document.uri),
           languageId,
           version: 1,
           text: document.text,
@@ -246,7 +259,7 @@ class StdioLspProvider implements LspProvider {
     const version = existing.version + 1;
     this.documents.set(document.uri, { digest, version });
     await this.sendNotification("textDocument/didChange", {
-      textDocument: { uri: document.uri, version },
+      textDocument: { uri: this.wireUri(document.uri), version },
       contentChanges: [{ text: document.text }],
     }, signal);
   }
@@ -458,41 +471,6 @@ class StdioLspProvider implements LspProvider {
   }
 }
 
-function sandboxArguments(
-  scope: LspProviderScope,
-  options: NormalizedStdioOptions,
-): string[] {
-  const args = [
-    "--die-with-parent",
-    "--new-session",
-    "--unshare-all",
-    "--ro-bind", "/usr", "/usr",
-    "--symlink", "usr/bin", "/bin",
-    "--symlink", "usr/lib", "/lib",
-    "--symlink", "usr/lib64", "/lib64",
-    "--proc", "/proc",
-    "--dev", "/dev",
-    "--tmpfs", "/tmp",
-    "--dir", "/tmp/home",
-    "--dir", "/opt",
-    "--dir", "/opt/lsp",
-  ];
-  for (const bind of options.readOnlyBinds) {
-    args.push("--ro-bind", bind.source, bind.target);
-  }
-  args.push(
-    "--ro-bind", realpathSync(scope.workspaceDir), "/workspace",
-    "--chdir", "/workspace",
-    "--clearenv",
-    "--setenv", "PATH", "/usr/bin:/bin:/opt/lsp",
-    "--setenv", "HOME", "/tmp/home",
-    "--setenv", "LANG", "C.UTF-8",
-    "--",
-    options.command,
-    ...options.args,
-  );
-  return args;
-}
 
 function locationsResult(input: unknown): LspProviderResult {
   if (input === null || input === undefined) return Object.freeze({ kind: "empty" });

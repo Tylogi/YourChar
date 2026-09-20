@@ -4,6 +4,16 @@ import json
 import sys
 from pathlib import Path
 
+# Apply limits before importing parsers/native libraries. macOS does not
+# reliably enforce RLIMIT_AS; its wall-clock/output limits still apply.
+import resource
+
+resource.setrlimit(resource.RLIMIT_CORE, (0, 0))
+resource.setrlimit(resource.RLIMIT_CPU, (90, 90))
+resource.setrlimit(resource.RLIMIT_NOFILE, (128, 128))
+if sys.platform.startswith("linux"):
+    resource.setrlimit(resource.RLIMIT_AS, (1610612736, 1610612736))
+
 from markitdown import MarkItDown
 
 

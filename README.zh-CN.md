@@ -58,13 +58,13 @@ YourChar 是一款开源、可自行部署的 AI 角色应用。你可以为角�
 
 ## 快速开始
 
-需要 **Node.js 22.19.0 或更新版本**和 npm。完整功能以 Linux 为目标环境：
-Linux 沙盒 Shell 与文档转换依赖 Bubblewrap，无痕快照需要可验证的 `tmpfs` 内存文件系统。
+需要 **Node.js 22.19.0 或更新版本**和 npm。Linux 的沙盒任务使用 Bubblewrap，
+无痕快照使用可验证的 `tmpfs` 内存文件系统。
 
-需要免装 Node 的 Apple Silicon 桌面版，可参考
-[macOS Release 打包说明](docs/macos-release.md)。macOS 应用包含 YourChar 核心功能，
-原生 Seatbelt Shell 已通过 [Apple Silicon 实机验证](docs/native-sandbox-plan.md)；
-文档转换、沙盒 LSP 和无痕隔离仍依赖 Linux。
+需要免装 Node/Python 的 Apple Silicon 桌面版，可参考
+[macOS Release 打包说明](docs/macos-release.md)（macOS 13+）。文档转换和 TypeScript LSP
+使用独立断网的 Seatbelt 沙盒，无痕模式使用私有 RAM 盘。Windows 采用 WSL2 后端，
+实机验收尚待完成；安装方法和测试清单见[跨平台适配说明](docs/cross-platform-workers.md)。
 
 ### 1. 启动应用
 
