@@ -49,6 +49,8 @@ target platform; a Windows Python executable cannot run in a WSL Linux sandbox.
 Offline build hosts may use uv's documented `UV_PYTHON_INSTALL_MIRROR`, including
 a local `file://` mirror of the official release layout. Do not disable TLS/hash
 checks or substitute unreviewed Python archives. [uv mirror documentation](https://docs.astral.sh/uv/reference/environment/#uv_python_install_mirror).
+`YOURCHAR_BUILD_WHEELS` may point at a local wheel directory; this disables index
+access for the bundle install while retaining `--require-hashes` against the lock.
 
 ## Windows / WSL2 hand-off
 

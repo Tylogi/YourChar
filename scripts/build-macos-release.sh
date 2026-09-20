@@ -173,6 +173,15 @@ chmod 755 "$contents/MacOS/YourChar"
 [[ "$(/usr/bin/lipo -archs "$contents/MacOS/YourChar")" == "arm64" ]]
 [[ "$(/usr/bin/lipo -archs "$runtime_node")" == "arm64" ]]
 
+# Re-test the relocated, pruned and signed payload, not just the build tree.
+(
+  cd "$application_root"
+  YOURCHAR_REQUIRE_WORKERS=1 "$runtime_node" --disable-warning=ExperimentalWarning \
+    --test --test-concurrency=1 \
+    --test-name-pattern='real MarkItDown worker|bundled TypeScript LSP resolves' \
+    dist/test/document-reader.test.js dist/test/lsp-navigation.test.js
+)
+
 smoke_port="$($runtime_node -e 'const net=require("node:net");const server=net.createServer();server.listen(0,"127.0.0.1",()=>{console.log(server.address().port);server.close();});')"
 smoke_state="$build_root/smoke-state"
 smoke_log="$build_root/smoke.log"

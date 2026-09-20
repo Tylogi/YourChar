@@ -66,15 +66,14 @@ and long-running agents, too.
 
 ## Quick start
 
-Requires **Node.js 22.19.0 or newer** and npm. Linux is the target for the full
-feature set: its sandboxed shell and document conversion use Bubblewrap, and
-incognito snapshots require a verified `tmpfs` filesystem.
+Requires **Node.js 22.19.0 or newer** and npm. Linux uses Bubblewrap for sandboxed
+workers and verified `tmpfs` for disposable state.
 
 For a self-contained Apple Silicon desktop build, see
-[macOS release packaging](docs/macos-release.md). The macOS app includes Node
-and core YourChar features. The native Seatbelt Shell provider has passed
-[Apple Silicon integration tests](docs/native-sandbox-plan.md); document conversion,
-sandboxed LSP, and incognito isolation still require Linux.
+[macOS release packaging](docs/macos-release.md) (macOS 13+). The app bundles
+Node and Python; document conversion and TypeScript LSP use offline Seatbelt,
+and incognito uses a private RAM volume. Windows uses a WSL2-hosted backend;
+its real-machine acceptance is pending. See [platform setup and checks](docs/cross-platform-workers.md).
 
 ### 1. Start the app
 

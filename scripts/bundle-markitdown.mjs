@@ -28,6 +28,7 @@ try {
   run(["export", "--project", project, "--frozen", "--no-dev", "--no-emit-project", "--format", "requirements-txt", "--output-file", requirements]);
   run(["pip", "install", "--python", join(runtime, "bin", "python3"), "--target", join(runtime, "lib", "python3.13", "site-packages"),
     ...(process.platform === "darwin" ? ["--python-platform", process.arch === "arm64" ? "aarch64-apple-darwin" : "x86_64-apple-darwin"] : []),
+    ...(process.env.YOURCHAR_BUILD_WHEELS ? ["--no-index", "--find-links", resolve(process.env.YOURCHAR_BUILD_WHEELS)] : []),
     "--require-hashes", "--only-binary", ":all:", "--requirements", requirements]);
   function checkLinks(path) {
     const stats = lstatSync(path);
@@ -41,7 +42,7 @@ try {
     lockSha256: createHash("sha256").update(readFileSync(join(project, "uv.lock"))).digest("hex") }, null, 2) + "\n");
   renameSync(runtime, target);
   // Validate after relocation, without relying on the build venv or its prefix.
-  run(["run", "--no-project", "--no-sync", "--python", join(target, "bin", "python3"), "python", "-I", "-c", "from markitdown import MarkItDown; import sqlite3; print('Bundled MarkItDown import OK')"]);
+  run(["run", "--no-project", "--python", join(target, "bin", "python3"), "python", "-I", "-c", "from markitdown import MarkItDown; import sqlite3; print('Bundled MarkItDown import OK')"]);
 } finally {
   rmSync(stage, { recursive: true, force: true });
 }

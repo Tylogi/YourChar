@@ -336,7 +336,7 @@ async function runMarkItDownWorker(
   try {
     const sourcePath = join(snapshot.path, `document${input.extension}`);
     writeFileSync(sourcePath, input.bytes, { flag: "wx", mode: 0o600 });
-    const runtime = pythonPath.includes("/runtime/") ? "runtime/bin/python3" : ".venv/bin/python";
+    const runtime = pythonPath === join(resolvedWorkerDir, "runtime", "bin", "python3") ? "runtime/bin/python3" : ".venv/bin/python";
     const virtualPython = `/opt/yourchar-markitdown/${runtime}`;
     // Development venvs may point at a uv-managed interpreter outside /usr.
     // Bind just that reviewed interpreter installation, never the user's home.
