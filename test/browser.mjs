@@ -350,7 +350,7 @@ async function runDesktopWorkflow(browser, baseUrl, outputDir) {
   await page.locator(".module-row").filter({ hasText: "World State MCP" }).locator(".module-token").filter({ hasText: "约 960 tokens/轮" }).waitFor();
   await page.locator(".module-row").filter({ hasText: "Interaction State MCP" }).locator(".module-token").filter({ hasText: "约 650 tokens/轮" }).waitFor();
   await planningModule.locator(".module-token").filter({ hasText: /索引约 .*全文约 .*tokens\/调用/ }).waitFor();
-  await page.locator("#permissionRuntime").filter({ hasText: "Bubblewrap 可用" }).waitFor();
+  await page.locator("#permissionRuntime").filter({ hasText: "Bubblewrap · 沙箱可用" }).waitFor();
   assert.match(await page.locator("#workspacePath").textContent(), /workspace$/);
   assert.equal(await page.locator("#networkPermissionInput").isDisabled(), true);
   assert.equal(
@@ -360,9 +360,19 @@ async function runDesktopWorkflow(browser, baseUrl, outputDir) {
   assert.equal(await page.locator("#networkPermissionInput").getAttribute("title"), "请先启用终端执行");
   await page.getByRole("button", { name: "读写", exact: true }).click();
   await page.locator('button[data-workspace-access="read_write"].active').waitFor();
+  let shellWarning = "";
+  page.once("dialog", async (dialog) => {
+    shellWarning = dialog.message();
+    await dialog.accept();
+  });
   await page.locator("#shellPermissionInput").check();
   await page.locator("#shellPermissionLabel").filter({ hasText: "已启用" }).waitFor();
+  assert.match(shellWarning, /启用终端执行/);
+  assert.match(shellWarning, /命令默认可以联网/);
   assert.equal(await page.locator("#networkPermissionInput").isDisabled(), false);
+  assert.equal(await page.locator("#networkPermissionInput").isChecked(), true);
+  await page.locator("#networkPermissionInput").uncheck();
+  await page.locator("#networkPermissionLabel").filter({ hasText: "已关闭" }).waitFor();
   assert.equal(await page.locator("#networkPermissionInput").isChecked(), false);
   // Simulate a tab surviving a service restart: its process-lifetime HttpOnly
   // capability is gone, but the loaded settings UI must recover automatically.
@@ -1938,7 +1948,7 @@ async function runMobileWorkflow(browser, baseUrl, outputDir) {
   await page.getByRole("button", { name: "管理", exact: true }).click();
   await page.locator("#managementPage").waitFor({ state: "visible" });
   await page.locator(".module-row").filter({ hasText: "Schedule MCP" }).waitFor();
-  await page.locator("#permissionRuntime").filter({ hasText: "Bubblewrap 可用" }).waitFor();
+  await page.locator("#permissionRuntime").filter({ hasText: "Bubblewrap · 沙箱可用" }).waitFor();
   await assertPanelInsideMain(page, "#managementPage");
   await assertInteractiveBounds(page);
   await page.screenshot({ path: resolve(outputDir, "mobile-management.png"), fullPage: false });
