@@ -49,6 +49,7 @@
     "migrate:state": "node --disable-warning=ExperimentalWarning scripts/migrate-state-directory.mjs migrate",
     "test:macos": "npm run build && YOURCHAR_REQUIRE_NATIVE_SANDBOX=1 YOURCHAR_REQUIRE_WORKERS=1 node --disable-warning=ExperimentalWarning --test --test-concurrency=1 dist/test/macos-release-packaging.test.js dist/test/shell-sandbox.test.js dist/test/native-shell-lifecycle.test.js dist/test/permission-defaults.test.js dist/test/offline-workers.test.js dist/test/document-reader.test.js dist/test/lsp-navigation.test.js dist/test/incognito-mode.test.js",
     "package:macos": "bash scripts/build-macos-release.sh",
+    "package:windows": "bash scripts/build-wsl-release.sh",
     "release:gate": "node scripts/release-gate.mjs",
     "release:gate:real": "node scripts/release-gate.mjs --real"
   },

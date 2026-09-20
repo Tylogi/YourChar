@@ -60,6 +60,10 @@ This avoids mixed executable formats and SQLite over `\\wsl.localhost` shares.
 Windows can access the local web UI; WSL localhost forwarding is described in
 [Microsoft's networking documentation](https://learn.microsoft.com/en-us/windows/wsl/networking).
 
+Releases ship that environment as a ready-made WSL2 distribution, so the steps
+below describe running the backend from a development checkout. For the packaged
+flow see [Windows / WSL2 release payload](windows-wsl-release.md).
+
 1. Install/start a WSL2 distribution; `wsl --list --verbose` must show version 2.
 2. Inside the distribution, install Node.js 22.19+ and uv, plus Bubblewrap
    (`sudo apt install bubblewrap` on Ubuntu). Keep the checkout and state in its

@@ -12,7 +12,12 @@ resource.setrlimit(resource.RLIMIT_CORE, (0, 0))
 resource.setrlimit(resource.RLIMIT_CPU, (90, 90))
 resource.setrlimit(resource.RLIMIT_NOFILE, (128, 128))
 if sys.platform.startswith("linux"):
-    resource.setrlimit(resource.RLIMIT_AS, (1610612736, 1610612736))
+    # MarkItDown pulls in Magika/ONNX Runtime, which reserve several GiB of
+    # virtual address space (measured peak: 2.1 GiB with 2 CPUs, 3.0 GiB with
+    # 24 CPUs) while resident memory stays near 140 MiB. A tighter ceiling
+    # makes ONNX Runtime initialization fail nondeterministically, so keep the
+    # bound above the measured reservation rather than disabling it.
+    resource.setrlimit(resource.RLIMIT_AS, (4294967296, 4294967296))
 
 from markitdown import MarkItDown
 
