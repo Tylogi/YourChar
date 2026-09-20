@@ -153,7 +153,7 @@ done
   -parse-as-library \
   -O \
   -whole-module-optimization \
-  -target arm64-apple-macos11.0 \
+  -target arm64-apple-macos13.0 \
   -framework AppKit \
   -framework WebKit \
   "$source_root/packaging/macos/YourCharLauncher.swift" \

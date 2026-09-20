@@ -3,6 +3,7 @@ import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
+import { strToU8, zipSync } from "fflate";
 import {
   DocumentConversionError,
   DocumentConversionService,
@@ -142,6 +143,18 @@ test("real MarkItDown worker converts a PDF inside a network-isolated sandbox", 
     });
     assert.equal(result.engine, "markitdown");
     assert.match(result.markdown, /MARKITDOWN PDF SENTINEL/);
+
+    const xml = (text: string) => strToU8(text);
+    writeFileSync(join(workspaceDir, "fixture.docx"), zipSync({
+      "[Content_Types].xml": xml('<?xml version="1.0"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/></Types>'),
+      "_rels/.rels": xml('<?xml version="1.0"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/></Relationships>'),
+      "word/document.xml": xml('<?xml version="1.0"?><w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body><w:p><w:r><w:t>DOCX PORTABLE SENTINEL</w:t></w:r></w:p></w:body></w:document>'),
+    }));
+    const docx = await service.read({ path: "fixture.docx" }, { workspaceFiles: workspace, cacheNamespace: "real-worker" });
+    assert.match(docx.markdown, /DOCX PORTABLE SENTINEL/);
+    writeFileSync(join(workspaceDir, "fixture.csv"), "name,value\nCSV_PORTABLE_SENTINEL,42\n");
+    const csv = await service.read({ path: "fixture.csv" }, { workspaceFiles: workspace, cacheNamespace: "real-worker" });
+    assert.match(csv.markdown, /CSV_PORTABLE_SENTINEL/);
 
     const controller = new AbortController();
     controller.abort();

@@ -61,7 +61,7 @@ path hash—not source text, hover bodies, or the raw path.
 ## Sandboxed stdio provider
 
 `createStdioLspProviderDefinition` is a small LSP JSON-RPC client. It starts the
-language server lazily with Bubblewrap and gives it:
+language server lazily with the offline worker provider. Linux/WSL2 use Bubblewrap:
 
 - no network namespace;
 - a read-only `/workspace` mount;
@@ -69,6 +69,15 @@ language server lazily with Bubblewrap and gives it:
 - read-only `/usr`; and
 - only explicitly reviewed extra files/directories mounted directly below
   `/opt/lsp`.
+
+macOS uses a default-deny Seatbelt profile, a private RAM-backed scratch/home,
+the read-only owning Workspace and only reviewed runtime paths. Network access
+is denied independently of Shell settings. Since Seatbelt does not virtualize
+paths, the adapter translates trusted runtime paths and LSP URI fields to host
+paths, then validates/translates returned locations back to `file:///workspace`.
+Source text is never rewritten. Returned paths outside the Workspace fail closed.
+The bundled TypeScript provider handles this automatically; a custom macOS
+provider must explicitly bind its executable and any non-system runtime files.
 
 Commands and arguments are trusted deployment configuration. They never come
 from module settings or model input. This example assumes `clangd` was installed

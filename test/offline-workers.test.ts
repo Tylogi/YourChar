@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { execFileSync } from "node:child_process";
 import { once } from "node:events";
 import { existsSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { createServer } from "node:net";
@@ -7,6 +8,25 @@ import { join } from "node:path";
 import test from "node:test";
 import { assertMemoryBacked, createMemoryDirectory, processIdentity } from "../src/execution/memory-directory.js";
 import { mapWorkerConfiguration, mapWorkerPath, offlineSeatbeltProfile, offlineWorkerAvailable, spawnOfflineWorker, workerWorkspaceUri } from "../src/execution/offline-worker.js";
+
+test("Windows native worker paths fail closed and the launcher delegates whole-backend execution", () => {
+  const module = new URL("../src/execution/offline-worker.js", import.meta.url).href;
+  const memory = new URL("../src/execution/memory-directory.js", import.meta.url).href;
+  execFileSync(process.execPath, ["--input-type=module", "-e", `
+    import assert from 'node:assert/strict';
+    Object.defineProperty(process, 'platform', {value:'win32'});
+    const worker=await import(${JSON.stringify(module)});
+    const memory=await import(${JSON.stringify(memory)});
+    assert.equal(worker.offlineWorkerAvailable(), false);
+    assert.throws(()=>worker.spawnOfflineWorker({command:'/usr/bin/true',args:[],binds:[]}), /WSL2/);
+    assert.throws(()=>memory.createMemoryDirectory('yourchar-test-'), /WSL2/);
+  `]);
+  const launcher = readFileSync("scripts/start-wsl.ps1", "utf8");
+  assert.match(launcher, /--exec \/bin\/bash \$backendScript/);
+  assert.match(launcher, /microsoft-standard/);
+  assert.doesNotMatch(launcher, /ExecutionPolicy|sudo|wsl --install|--exec.*python\.exe/);
+  execFileSync("bash", ["-n", "scripts/start-wsl-backend.sh"]);
+});
 
 test("worker path mapping is bounded and does not alter source text", () => {
   const binds = [{ source: "/reviewed/runtime", target: "/opt/lsp/server" }];

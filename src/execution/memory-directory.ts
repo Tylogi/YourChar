@@ -55,7 +55,11 @@ export function createMemoryDirectory(prefix: string, capacityMiB = 64): MemoryD
       value["system-entities"]?.some((entry: Record<string, unknown>) => entry["dev-entry"] === device && entry["mount-point"] === path));
     if (!live || statSync(path).dev === statSync(tmpdir()).dev) throw new Error("RAM mount verification failed");
     chmodSync(path, 0o700);
-    writeFileSync(join(path, markerName), JSON.stringify({ pid: process.pid, identity: processIdentity(process.pid), uid: process.getuid!(), device, path }), { flag: "wx", mode: 0o600 });
+    // Prevent desktop indexing/backups before any document or chat is staged.
+    writeFileSync(join(path, ".metadata_never_index"), "", { flag: "wx", mode: 0o600 });
+    const identity = processIdentity(process.pid);
+    if (!identity) throw new Error("Cannot identify the RAM volume owner process");
+    writeFileSync(join(path, markerName), JSON.stringify({ pid: process.pid, identity, uid: process.getuid!(), device, path }), { flag: "wx", mode: 0o600 });
     const ownedDevice = device;
     let disposed = false;
     const volume: Volume = {
@@ -64,8 +68,14 @@ export function createMemoryDirectory(prefix: string, capacityMiB = 64): MemoryD
         if (disposed) return;
         // Never delete a mountpoint recursively: unmount, detach the exact
         // owned RAM device, then remove only the empty mountpoint.
-        assertMemoryBacked(path);
-        run("/sbin/umount", [path]);
+        if (mounted) {
+          assertMemoryBacked(path);
+          run("/sbin/umount", [path]);
+          mounted = false;
+        }
+        const sameImage = ramImages().some(value => value["hdid-pid"] === image["hdid-pid"] && value["owner-uid"] === process.getuid!() &&
+          value["system-entities"]?.some((entry: Record<string, unknown>) => entry["dev-entry"] === ownedDevice));
+        if (!sameImage) throw new Error("Owned RAM device identity changed during cleanup");
         run("/usr/bin/hdiutil", ["detach", ownedDevice]);
         volumes.delete(path);
         disposed = true;

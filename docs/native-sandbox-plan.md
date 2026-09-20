@@ -94,7 +94,8 @@ remaining checklist item; the Linux supervisor test does not close that item.
 
 Work is isolated on the development branch. The existing main checkout and
 running Linux service remain unchanged. Document conversion, LSP, and incognito
-still have Linux-only prerequisites; they are separate follow-up migrations.
+are adapted in the separate [cross-platform workers plan](cross-platform-workers-plan.md).
+The evidence above describes the original Shell milestone, not the newer worker gate.
 
 ## Upstream references
 

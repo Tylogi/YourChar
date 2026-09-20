@@ -11,13 +11,22 @@ The snapshot does not continue following later normal-space changes. All turns,
 meeting transitions, context logs, model traces, and other writes made inside
 the incognito session target only the disposable overlay.
 
-The overlay runs in a private `tmpfs` directory and is never published into the
+The overlay runs in a private memory-backed directory and is never published into the
 normal state directory, private state directory, exports, backups, unread
 queues, or IM channels. Leaving incognito mode disposes the child runtime and
 removes the overlay. A process restart also invalidates its synthetic session
 identifier. If a verified memory-backed filesystem is unavailable, YourChar
 fails closed instead of silently placing an incognito snapshot on persistent
 storage.
+
+Linux and WSL2 verify the `/dev/shm` tmpfs filesystem. macOS creates a private
+384 MiB, case-sensitive RAM volume, verifies the newly attached device against
+DiskImages before formatting, and unmounts/detaches it on close. The existing
+256 MiB snapshot quota and 16 MiB free-space reserve still apply. Ownership
+markers and process start identities restrict stale-volume recovery; unknown or
+busy volumes are not forcibly removed. Spotlight indexing is disabled before
+payload staging. A temporary directory merely named “RAM” is never accepted.
+Windows runs the backend inside WSL2, not over a Windows-to-WSL SQLite file share.
 
 If an incognito conversation itself reaches a successful conversation-sleep
 checkpoint, its child runtime may append the separate in-character wake message

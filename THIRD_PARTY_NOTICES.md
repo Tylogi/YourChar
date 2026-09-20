@@ -7,6 +7,13 @@ Node.js. Its complete upstream `LICENSE` file is distributed inside
 `YourChar.app/Contents/Resources/runtime/LICENSE`; that license also contains
 the notices for third-party components bundled by Node.js.
 
+macOS releases also embed CPython from Astral's `python-build-standalone`
+distribution, with MarkItDown dependencies selected by `services/markitdown/uv.lock`.
+The Python runtime's upstream license files and installed wheels' `.dist-info`
+license metadata are retained under
+`Contents/Resources/app/services/markitdown/runtime`. These components retain
+their own licenses; the YourChar MIT license does not relicense them.
+
 This file records selected third-party code, runtime libraries, and branding
 assets reused by YourChar. It does not replace license metadata shipped with
 the project's package dependencies.

@@ -3,7 +3,8 @@
 YourChar can be packaged as a self-contained Apple Silicon application. The
 release contains a native AppKit/WebKit window, the compiled YourChar server,
 production npm dependencies, the bundled Skills, and a verified Node.js arm64
-runtime. Users do not need to install Node.js.
+runtime, plus a self-contained CPython/MarkItDown worker. Users do not need to
+install Node.js, Python, or uv.
 
 ## Runtime behavior
 
@@ -24,17 +25,19 @@ Workspace boundary and private-file protection must pass the native release
 tests on the build Mac. Shell is opt-in and uses host networking on macOS.
 The native gate passed on Apple Silicon with macOS 26.6.2 and Node 22.19.0;
 this does not mean an updated installer has already been published.
-The local MarkItDown worker, sandboxed TypeScript LSP, and incognito Linux
-isolation are not made portable by this Shell change. See the
-[migration status](native-sandbox-plan.md) for validation evidence and the remaining Windows checks.
+Document conversion and TypeScript LSP have a separate **offline** Seatbelt
+provider. Incognito and worker scratch use verified private RAM volumes, with no
+disk fallback. See [worker adaptation](cross-platform-workers.md) for the exact
+boundaries, verification status, and remaining Windows checks.
 
 ## Build on Apple Silicon
 
 Requirements:
 
-- Apple Silicon Mac running macOS 11 or newer
+- Apple Silicon Mac running macOS 13 or newer (the bundled document libraries require macOS 13)
 - Xcode Command Line Tools with Swift, `codesign`, `iconutil`, and `hdiutil`
-- Network access to the npm registry and `nodejs.org`
+- uv (build-time only; `YOURCHAR_BUILD_UV` may name its executable)
+- Network access to npm, `nodejs.org`, Python package downloads and Astral's Python releases
 - A clean Git working tree
 
 Run from the repository root:
@@ -46,7 +49,8 @@ npm run package:macos
 The builder exports committed `HEAD` into a clean staging directory, downloads
 the Node version pinned by `.nvmrc`, verifies it against Node's published
 `SHASUMS256.txt`, installs locked dependencies, runs the macOS packaging gate
-and sensitive-information scan, prunes development-only packages, compiles the
+and sensitive-information scan, bundles CPython 3.13.5 with hash-locked
+MarkItDown wheels, prunes development-only packages, compiles the
 native launcher and icon, performs a packaged-server readiness smoke test, and
 then produces:
 
@@ -68,9 +72,12 @@ option for a published release. The source commit should still pass the full
 suite in Linux CI before publication.
 
 The native test gate runs serially, including foreground/background lifecycle
-tests. For a bounded-heap validation on a shared Mac, run:
+tests, actual PDF conversion, TypeScript cross-file navigation, worker isolation,
+and portable incognito lifecycle tests. Linux `/proc`/tmpfs-specific assertions
+remain Linux-only and are not counted as macOS verification. For a bounded-heap validation on a shared Mac, run:
 
 ```bash
+npm run setup:markitdown # development checkout; release builds bundle Python instead
 NODE_OPTIONS=--max-old-space-size=2048 npm run test:macos
 ```
 

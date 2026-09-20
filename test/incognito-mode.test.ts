@@ -9,12 +9,13 @@ import {
   readFileSync,
   readlinkSync,
   readdirSync,
+  realpathSync,
   rmSync,
   truncateSync,
   writeFileSync,
 } from "node:fs";
 import type { Server } from "node:http";
-import { tmpdir } from "node:os";
+import { tmpdir as systemTmpdir } from "node:os";
 import { join, relative } from "node:path";
 import test from "node:test";
 import { Worker } from "node:worker_threads";
@@ -34,6 +35,7 @@ import { createTestRuntime, ScriptedModelController } from "../src/testing/runti
 import { createMemoryDirectory } from "../src/execution/memory-directory.js";
 
 const tmpfsRoot = "/dev/shm";
+const tmpdir = () => realpathSync(systemTmpdir());
 const snapshotPrefix = "yourchar-incognito-";
 
 test("incognito inherits a stable transcript, supports meetings, and leaves parent state unchanged", async () => {

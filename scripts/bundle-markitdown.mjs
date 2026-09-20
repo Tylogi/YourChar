@@ -15,7 +15,7 @@ const stage = mkdtempSync(join(project, ".bundle-"));
 const uv = process.env.YOURCHAR_BUILD_UV ?? "uv";
 const pythonVersion = "3.13.5";
 function run(args) {
-  execFileSync(uv, args, { cwd: root, stdio: "inherit", env: { ...process.env, UV_LINK_MODE: "copy" } });
+  execFileSync(uv, args, { cwd: root, stdio: "inherit", env: { ...process.env, UV_LINK_MODE: "copy", MACOSX_DEPLOYMENT_TARGET: "13.0" } });
 }
 try {
   const installations = join(stage, "python");
@@ -27,6 +27,7 @@ try {
   const requirements = join(stage, "requirements.txt");
   run(["export", "--project", project, "--frozen", "--no-dev", "--no-emit-project", "--format", "requirements-txt", "--output-file", requirements]);
   run(["pip", "install", "--python", join(runtime, "bin", "python3"), "--target", join(runtime, "lib", "python3.13", "site-packages"),
+    ...(process.platform === "darwin" ? ["--python-platform", process.arch === "arm64" ? "aarch64-apple-darwin" : "x86_64-apple-darwin"] : []),
     "--require-hashes", "--only-binary", ":all:", "--requirements", requirements]);
   function checkLinks(path) {
     const stats = lstatSync(path);

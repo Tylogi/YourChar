@@ -599,6 +599,9 @@ export class IncognitoSessionManager {
   }
 
   private assertTmpfs(): void {
+    if (process.platform !== "linux" && process.platform !== "darwin") {
+      throw new IncognitoUnavailableError("Verified RAM storage is unavailable on this host; Windows users must start the backend inside WSL2.");
+    }
     if (process.platform === "darwin" && !this.options.tmpRoot && !this.memoryDirectory) {
       try {
         this.memoryDirectory = createMemoryDirectory("yourchar-incognito-", 384);

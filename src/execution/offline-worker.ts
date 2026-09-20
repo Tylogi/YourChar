@@ -43,6 +43,7 @@ export function offlineSeatbeltProfile(reads: readonly string[], writes: readonl
   }
   const rules = (paths: readonly string[], kind = "subpath") => paths.map(path => `(${kind} ${JSON.stringify(path)})`).join(" ");
   return ["(version 1)", "(deny default)", "(deny network*)",
+    '(allow file-read-data (literal "/"))',
     "(allow process-exec)", "(allow process-fork)", "(allow process-info* (target same-sandbox))",
     "(allow signal (target same-sandbox))", "(allow mach-priv-task-port (target same-sandbox))", "(allow sysctl-read)",
     '(allow mach-lookup (global-name "com.apple.system.opendirectoryd.libinfo") (global-name "com.apple.system.opendirectoryd.membership"))',
@@ -79,11 +80,13 @@ export function spawnOfflineWorker(options: OfflineWorkerOptions): OfflineWorker
       env = {};
     } else {
       scratch = createMemoryDirectory("yourchar-worker-");
-      mkdirSync(join(scratch.path, "home"), { mode: 0o700 });
+      const scratchPath = join(scratch.path, "scratch");
+      mkdirSync(scratchPath, { mode: 0o700 });
+      mkdirSync(join(scratchPath, "home"), { mode: 0o700 });
       command = "/usr/bin/sandbox-exec";
-      args = ["-p", offlineSeatbeltProfile(binds.map(bind => bind.source), [scratch.path]), mapPath(options.command), ...options.args.map(mapPath)];
-      cwd = options.cwd ? mapPath(options.cwd) : scratch.path;
-      env = { PATH: "/usr/bin:/bin", LANG: "en_US.UTF-8", ...options.env, HOME: join(scratch.path, "home"), TMPDIR: scratch.path };
+      args = ["-p", offlineSeatbeltProfile(binds.map(bind => bind.source), [scratchPath]), mapPath(options.command), ...options.args.map(mapPath)];
+      cwd = options.cwd ? mapPath(options.cwd) : scratchPath;
+      env = { PATH: "/usr/bin:/bin", LANG: "en_US.UTF-8", ...options.env, HOME: join(scratchPath, "home"), TMPDIR: scratchPath };
     }
     const child = spawn(command, args, { detached: true, stdio: ["pipe", "pipe", "pipe"], cwd, env });
     const terminate = () => {
