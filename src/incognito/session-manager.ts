@@ -27,8 +27,8 @@ import type {
   ConversationTranscriptMessage,
 } from "../pi/session-runtime.js";
 import { resolveSafePiSessionFileBinding } from "../pi/session-runtime.js";
+import { assertMemoryBacked, createMemoryDirectory, processIdentity, processDefinitelyExited, type MemoryDirectory } from "../execution/memory-directory.js";
 
-const TMPFS_MAGIC = 0x01021994;
 const DEFAULT_TMP_ROOT = "/dev/shm";
 const INCOGNITO_SESSION_PREFIX = "incognito-";
 const SNAPSHOT_DIRECTORY_PREFIX = "yourchar-incognito-";
@@ -185,7 +185,8 @@ export type IncognitoSessionManagerOptions = {
  */
 export class IncognitoSessionManager {
   private readonly entries = new Map<string, IncognitoEntry>();
-  private readonly tmpRoot: string;
+  private tmpRoot: string;
+  private memoryDirectory?: MemoryDirectory;
   private readonly now: () => Date;
   private accepting = true;
   private openingTask?: Promise<IncognitoConversationMetadata>;
@@ -306,6 +307,7 @@ export class IncognitoSessionManager {
       );
     } finally {
       if (this.openingRootDir === rootDir) this.openingRootDir = undefined;
+      if (!this.entries.size) this.releaseMemoryDirectory();
     }
   }
 
@@ -478,6 +480,7 @@ export class IncognitoSessionManager {
     }
     try {
       this.disposeEntries();
+      if (!this.entries.size) this.releaseMemoryDirectory();
     } catch (error) {
       errors.push(error);
     }
@@ -506,6 +509,12 @@ export class IncognitoSessionManager {
     await Promise.allSettled([...entry.activeOperations]);
     disposeEntry(entry);
     this.entries.delete(entry.id);
+    if (!this.entries.size) this.releaseMemoryDirectory();
+  }
+
+  private releaseMemoryDirectory(): void {
+    this.memoryDirectory?.dispose();
+    this.memoryDirectory = undefined;
   }
 
   private trackOperation<T>(entry: IncognitoEntry, operation: () => Promise<T>): Promise<T> {
@@ -590,11 +599,18 @@ export class IncognitoSessionManager {
   }
 
   private assertTmpfs(): void {
+    if (process.platform === "darwin" && !this.options.tmpRoot && !this.memoryDirectory) {
+      try {
+        this.memoryDirectory = createMemoryDirectory("yourchar-incognito-", 384);
+        this.tmpRoot = this.memoryDirectory.path;
+      } catch (error) {
+        throw new IncognitoUnavailableError(`cannot create private RAM storage: ${String(error)}`);
+      }
+    }
     if (!existsSync(this.tmpRoot)) {
       throw new IncognitoUnavailableError(`tmpfs root does not exist: ${this.tmpRoot}`);
     }
-    const stats = statfsSync(this.tmpRoot);
-    if (Number(stats.type) !== TMPFS_MAGIC) {
+    try { assertMemoryBacked(this.tmpRoot); } catch {
       throw new IncognitoUnavailableError(
         `refusing incognito mode because ${this.tmpRoot} is not a tmpfs filesystem`,
       );
@@ -603,7 +619,8 @@ export class IncognitoSessionManager {
 
   private isUsableTmpfs(): boolean {
     try {
-      return existsSync(this.tmpRoot) && Number(statfsSync(this.tmpRoot).type) === TMPFS_MAGIC;
+      assertMemoryBacked(this.tmpRoot);
+      return true;
     } catch {
       return false;
     }
@@ -625,7 +642,9 @@ export class IncognitoSessionManager {
         const marker = JSON.parse(readFileSync(markerPath, "utf8")) as Record<string, unknown>;
         if (marker.schemaVersion !== 1 || marker.uid !== currentUid()) continue;
         if (typeof marker.pid !== "number" || typeof marker.processIdentity !== "string") continue;
-        if (processIdentity(marker.pid) === marker.processIdentity) continue;
+        if (!Number.isSafeInteger(marker.pid) || marker.pid <= 0) continue;
+        const identity = processIdentity(marker.pid);
+        if (!processDefinitelyExited(marker.pid) && (!identity || identity === marker.processIdentity)) continue;
         rmSync(path, { recursive: true, force: true });
       } catch {
         // Unknown or malformed entries are never deleted.
@@ -797,8 +816,8 @@ export function assertIncognitoTmpfsQuota(rootDir: string, additionalBytes = 0):
     );
   }
   const stats = statfsSync(rootDir);
-  if (Number(stats.type) !== TMPFS_MAGIC) {
-    throw new IncognitoUnavailableError("the disposable session is no longer backed by tmpfs");
+  try { assertMemoryBacked(rootDir); } catch {
+    throw new IncognitoUnavailableError("the disposable session is no longer backed by verified RAM storage");
   }
   const availableBytes = Number(stats.bavail) * Number(stats.bsize);
   if (availableBytes - normalizedAdditionalBytes < TMPFS_RESERVE_BYTES) {
@@ -880,15 +899,6 @@ function currentUid(): number {
   return typeof process.getuid === "function" ? process.getuid() : -1;
 }
 
-function processIdentity(pid: number): string | undefined {
-  try {
-    const source = readFileSync(`/proc/${pid}/stat`, "utf8").trim();
-    const afterName = source.slice(source.lastIndexOf(")") + 1).trim().split(/\s+/);
-    return `${pid}:${afterName[19] ?? "unknown"}`;
-  } catch {
-    return undefined;
-  }
-}
 
 type SnapshotCopyBudget = { copiedBytes: number; maximumBytes: number };
 

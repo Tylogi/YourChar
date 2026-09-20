@@ -127,9 +127,10 @@ test("read_document is permission-gated, wraps untrusted content, and audits no 
   }
 });
 
-test("real MarkItDown worker converts a PDF inside a network-isolated Bubblewrap sandbox", {
-  skip: !new DocumentConversionService().isAvailable(),
+test("real MarkItDown worker converts a PDF inside a network-isolated sandbox", {
+  skip: process.env.YOURCHAR_REQUIRE_WORKERS !== "1" && !new DocumentConversionService().isAvailable(),
 }, async () => {
+  assert.equal(new DocumentConversionService().isAvailable(), true);
   const workspaceDir = mkdtempSync(join(tmpdir(), "yourchar-markitdown-real-"));
   const workspace = new WorkspaceFileService(workspaceDir);
   const service = new DocumentConversionService();

@@ -100,12 +100,14 @@ runtime_node="$runtime_root/bin/node"
 chmod 755 "$runtime_node"
 
 git -C "$repo_root" archive --format=tar HEAD | /usr/bin/tar -xf - -C "$source_root"
+export YOURCHAR_BUILD_UV="${YOURCHAR_BUILD_UV:-$(command -v uv)}"
 export PATH="$node_distribution/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
 export npm_config_audit=false
 export npm_config_fund=false
 (
   cd "$source_root"
   npm ci
+  npm run bundle:markitdown
   if [[ "${MACOS_SKIP_TESTS:-0}" == "1" ]]; then
     npm run build
   else
@@ -188,7 +190,7 @@ smoke_ready=0
 for _ in {1..120}; do
   if /usr/bin/curl --fail --silent --max-time 1 --output "$smoke_response" \
     "http://127.0.0.1:${smoke_port}/api/v1/readiness" &&
-    "$runtime_node" -e 'const fs=require("node:fs");try{const value=JSON.parse(fs.readFileSync(process.argv[1],"utf8"));process.exit(value.status==="ready"&&value.database==="ok"?0:1);}catch{process.exit(1);}' "$smoke_response"
+    "$runtime_node" -e 'const fs=require("node:fs");try{const value=JSON.parse(fs.readFileSync(process.argv[1],"utf8"));process.exit(value.status==="ready"&&value.database==="ok"&&value.markitdownAvailable===true?0:1);}catch{process.exit(1);}' "$smoke_response"
   then
     smoke_ready=1
     break

@@ -1,21 +1,18 @@
-import { spawn } from "node:child_process";
 import { createHash } from "node:crypto";
 import {
-  chmodSync,
   closeSync,
   constants,
   existsSync,
   fstatSync,
-  mkdtempSync,
   openSync,
   readFileSync,
   realpathSync,
-  rmSync,
-  statfsSync,
   statSync,
   writeFileSync,
 } from "node:fs";
-import { basename, extname, join, resolve } from "node:path";
+import { basename, dirname, extname, join, resolve } from "node:path";
+import { createMemoryDirectory } from "../execution/memory-directory.js";
+import { offlineWorkerAvailable, spawnOfflineWorker } from "../execution/offline-worker.js";
 import type { WorkspaceFileService } from "../workspace/file-service.js";
 import type {
   DocumentConversion,
@@ -23,7 +20,6 @@ import type {
   DocumentReadResult,
 } from "./types.js";
 
-const bubblewrapPath = "/usr/bin/bwrap";
 const defaultTimeoutMs = 90_000;
 const maximumInputBytes = 20 * 1024 * 1024;
 const maximumWorkerOutputBytes = 18 * 1024 * 1024;
@@ -35,7 +31,6 @@ const maximumLineLimit = 1_000;
 const maximumChunkCharacters = 64 * 1024;
 const maximumNormalizedLineCharacters = 8 * 1024;
 const maximumConcurrentConversions = 2;
-const tmpfsMagic = 0x01021994;
 
 const supportedExtensions = new Set([
   ".csv",
@@ -98,9 +93,9 @@ export class DocumentConversionService {
 
   isAvailable(): boolean {
     if (this.customRunner) return true;
-    return existsSync(bubblewrapPath) &&
+    return offlineWorkerAvailable() &&
       existsSync(join(this.workerDir, "worker.py")) &&
-      existsSync(join(this.workerDir, ".venv", "bin", "python"));
+      existsSync(workerPython(this.workerDir));
   }
 
   async read(
@@ -323,7 +318,7 @@ async function runMarkItDownWorker(
     throw new DocumentConversionError("DOCUMENT_CONVERSION_ABORTED", "document conversion was cancelled");
   }
   const resolvedWorkerDir = safeRealDirectory(workerDir);
-  const pythonPath = join(resolvedWorkerDir, ".venv", "bin", "python");
+  const pythonPath = workerPython(resolvedWorkerDir);
   const workerPath = join(resolvedWorkerDir, "worker.py");
   if (!existsSync(pythonPath) || !existsSync(workerPath)) {
     throw new DocumentConversionError(
@@ -331,61 +326,37 @@ async function runMarkItDownWorker(
       "MarkItDown is not installed; run npm run setup:markitdown",
     );
   }
-  if (!existsSync(bubblewrapPath)) {
-    throw new DocumentConversionError("DOCUMENT_RUNTIME_UNAVAILABLE", "Bubblewrap is required for MarkItDown");
-  }
-  const snapshot = createTmpfsSnapshot(input.extension, input.bytes);
-  const sourcePath = snapshot.path;
-  const sandboxSource = `/input/document${input.extension}`;
-  const args = [
-    "--die-with-parent",
-    "--new-session",
-    "--unshare-all",
-    "--ro-bind", "/usr", "/usr",
-    "--symlink", "usr/bin", "/bin",
-    "--symlink", "usr/lib", "/lib",
-    "--symlink", "usr/lib64", "/lib64",
-    "--proc", "/proc",
-    "--dev", "/dev",
-    "--tmpfs", "/tmp",
-    "--dir", "/tmp/home",
-    "--dir", "/input",
-    "--ro-bind", resolvedWorkerDir, "/opt/yourchar-markitdown",
-    "--ro-bind", sourcePath, sandboxSource,
-    "--chdir", "/tmp",
-    "--clearenv",
-    "--setenv", "PATH", "/opt/yourchar-markitdown/.venv/bin:/usr/bin:/bin",
-    "--setenv", "HOME", "/tmp/home",
-    "--setenv", "LANG", "C.UTF-8",
-    "--setenv", "PYTHONDONTWRITEBYTECODE", "1",
-    "--setenv", "PYTHONNOUSERSITE", "1",
-    "--",
-    "/opt/yourchar-markitdown/.venv/bin/python",
-    "/opt/yourchar-markitdown/worker.py",
-    sandboxSource,
-  ];
-  const pythonIndex = args.lastIndexOf("/opt/yourchar-markitdown/.venv/bin/python");
-  args.splice(
-    pythonIndex,
-    0,
-    "/usr/bin/prlimit",
-    "--as=1610612736",
-    "--cpu=90",
-    "--core=0",
-    "--nofile=128",
-    "--",
-  );
-  let child;
+  let snapshot: ReturnType<typeof createMemoryDirectory>;
+  let worker: ReturnType<typeof spawnOfflineWorker>;
   try {
-    child = spawn(bubblewrapPath, args, {
-      detached: true,
-      stdio: ["ignore", "pipe", "pipe"],
-      env: { PATH: "/usr/bin:/bin", LANG: "C.UTF-8" },
+    snapshot = createMemoryDirectory("yourchar-document-");
+  } catch (error) {
+    throw new DocumentConversionError("DOCUMENT_RUNTIME_UNAVAILABLE", String(error));
+  }
+  try {
+    const sourcePath = join(snapshot.path, `document${input.extension}`);
+    writeFileSync(sourcePath, input.bytes, { flag: "wx", mode: 0o600 });
+    const runtime = pythonPath.includes("/runtime/") ? "runtime/bin/python3" : ".venv/bin/python";
+    const virtualPython = `/opt/yourchar-markitdown/${runtime}`;
+    // Development venvs may point at a uv-managed interpreter outside /usr.
+    // Bind just that reviewed interpreter installation, never the user's home.
+    const pythonRoot = dirname(dirname(realpathSync(pythonPath)));
+    worker = spawnOfflineWorker({
+      command: virtualPython,
+      args: ["/opt/yourchar-markitdown/worker.py", `/input/document${input.extension}`],
+      binds: [
+        { source: resolvedWorkerDir, target: "/opt/yourchar-markitdown" },
+        { source: sourcePath, target: `/input/document${input.extension}` },
+        ...(pythonRoot === "/usr" || pythonRoot.startsWith(resolvedWorkerDir + "/") ? [] : [{ source: pythonRoot, target: pythonRoot }]),
+      ],
+      env: { PYTHONDONTWRITEBYTECODE: "1", PYTHONNOUSERSITE: "1", OPENBLAS_NUM_THREADS: "1", OMP_NUM_THREADS: "1" },
     });
   } catch (error) {
-    rmSync(snapshot.dir, { recursive: true, force: true });
-    throw error;
+    snapshot.dispose();
+    throw new DocumentConversionError("DOCUMENT_RUNTIME_UNAVAILABLE", String(error));
   }
+  const child = worker.child;
+  child.stdin.end();
   const stdout: Buffer[] = [];
   const stderr: Buffer[] = [];
   let stdoutBytes = 0;
@@ -426,6 +397,7 @@ async function runMarkItDownWorker(
     terminate();
   };
   signal?.addEventListener("abort", abort, { once: true });
+  if (signal?.aborted) abort();
   try {
     const exitCode = await new Promise<number | null>((resolveExit, reject) => {
       child.once("error", reject);
@@ -458,7 +430,7 @@ async function runMarkItDownWorker(
   } finally {
     clearTimeout(timeout);
     signal?.removeEventListener("abort", abort);
-    rmSync(snapshot.dir, { recursive: true, force: true });
+    snapshot.dispose();
   }
 }
 
@@ -481,32 +453,9 @@ function readRegularSource(path: string): Buffer {
   }
 }
 
-function createTmpfsSnapshot(extension: string, bytes: Buffer): { dir: string; path: string } {
-  let fileSystemType: bigint;
-  try {
-    fileSystemType = statfsSync("/dev/shm", { bigint: true }).type;
-  } catch {
-    throw new DocumentConversionError(
-      "DOCUMENT_RUNTIME_UNAVAILABLE",
-      "a private /dev/shm tmpfs is required for document conversion",
-    );
-  }
-  if (fileSystemType !== BigInt(tmpfsMagic)) {
-    throw new DocumentConversionError(
-      "DOCUMENT_RUNTIME_UNAVAILABLE",
-      "document conversion refuses to stage input outside tmpfs",
-    );
-  }
-  const dir = mkdtempSync("/dev/shm/yourchar-document-");
-  chmodSync(dir, 0o700);
-  const path = join(dir, `document${extension}`);
-  try {
-    writeFileSync(path, bytes, { flag: "wx", mode: 0o600 });
-    return { dir, path };
-  } catch (error) {
-    rmSync(dir, { recursive: true, force: true });
-    throw error;
-  }
+function workerPython(workerDir: string): string {
+  const bundled = join(workerDir, "runtime", "bin", "python3");
+  return existsSync(bundled) ? bundled : join(workerDir, ".venv", "bin", "python");
 }
 
 function safeRealDirectory(path: string): string {
