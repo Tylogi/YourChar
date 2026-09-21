@@ -33,3 +33,5 @@ eval-artifacts/
 backups/
 release/
 packaging/windows/launcher/out/
+packaging/windows/installer/out/
+packaging/windows/installer/stage/

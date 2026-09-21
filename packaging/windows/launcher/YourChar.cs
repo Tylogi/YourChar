@@ -29,6 +29,10 @@ namespace YourCharLauncher
         public const string DistroMarker = "/opt/yourchar/BUILD-INFO.txt";
         public const string DistroEntrypoint = "/opt/yourchar/bin/yourchar-backend";
         public const string DistroStateDir = "/var/lib/yourchar";
+        // Application files inside the distribution. User state lives in
+        // DistroStateDir, outside this subtree, so refreshing the payload can
+        // never overwrite it.
+        public const string PayloadSubtree = "./opt/yourchar";
         public const int Port = 8765;
         public const string HealthUrl = "http://127.0.0.1:8765/api/v1/health";
         public const string UiUrl = "http://127.0.0.1:8765/";
@@ -58,6 +62,9 @@ namespace YourCharLauncher
         public static string LauncherLog { get { return Path.Combine(DataDir, "launcher.log"); } }
         public static string StatusFile { get { return Path.Combine(DataDir, "status.json"); } }
         public static string StopSentinel { get { return Path.Combine(DataDir, "stop.request"); } }
+        // Which payload was unpacked into the distribution, so a normal start
+        // only refreshes the application files when they actually changed.
+        public static string AppliedPayloadFile { get { return Path.Combine(DataDir, "applied-payload.txt"); } }
     }
 
     internal static class Log
@@ -115,6 +122,13 @@ namespace YourCharLauncher
             psi.Arguments = line.ToString();
             psi.UseShellExecute = false;
             psi.CreateNoWindow = true;
+            // wsl.exe switches its own messages, including `--list --quiet`, to
+            // UTF-8 when WSL_UTF8 is set in the environment. That is a documented
+            // WSL setting users do have, and it garbles the UTF-16LE decoding
+            // below badly enough that an existing distribution looks missing and
+            // the launcher tries to import a second time. Pin the encoding we
+            // parse instead of inheriting the user's choice.
+            psi.EnvironmentVariables["WSL_UTF8"] = "0";
             if (capture)
             {
                 psi.RedirectStandardOutput = true;
@@ -165,6 +179,7 @@ namespace YourCharLauncher
             stderr = errText ?? "";
             return process.ExitCode;
         }
+
     }
 
     internal sealed class Engine
@@ -240,10 +255,11 @@ namespace YourCharLauncher
             }
             if (HandleLeftoverBackend()) return;
             if (!EnsureDistro()) return;
+            if (!EnsureAppPayload()) return;
             Set("verifying", "Checking YourChar runtime...", true, "");
             if (!Preflight())
             {
-                Set("needs-repair", "YourChar runtime needs repair.\n\nRepairing reinstalls it; YourChar's stored conversations and characters are removed when you do.", false, "repair");
+                Set("needs-repair", "YourChar runtime needs repair.\n\nRepairing replaces YourChar's application files; your conversations, characters and memory are kept.", false, "repair");
                 return;
             }
             StartBackendAndFinish();
@@ -283,7 +299,7 @@ namespace YourCharLauncher
             return code;
         }
 
-        static bool ContainsName(List<string> names, string name)
+        internal static bool ContainsName(List<string> names, string name)
         {
             foreach (string candidate in names)
             {
@@ -292,7 +308,7 @@ namespace YourCharLauncher
             return false;
         }
 
-        bool HasMarker(string distro)
+        internal static bool HasMarker(string distro)
         {
             string stdout, stderr;
             int code = Wsl.Run(new string[] { "-d", distro, "-u", "yourchar", "--exec", "/usr/bin/test", "-f", Cfg.DistroMarker }, 120000, Wsl.LinuxOutput, out stdout, out stderr);
@@ -333,18 +349,50 @@ namespace YourCharLauncher
             return false;
         }
 
+        // The installer keeps one payload next to the launcher, but a manual copy
+        // or an interrupted upgrade can leave several behind. Rank them by the
+        // version in the file name: a plain name sort puts "0.9.0" after
+        // "0.10.0" and would apply the older payload over the newer one.
         string FindPayload()
         {
             if (!Directory.Exists(Cfg.RuntimeDir)) return null;
             string[] candidates = Directory.GetFiles(Cfg.RuntimeDir, "YourChar-*-wsl-amd64.tar.gz");
-            Array.Sort(candidates);
-            return candidates.Length == 0 ? null : candidates[candidates.Length - 1];
+            if (candidates.Length == 0) return null;
+            Array.Sort(candidates, StringComparer.Ordinal);
+            string best = null;
+            Version bestVersion = null;
+            foreach (string candidate in candidates)
+            {
+                Version parsed = PayloadVersion(Path.GetFileName(candidate));
+                if (parsed == null) continue;
+                if (best == null || parsed > bestVersion) { best = candidate; bestVersion = parsed; }
+            }
+            // Nothing parseable: keep the previous behaviour instead of failing.
+            return best == null ? candidates[candidates.Length - 1] : best;
+        }
+
+        static Version PayloadVersion(string fileName)
+        {
+            const string prefix = "YourChar-";
+            const string suffix = "-wsl-amd64.tar.gz";
+            if (!fileName.StartsWith(prefix, StringComparison.OrdinalIgnoreCase)) return null;
+            if (!fileName.EndsWith(suffix, StringComparison.OrdinalIgnoreCase)) return null;
+            string text = fileName.Substring(prefix.Length, fileName.Length - prefix.Length - suffix.Length);
+            Version parsed;
+            return Version.TryParse(text, out parsed) ? parsed : null;
         }
 
         bool VerifyPayload(string payload)
         {
             string sums = Path.Combine(Cfg.RuntimeDir, "SHA256SUMS.txt");
-            if (!File.Exists(sums)) { Log.Write("no SHA256SUMS.txt next to the payload; skipping verification"); return true; }
+            // Fail closed: the archive is unpacked as root inside the
+            // distribution, so an unverifiable payload is never trusted.
+            if (!File.Exists(sums))
+            {
+                Log.Write("no SHA256SUMS.txt next to the payload; refusing to use " + Path.GetFileName(payload));
+                Fail("YourChar runtime files are damaged or incomplete.\n\nPlease download YourChar again.");
+                return false;
+            }
             string expected = null;
             string fileName = Path.GetFileName(payload);
             foreach (string line in File.ReadAllLines(sums))
@@ -356,7 +404,12 @@ namespace YourCharLauncher
                     break;
                 }
             }
-            if (expected == null) { Log.Write("payload " + fileName + " is not listed in SHA256SUMS.txt; skipping verification"); return true; }
+            if (expected == null)
+            {
+                Log.Write("payload " + fileName + " is not listed in SHA256SUMS.txt; refusing to use it");
+                Fail("YourChar runtime files are damaged or incomplete.\n\nPlease download YourChar again.");
+                return false;
+            }
             string actual;
             using (FileStream stream = File.OpenRead(payload))
             using (SHA256 sha = SHA256.Create())
@@ -406,6 +459,85 @@ namespace YourCharLauncher
                 Fail("YourChar could not verify its runtime after installing it.");
                 return false;
             }
+            RememberPayload(payload);
+            return true;
+        }
+
+        // The application payload and the runtime it needs both live under
+        // /opt/yourchar, so a single overlay refreshes both. User state lives in
+        // /var/lib/yourchar and is not part of the extracted subtree, which is
+        // why refresh and repair need no "wsl --unregister" and cannot lose
+        // conversations, characters, memory, usage or settings.
+        // WSL mounts the Windows drives inside the distribution, so the payload
+        // is reachable as /mnt/<drive>/... That is what tar is handed.
+        public static string LinuxPath(string windowsPath)
+        {
+            string full;
+            try { full = Path.GetFullPath(windowsPath); }
+            catch { return null; }
+            if (full.Length < 3 || full[1] != ':' || full[2] != '\\') return null;
+            return "/mnt/" + char.ToLowerInvariant(full[0]) + full.Substring(2).Replace('\\', '/');
+        }
+
+        string PayloadStamp(string payload)
+        {
+            FileInfo info = new FileInfo(payload);
+            return info.Name + "|" + info.Length + "|" + info.LastWriteTimeUtc.Ticks;
+        }
+
+        bool PayloadIsApplied(string payload)
+        {
+            try
+            {
+                if (!File.Exists(Cfg.AppliedPayloadFile)) return false;
+                return File.ReadAllText(Cfg.AppliedPayloadFile).Trim() == PayloadStamp(payload);
+            }
+            catch { return false; }
+        }
+
+        void RememberPayload(string payload)
+        {
+            try { File.WriteAllText(Cfg.AppliedPayloadFile, PayloadStamp(payload), new UTF8Encoding(false)); }
+            catch (Exception error) { Log.WriteException("cannot record the applied payload", error); }
+        }
+
+        bool ApplyAppPayload(string payload)
+        {
+            string linuxPayload = LinuxPath(payload);
+            if (linuxPayload == null)
+            {
+                Fail("YourChar cannot reach its own files from inside the runtime.");
+                return false;
+            }
+            Set("updating", "Updating YourChar...\n\nYour conversations and characters are kept.", true, "");
+            string stdout, stderr;
+            int code = Wsl.Run(
+                new string[] { "-d", Distro, "-u", "root", "--exec", "/bin/tar", "-xzf", linuxPayload, "-C", "/", Cfg.PayloadSubtree },
+                Cfg.ImportTimeoutSeconds * 1000,
+                Wsl.LinuxOutput,
+                out stdout,
+                out stderr);
+            Log.Write("payload overlay rc=" + code + " stderr=" + stderr.Trim());
+            if (code != 0)
+            {
+                Fail("YourChar could not update its application files.\n\nClose other WSL windows and try again.");
+                return false;
+            }
+            return true;
+        }
+
+        bool EnsureAppPayload()
+        {
+            string payload = FindPayload();
+            if (payload == null)
+            {
+                Fail("YourChar runtime files are missing.\n\nPlease download YourChar again.");
+                return false;
+            }
+            if (PayloadIsApplied(payload)) return true;
+            if (!VerifyPayload(payload)) return false;
+            if (!ApplyAppPayload(payload)) return false;
+            RememberPayload(payload);
             return true;
         }
 
@@ -502,6 +634,7 @@ namespace YourCharLauncher
             // Write the pid before exec: the shell is replaced by the backend, so
             // the recorded pid is the backend pid and SIGTERM reaches it directly.
             string script = "mkdir -p " + Cfg.DistroStateDir + " && echo $$ > " + Cfg.DistroStateDir + "/backend.pid && exec " + Cfg.DistroEntrypoint;
+            Program.DisownStandardHandles();
             ProcessStartInfo psi = Wsl.StartInfo(new string[] { "-d", Distro, "-u", "yourchar", "--exec", "/bin/bash", "-c", script }, true, Wsl.LinuxOutput);
             Process process = new Process();
             process.StartInfo = psi;
@@ -662,15 +795,20 @@ namespace YourCharLauncher
             }
         }
 
+        // Repair replaces the application files inside the distribution and
+        // leaves the rest of the distribution alone: no --unregister and no new
+        // import, so the user's conversations, characters, memory, usage and
+        // settings survive. A distribution that is missing altogether is
+        // imported from scratch; there is no state to lose in that case.
         public void Repair(bool confirmed)
         {
             if (!confirmed)
             {
                 DialogResult answer = MessageBox.Show(
-                    "Repairing reinstalls YourChar's private Linux runtime.\n\nConversations, characters and memory stored inside it are removed. Continue?",
+                    "Repairing replaces YourChar's application files.\n\nYour conversations, characters and memory are kept. Continue?",
                     "Repair YourChar",
                     MessageBoxButtons.YesNo,
-                    MessageBoxIcon.Warning);
+                    MessageBoxIcon.Information);
                 if (answer != DialogResult.Yes) return;
             }
             Thread thread = new Thread(delegate()
@@ -678,16 +816,16 @@ namespace YourCharLauncher
                 try
                 {
                     Ready = false;
-                    Set("preparing", "Repairing YourChar runtime...", true, "");
-                    List<string> names;
-                    if (ListDistros(out names) == 0 && ContainsName(names, Distro))
+                    Set("preparing", "Repairing YourChar...", true, "");
+                    if (!EnsureWsl())
                     {
-                        string stdout, stderr;
-                        int code = Wsl.Run(new string[] { "--unregister", Distro }, 300000, Wsl.OwnOutput, out stdout, out stderr);
-                        Log.Write("wsl --unregister " + Distro + " rc=" + code + " stderr=" + stderr.Trim());
+                        Set("needs-wsl", "WSL2 is required.\n\nYourChar runs its own private Linux runtime and needs the Windows Subsystem for Linux 2.", false, "install-wsl");
+                        return;
                     }
-                    importedThisRun = true;
-                    if (!ImportDistro()) return;
+                    if (HandleLeftoverBackend()) return;
+                    if (!EnsureDistro()) return;
+                    TryDelete(Cfg.AppliedPayloadFile);
+                    if (!EnsureAppPayload()) return;
                     if (!Preflight()) { Set("needs-repair", "YourChar runtime still needs repair.", false, "repair"); return; }
                     StartBackendAndFinish();
                 }
@@ -899,6 +1037,8 @@ namespace YourCharLauncher
             try
             {
                 inner.Flush();
+                // Nothing to write to once --remove-data has deleted the folder.
+                if (!Directory.Exists(directory)) return;
                 File.WriteAllText(Path.Combine(directory, "cli.txt"), buffer.ToString(), new UTF8Encoding(false));
             }
             catch { }
@@ -909,11 +1049,34 @@ namespace YourCharLauncher
         [DllImport("kernel32.dll")]
         static extern bool AttachConsole(int processId);
 
+        [DllImport("kernel32.dll")]
+        static extern IntPtr GetStdHandle(int nStdHandle);
+
+        [DllImport("kernel32.dll", SetLastError = true)]
+        static extern bool SetHandleInformation(IntPtr handle, uint mask, uint flags);
+
+        // The backend outlives this process, so it must not inherit our own
+        // stdout and stderr. If it does, a caller that redirects this process
+        // ("YourChar.exe --repair > log.txt", or a pipe) keeps waiting for a
+        // stream that can never close. Streams we hand to children explicitly
+        // are unaffected.
+        public static void DisownStandardHandles()
+        {
+            const uint HANDLE_FLAG_INHERIT = 0x1;
+            try
+            {
+                SetHandleInformation(GetStdHandle(-11), HANDLE_FLAG_INHERIT, 0);
+                SetHandleInformation(GetStdHandle(-12), HANDLE_FLAG_INHERIT, 0);
+            }
+            catch (Exception error) { Log.WriteException("cannot disown the standard handles", error); }
+        }
+
         [STAThread]
         static void Main(string[] args)
         {
             bool consoleMode = false;
             bool repair = false;
+            bool removeData = false;
             bool status = false;
             bool stop = false;
             bool help = false;
@@ -924,10 +1087,12 @@ namespace YourCharLauncher
                 else if (flag == "--status") { status = true; consoleMode = true; }
                 else if (flag == "--stop") { stop = true; consoleMode = true; }
                 else if (flag == "--repair") { repair = true; consoleMode = true; }
+                else if (flag == "--remove-data") { removeData = true; consoleMode = true; }
                 else if (flag == "--help" || flag == "-h") { help = true; consoleMode = true; }
             }
             try { Directory.CreateDirectory(Cfg.DataDir); }
             catch { }
+            DisownStandardHandles();
             if (consoleMode)
             {
                 AttachConsole(-1);
@@ -941,12 +1106,13 @@ namespace YourCharLauncher
                 Console.WriteLine("  YourChar.exe --no-browser    start YourChar without opening the browser");
                 Console.WriteLine("  YourChar.exe --status        report WSL2, runtime and backend state");
                 Console.WriteLine("  YourChar.exe --stop          stop a running YourChar");
-                Console.WriteLine("  YourChar.exe --repair        reinstall YourChar's private WSL runtime");
+                Console.WriteLine("  YourChar.exe --repair        refresh YourChar's application files (your data is kept)");
+                Console.WriteLine("  YourChar.exe --remove-data   delete YourChar's runtime and all of your data");
                 return;
             }
             Log.Write("launcher started args=" + string.Join(" ", args));
 
-            if (status || stop || repair)
+            if (status || stop || repair || removeData)
             {
                 TeeTextWriter tee = new TeeTextWriter(Console.Out);
                 Console.SetOut(tee);
@@ -954,12 +1120,15 @@ namespace YourCharLauncher
                 {
                     if (status) Environment.ExitCode = ReportStatus();
                     else if (stop) Environment.ExitCode = StopRunning();
+                    else if (removeData) Environment.ExitCode = RemoveData();
                     else
                     {
                         Engine repairEngine = new Engine();
                         repairEngine.Repair(true);
                         WaitForFinished(repairEngine);
                         Console.WriteLine("YourChar repair finished: " + repairEngine.StageName);
+                        if (repairEngine.StageName == "failed" || repairEngine.StageName == "needs-repair")
+                            Environment.ExitCode = 1;
                     }
                 }
                 finally { tee.FlushTo(Cfg.DataDir); }
@@ -1037,6 +1206,49 @@ namespace YourCharLauncher
                 if (string.Equals(name, Cfg.FallbackDistroName, StringComparison.OrdinalIgnoreCase)) return name;
             }
             return null;
+        }
+
+        // Called by the uninstaller when the user chooses to delete their data.
+        // Only a distribution carrying the YourChar marker is removed, so an
+        // unrelated distribution that happens to share the name is left alone.
+        static int RemoveData()
+        {
+            int failures = 0;
+            foreach (string candidate in new string[] { Cfg.DistroName, Cfg.FallbackDistroName })
+            {
+                if (!Engine.ContainsName(ReadDistroNames(), candidate))
+                {
+                    Console.WriteLine("no WSL distribution named " + candidate);
+                    continue;
+                }
+                if (!Engine.HasMarker(candidate))
+                {
+                    Console.WriteLine("keeping " + candidate + ": it is not a YourChar runtime");
+                    continue;
+                }
+                string stdout, stderr;
+                Wsl.Run(new string[] { "--terminate", candidate }, 120000, Wsl.OwnOutput, out stdout, out stderr);
+                int code = Wsl.Run(new string[] { "--unregister", candidate }, 600000, Wsl.OwnOutput, out stdout, out stderr);
+                Console.WriteLine("removed the WSL distribution " + candidate + " (rc=" + code + ")");
+                if (code != 0) failures++;
+            }
+            if (failures > 0)
+            {
+                Console.WriteLine("YourChar could not remove its runtime; nothing else was deleted.");
+                return 1;
+            }
+            try
+            {
+                if (Directory.Exists(Cfg.DataDir)) Directory.Delete(Cfg.DataDir, true);
+                Console.WriteLine("removed " + Cfg.DataDir);
+            }
+            catch (Exception error)
+            {
+                Log.WriteException("cannot delete " + Cfg.DataDir, error);
+                Console.WriteLine("could not delete " + Cfg.DataDir);
+                failures++;
+            }
+            return failures == 0 ? 0 : 1;
         }
 
         static int StopRunning()

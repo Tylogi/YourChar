@@ -31,7 +31,7 @@ Installing
 ----------
 Import the distribution once. This does not need administrator rights:
 
-  wsl --import YourChar "%LOCALAPPDATA%\YourChar\wsl" YourChar-<version>-wsl-amd64.tar.gz
+  wsl --import YourChar "%LOCALAPPDATA%\YourChar\distro" YourChar-<version>-wsl-amd64.tar.gz
 
 Checking and starting
 ---------------------
@@ -56,7 +56,8 @@ Removing
   wsl --unregister YourChar
 
 This deletes the distribution and with it /var/lib/yourchar. Export your data
-first if you want to keep it.
+first if you want to keep it, or uninstall through the Windows installer, whose
+uninstaller asks before it removes anything and keeps your data by default.
 
 Verification
 ------------
@@ -65,14 +66,18 @@ the backend is started inside it, readiness is polled, a real model request is
 sent, and document conversion is repeated to confirm the bundled runtime is
 stable. SHA256SUMS.txt carries the digests of the published archives.
 
-Not included yet
-----------------
-There is no Windows launcher or installer in this payload. Starting YourChar
-still means running one wsl.exe command; the double-clickable application that
-wraps it is the next step.
 Windows launcher
 ----------------
 packaging/windows/launcher/ holds YourChar.exe, the double-click entry point that
 imports this payload into WSL2 and runs it. Build it with
 `powershell -File packaging/windows/launcher/build.ps1` after building the payload.
 See packaging/windows/launcher/README.md.
+
+Windows installer
+-----------------
+packaging/windows/installer/ wraps the launcher and this payload in a single
+per-user setup executable: no administrator rights, Start Menu and desktop
+shortcuts, an Apps & Features entry, and an uninstaller that asks whether to
+keep user data. Build it with
+`powershell -File packaging/windows/installer/build.ps1` after building the payload.
+See packaging/windows/installer/README.md.

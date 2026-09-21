@@ -52,7 +52,8 @@
     "package:windows": "bash scripts/build-wsl-release.sh",
     "release:gate": "node scripts/release-gate.mjs",
     "release:gate:real": "node scripts/release-gate.mjs --real",
-    "package:launcher:windows": "powershell -ExecutionPolicy Bypass -File packaging/windows/launcher/build.ps1"
+    "package:launcher:windows": "powershell -ExecutionPolicy Bypass -File packaging/windows/launcher/build.ps1",
+    "package:installer:windows": "powershell -ExecutionPolicy Bypass -File packaging/windows/installer/build.ps1"
   },
   "engines": {
     "node": ">=22.19.0"

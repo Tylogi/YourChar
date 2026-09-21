@@ -51,7 +51,7 @@ YourChar again" message instead of importing anything.
 | `YourChar.exe --no-browser` | start without opening the browser |
 | `YourChar.exe --status` | report WSL2, runtime and backend state |
 | `YourChar.exe --stop` | stop a running YourChar gracefully |
-| `YourChar.exe --repair` | reinstall YourChar's private WSL runtime |
+| `YourChar.exe --repair` | refresh YourChar's application files inside the runtime (your data is kept) |
 
 `--status`, `--stop` and `--repair` also mirror their report to
 `%LOCALAPPDATA%\YourChar\cli.txt`, because a GUI executable has no console of its own.
@@ -82,7 +82,7 @@ directory is owned by another user.
 | Crash repeats | "YourChar stopped unexpectedly." | stops after 3 consecutive failures and offers "Try again" |
 | Readiness never arrives | "YourChar did not become ready in time..." | reports a plain-language error and cleans up the backend |
 | No WSL2 on the machine | "WSL2 is required." with "Install WSL2" | runs `wsl --install --no-distribution` through UAC |
-| Runtime damaged | "YourChar runtime needs repair." with "Repair" | re-imports after a confirmation prompt |
+| Runtime damaged | "YourChar runtime needs repair." with "Repair" | re-extracts `./opt/yourchar` after a confirmation prompt; the distribution and your data are kept |
 | Another launcher is running | the UI opens | exits immediately, no second backend |
 | User quits | "Stopping YourChar..." | `SIGTERM`s the backend, waits up to 20 s, then exits |
 
@@ -97,16 +97,20 @@ The launcher uses the distribution name `YourChar`. If an unrelated distribution
 already owns that name, it falls back to `YourCharRuntime` instead of touching the
 user's distribution. YourChar-owned distributions are recognised by
 `/opt/yourchar/BUILD-INFO.txt`; if both names are taken by foreign distributions the
-launcher stops with an actionable message. Nothing is ever unregistered unless the
-user explicitly asks for a repair.
+launcher stops with an actionable message. The only thing that unregisters a
+distribution is `--remove-data`, which the uninstaller runs after the user has
+asked for it; repair never does.
 
 ## Limits of this MVP
 
-- No installer, no shortcut, no uninstaller, no code signing, no auto-update yet.
-  Those are the next phases; this one proves the launch chain.
-- Repair re-imports the distribution, which resets data stored inside it. Shipping
-  the application payload as a separate archive is the real fix and is already
-  supported by `scripts/build-wsl-release.sh`.
+- No code signing and no auto-update yet; `packaging/windows/installer/` builds the
+  per-user setup executable that adds shortcuts, an Apps & Features entry and an
+  uninstaller for this launcher.
+- Repair refreshes `/opt/yourchar` inside the existing distribution and never
+  unregisters it, so conversations, characters and memory survive. The refresh is
+  an overlay: files that a newer payload drops are left behind, and it covers
+  `/opt/yourchar` only, so a payload that changes `/usr` or `/etc` needs a fresh
+  import rather than a repair.
 - The window stays open while YourChar runs (closing it stops YourChar); there is
   no tray icon yet.
 - The UI is the existing browser UI. A desktop shell (WebView2) is a later option,
