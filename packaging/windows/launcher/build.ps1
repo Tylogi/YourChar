@@ -36,7 +36,9 @@ $ErrorActionPreference = 'Stop'
 # the script directory defensively before deriving the default paths from it.
 $scriptDirectory = $PSScriptRoot
 if (-not $scriptDirectory) { $scriptDirectory = Split-Path -Parent $MyInvocation.MyCommand.Path }
-if (-not $PayloadDir) { $PayloadDir = Join-Path $scriptDirectory '..\..\release' }
+# packaging/windows/launcher -> three levels up is the repository root, where
+# scripts/build-wsl-release.sh writes release/ by default.
+if (-not $PayloadDir) { $PayloadDir = Join-Path $scriptDirectory '..\..\..\release' }
 if (-not $OutDir) { $OutDir = Join-Path $scriptDirectory 'out' }
 
 $compiler = Join-Path $env:SystemRoot 'Microsoft.NET\Framework64\v4.0.30319\csc.exe'
@@ -65,8 +67,8 @@ Write-Host ("launcher: {0} ({1:N0} bytes)" -f $exe, (Get-Item -LiteralPath $exe)
 
 if ($SkipPayload) { return }
 
-$payload = Get-ChildItem -LiteralPath $PayloadDir -Filter 'YourChar-*-wsl-amd64.tar.gz' -ErrorAction SilentlyContinue |
-  Sort-Object Name | Select-Object -Last 1
+. (Join-Path $scriptDirectory '..\payload-selection.ps1')
+$payload = Select-LatestPayload -PayloadDir $PayloadDir
 if (-not $payload) {
   throw "No WSL payload found in $PayloadDir. Run 'bash scripts/build-wsl-release.sh' first."
 }

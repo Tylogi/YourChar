@@ -48,7 +48,9 @@ $ErrorActionPreference = 'Stop'
 # the script directory defensively before deriving the default paths from it.
 $scriptDirectory = $PSScriptRoot
 if (-not $scriptDirectory) { $scriptDirectory = Split-Path -Parent $MyInvocation.MyCommand.Path }
-if (-not $PayloadDir) { $PayloadDir = Join-Path $scriptDirectory '..\..\release' }
+# packaging/windows/installer -> three levels up is the repository root, where
+# scripts/build-wsl-release.sh writes release/ by default.
+if (-not $PayloadDir) { $PayloadDir = Join-Path $scriptDirectory '..\..\..\release' }
 if (-not $LauncherDir) { $LauncherDir = Join-Path $scriptDirectory '..\launcher\out' }
 if (-not $OutDir) { $OutDir = Join-Path $scriptDirectory 'out' }
 $stageDirectory = Join-Path $scriptDirectory 'stage'
@@ -81,23 +83,23 @@ function Stage-File([string]$source, [string]$destination) {
   Copy-Item -LiteralPath $source -Destination $destination
 }
 
-# 1. The launcher that the shortcuts point at.
+# 1. The launcher that the shortcuts point at. Always recompile: an existing
+#    YourChar.exe says nothing about whether it still matches YourChar.cs, so a build
+#    that reuses it would ship a stale launcher inside a fresh installer.
 $launcher = Join-Path $LauncherDir 'YourChar.exe'
-if (-not (Test-Path -LiteralPath $launcher)) {
-  Write-Host 'launcher not built yet; building it now'
-  & (Join-Path $scriptDirectory '..\launcher\build.ps1') -SkipPayload -OutDir $LauncherDir
-}
+Write-Host 'compiling the launcher'
+& (Join-Path $scriptDirectory '..\launcher\build.ps1') -SkipPayload -OutDir $LauncherDir
 
 # 2. The WSL payload that YourChar.exe imports on first run.
-$payload = Get-ChildItem -LiteralPath $PayloadDir -Filter 'YourChar-*-wsl-amd64.tar.gz' -ErrorAction SilentlyContinue |
-  Sort-Object Name | Select-Object -Last 1
+. (Join-Path $scriptDirectory '..\payload-selection.ps1')
+$payload = Select-LatestPayload -PayloadDir $PayloadDir
 if (-not $payload) {
   throw "No WSL payload found in $PayloadDir. Run 'bash scripts/build-wsl-release.sh' first."
 }
 if (-not $Version) {
-  $match = [regex]::Match($payload.Name, '^YourChar-(?<version>[0-9][^-]*)-wsl-amd64\.tar\.gz$')
-  if (-not $match.Success) { throw "Cannot read a version out of $($payload.Name); pass -Version." }
-  $Version = $match.Groups['version'].Value
+  $payloadVersion = Get-YourCharPayloadVersion -Name $payload.Name
+  if ($null -eq $payloadVersion) { throw "Cannot read a version out of $($payload.Name); pass -Version." }
+  $Version = $payloadVersion.ToString()
 }
 
 # 3. Stage what the installer ships, with the digest manifest the launcher

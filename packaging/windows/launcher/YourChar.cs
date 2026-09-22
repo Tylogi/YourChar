@@ -46,6 +46,9 @@ namespace YourCharLauncher
         public const int ReadyTimeoutFirstRunSeconds = 180;
         public const int ImportTimeoutSeconds = 900;
         public const int StopTimeoutSeconds = 20;
+        // A repair performs the same steps as a first start, so the command line
+        // waits out the slowest internal timeout instead of a shorter guess.
+        public const int RepairTimeoutSeconds = ImportTimeoutSeconds + ReadyTimeoutFirstRunSeconds;
 
         public const string MutexName = "Local\\YourCharLauncherSingleInstance";
 
@@ -190,6 +193,9 @@ namespace YourCharLauncher
         public volatile bool Busy = true;
         public volatile bool Ready;
         public volatile bool Finished;
+        // Set when the work started by Repair() has ended, however it ended, so a
+        // caller can tell "still running" from "finished successfully".
+        public volatile bool RepairFinished;
 
         public string Distro = Cfg.DistroName;
 
@@ -253,8 +259,13 @@ namespace YourCharLauncher
                 Set("needs-wsl", "WSL2 is required.\n\nYourChar runs its own private Linux runtime and needs the Windows Subsystem for Linux 2. Windows may ask you to restart after setup.", false, "install-wsl");
                 return;
             }
-            if (HandleLeftoverBackend()) return;
+            // Resolve the distribution before stopping a backend left over from an
+            // earlier run: that probe reads the pid file of the distribution in use,
+            // which is YourCharRuntime when the name YourChar is taken by something
+            // else. Cleaning up the wrong distribution leaves the old backend alive
+            // and the new one then trips over the memory-vault writer lease.
             if (!EnsureDistro()) return;
+            if (HandleLeftoverBackend()) return;
             if (!EnsureAppPayload()) return;
             Set("verifying", "Checking YourChar runtime...", true, "");
             if (!Preflight())
@@ -811,6 +822,7 @@ namespace YourCharLauncher
                     MessageBoxIcon.Information);
                 if (answer != DialogResult.Yes) return;
             }
+            RepairFinished = false;
             Thread thread = new Thread(delegate()
             {
                 try
@@ -822,14 +834,15 @@ namespace YourCharLauncher
                         Set("needs-wsl", "WSL2 is required.\n\nYourChar runs its own private Linux runtime and needs the Windows Subsystem for Linux 2.", false, "install-wsl");
                         return;
                     }
-                    if (HandleLeftoverBackend()) return;
                     if (!EnsureDistro()) return;
+                    if (HandleLeftoverBackend()) return;
                     TryDelete(Cfg.AppliedPayloadFile);
                     if (!EnsureAppPayload()) return;
                     if (!Preflight()) { Set("needs-repair", "YourChar runtime still needs repair.", false, "repair"); return; }
                     StartBackendAndFinish();
                 }
                 catch (Exception error) { Log.WriteException("repair failed", error); Fail("YourChar could not repair its runtime."); }
+                finally { RepairFinished = true; }
             });
             thread.IsBackground = true;
             thread.Start();
@@ -889,6 +902,10 @@ namespace YourCharLauncher
         }
 
         public bool SafeToClose { get { return Finished || backend == null; } }
+
+        // A repair counts as successful only once the repaired runtime is actually
+        // serving; "the worker returned" and "the command timed out" are not success.
+        public bool RepairSucceeded { get { return StageName == "ready"; } }
     }
 
     internal sealed class MainForm : Form
@@ -1121,15 +1138,7 @@ namespace YourCharLauncher
                     if (status) Environment.ExitCode = ReportStatus();
                     else if (stop) Environment.ExitCode = StopRunning();
                     else if (removeData) Environment.ExitCode = RemoveData();
-                    else
-                    {
-                        Engine repairEngine = new Engine();
-                        repairEngine.Repair(true);
-                        WaitForFinished(repairEngine);
-                        Console.WriteLine("YourChar repair finished: " + repairEngine.StageName);
-                        if (repairEngine.StageName == "failed" || repairEngine.StageName == "needs-repair")
-                            Environment.ExitCode = 1;
-                    }
+                    else Environment.ExitCode = RunRepair();
                 }
                 finally { tee.FlushTo(Cfg.DataDir); }
                 return;
@@ -1157,6 +1166,36 @@ namespace YourCharLauncher
         {
             try { mutex.ReleaseMutex(); }
             catch { }
+        }
+
+        // Repair runs on a background thread. Waiting a fixed number of seconds and
+        // then reporting success says nothing about whether the repair finished, so
+        // the command line waits for the worker to report completion and then judges
+        // the state it reached. A timeout is a failure, never a success.
+        static int RunRepair()
+        {
+            Engine engine = new Engine();
+            engine.Repair(true);
+            DateTime deadline = DateTime.UtcNow.AddSeconds(Cfg.RepairTimeoutSeconds);
+            string shown = null;
+            while (!engine.RepairFinished && DateTime.UtcNow < deadline)
+            {
+                if (engine.StageName != shown)
+                {
+                    shown = engine.StageName;
+                    Console.WriteLine("repair: " + shown);
+                }
+                Thread.Sleep(200);
+            }
+            if (!engine.RepairFinished)
+            {
+                Console.WriteLine("YourChar repair did not finish within " + Cfg.RepairTimeoutSeconds + " seconds. Run repair again to finish it.");
+                return 2;
+            }
+            Console.WriteLine("YourChar repair finished: " + engine.StageName);
+            if (engine.RepairSucceeded) return 0;
+            Console.WriteLine("YourChar repair did not complete successfully.");
+            return 1;
         }
 
         static void WaitForFinished(Engine engine)
@@ -1195,15 +1234,19 @@ namespace YourCharLauncher
             return names;
         }
 
+        // A distribution that merely shares the name is not ours, which is the same
+        // test the launcher applies before it imports or starts anything. Without it
+        // --status and --stop would pick an unrelated distribution that occupies the
+        // name YourChar even though the backend is running in YourCharRuntime.
         static string FindDistro(List<string> names)
         {
             foreach (string name in names)
             {
-                if (string.Equals(name, Cfg.DistroName, StringComparison.OrdinalIgnoreCase)) return name;
+                if (string.Equals(name, Cfg.DistroName, StringComparison.OrdinalIgnoreCase) && Engine.HasMarker(name)) return name;
             }
             foreach (string name in names)
             {
-                if (string.Equals(name, Cfg.FallbackDistroName, StringComparison.OrdinalIgnoreCase)) return name;
+                if (string.Equals(name, Cfg.FallbackDistroName, StringComparison.OrdinalIgnoreCase) && Engine.HasMarker(name)) return name;
             }
             return null;
         }

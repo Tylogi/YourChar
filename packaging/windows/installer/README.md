@@ -3,7 +3,7 @@
 `build.ps1` turns the two things the earlier stages produced
 
 - `packaging/windows/launcher/` - `YourChar.exe`, the double-click entry point
-- `packaging/windows/../../release/` - the WSL2 runtime payload
+- `release/` (repository root) - the WSL2 runtime payload
 
 into one file an ordinary Windows user can run:
 
