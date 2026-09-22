@@ -806,6 +806,15 @@ namespace YourCharLauncher
             }
         }
 
+        // The stages in which repair work is still in flight. A repair is only
+        // finished once the stage leaves this set: "recovering" means a delayed
+        // restart owns the remaining work, so ending the command there would report
+        // the repair as over and cancel the restart before it has run.
+        static bool RepairInFlight(string stage)
+        {
+            return stage == "starting" || stage == "waiting" || stage == "recovering";
+        }
+
         // Repair replaces the application files inside the distribution and
         // leaves the rest of the distribution alone: no --unregister and no new
         // import, so the user's conversations, characters, memory, usage and
@@ -840,6 +849,13 @@ namespace YourCharLauncher
                     if (!EnsureAppPayload()) return;
                     if (!Preflight()) { Set("needs-repair", "YourChar runtime still needs repair.", false, "repair"); return; }
                     StartBackendAndFinish();
+                    // Starting may have failed and scheduled a delayed restart. That
+                    // restart (and every later one it schedules) owns the remaining work,
+                    // so the repair is not finished until the chain reaches a terminal
+                    // stage; returning here would leave RepairFinished true while the
+                    // stage is still "recovering" and the command line would exit before
+                    // the recovery thread could run.
+                    while (!stopping && RepairInFlight(StageName)) Thread.Sleep(200);
                 }
                 catch (Exception error) { Log.WriteException("repair failed", error); Fail("YourChar could not repair its runtime."); }
                 finally { RepairFinished = true; }

@@ -86,6 +86,59 @@ test("backend lifecycle operations use the resolved distribution identity", () =
   assert.match(source, /string\.Equals\(name, Cfg\.FallbackDistroName, StringComparison\.OrdinalIgnoreCase\) && Engine\.HasMarker\(name\)/u);
 });
 
+// A repair starts a background worker, and the command line waits for that worker to
+// finish. A start attempt can end by handing the remaining work to a delayed recovery,
+// so the repair is only over once the recovery chain reaches a terminal stage. Marking
+// it finished when the first attempt returns would report a finished repair while the
+// stage is still "recovering", and the exiting command line would kill the restart.
+test("a repair does not finish while a delayed recovery is still pending", () => {
+  const source = readFileSync(launcherSource, "utf8");
+  // the stages that still have work behind them, including the recovery hand-off
+  assert.match(
+    source,
+    /static bool RepairInFlight\(string stage\)\n\s*\{\n\s*return stage == "starting" \|\| stage == "waiting" \|\| stage == "recovering";\n\s*\}/u,
+  );
+  // the worker waits inside the try, so the finally that marks completion can only run
+  // after the recovery chain has settled
+  assert.match(
+    source,
+    /StartBackendAndFinish\(\);\n(?:\s*\/\/[^\n]*\n)*\s*while \(!stopping && RepairInFlight\(StageName\)\) Thread\.Sleep\(200\);\n\s*\}\n\s*catch \(Exception error\) \{ Log\.WriteException\("repair failed"/u,
+  );
+  // completion is marked exactly once, in that finally
+  assert.equal([...source.matchAll(/RepairFinished = true;/gu)].length, 1);
+  assert.match(source, /finally \{ RepairFinished = true; \}/u);
+  assert.match(source, /RepairFinished = false;\n\s*Thread thread = new Thread/u);
+});
+
+test("a repair whose delayed recovery succeeds only completes at ready", () => {
+  const source = readFileSync(launcherSource, "utf8");
+  const inFlight = /return stage == "starting" \|\| stage == "waiting" \|\| stage == "recovering";/u.exec(source);
+  assert.ok(inFlight, "the in-flight stages must be spelled out");
+  assert.doesNotMatch(inFlight[0]!, /"ready"/u, "ready is terminal, so the wait ends there");
+  // the recovery chain runs the same start-and-finish step that reaches ready
+  assert.match(source, /try \{ StartBackendAndFinish\(\); \}/u);
+  // and ready is the only state that counts as a successful repair
+  assert.match(source, /public bool RepairSucceeded \{ get \{ return StageName == "ready"; \} \}/u);
+  assert.match(source, /if \(engine\.RepairSucceeded\) return 0;/u);
+});
+
+test("a repair whose recovery chain is exhausted ends as a failure", () => {
+  const source = readFileSync(launcherSource, "utf8");
+  const inFlight = /return stage == "starting" \|\| stage == "waiting" \|\| stage == "recovering";/u.exec(source);
+  assert.ok(inFlight, "the in-flight stages must be spelled out");
+  // an exhausted chain reports a terminal failure instead of scheduling more work
+  assert.match(source, /if \(failureCount > Cfg\.MaxRecoveryAttempts\)\n\s*\{\n\s*Set\("failed",/u);
+  assert.doesNotMatch(inFlight[0]!, /"failed"/u, "failed is terminal, so the wait ends there");
+  assert.match(
+    source,
+    /if \(engine\.RepairSucceeded\) return 0;\n\s*Console\.WriteLine\("YourChar repair did not complete successfully\."\);\n\s*return 1;/u,
+  );
+  // the recovery behaviour the GUI start path relies on is unchanged
+  assert.match(source, /public const int BackoffSeconds = 25;/u);
+  assert.match(source, /public const int MaxRecoveryAttempts = 3;/u);
+  assert.match(source, /public const int StableUptimeSeconds = 120;/u);
+});
+
 test("payload version selection orders 1.0.0 > 0.10.0 > 0.9.0 > 0.2.0", { skip: process.platform === "win32" ? false : "drives the Windows packaging helper; this check runs on Windows" }, () => {
   const directory = mkdtempSync(join(tmpdir(), "yourchar-payloads-"));
   try {
