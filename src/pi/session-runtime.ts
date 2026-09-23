@@ -1983,6 +1983,7 @@ export class PiSessionRuntime {
       confirmedToolName: undefined,
       outputGuardRetryUsed: false,
       outputGuardBlocked: false,
+      outputGuardRecoveryActive: false,
       outputGuardRecoveryPrompt: undefined,
       toolProtocolLeakBlocked: false,
       toolProtocolLeakRetryUsed: false,
@@ -3474,7 +3475,9 @@ export class PiSessionRuntime {
               },
             };
           }
+          const outputBlocked = classifyAssistantOutput(text) === "blocked";
           if (
+            !outputBlocked &&
             toolState.traceKind === "user" &&
             toolState.interactiveThinkingRequired &&
             text.trim().length > 0 &&
@@ -3495,7 +3498,7 @@ export class PiSessionRuntime {
               },
             };
           }
-          if (classifyAssistantOutput(text) !== "blocked") return undefined;
+          if (!outputBlocked) return undefined;
 
           toolState.outputGuardBlocked = true;
 
@@ -3504,7 +3507,7 @@ export class PiSessionRuntime {
               ...event.message,
               content: [],
               stopReason: "error",
-              errorMessage: "Internal analysis output was blocked before display.",
+              errorMessage: "模型输出包含内部分析，已阻止展示。",
             },
           };
         });
@@ -3513,9 +3516,10 @@ export class PiSessionRuntime {
             return undefined;
           }
           const options = this.providerPayloadOptions?.(toolState.sessionId) ?? {};
-          toolState.interactiveThinkingRequired = options.requireThinking === true;
+          const directRecovery = toolState.lengthRecoveryActive || toolState.outputGuardRecoveryActive;
+          toolState.interactiveThinkingRequired = options.requireThinking === true && !directRecovery;
           const controls: ModelProviderPayloadControls = {
-            temperature: toolState.lengthRecoveryActive ? 0 : options.temperature,
+            temperature: directRecovery ? 0 : options.temperature,
             topP: options.topP,
             frequencyPenalty: options.frequencyPenalty,
             presencePenalty: options.presencePenalty,
@@ -3525,7 +3529,7 @@ export class PiSessionRuntime {
             thinkingTokenBudgetField: options.thinkingTokenBudgetField,
             thinkingBudgetTokens: options.thinkingBudgetTokens,
             chatTemplateKwargs: options.chatTemplateKwargs,
-            thinkingMode: toolState.lengthRecoveryActive ? "off" : "configured",
+            thinkingMode: directRecovery ? "off" : "configured",
           };
           const transformed = this.providerPayloadTransform?.({
             appSessionId: toolState.sessionId,
@@ -3538,9 +3542,6 @@ export class PiSessionRuntime {
             now: this.clock.now(),
           }) ?? event.payload;
           const payload = isRecord(transformed) ? transformed : { ...event.payload };
-          if (toolState.lengthRecoveryActive) {
-            toolState.interactiveThinkingRequired = false;
-          }
           try {
             this.store.addModelContextTrace({
               sessionId: toolState.sessionId,
