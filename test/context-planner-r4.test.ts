@@ -402,9 +402,9 @@ test("conversation fatigue follows the canonical model budget instead of raw ove
   const workspaceDir = join(stateDir, "workspace");
   const runtime = createTestRuntime({ stateDir, workspaceDir, seed: "r4-budget-lifecycle" });
   try {
-    // Leave enough resident-tool headroom that the compacted view of the raw
-    // result remains below projected planned pressure.
-    runtime.kernel.patchModelApiConfig({ contextWindowTokens: 36_864, maxTokens: 2_048 });
+    // Include the schedule batch/detail schemas in resident-tool headroom so
+    // the compacted view of the raw result stays below planned pressure.
+    runtime.kernel.patchModelApiConfig({ contextWindowTokens: 40_960, maxTokens: 2_048 });
     runtime.kernel.patchAgentPermissions({ workspaceAccess: "read_only" });
     writeFileSync(
       join(workspaceDir, "oversized-result.txt"),
@@ -454,7 +454,7 @@ test("conversation fatigue follows the canonical model budget instead of raw ove
 });
 
 test("planned pressure starts near ninety percent of a small simulated window, not at warning pressure", async () => {
-  // Padding accounts for the resident reminder plus durable goal/workflow tool schemas.
+  // Padding accounts for schedule batch/detail and durable goal/workflow schemas.
   // Keep all measured warning/planned-pressure assertions below as the contract.
   const runtime = createTestRuntime({ seed: "r4-planned-pressure" });
   try {
@@ -464,7 +464,7 @@ test("planned pressure starts near ninety percent of a small simulated window, n
     runtime.model.enqueue([
       {
         kind: "assistant_text",
-        text: `八成多的占用还不需要打断对话。${"abcd".repeat(6_556)}`,
+        text: `八成多的占用还不需要打断对话。${"abcd".repeat(5_469)}`,
       },
       {
         kind: "assistant_text",
@@ -506,7 +506,7 @@ test("a conservative turn projection can suggest fatigue but cannot checkpoint b
     runtime.kernel.patchModelApiConfig({ contextWindowTokens: 65_536, maxTokens: 2_048 });
     runtime.kernel.patchAgentPermissions({ workspaceAccess: "read_write" });
     runtime.model.enqueue([
-      { kind: "assistant_text", text: `投影边界上下文。${"abcd".repeat(40_056)}` },
+      { kind: "assistant_text", text: `投影边界上下文。${"abcd".repeat(37_882)}` },
       { kind: "tool_call", name: "write", arguments: { path: "projection.txt", content: "done" } },
       { kind: "assistant_text", text: "文件写好了，我有点困了。" },
       { kind: "assistant_text", text: "实测余量充足，我们正常继续。" },
@@ -551,7 +551,7 @@ test("a tired tool turn is checkpointed at the next safe boundary without anothe
         kind: "assistant_text",
         // Exercise planned pressure, with room for tool-schema growth below the
         // emergency preflight threshold (which is tested separately).
-        text: `这是后续操作需要保留的上下文。${"abcd".repeat(41_456)}`,
+        text: `这是后续操作需要保留的上下文。${"abcd".repeat(39_282)}`,
       },
       { kind: "tool_call", name: "write", arguments: { path: "second.txt", content: "second" } },
       {
@@ -807,7 +807,7 @@ test("planned and manual context compaction do not send a wake notification", as
     runtime.model.enqueue([
       {
         kind: "assistant_text",
-        text: `这轮先保留较长背景。${"abcd".repeat(12_000)}`,
+        text: `这轮先保留较长背景。${"abcd".repeat(9_826)}`,
       },
       {
         kind: "assistant_text",
@@ -870,7 +870,7 @@ test("a side-effect-deferred rest checkpoint wakes once at its later safe bounda
     runtime.kernel.patchAgentPermissions({ workspaceAccess: "read_write" });
     const character = runtime.kernel.createCharacter({ name: "延后唤醒角色" });
     runtime.model.enqueue([
-      { kind: "assistant_text", text: `这是操作所需的较长背景。${"abcd".repeat(39_656)}` },
+      { kind: "assistant_text", text: `这是操作所需的较长背景。${"abcd".repeat(37_482)}` },
       { kind: "tool_call", name: "write", arguments: { path: "deferred-wake.txt", content: "done" } },
       { kind: "assistant_text", text: "文件写完了，我确实有点困，想休息一下。" },
       { kind: "assistant_text", text: "好，等我休息好再回来。" },

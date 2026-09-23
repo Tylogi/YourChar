@@ -184,9 +184,10 @@ test("a character-bound session reports its model budget and manual compaction t
 test("model-relative pressure triggers one proactive checkpoint with hysteresis", async () => {
   const runtime = createTestRuntime({ seed: "context-budget-proactive" });
   try {
-    // This small-window fixture is calibrated for the non-Workspace tool set.
+    // Leave room for the resident schedule batch/detail schemas before the
+    // history is large enough for Pi to produce a compaction checkpoint.
     runtime.kernel.patchAgentPermissions({ workspaceAccess: "off" });
-    runtime.kernel.patchModelApiConfig({ contextWindowTokens: 32_768, maxTokens: 2_048 });
+    runtime.kernel.patchModelApiConfig({ contextWindowTokens: 36_864, maxTokens: 2_048 });
     const character = runtime.kernel.createCharacter({ name: "主动整理角色" });
     runtime.model.enqueue(Array.from({ length: 14 }, (_, index) => ({
       kind: "assistant_text" as const,
