@@ -6052,6 +6052,7 @@ export class CompanionKernel {
     handle.toolState.confirmedToolName = undefined;
     handle.toolState.outputGuardRetryUsed = false;
     handle.toolState.outputGuardBlocked = false;
+    handle.toolState.outputGuardRecoveryActive = false;
     handle.toolState.outputGuardRecoveryPrompt = undefined;
     handle.toolState.toolProtocolLeakBlocked = false;
     handle.toolState.toolProtocolLeakRetryUsed = false;
@@ -11195,6 +11196,7 @@ function outputGuardRecoverySystemPrompt(mode: Mode, requestText = ""): string {
     : "若原始请求需要可用工具才能完成，先调用该工具，再给出简短最终回复。";
   return [
     "[TRUSTED OUTPUT RECOVERY] The previous generation was rejected and removed from the active branch.",
+    "This bounded retry skips private deliberation. Return the final answer or required tool calls directly.",
     "不要分析任务、检查历史、解释冲突或输出英文内部笔记。只根据当前 system context 中的权威状态回答原始用户消息。",
     "当前已确认长期记忆覆盖旧对话；若它已直接回答问题，直接陈述该事实，不要回溯其变更过程。",
     requiredTool,
@@ -11218,6 +11220,9 @@ async function retryBlockedOutputGuard(
   handle.toolState.outputGuardBlocked = false;
   handle.toolState.outputGuardRetryUsed = true;
   sessionRuntime.rewindToLatestUser(handle);
+  const previousRecoveryActive = handle.toolState.outputGuardRecoveryActive;
+  const previousRecoveryPrompt = handle.toolState.outputGuardRecoveryPrompt;
+  handle.toolState.outputGuardRecoveryActive = true;
   handle.toolState.outputGuardRecoveryPrompt = outputGuardRecoverySystemPrompt(
     request.mode,
     request.text,
@@ -11234,7 +11239,8 @@ async function retryBlockedOutputGuard(
     );
   } finally {
     handle.session.agent.state.systemPrompt = previousSystemPrompt;
-    handle.toolState.outputGuardRecoveryPrompt = undefined;
+    handle.toolState.outputGuardRecoveryPrompt = previousRecoveryPrompt;
+    handle.toolState.outputGuardRecoveryActive = previousRecoveryActive;
   }
   return true;
 }

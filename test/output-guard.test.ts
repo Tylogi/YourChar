@@ -1,4 +1,7 @@
 import assert from "node:assert/strict";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import test from "node:test";
 import { classifyAssistantOutput } from "../src/pi/output-guard.js";
 import { createTestRuntime } from "../src/testing/index.js";
@@ -92,6 +95,92 @@ test("a second internal-analysis response becomes a retryable system event", asy
     assert.equal(serialized.includes("Thinking Process"), false);
     assert.equal(serialized.includes("Reasoning"), false);
     assert.equal(serialized.includes("The user is asking me"), false);
+  } finally {
+    runtime.dispose();
+  }
+});
+
+test("MLX output recovery keeps images, disables thinking once, and restores it on the next turn", async () => {
+  const root = mkdtempSync(join(tmpdir(), "yourchar-output-recovery-"));
+  const runtime = createTestRuntime({ seed: "output-guard-mlx", workspaceDir: root });
+  try {
+    runtime.kernel.setAgentModuleEnabled("mcp:vision", true);
+    runtime.kernel.patchModelApiConfig({
+      model: "scripted-MLX-model", visionInputEnabled: true, maxTokens: 4096, temperature: 0.7,
+    });
+    const character = runtime.kernel.createCharacter({ name: "苏言" });
+    const image = runtime.kernel.uploadWorkspaceFile({
+      directory: "uploads", name: "pixel.png",
+      bytes: Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=", "base64"),
+    });
+    runtime.model.enqueue([
+      {
+        kind: "assistant_text", stopReason: "length",
+        thinking: "核对图片内容并组织角色回复，这些内部记录不应作为正文显示。",
+        text: "Thinking Process:\n" + "Review the image before answering. ".repeat(400),
+        usage: { input: 24000, output: 4096 },
+      },
+      { kind: "assistant_text", text: "图片里有一个像素。" },
+    ]);
+    const streamed: string[] = [];
+    const response = await runtime.kernel.streamMessage("guard-mlx", {
+      mode: "sms", characterId: character.id, text: "描述这张图片。",
+      attachments: [{ path: image.path, contentType: image.contentType }],
+    }, event => {
+      if (event.type === "message_update" && event.message.role === "assistant") {
+        streamed.push(JSON.stringify(event.message.content));
+      }
+    });
+    assert.equal(response.status, "completed");
+    assert.equal(response.reply, "图片里有一个像素。");
+    assert.equal(runtime.model.requests.length, 2);
+    const recovery = runtime.kernel.recentModelContextTraces(10).find(trace =>
+      JSON.stringify(trace.payload).includes("TRUSTED OUTPUT RECOVERY"));
+    assert.deepEqual(recovery?.payload.chat_template_kwargs, { enable_thinking: false, preserve_thinking: true });
+    assert.equal(recovery?.payload.temperature, 0);
+    assert.match(JSON.stringify(runtime.model.requests[1].messages), /"type":"image"/);
+    assert.doesNotMatch(JSON.stringify(runtime.model.requests[1].messages), /Review the image before answering/);
+    assert.doesNotMatch(streamed.join(""), /Thinking Process/);
+    assert.match(streamed.join(""), /图片里有一个像素/);
+
+    runtime.model.enqueue([
+      { kind: "assistant_text", text: "没有私有思考的下一轮草稿。" },
+      { kind: "assistant_text", thinking: "下一轮仍需正常的私有思考，恢复设置不应改变后续对话行为。", text: "收到。" },
+    ]);
+    const next = await runtime.kernel.sendMessage("guard-mlx", { mode: "sms", characterId: character.id, text: "继续。" });
+    assert.equal(next.reply, "收到。");
+    assert.equal(runtime.model.requests.length, 4);
+    const nextTraces = runtime.kernel.recentModelContextTraces(10).filter(trace => trace.requestText === "继续。");
+    assert.equal(nextTraces.length, 2);
+    for (const trace of nextTraces) {
+      assert.deepEqual(trace.payload.chat_template_kwargs, { enable_thinking: true, preserve_thinking: true });
+      assert.equal(trace.payload.temperature, 0.7);
+    }
+    assert.doesNotMatch(JSON.stringify((await runtime.kernel.getSession("guard-mlx")).messages), /Thinking Process|没有私有思考的下一轮草稿/);
+  } finally {
+    runtime.dispose();
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("MLX visible analysis uses the bounded output recovery before the missing-thinking retry", async () => {
+  const runtime = createTestRuntime({ seed: "output-guard-mlx-bounded" });
+  try {
+    runtime.kernel.patchModelApiConfig({ model: "scripted-MLX-model" });
+    const character = runtime.kernel.createCharacter({ name: "苏言" });
+    runtime.model.enqueue([
+      { kind: "assistant_text", text: "Thinking Process:\nReview the image." },
+      { kind: "assistant_text", text: "Reasoning:\nReview the image again." },
+    ]);
+    const response = await runtime.kernel.sendMessage("guard-mlx-bounded", {
+      mode: "sms", characterId: character.id, text: "描述图片。",
+    });
+    assert.equal(response.status, "failed");
+    assert.equal(response.canRetry, true);
+    assert.equal(runtime.model.requests.length, 2);
+    assert.match(runtime.model.requests[1].systemPrompt, /TRUSTED OUTPUT RECOVERY/);
+    assert.doesNotMatch(runtime.model.requests[1].systemPrompt, /TRUSTED THINKING RETRY/);
+    assert.match(response.reply, /内部分析/);
   } finally {
     runtime.dispose();
   }

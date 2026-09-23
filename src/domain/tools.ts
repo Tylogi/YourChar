@@ -32,6 +32,7 @@ type RuntimeState = {
   confirmedToolName?: string;
   outputGuardRetryUsed: boolean;
   outputGuardBlocked: boolean;
+  outputGuardRecoveryActive: boolean;
   outputGuardRecoveryPrompt?: string;
   toolProtocolLeakBlocked: boolean;
   toolProtocolLeakRetryUsed: boolean;
