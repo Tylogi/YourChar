@@ -53,7 +53,7 @@ export const interactionStateMcpModuleId = "mcp:interaction-state";
 
 // Rounded from the current provider-facing tool definitions; tests keep these visible estimates intentional.
 const mcpEstimatedTokens = {
-  [scheduleMcpModuleId]: 960,
+  [scheduleMcpModuleId]: 2_500,
   [tavilySearchMcpModuleId]: 350,
   [webReaderMcpModuleId]: 260,
   [visionMcpModuleId]: 420,
@@ -194,7 +194,9 @@ const mcpDetails: Record<string, string> = {
 ## Tools
 
 - \`create_schedule_item\`
+- \`create_schedule_items\`: create up to 50 items per batch; only counts, conflicts, and failures are returned. Use a stable batchId for an unchanged retry and a new batchId for new/corrected entries. Entries share one calendar; world-place bindings use the single-item tool.
 - \`list_schedule_items\`
+- \`get_schedule_item\`: retrieve one item's details, with offset-based slices for long notes or titles.
 - \`update_schedule_item\`
 - \`complete_schedule_item\`
 - \`cancel_schedule_item\`
@@ -206,6 +208,8 @@ const mcpDetails: Record<string, string> = {
 - \`calendar=character\` is the selected character's fictional calendar; it accepts events and tasks but never reminders or system notifications.
 - \`kind=reminder\` always belongs to \`calendar=user\`. Physical co-presence changes the narrative lens, not calendar ownership; “提醒我” remains a user-calendar request while meeting.
 - Calendar ownership is isolated. Character operations cannot read or mutate the user's calendar, and vice versa.
+- For a day/week/course query, narrow from/to/query first. Lists return at most 20 summaries by default (50 maximum); follow nextOffset with unchanged filters only when more results are needed. Long fields are explicitly marked as previews. Never claim to have read the whole calendar when hasMore is true.
+- For semester timetables, create bounded batches and report saved/existing/failed counts and conflicts. Successful entries remain saved on partial failure; do not recreate them. Check failed indexes and correct only those entries. Recurrence currently supports DAILY/WEEKLY with optional INTERVAL, not semester end dates or holiday exceptions; use dated entries for a finite term.
 - Relative and local-language times are passed through \`timeExpression\` and resolved by the trusted server clock.
 - RP requests about the character's own plans use \`calendar=character\`; real user schedule changes still require explicit confirmation.
 - In canonical SMS worlds, future location activities use \`placeId\` plus \`capabilityId\`. They are linked to world state, and travel reaches the destination when the scheduled interval ends.

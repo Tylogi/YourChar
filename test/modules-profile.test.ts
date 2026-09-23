@@ -43,7 +43,7 @@ test("module toggles rebuild Pi capabilities and profile context without losing 
     ]);
     assert.deepEqual(
       modules.filter((entry) => entry.type === "mcp").map((entry) => [entry.name, entry.estimatedTokens]),
-      [["Git MCP", 620], ["Interaction State MCP", 650], ["Memory Coordinator MCP", 430], ["MinerU Document MCP", 300], ["Relationship State MCP", 230], ["Schedule MCP", 960], ["Subagent Delegation MCP", 1100], ["Tavily Search MCP", 350], ["User Profile MCP", 270], ["Vision MCP", 420], ["Web Reader MCP", 260], ["World State MCP", 960]],
+      [["Git MCP", 620], ["Interaction State MCP", 650], ["Memory Coordinator MCP", 430], ["MinerU Document MCP", 300], ["Relationship State MCP", 230], ["Schedule MCP", 2500], ["Subagent Delegation MCP", 1100], ["Tavily Search MCP", 350], ["User Profile MCP", 270], ["Vision MCP", 420], ["Web Reader MCP", 260], ["World State MCP", 960]],
     );
     assert.match(runtime.kernel.getAgentModuleDetail("mcp:interaction-state").content, /begin_meeting/);
     assert.match(runtime.kernel.getAgentModuleDetail("mcp:interaction-state").content, /semantic evidence/);
@@ -81,6 +81,8 @@ test("module toggles rebuild Pi capabilities and profile context without losing 
     assert.match(runtime.model.requests[0].systemPrompt, /称呼：Vector/);
     assert.ok(runtime.model.requests[0].toolNames.includes("read"));
     assert.ok(runtime.model.requests[0].toolNames.includes("create_schedule_item"));
+    assert.ok(runtime.model.requests[0].toolNames.includes("create_schedule_items"));
+    assert.ok(runtime.model.requests[0].toolNames.includes("get_schedule_item"));
     assert.ok(runtime.model.requests[0].toolNames.includes("update_user_profile"));
     assert.match(JSON.stringify(runtime.model.requests[1].messages), /# Daily Planning/);
 
@@ -88,6 +90,8 @@ test("module toggles rebuild Pi capabilities and profile context without losing 
     runtime.kernel.setAgentModuleEnabled("mcp:user-profile", false);
     await runtime.kernel.sendMessage("module-session", { mode: "sms", text: "继续" });
     assert.equal(runtime.model.requests[2].toolNames.includes("create_schedule_item"), false);
+    assert.equal(runtime.model.requests[2].toolNames.includes("create_schedule_items"), false);
+    assert.equal(runtime.model.requests[2].toolNames.includes("get_schedule_item"), false);
     assert.equal(runtime.model.requests[2].toolNames.includes("update_user_profile"), false);
     assert.equal(runtime.model.requests[2].toolNames.includes("get_user_profile"), false);
     assert.doesNotMatch(runtime.model.requests[2].systemPrompt, /称呼：Vector/);

@@ -131,6 +131,8 @@ test("incognito inherits a stable transcript, supports meetings, and leaves pare
     for (const blocked of [
       "bash",
       "create_schedule_item",
+      "create_schedule_items",
+      "get_schedule_item",
       "get_user_profile",
       "get_current_character_soul",
       "search_memory",

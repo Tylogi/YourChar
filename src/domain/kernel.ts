@@ -10528,6 +10528,7 @@ function recentRecoverableAttachmentPaths(messages: readonly AgentMessage[]): st
 
 const readOnlyActionTypes = new Set([
   "list_schedule_items",
+  "get_schedule_item",
   "get_user_profile",
   "get_current_character_soul",
   "search_memory",

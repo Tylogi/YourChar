@@ -8,6 +8,8 @@ import type {
   ReminderOccurrence,
   ScheduleItem,
   ScheduleListFilter,
+  SchedulePage,
+  SchedulePageOptions,
   ScheduleMutationEvent,
   ScheduleMutationListener,
   ScheduleMutationResult,
@@ -76,7 +78,7 @@ export class ScheduleService {
     item.reminder = normalizeReminderPolicy(input.reminder, item);
     validateScheduleItem(item);
     assertFutureReminder(item, this.clock.now());
-    const warnings = this.overlapWarnings(item);
+    const warnings = this.conflictWarnings(item);
     const result = this.repository.transaction(() => {
       this.repository.createItem(item, input.idempotencyKey);
       const occurrence = reminderPolicy(item).enabled ? this.createOccurrence(item, notificationTime(item)) : undefined;
@@ -88,6 +90,21 @@ export class ScheduleService {
 
   list(filter: ScheduleListFilter = {}): ScheduleItem[] {
     return this.repository.listItems(filter);
+  }
+
+  listPage(filter: ScheduleListFilter = {}, options: SchedulePageOptions = {}): SchedulePage {
+    const limit = options.limit ?? 20;
+    const offset = options.offset ?? 0;
+    if (!Number.isInteger(limit) || limit < 1 || limit > 50) {
+      throw new ScheduleValidationError("limit must be an integer between 1 and 50");
+    }
+    if (!Number.isSafeInteger(offset) || offset < 0) {
+      throw new ScheduleValidationError("offset must be a non-negative safe integer");
+    }
+    const from = normalizeInstant(filter.from);
+    const to = normalizeInstant(filter.to);
+    if (from && to && from >= to) throw new ScheduleValidationError("to must be after from");
+    return this.repository.listItemsPage({ ...filter, from, to }, limit, offset);
   }
 
   get(id: string): ScheduleItem {
@@ -128,7 +145,7 @@ export class ScheduleService {
     } : currentPolicy, next);
     validateScheduleItem(next);
     assertFutureReminder(next, this.clock.now());
-    const warnings = this.overlapWarnings(next);
+    const warnings = this.conflictWarnings(next);
     const result = this.repository.transaction(() => {
       this.repository.updateItem(next);
       let occurrence: ReminderOccurrence | undefined;
@@ -248,23 +265,8 @@ export class ScheduleService {
     });
   }
 
-  private overlapWarnings(item: ScheduleItem): string[] {
-    if (!item.startAt || item.status !== "scheduled") {
-      return [];
-    }
-    const start = new Date(item.startAt).getTime();
-    const end = item.endAt ? new Date(item.endAt).getTime() : start + 1;
-    const overlaps = this.repository.listItems({
-      status: "scheduled",
-      ownerType: item.ownerType,
-      characterId: item.characterId,
-    }).filter((candidate) => {
-      if (candidate.id === item.id || !candidate.startAt) return false;
-      const candidateStart = new Date(candidate.startAt).getTime();
-      const candidateEnd = candidate.endAt ? new Date(candidate.endAt).getTime() : candidateStart + 1;
-      return candidateStart < end && candidateEnd > start;
-    });
-    return overlaps.map((candidate) => `与“${candidate.title}”时间重叠`);
+  conflictWarnings(item: ScheduleItem): string[] {
+    return this.repository.overlappingTitles(item).map(title => `与“${title}”时间重叠`);
   }
 
   private emitMutation(event: ScheduleMutationEvent): void {
