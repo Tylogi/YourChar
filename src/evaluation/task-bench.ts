@@ -920,6 +920,7 @@ function cloneEvaluationConfiguration(
     model: vision.model,
     detail: vision.detail,
     maxImages: vision.maxImages,
+    maxOutputTokens: vision.maxOutputTokens,
     ...(vision.apiKey ? { apiKey: vision.apiKey } : {}),
   });
   const mineru = source.mineruService.getRawConfig();

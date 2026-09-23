@@ -6024,9 +6024,9 @@ export function renderAppHtml(): string {
               <div class="settings-field">
                 <label for="visionMode">处理模式</label>
                 <select id="visionMode">
-                  <option value="auto">自动</option>
+                  <option value="auto">自动（优先角色模型）</option>
                   <option value="direct">主模型直读</option>
-                  <option value="mcp">Vision MCP</option>
+                  <option value="mcp">强制 Vision MCP</option>
                   <option value="off">关闭</option>
                 </select>
               </div>
@@ -6054,6 +6054,11 @@ export function renderAppHtml(): string {
               <div class="settings-field">
                 <label for="visionMaxImages">单轮图片上限</label>
                 <input id="visionMaxImages" type="number" min="1" max="8" step="1" value="4" />
+              </div>
+              <div class="settings-field">
+                <label for="visionMaxOutputTokens">视觉工具输出上限（tokens）</label>
+                <input id="visionMaxOutputTokens" type="number" min="1024" max="32768" step="1024" value="8192" />
+                <small>复杂截图、长文本可调高；不要超过视觉模型的输出上限。</small>
               </div>
             </div>
             <div class="settings-actions">
@@ -7534,6 +7539,7 @@ export function renderAppHtml(): string {
       visionModelCustom: document.getElementById("visionModelCustom"),
       visionApiKey: document.getElementById("visionApiKey"),
       visionMaxImages: document.getElementById("visionMaxImages"),
+      visionMaxOutputTokens: document.getElementById("visionMaxOutputTokens"),
       saveVisionSettingsBtn: document.getElementById("saveVisionSettingsBtn"),
       testVisionBtn: document.getElementById("testVisionBtn"),
       discoverVisionModelsBtn: document.getElementById("discoverVisionModelsBtn"),
@@ -21733,6 +21739,7 @@ export function renderAppHtml(): string {
         nodes.visionBaseUrl.value = config.baseUrl || "";
         nodes.visionApiKey.value = "";
         nodes.visionMaxImages.value = config.maxImages || 4;
+        nodes.visionMaxOutputTokens.value = config.maxOutputTokens || 8192;
         renderVisionModelOptions(config.model || "");
         nodes.visionSettingsState.textContent = formatVisionSettingsState(config);
       } catch (error) {
@@ -21770,7 +21777,8 @@ export function renderAppHtml(): string {
         detail: nodes.visionDetail.value,
         baseUrl: nodes.visionBaseUrl.value.trim(),
         model: selectedVisionModelName(),
-        maxImages: Math.max(1, Math.min(8, optionalInteger(nodes.visionMaxImages.value) || 4))
+        maxImages: Math.max(1, Math.min(8, optionalInteger(nodes.visionMaxImages.value) || 4)),
+        maxOutputTokens: Math.max(1024, Math.min(32768, optionalInteger(nodes.visionMaxOutputTokens.value) || 8192))
       };
       if (nodes.visionApiKey.value) payload.apiKey = nodes.visionApiKey.value;
       try {
@@ -21782,7 +21790,7 @@ export function renderAppHtml(): string {
         const config = await response.json();
         if (!response.ok) throw new Error(config.error || "视觉设置保存失败");
         nodes.visionApiKey.value = "";
-        nodes.visionSettingsState.textContent = "已保存 · " + formatVisionSettingsState(config);
+        nodes.visionSettingsState.textContent = uiText("已保存") + " · " + formatVisionSettingsState(config);
         setStatus("视觉设置已保存");
         return config;
       } catch (error) {
@@ -21853,9 +21861,12 @@ export function renderAppHtml(): string {
     }
 
     function formatVisionSettingsState(config) {
-      const labels = { auto: "自动", direct: "主模型直读", mcp: "Vision MCP", off: "关闭" };
-      return (labels[config.mode] || config.mode) + " · Key: " +
-        (config.apiKeySet ? config.apiKeyMasked : "未设置") + " · 上限 " + (config.maxImages || 4) + " 张";
+      const labels = { auto: "自动（优先角色模型）", direct: "主模型直读", mcp: "强制 Vision MCP", off: "关闭" };
+      const english = uiLocale() === "en";
+      return uiText(labels[config.mode] || config.mode) + " · Key: " +
+        (config.apiKeySet ? config.apiKeyMasked : uiText("未设置")) +
+        (english ? " · Up to " : " · 上限 ") + (config.maxImages || 4) +
+        (english ? " images · Output " : " 张 · 输出 ") + (config.maxOutputTokens || 8192) + " tokens";
     }
 
     async function loadMineruSettings() {

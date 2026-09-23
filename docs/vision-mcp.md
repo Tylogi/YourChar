@@ -10,7 +10,7 @@ OpenAI-compatible vision endpoint and an explicit primary-model capability flag.
 
 | Mode | Behavior |
 | --- | --- |
-| `auto` | Send images directly when the primary model is marked vision-capable; otherwise run independent pre-analysis. |
+| `auto` | Prefer the current character's bound model when it is marked vision-capable; otherwise run independent pre-analysis. |
 | `direct` | Send image blocks only to a primary model marked vision-capable. |
 | `mcp` | Always pre-analyze with the configured Vision endpoint. |
 | `off` | Do not inspect pixels or expose the Vision tool. |
@@ -18,6 +18,11 @@ OpenAI-compatible vision endpoint and an explicit primary-model capability flag.
 The `mcp:vision` module switch is the outer capability boundary. Disabling it
 turns off direct and independent image processing while retaining configuration
 and cached analyses.
+
+Use `auto` for character-model priority. `mcp` explicitly forces independent
+analysis, even for vision-capable characters. Routing and capability context both
+use the character's selected profile, falling back to the default profile only
+when the character has no valid binding.
 
 ## Turn flow
 
@@ -58,10 +63,21 @@ ID from the provider is selected; model IDs are treated as case-sensitive.
 
 ## Cache and limits
 
-Analysis cache keys include prompt version, image SHA-256, model, question,
-detail, and requested features. The cache is bounded to 200 entries. A turn may
+Analysis cache keys include prompt version, image SHA-256, endpoint, model,
+output-token budget, question, detail, and requested features. The cache is bounded to 200 entries. A turn may
 process at most the configured `maxImages` value, constrained to `1..8`; each
 upload is constrained by the workspace 20 MiB limit.
+
+`maxOutputTokens` defaults to 8,192 and can be set to 1,024–32,768 in Vision
+settings. Keep it within the endpoint model's supported output limit. Independent
+analysis has a five-minute timeout, and the MCP bridge allows the same budget.
+Summaries, OCR lines, and observation lists retain their content within a shared
+128,000-character result limit; they are no longer individually shortened. Current
+turn Vision tool results have a separate context budget of that size plus a small
+formatting allowance. Historical results still use normal conversation compaction.
+Provider output-limit stops and the shared result limit are reported explicitly
+as incomplete analyses and are not cached. Earlier, shorter cached analyses are
+invalidated by the new prompt version.
 
 Supported formats are PNG, JPEG, GIF, and WebP. SVG is deliberately excluded
 from model image input because it is executable text rather than trusted raster
