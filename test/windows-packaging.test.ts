@@ -17,6 +17,11 @@ const launcherSource = resolve(root, "packaging/windows/launcher/YourChar.cs");
 const packagingRoot = resolve(root, "packaging/windows");
 const releaseDirectory = resolve(root, "release");
 
+function readLauncherSource(): string {
+  // Git may check out the C# source with CRLF on Windows.
+  return readFileSync(launcherSource, "utf8").replace(/\r\n/g, "\n");
+}
+
 function findPowerShell(): string | null {
   const candidates = process.platform === "win32" ? ["powershell.exe", "pwsh.exe"] : ["pwsh", "powershell.exe"];
   for (const candidate of candidates) {
@@ -64,7 +69,7 @@ test("the installer packaging step always recompiles the launcher", () => {
 });
 
 test("the repair command line cannot report success for an unfinished repair", () => {
-  const source = readFileSync(launcherSource, "utf8");
+  const source = readLauncherSource();
   // the worker marks completion, however it ends
   assert.match(source, /finally \{ RepairFinished = true; \}/u);
   // the command line waits for that mark instead of a fixed number of seconds
@@ -77,7 +82,7 @@ test("the repair command line cannot report success for an unfinished repair", (
 });
 
 test("backend lifecycle operations use the resolved distribution identity", () => {
-  const source = readFileSync(launcherSource, "utf8");
+  const source = readLauncherSource();
   // the distribution must be resolved before a leftover backend is looked for
   assert.match(source, /if \(!EnsureDistro\(\)\) return;\s*\n\s*if \(HandleLeftoverBackend\(\)\) return;/u);
   assert.doesNotMatch(source, /if \(HandleLeftoverBackend\(\)\) return;\s*\n\s*if \(!EnsureDistro\(\)\) return;/u);
@@ -92,7 +97,7 @@ test("backend lifecycle operations use the resolved distribution identity", () =
 // it finished when the first attempt returns would report a finished repair while the
 // stage is still "recovering", and the exiting command line would kill the restart.
 test("a repair does not finish while a delayed recovery is still pending", () => {
-  const source = readFileSync(launcherSource, "utf8");
+  const source = readLauncherSource();
   // the stages that still have work behind them, including the recovery hand-off
   assert.match(
     source,
@@ -111,7 +116,7 @@ test("a repair does not finish while a delayed recovery is still pending", () =>
 });
 
 test("a repair whose delayed recovery succeeds only completes at ready", () => {
-  const source = readFileSync(launcherSource, "utf8");
+  const source = readLauncherSource();
   const inFlight = /return stage == "starting" \|\| stage == "waiting" \|\| stage == "recovering";/u.exec(source);
   assert.ok(inFlight, "the in-flight stages must be spelled out");
   assert.doesNotMatch(inFlight[0]!, /"ready"/u, "ready is terminal, so the wait ends there");
@@ -123,7 +128,7 @@ test("a repair whose delayed recovery succeeds only completes at ready", () => {
 });
 
 test("a repair whose recovery chain is exhausted ends as a failure", () => {
-  const source = readFileSync(launcherSource, "utf8");
+  const source = readLauncherSource();
   const inFlight = /return stage == "starting" \|\| stage == "waiting" \|\| stage == "recovering";/u.exec(source);
   assert.ok(inFlight, "the in-flight stages must be spelled out");
   // an exhausted chain reports a terminal failure instead of scheduling more work
