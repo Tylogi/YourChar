@@ -76,6 +76,19 @@ test("schedule MCP server exposes and executes tools over JSON-RPC", async () =>
     assert.equal(actions.length, 1);
 
     actions = [];
+    const replayed = await bridge.client.callTool({
+      name: "create_schedule_item",
+      arguments: { kind: "reminder", title: "喝水", timeExpression: "五分钟后", timezone: "Asia/Shanghai" },
+      _meta: { "rp-agent/tool-call-id": "contract-call-next-turn" },
+    });
+    assert.equal(replayed.isError, undefined);
+    assert.equal(kernel.listScheduleItems().length, 2);
+    assert.equal(actions.length, 1);
+    assert.equal(actions[0].actionType, "create_schedule_item");
+    assert.equal(actions[0].status, "completed");
+    assert.equal(actions[0].payload.replayed, true);
+
+    actions = [];
     const characterEvent = await bridge.client.callTool({
       name: "create_schedule_item",
       arguments: {

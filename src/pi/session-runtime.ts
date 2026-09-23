@@ -4851,6 +4851,7 @@ function abortError(message: string): Error {
 
 const scheduleMutationTools = new Set([
   "create_schedule_item",
+  "create_schedule_items",
   "update_schedule_item",
   "complete_schedule_item",
   "cancel_schedule_item",

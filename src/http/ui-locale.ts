@@ -145,6 +145,8 @@ export const englishUiMessages: Readonly<Record<string, string>> = Object.freeze
   "正在做": "In progress",
   "全部任务": "All tasks",
   "创建日程": "Create schedule item",
+  "批量创建日程": "Create schedule items",
+  "读取日程详情": "Read schedule details",
   "日程视图": "Schedule view",
   "日程归属": "Schedule owner",
   "标题": "Title",

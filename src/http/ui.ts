@@ -20564,7 +20564,9 @@ export function renderAppHtml(): string {
     function toolDisplayName(name) {
       return ({
         create_schedule_item: "创建日程",
+        create_schedule_items: "批量创建日程",
         list_schedule_items: "查询日程",
+        get_schedule_item: "读取日程详情",
         update_schedule_item: "更新日程",
         complete_schedule_item: "完成日程",
         cancel_schedule_item: "取消日程",

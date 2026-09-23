@@ -6,6 +6,7 @@ import type {
   ReminderOccurrenceStatus,
   ScheduleItem,
   ScheduleListFilter,
+  SchedulePage,
 } from "./types.js";
 
 type ScheduleItemRow = {
@@ -104,6 +105,13 @@ export class ScheduleRepository {
     return row ? mapItem(row) : undefined;
   }
 
+  findIdempotencyKeyWithPrefix(prefix: string): string | undefined {
+    const row = this.database.connection.prepare(
+      "SELECT idempotency_key FROM schedule_items WHERE substr(idempotency_key, 1, ?) = ? LIMIT 1",
+    ).get(prefix.length, prefix) as { idempotency_key: string } | undefined;
+    return row?.idempotency_key;
+  }
+
   getItem(id: string): ScheduleItem | undefined {
     const row = this.database.connection
       .prepare("SELECT * FROM schedule_items WHERE id = ?")
@@ -112,42 +120,39 @@ export class ScheduleRepository {
   }
 
   listItems(filter: ScheduleListFilter = {}): ScheduleItem[] {
-    const clauses: string[] = [];
-    const values: SQLInputValue[] = [];
-    if (filter.from) {
-      clauses.push("start_at >= ?");
-      values.push(filter.from);
-    }
-    if (filter.to) {
-      clauses.push("start_at < ?");
-      values.push(filter.to);
-    }
-    if (filter.status) {
-      clauses.push("status = ?");
-      values.push(filter.status);
-    }
-    if (filter.kind) {
-      clauses.push("kind = ?");
-      values.push(filter.kind);
-    }
-    if (filter.ownerType) {
-      clauses.push("owner_type = ?");
-      values.push(filter.ownerType);
-    }
-    if (filter.characterId) {
-      clauses.push("character_id = ?");
-      values.push(filter.characterId);
-    }
-    if (filter.query) {
-      clauses.push("(title LIKE ? OR notes LIKE ?)");
-      const query = `%${filter.query}%`;
-      values.push(query, query);
-    }
-    const where = clauses.length ? `WHERE ${clauses.join(" AND ")}` : "";
+    const { where, values } = scheduleListWhere(filter);
     const rows = this.database.connection
       .prepare(`SELECT * FROM schedule_items ${where} ORDER BY COALESCE(start_at, created_at), id`)
       .all(...values) as ScheduleItemRow[];
     return rows.map(mapItem);
+  }
+
+  listItemsPage(filter: ScheduleListFilter, limit: number, offset: number): SchedulePage {
+    const { where, values } = scheduleListWhere(filter);
+    const { total } = this.database.connection.prepare(
+      `SELECT COUNT(*) AS total FROM schedule_items ${where}`,
+    ).get(...values) as { total: number };
+    const rows = this.database.connection.prepare(
+      `SELECT * FROM schedule_items ${where} ORDER BY COALESCE(start_at, created_at), id LIMIT ? OFFSET ?`,
+    ).all(...values, limit, offset) as ScheduleItemRow[];
+    const nextOffset = offset + rows.length;
+    return {
+      items: rows.map(mapItem), total, offset, limit,
+      hasMore: nextOffset < total,
+      ...(nextOffset < total ? { nextOffset } : {}),
+    };
+  }
+
+  overlappingTitles(item: ScheduleItem): string[] {
+    if (!item.startAt || item.status !== "scheduled") return [];
+    const endAt = item.endAt ?? new Date(Date.parse(item.startAt) + 1).toISOString();
+    const rows = this.database.connection.prepare(`
+      SELECT title FROM schedule_items
+      WHERE owner_type = ? AND character_id IS ? AND status = 'scheduled' AND id <> ?
+        AND start_at < ? AND (end_at > ? OR (end_at IS NULL AND start_at >= ?))
+      ORDER BY COALESCE(start_at, created_at), id
+    `).all(item.ownerType, item.characterId ?? null, item.id, endAt, item.startAt, item.startAt) as Array<{ title: string }>;
+    return rows.map(row => row.title);
   }
 
   updateItem(item: ScheduleItem): ScheduleItem {
@@ -499,4 +504,40 @@ function mapOutbox(row: OutboxRow): NotificationOutboxEntry {
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };
+}
+
+function scheduleListWhere(filter: ScheduleListFilter): { where: string; values: SQLInputValue[] } {
+  const clauses: string[] = [];
+  const values: SQLInputValue[] = [];
+  if (filter.from) {
+    clauses.push("start_at >= ?");
+    values.push(filter.from);
+  }
+  if (filter.to) {
+    clauses.push("start_at < ?");
+    values.push(filter.to);
+  }
+  if (filter.status) {
+    clauses.push("status = ?");
+    values.push(filter.status);
+  }
+  if (filter.kind) {
+    clauses.push("kind = ?");
+    values.push(filter.kind);
+  }
+  if (filter.ownerType) {
+    clauses.push("owner_type = ?");
+    values.push(filter.ownerType);
+  }
+  if (filter.characterId) {
+    clauses.push("character_id = ?");
+    values.push(filter.characterId);
+  }
+  if (filter.query) {
+    clauses.push("(title LIKE ? OR notes LIKE ?)");
+    const query = `%${filter.query}%`;
+    values.push(query, query);
+  }
+  const where = clauses.length ? `WHERE ${clauses.join(" AND ")}` : "";
+  return { where, values };
 }

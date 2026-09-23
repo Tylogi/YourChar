@@ -40,6 +40,7 @@ For contributors: [sharing copy and publication notes](blog/memory-tutorial-shar
 - [Memory capture](memory-architecture-r3.md) and [Daily-chat capture](memory-daily-capture.md): evidence, review, and memory lifecycle.
 - [OKF memory exchange](okf-memory-compatibility.md): import/export boundaries and supported archive content.
 - [Reminder delivery](reminder-delivery.md) and [Reminder lifecycle](reminder-lifecycle.md): timing, retries, channels, and acknowledgement.
+- [Schedule queries and batches](schedule-context.md): bounded calendar pages, detail reads, and compact creation receipts for semester timetables.
 
 ## Tools and extensions
 

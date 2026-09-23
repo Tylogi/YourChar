@@ -82,6 +82,17 @@ export type ScheduleListFilter = {
   query?: string;
 };
 
+export type SchedulePageOptions = { limit?: number; offset?: number };
+
+export type SchedulePage = {
+  items: ScheduleItem[];
+  total: number;
+  offset: number;
+  limit: number;
+  hasMore: boolean;
+  nextOffset?: number;
+};
+
 export type CreateScheduleItemInput = {
   kind: ScheduleItemKind;
   title: string;

@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import type { Clock } from "../app/clock.js";
 import type { CompanionStore } from "../domain/store.js";
 import { parseReminderTime } from "../domain/time.js";
@@ -14,7 +15,9 @@ import { connectMcpServerToPi, type McpPiBridge } from "./pi-adapter.js";
 
 export const scheduleMcpToolNames = [
   "create_schedule_item",
+  "create_schedule_items",
   "list_schedule_items",
+  "get_schedule_item",
   "update_schedule_item",
   "complete_schedule_item",
   "cancel_schedule_item",
@@ -65,6 +68,21 @@ const optionalTime = {
     .describe("The user's original natural-language time expression. Prefer this over calculating UTC."),
 };
 
+const createItemInput = z.object({
+  calendar: scheduleCalendar.optional().describe("user for the real user calendar and every reminder; character only for the selected character's fictional events/tasks. Defaults to user. In-person scene perspective does not change ownership."),
+  kind: scheduleKind,
+  title: z.string().min(1),
+  notes: z.string().optional(),
+  ...optionalTime,
+  endAt: z.string().optional(),
+  timezone: z.string().optional(),
+  allDay: z.boolean().optional(),
+  recurrenceRule: z.string().optional().describe("Only FREQ=DAILY or FREQ=WEEKLY with optional ;INTERVAL=n. No semester cutoff or holiday exceptions; use dated entries for a finite term."),
+  reminder: reminderOptions,
+  placeId: z.string().optional().describe("Canonical world place ID. Only valid with calendar=character and capabilityId."),
+  capabilityId: worldCapability.optional().describe("Fixed world capability. Only valid with calendar=character and placeId."),
+});
+
 export function createScheduleMcpServer(context: ScheduleMcpContext): McpServer {
   const creationsByTurn = new WeakMap<ActionRecord[], Map<string, ScheduleMutationResult>>();
   const ownershipGuidance = context.mode === "rp"
@@ -78,113 +96,110 @@ export function createScheduleMcpServer(context: ScheduleMcpContext): McpServer 
     },
   );
 
+  const createItem = (input: z.infer<typeof createItemInput>, idempotencyKey: string, deduplicateByContent = true) => {
+    const ownership = scheduleOwnerForCreation(context, input.calendar, input.kind);
+    const owner = ownership.owner;
+    const timezone = input.timezone ?? "Asia/Shanghai";
+    const hasWorldBinding = Boolean(input.placeId || input.capabilityId);
+    const persisted = context.scheduleService.repository.findByIdempotencyKey(idempotencyKey);
+    const resolvedStartAt = persisted?.startAt ?? resolveStartAt(input.startAt, input.timeExpression, timezone, context.clock);
+    const startAt = resolvedStartAt ?? (hasWorldBinding ? context.clock.now().toISOString() : undefined);
+    if (hasWorldBinding && owner.ownerType !== "character") {
+      throw new Error("world place bindings are only valid for calendar=character");
+    }
+    if (hasWorldBinding && (!input.placeId || !input.capabilityId)) {
+      throw new Error("placeId and capabilityId must be provided together");
+    }
+    if (hasWorldBinding && (!context.worldCoordinator || !context.characterId)) {
+      throw new Error("canonical world scheduling is not enabled for this conversation");
+    }
+    if (hasWorldBinding) {
+      context.worldCoordinator!.validateActivityTarget(
+        context.characterId!,
+        input.placeId!,
+        input.capabilityId!,
+      );
+    }
+    const endAt = input.endAt ?? (hasWorldBinding
+      ? defaultWorldActivityEndAt(startAt!, input.capabilityId!)
+      : undefined);
+    const actions = context.actions();
+    const signature = scheduleCreateSignature({ ...input, ...owner, startAt, endAt, timezone });
+    let creations = creationsByTurn.get(actions);
+    if (!creations) {
+      creations = new Map();
+      creationsByTurn.set(actions, creations);
+    }
+    const existingThisTurn = deduplicateByContent ? creations.get(signature) : undefined;
+    const existing = existingThisTurn ?? (persisted
+      ? { item: persisted, warnings: context.scheduleService.conflictWarnings(persisted), occurrence: context.scheduleService.listOccurrences(persisted.id)[0] }
+      : undefined);
+    const result = existing ?? context.scheduleService.create({
+      kind: input.kind,
+      title: input.title,
+      notes: input.notes,
+      startAt,
+      endAt,
+      timezone,
+      allDay: input.allDay,
+      recurrenceRule: input.recurrenceRule,
+      reminder: { ...input.reminder, channelMode: "follow_settings" },
+      ...owner,
+      sourceSessionId: context.sessionId,
+      idempotencyKey,
+    });
+    creations.set(signature, result);
+    const worldPlan = hasWorldBinding
+      ? context.worldCoordinator!.linkScheduleItem({
+          characterId: context.characterId!,
+          scheduleItemId: result.item.id,
+          placeId: input.placeId!,
+          capabilityId: input.capabilityId!,
+          summary: input.notes || input.title,
+          idempotencyKey: `world-schedule:${result.item.id}`,
+        })
+      : undefined;
+    if (!existingThisTurn) actions.push(
+      context.store.addAction("create_schedule_item", "completed", {
+        transport: "mcp",
+        mcpServer: "rp-agent-schedule",
+        scheduleItemId: result.item.id,
+        kind: result.item.kind,
+        title: result.item.title,
+        ownerType: result.item.ownerType,
+        characterId: result.item.characterId,
+        startAt: result.item.startAt,
+        occurrenceId: result.occurrence?.id,
+        replayed: Boolean(persisted),
+        warnings: result.warnings,
+        timeSource: input.timeExpression
+          ? "timeExpression"
+          : input.startAt
+            ? "startAt"
+            : hasWorldBinding
+              ? "trusted_world_now"
+              : "none",
+        ignoredStartAt: Boolean(input.timeExpression && input.startAt),
+        calendarCorrectedFromCharacter: ownership.correctedFromCharacter,
+        worldPlanId: worldPlan?.id,
+        placeId: worldPlan?.placeId,
+        capabilityId: worldPlan?.capabilityId,
+      }),
+    );
+    return { result, existing: Boolean(existing), worldPlan };
+  };
+
   server.registerTool(
     "create_schedule_item",
     {
       title: "Create schedule item",
       description:
         `Create an item in the real user calendar or the selected character's fictional calendar. kind=reminder always belongs to calendar=user; character calendars accept only events and tasks. ${ownershipGuidance} All new reminders follow the user's IM notification settings, including normal-importance reminders. Never select channels; per-reminder exceptions belong in the user's schedule editor. For a canonical-world location activity, provide both placeId and capabilityId; travel means arrival at the destination when the item ends. A bound world activity with no time starts at trusted server now. Prefer timeExpression for an explicit relative or local-language time.`,
-      inputSchema: z.object({
-        calendar: scheduleCalendar.optional().describe("user for the real user calendar and every reminder; character only for the selected character's fictional events/tasks. Defaults to user. In-person scene perspective does not change ownership."),
-        kind: scheduleKind,
-        title: z.string().min(1),
-        notes: z.string().optional(),
-        ...optionalTime,
-        endAt: z.string().optional(),
-        timezone: z.string().optional(),
-        allDay: z.boolean().optional(),
-        recurrenceRule: z.string().optional(),
-        reminder: reminderOptions,
-        placeId: z.string().optional().describe("Canonical world place ID. Only valid with calendar=character and capabilityId."),
-        capabilityId: worldCapability.optional().describe("Fixed world capability. Only valid with calendar=character and placeId."),
-      }),
+      inputSchema: createItemInput,
       annotations: { destructiveHint: false, idempotentHint: true },
     },
     async (input, extra) => {
-      const ownership = scheduleOwnerForCreation(context, input.calendar, input.kind);
-      const owner = ownership.owner;
-      const timezone = input.timezone ?? "Asia/Shanghai";
-      const hasWorldBinding = Boolean(input.placeId || input.capabilityId);
-      const resolvedStartAt = resolveStartAt(input.startAt, input.timeExpression, timezone, context.clock);
-      const startAt = resolvedStartAt ?? (hasWorldBinding ? context.clock.now().toISOString() : undefined);
-      if (hasWorldBinding && owner.ownerType !== "character") {
-        throw new Error("world place bindings are only valid for calendar=character");
-      }
-      if (hasWorldBinding && (!input.placeId || !input.capabilityId)) {
-        throw new Error("placeId and capabilityId must be provided together");
-      }
-      if (hasWorldBinding && (!context.worldCoordinator || !context.characterId)) {
-        throw new Error("canonical world scheduling is not enabled for this conversation");
-      }
-      if (hasWorldBinding) {
-        context.worldCoordinator!.validateActivityTarget(
-          context.characterId!,
-          input.placeId!,
-          input.capabilityId!,
-        );
-      }
-      const endAt = input.endAt ?? (hasWorldBinding
-        ? defaultWorldActivityEndAt(startAt!, input.capabilityId!)
-        : undefined);
-      const actions = context.actions();
-      const signature = scheduleCreateSignature({ ...input, ...owner, startAt, endAt, timezone });
-      let creations = creationsByTurn.get(actions);
-      if (!creations) {
-        creations = new Map();
-        creationsByTurn.set(actions, creations);
-      }
-      const existing = creations.get(signature);
-      const result = existing ?? context.scheduleService.create({
-          kind: input.kind,
-          title: input.title,
-          notes: input.notes,
-          startAt,
-          endAt,
-          timezone,
-          allDay: input.allDay,
-          recurrenceRule: input.recurrenceRule,
-          reminder: { ...input.reminder, channelMode: "follow_settings" },
-          ...owner,
-          sourceSessionId: context.sessionId,
-          idempotencyKey: mcpToolCallId(extra),
-        });
-      if (!existing) creations.set(signature, result);
-      const worldPlan = hasWorldBinding
-        ? context.worldCoordinator!.linkScheduleItem({
-            characterId: context.characterId!,
-            scheduleItemId: result.item.id,
-            placeId: input.placeId!,
-            capabilityId: input.capabilityId!,
-            summary: input.notes || input.title,
-            idempotencyKey: `world-schedule:${result.item.id}`,
-          })
-        : undefined;
-      if (!existing) actions.push(
-        context.store.addAction("create_schedule_item", "completed", {
-          transport: "mcp",
-          mcpServer: "rp-agent-schedule",
-          scheduleItemId: result.item.id,
-          kind: result.item.kind,
-          title: result.item.title,
-          ownerType: result.item.ownerType,
-          characterId: result.item.characterId,
-          startAt: result.item.startAt,
-          occurrenceId: result.occurrence?.id,
-          warnings: result.warnings,
-          timeSource: input.timeExpression
-            ? "timeExpression"
-            : input.startAt
-              ? "startAt"
-              : hasWorldBinding
-                ? "trusted_world_now"
-                : "none",
-          ignoredStartAt: Boolean(input.timeExpression && input.startAt),
-          calendarCorrectedFromCharacter: ownership.correctedFromCharacter,
-          worldPlanId: worldPlan?.id,
-          placeId: worldPlan?.placeId,
-          capabilityId: worldPlan?.capabilityId,
-        }),
-      );
+      const { result, existing, worldPlan } = createItem(input, mcpToolCallId(extra));
       return toolResult(
         `${existing ? "本轮已创建" : "已创建"}${kindLabel(result.item.kind)}：${result.item.title}${result.item.startAt ? `，时间 ${result.item.startAt}` : ""}${worldPlan ? "，并已关联角色世界状态" : ""}。`,
         { ...result, ...(worldPlan ? { worldPlan } : {}) },
@@ -193,24 +208,132 @@ export function createScheduleMcpServer(context: ScheduleMcpContext): McpServer 
   );
 
   server.registerTool(
+    "create_schedule_items",
+    {
+      title: "Create schedule items in a batch",
+      description: `Create 1–50 schedule items per batch for a timetable or other multi-item request. Use multiple batches for a semester. Returns only counts, conflicts and failures, never the full created calendar. Indexes in results are 1-based. Successful items remain saved when another item fails; retry only failed entries with a new batchId. Reuse the same batchId and unchanged entries only to safely replay a batch. All entries share the top-level calendar. ${ownershipGuidance} For world place/capability bindings use create_schedule_item instead.`,
+      inputSchema: z.object({
+        calendar: scheduleCalendar.optional().describe("One calendar for the whole batch; defaults to user."),
+        batchId: z.string().min(1).max(80).describe("Stable unique ID for this batch within this conversation. Reuse unchanged on transport retries; use a new ID for a new batch or corrected entries."),
+        items: z.array(createItemInput.omit({ calendar: true, placeId: true, capabilityId: true }).strict()).min(1).max(50),
+      }),
+      annotations: { destructiveHint: false, idempotentHint: true },
+    },
+    async (input) => {
+      const owner = scheduleOwner(context, input.calendar);
+      const scope = digest([context.sessionId, owner.ownerType, owner.characterId, input.batchId]);
+      const summary = {
+        batchId: input.batchId, requested: input.items.length, created: 0, existing: 0, failed: 0,
+        conflictCount: 0,
+        conflicts: [] as Array<{ index: number; id: string; warning: string; additionalWarnings: number }>,
+        failures: [] as Array<{ index: number; title: string; time?: string; error: string }>,
+      };
+      for (const [index, entry] of input.items.entries()) {
+        try {
+          const prefix = `schedule-batch:${scope}:${index}:`;
+          const key = `${prefix}${digest(entry)}`;
+          const priorKey = context.scheduleService.repository.findIdempotencyKeyWithPrefix(prefix);
+          if (priorKey && priorKey !== key) {
+            throw new Error("This batchId/index already saved a different entry. Use a new batchId for corrected entries; existing items were not changed.");
+          }
+          const { result, existing } = createItem({ ...entry, calendar: input.calendar }, key, false);
+          if (existing) summary.existing += 1;
+          else summary.created += 1;
+          if (result.warnings.length) {
+            summary.conflictCount += 1;
+            summary.conflicts.push({
+              index: index + 1, id: result.item.id,
+              warning: shortText(result.warnings[0], 140),
+              additionalWarnings: result.warnings.length - 1,
+            });
+          }
+        } catch (error) {
+          summary.failed += 1;
+          const time = entry.timeExpression ?? entry.startAt;
+          summary.failures.push({
+            index: index + 1, title: shortText(entry.title, 80),
+            ...(time ? { time: shortText(time, 60) } : {}),
+            error: shortText(error instanceof Error ? error.message : String(error), 120),
+          });
+        }
+      }
+      context.actions().push(context.store.addAction(
+        "create_schedule_items",
+        summary.created + summary.existing > 0 ? "completed" : "failed",
+        { transport: "mcp", mcpServer: "rp-agent-schedule", batchId: input.batchId,
+          ...owner, requested: summary.requested, created: summary.created,
+          existing: summary.existing, failed: summary.failed, conflictCount: summary.conflictCount },
+      ));
+      return toolResult(JSON.stringify(summary), summary);
+    },
+  );
+
+  server.registerTool(
     "list_schedule_items",
     {
       title: "List schedule items",
-      description: "List items from the real user calendar or the selected character's fictional calendar.",
+      description: "Query a bounded page of schedule summaries (default 20, maximum 50). Prefer from/to for the requested day or week and query for a course/title. Results include total, hasMore and nextOffset; keep the same filters when fetching another page. Fetch only pages needed for the user's request. Notes are previews; use get_schedule_item for full details. Dates filter stored startAt values, not expanded recurrence occurrences.",
       inputSchema: z.object({
         calendar: scheduleCalendar.optional().describe("Defaults to user."),
-        from: z.string().optional(),
-        to: z.string().optional(),
+        from: z.string().optional().describe("Inclusive start instant, ISO 8601 with timezone."),
+        to: z.string().optional().describe("Exclusive end instant, ISO 8601 with timezone."),
         status: scheduleStatus.optional(),
         kind: scheduleKind.optional(),
         query: z.string().optional(),
+        limit: z.number().int().min(1).max(50).optional(),
+        offset: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER).optional(),
       }),
       annotations: { readOnlyHint: true },
     },
     async (input) => {
       const owner = scheduleOwner(context, input.calendar);
-      const items = context.scheduleService.list({ ...input, ...owner });
-      return toolResult(items.length ? JSON.stringify(items) : "没有匹配的日程。", { items });
+      const page = context.scheduleService.listPage({ ...input, ...owner }, input);
+      const items: ReturnType<typeof scheduleSummary>[] = [];
+      let characters = 0;
+      for (const item of page.items) {
+        const summary = scheduleSummary(item);
+        const size = JSON.stringify(summary).length + 1;
+        if (items.length && characters + size > 20_000) break;
+        items.push(summary);
+        characters += size;
+      }
+      const nextOffset = page.offset + items.length;
+      const result = {
+        items, total: page.total, offset: page.offset, limit: page.limit,
+        returned: items.length, hasMore: nextOffset < page.total,
+        ...(nextOffset < page.total ? { nextOffset } : {}),
+      };
+      return toolResult(JSON.stringify(result), result);
+    },
+  );
+
+  server.registerTool(
+    "get_schedule_item",
+    {
+      title: "Read schedule item details",
+      description: "Read one owned schedule item by ID, with a bounded slice of its notes (default), title, or recurrenceRule. Use nextOffset and the same field to continue long text. This does not load the rest of the calendar.",
+      inputSchema: z.object({
+        calendar: scheduleCalendar.optional(), id: z.string(),
+        field: z.enum(["notes", "title", "recurrenceRule"]).optional(),
+        offset: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER).optional(),
+        limit: z.number().int().min(2).max(4000).optional(),
+      }),
+      annotations: { readOnlyHint: true },
+    },
+    async (input) => {
+      const item = context.scheduleService.get(input.id);
+      assertScheduleOwner(context, item, input.calendar);
+      const field = input.field ?? "notes";
+      const source = item[field] ?? "";
+      const offset = input.offset ?? 0;
+      const text = sliceText(source.slice(offset), input.limit ?? 2000);
+      const nextOffset = offset + text.length;
+      const result = {
+        item: scheduleSummary(item), reminder: item.reminder,
+        field, text, offset, totalCharacters: source.length, hasMore: nextOffset < source.length,
+        ...(nextOffset < source.length ? { nextOffset } : {}),
+      };
+      return toolResult(JSON.stringify(result), result);
     },
   );
 
@@ -448,4 +571,31 @@ function asRecord(value: unknown): Record<string, unknown> {
 
 function kindLabel(kind: "event" | "task" | "reminder"): string {
   return kind === "event" ? "事件" : kind === "task" ? "任务" : "提醒";
+}
+
+function digest(value: unknown): string {
+  return createHash("sha256").update(JSON.stringify(value)).digest("hex");
+}
+
+function sliceText(value: string, limit: number): string {
+  const result = value.slice(0, limit);
+  return result.length < value.length ? result.replace(/[\uD800-\uDBFF]$/u, "") : result;
+}
+
+function shortText(value: string, limit: number): string {
+  const normalized = value.replace(/[\u0000-\u001f\u007f]/gu, " ");
+  return normalized.length <= limit ? normalized : `${sliceText(normalized, limit)}…`;
+}
+
+function scheduleSummary(item: ScheduleItem) {
+  return {
+    id: item.id, kind: item.kind, title: shortText(item.title, 160),
+    startAt: item.startAt, endAt: item.endAt, timezone: item.timezone,
+    allDay: item.allDay, status: item.status,
+    ownerType: item.ownerType, characterId: item.characterId,
+    recurrenceRule: item.recurrenceRule ? shortText(item.recurrenceRule, 80) : undefined,
+    notesPreview: item.notes ? shortText(item.notes, 200) : undefined,
+    truncatedFields: (["title", "notes", "recurrenceRule"] as const).filter(field =>
+      (item[field]?.length ?? 0) > ({ title: 160, notes: 200, recurrenceRule: 80 })[field]),
+  };
 }
