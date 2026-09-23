@@ -4,13 +4,171 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 import { createTestRuntime } from "../src/testing/runtime.js";
-import { VisionService } from "../src/vision/service.js";
+import { formatVisionAnalysis, maximumVisionAnalysisCharacters, VisionService } from "../src/vision/service.js";
 import { WorkspaceFileError, WorkspaceFileService } from "../src/workspace/file-service.js";
 
 const tinyPng = Buffer.from(
   "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=",
   "base64",
 );
+
+test("automatic vision follows the character's profile, including its capability context", async (t) => {
+  for (const characterVision of [true, false]) {
+    await t.test(characterVision ? "vision character with text-only default" : "text-only character with vision default", async () => {
+      const root = mkdtempSync(join(tmpdir(), "yourchar-character-vision-"));
+      const workspaceDir = join(root, "workspace");
+      let independentCalls = 0;
+      const service = new VisionService({
+        workspaceFiles: new WorkspaceFileService(workspaceDir),
+        fetch: async () => {
+          independentCalls += 1;
+          return Response.json({ choices: [{ message: { content: '{"summary":"Visible pixel"}' } }] });
+        },
+      });
+      service.patchConfig({ mode: "auto", baseUrl: "https://vision.example.test/v1", model: "independent-vision" });
+      const runtime = createTestRuntime({ workspaceDir, visionService: service });
+      try {
+        runtime.kernel.setAgentModuleEnabled("mcp:vision", true);
+        runtime.kernel.patchModelApiConfig({ visionInputEnabled: !characterVision });
+        const profile = runtime.kernel.createModelApiProfile({
+          name: "角色模型", enabled: true, baseUrl: "http://test.invalid/v1",
+          model: "character-model", visionInputEnabled: characterVision,
+        });
+        const character = runtime.kernel.createCharacter({ name: "测试角色", modelProfileId: profile.id });
+        const image = runtime.kernel.uploadWorkspaceFile({ directory: "uploads", name: "pixel.png", bytes: tinyPng });
+        runtime.model.enqueue([{ kind: "assistant_text", text: "图片里有一个像素。" }]);
+        const response = await runtime.kernel.sendMessage("character-vision", {
+          mode: "sms", characterId: character.id, text: "描述这张图片。",
+          attachments: [{ path: image.path, contentType: image.contentType }],
+        });
+        assert.equal(response.status, "completed");
+        assert.equal(independentCalls, characterVision ? 0 : 1);
+        assert.equal(response.actions.some(action => action.actionType === "vision_direct_input"), characterVision);
+        const request = runtime.model.requests[0];
+        assert.equal(JSON.stringify(request.messages).includes('"type":"image"'), characterVision);
+        if (characterVision) {
+          assert.match(request.systemPrompt, /sent directly to the vision-capable primary model/);
+          assert.doesNotMatch(request.systemPrompt, /Vision MCP is enabled in auto mode/);
+        } else {
+          assert.match(request.systemPrompt, /Vision MCP is enabled in auto mode/);
+          assert.doesNotMatch(request.systemPrompt, /sent directly to the vision-capable primary model/);
+          assert.match(JSON.stringify(request.messages), /Visible pixel/);
+        }
+      } finally {
+        runtime.dispose();
+        rmSync(root, { recursive: true, force: true });
+      }
+    });
+  }
+});
+
+test("vision preserves dense summaries, long OCR lines, and lists beyond thirty entries", async () => {
+  const root = mkdtempSync(join(tmpdir(), "yourchar-vision-budget-"));
+  const workspaceFiles = new WorkspaceFileService(join(root, "workspace"));
+  const image = workspaceFiles.upload({ directory: "uploads", name: "dense.png", bytes: tinyPng });
+  const full = {
+    summary: "Summary detail. ".repeat(200) + "SUMMARY_END",
+    observations: Array.from({ length: 45 }, (_, index) => `Observation ${index}`),
+    ocr: Array.from({ length: 40 }, (_, index) => `${index}: ${"Visible text ".repeat(150)} OCR_END_${index}`),
+    uncertainties: [],
+  };
+  const budgets: number[] = [];
+  const service = new VisionService({
+    workspaceFiles, stateDir: root,
+    fetch: async (_url, init) => {
+      budgets.push(JSON.parse(String(init?.body)).max_tokens);
+      return Response.json({ choices: [{ message: { content: JSON.stringify(full) }, finish_reason: "stop" }] });
+    },
+  });
+  try {
+    service.patchConfig({ baseUrl: "https://vision.example.test/v1", model: "vision-model" });
+    const input = { path: image.path, question: "Transcribe everything." };
+    const result = await service.analyzePath(input);
+    assert.deepEqual({ summary: result.summary, observations: result.observations, ocr: result.ocr, uncertainties: result.uncertainties }, full);
+    assert.equal(result.truncated, undefined);
+    assert.equal((await service.analyzePath(input)).cached, true);
+    assert.deepEqual(budgets, [8192]);
+
+    service.patchConfig({ maxOutputTokens: 16384 });
+    assert.equal((await service.analyzePath(input)).cached, false, "a larger budget must not reuse the shorter-budget cache");
+    assert.deepEqual(budgets, [8192, 16384]);
+    assert.equal(new VisionService({ workspaceFiles, stateDir: root }).getConfig().maxOutputTokens, 16384);
+    for (const budget of [0, 1023, 32769, 1500.5, NaN]) {
+      assert.throws(() => service.patchConfig({ maxOutputTokens: budget }), /maxOutputTokens must be an integer/);
+      assert.equal(service.getConfig().maxOutputTokens, 16384);
+    }
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("incomplete vision outputs are identified and never cached as complete analyses", async (t) => {
+  for (const providerLimited of [true, false]) {
+    await t.test(providerLimited ? "provider output limit" : "application result limit", async () => {
+      const root = mkdtempSync(join(tmpdir(), "yourchar-vision-incomplete-"));
+      const workspaceFiles = new WorkspaceFileService(join(root, "workspace"));
+      const image = workspaceFiles.upload({ directory: "uploads", name: "dense.png", bytes: tinyPng });
+      let calls = 0;
+      const service = new VisionService({
+        workspaceFiles, stateDir: root,
+        fetch: async () => {
+          calls += 1;
+          return Response.json({ choices: [{
+            message: { content: providerLimited
+              ? '{"summary":"An unfinished description ' + "text ".repeat(600)
+              : JSON.stringify({ summary: "x".repeat(maximumVisionAnalysisCharacters + 1) }) },
+            finish_reason: providerLimited ? "length" : "stop",
+          }] });
+        },
+      });
+      try {
+        service.patchConfig({ baseUrl: "https://vision.example.test/v1", model: "vision-model" });
+        const input = { path: image.path, question: "Describe everything." };
+        const result = await service.analyzePath(input);
+        assert.equal(result.truncated, true);
+        assert.ok(result.summary.length > 2000);
+        assert.ok(result.summary.length <= maximumVisionAnalysisCharacters);
+        assert.match(formatVisionAnalysis(result), /analysis is incomplete/);
+        assert.equal((await service.analyzePath(input)).cached, false);
+        assert.equal(calls, 2);
+      } finally {
+        rmSync(root, { recursive: true, force: true });
+      }
+    });
+  }
+});
+
+test("a dense vision tool result reaches the character model without the generic 32k cut", async () => {
+  const root = mkdtempSync(join(tmpdir(), "yourchar-vision-tool-context-"));
+  const workspaceDir = join(root, "workspace");
+  const fullOcr = "Visible words. ".repeat(3000) + "FULL_OCR_TAIL";
+  const service = new VisionService({
+    workspaceFiles: new WorkspaceFileService(workspaceDir),
+    fetch: async () => Response.json({ choices: [{ message: { content: JSON.stringify({
+      summary: "A dense page", ocr: [fullOcr],
+    }) }, finish_reason: "stop" }] }),
+  });
+  service.patchConfig({ baseUrl: "https://vision.example.test/v1", model: "vision-model", maxOutputTokens: 16384 });
+  const runtime = createTestRuntime({ workspaceDir, visionService: service });
+  try {
+    runtime.kernel.setAgentModuleEnabled("mcp:vision", true);
+    const image = runtime.kernel.uploadWorkspaceFile({ directory: "uploads", name: "dense.png", bytes: tinyPng });
+    runtime.model.enqueue([
+      { kind: "tool_call", name: "analyze_image", arguments: { path: image.path, question: "Transcribe the full page." } },
+      { kind: "assistant_text", text: "已经读完图片里的文字。" },
+    ]);
+    const response = await runtime.kernel.sendMessage("dense-vision-tool", { mode: "sms", text: "读取之前的图片。" });
+    assert.equal(response.status, "completed");
+    const providerResult = runtime.model.requests[1].messages.find((message) =>
+      typeof message === "object" && message !== null && "role" in message && message.role === "toolResult");
+    const serialized = JSON.stringify(providerResult);
+    assert.ok(serialized.includes(fullOcr));
+    assert.doesNotMatch(serialized, /Tool result compacted for active model context/);
+  } finally {
+    runtime.dispose();
+    rmSync(root, { recursive: true, force: true });
+  }
+});
 
 test("Vision service restricts image paths, validates signatures, masks credentials, and caches analyses", async () => {
   const root = mkdtempSync(join(tmpdir(), "rp-agent-vision-service-"));

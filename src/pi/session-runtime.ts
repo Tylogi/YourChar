@@ -98,7 +98,7 @@ import type { ScheduleService } from "../schedule/service.js";
 import type { TavilyService } from "../tavily/service.js";
 import type { WebReaderService } from "../web-reader/service.js";
 import type { MemoryLifecycleService } from "../memory-coordinator/lifecycle.js";
-import type { VisionService } from "../vision/service.js";
+import { maximumVisionAnalysisCharacters, type VisionService } from "../vision/service.js";
 import type { DocumentConversionService } from "../document/service.js";
 import type { MineruService } from "../mineru/service.js";
 import type { GitAccessService } from "../git/index.js";
@@ -176,6 +176,7 @@ export const subagentHttpIdleTimeoutMs = 0;
 const historicalToolResultContextCharacters = 6_000;
 const currentToolResultContextCharacters = 48_000;
 const maxCurrentToolResultCharacters = 32_000;
+const currentVisionResultContextCharacters = maximumVisionAnalysisCharacters + 2_048;
 const subagentResultContextEnvelopeCharacters = 2_048;
 // One delegated result may use its configured result budget plus a bounded MCP
 // usage/header envelope. Parallel delegated results share this total budget.
@@ -4289,21 +4290,25 @@ function compactProviderToolHistory(
   // request would rewrite the prefix and invalidate the model's KV cache.
   const currentOrdinaryLimits = new Map<number, number>();
   let currentOrdinaryRemaining = currentToolResultContextCharacters;
+  let currentVisionRemaining = currentVisionResultContextCharacters;
   for (const index of currentOrdinaryResultIndexes) {
     const message = messages[index];
     if (message.role !== "toolResult") continue;
+    const vision = message.toolName === "analyze_image";
     const limit = Math.min(
-      maxCurrentToolResultCharacters,
-      Math.max(256, currentOrdinaryRemaining),
+      vision ? currentVisionResultContextCharacters : maxCurrentToolResultCharacters,
+      Math.max(256, vision ? currentVisionRemaining : currentOrdinaryRemaining),
     );
     currentOrdinaryLimits.set(index, limit);
-    currentOrdinaryRemaining = Math.max(
+    const remaining = Math.max(
       0,
-      currentOrdinaryRemaining - Math.min(
+      (vision ? currentVisionRemaining : currentOrdinaryRemaining) - Math.min(
         toolResultContextCharacters(message, false),
         limit,
       ),
     );
+    if (vision) currentVisionRemaining = remaining;
+    else currentOrdinaryRemaining = remaining;
   }
 
   const currentSubagentBatches = new Map<number, number[]>();

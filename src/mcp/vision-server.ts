@@ -3,7 +3,7 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import * as z from "zod/v4";
 import type { CompanionStore } from "../domain/store.js";
 import type { ActionRecord } from "../domain/types.js";
-import { formatVisionAnalysis, type VisionService } from "../vision/index.js";
+import { formatVisionAnalysis, visionAnalysisTimeoutMs, type VisionService } from "../vision/index.js";
 import type { WorkspaceFileService } from "../workspace/file-service.js";
 import { connectMcpServerToPi, type McpPiBridge } from "./pi-adapter.js";
 
@@ -32,7 +32,7 @@ export function createVisionMcpServer(context: VisionMcpContext): McpServer {
     {
       title: "Analyze uploaded image",
       description:
-        "Analyze one raster image inside workspace/uploads or a managed workspace/tmp/mineru artifact with an independent vision model. Returns a concise summary, observations, OCR text, and uncertainties.",
+        "Analyze one raster image inside workspace/uploads or a managed workspace/tmp/mineru artifact with an independent vision model. Returns a summary, detailed observations, OCR text, and uncertainties. Prefer image data already available to the current model; use this tool for images or focused details that need independent analysis.",
       inputSchema: z.object({
         path: z.string().min(1).max(500).describe("Workspace-relative image path under uploads/ or a managed tmp/mineru document package."),
         question: z.string().min(1).max(4_000).describe("The exact visual question to answer."),
@@ -81,6 +81,7 @@ export async function createVisionMcpBridge(context: VisionMcpContext): Promise<
   return connectMcpServerToPi(
     createVisionMcpServer(context),
     `rp-agent-vision-pi-${context.sessionId}`,
+    { requestTimeoutMs: visionAnalysisTimeoutMs + 10_000 },
   );
 }
 

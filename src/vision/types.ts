@@ -10,6 +10,7 @@ export type VisionApiConfig = {
   apiKeyMasked: string;
   detail: VisionDetail;
   maxImages: number;
+  maxOutputTokens: number;
   updatedAt?: string;
 };
 
@@ -21,6 +22,7 @@ export type VisionApiConfigPatch = {
   clearApiKey?: boolean;
   detail?: VisionDetail;
   maxImages?: number;
+  maxOutputTokens?: number;
 };
 
 export type VisionAnalysisInput = {
@@ -39,4 +41,6 @@ export type VisionAnalysis = {
   imageSha256: string;
   model: string;
   cached: boolean;
+  /** The provider or the application reached an output limit. */
+  truncated?: boolean;
 };

@@ -1882,13 +1882,14 @@ test("server serves chat UI and debug model traces", async () => {
     const savedVisionSettings = await fetch(`${baseUrl}/api/settings/vision`, {
       method: "PATCH",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ mode: "direct", detail: "high", maxImages: 2 }),
+      body: JSON.stringify({ mode: "direct", detail: "high", maxImages: 2, maxOutputTokens: 16384 }),
     });
     assert.equal(savedVisionSettings.status, 200);
     const visionBody = await savedVisionSettings.json();
     assert.equal(visionBody.mode, "direct");
     assert.equal(visionBody.detail, "high");
     assert.equal(visionBody.maxImages, 2);
+    assert.equal(visionBody.maxOutputTokens, 16384);
 
     await fetch(`${baseUrl}/api/settings/model-api`, {
       method: "PATCH",

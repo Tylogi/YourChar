@@ -713,6 +713,7 @@ async function runDesktopWorkflow(browser, baseUrl, outputDir) {
   await page.locator("#visionModel").selectOption("vision-browser-b");
   await page.locator("#visionDetail").selectOption("high");
   await page.locator("#visionMaxImages").fill("3");
+  await page.locator("#visionMaxOutputTokens").fill("16384");
   await page.getByRole("button", { name: "保存设置", exact: true }).click();
   await page.locator("#visionSettingsState").filter({ hasText: "已保存" }).filter({ hasText: "visi...cret" }).waitFor();
   const safeVisionConfig = await page.evaluate(async () => {
@@ -720,6 +721,7 @@ async function runDesktopWorkflow(browser, baseUrl, outputDir) {
     return response.json();
   });
   assert.equal(JSON.stringify(safeVisionConfig).includes("vision-browser-test-secret"), false);
+  assert.equal(safeVisionConfig.maxOutputTokens, 16384);
   await assertInteractiveBounds(page);
   await page.screenshot({ path: resolve(outputDir, "settings-vision.png"), fullPage: false });
   await page.unroute("**/api/v1/diagnostics/vision/models");

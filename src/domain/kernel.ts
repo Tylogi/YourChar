@@ -10336,7 +10336,7 @@ export class CompanionKernel {
         this.webReaderService.contextStatus(this.moduleCatalog.isEnabled(webReaderMcpModuleId)),
         this.visionService.contextStatus(
           this.moduleCatalog.isEnabled(visionMcpModuleId),
-          this.store.getRawModelApiConfig().visionInputEnabled,
+          this.modelConfigForCharacter(input.characterId).visionInputEnabled,
         ),
         this.mineruService.contextStatus(this.moduleCatalog.isEnabled(mineruMcpModuleId)),
         this.gitService.contextStatus(!isSecret && this.moduleCatalog.isEnabled(gitMcpModuleId)),
