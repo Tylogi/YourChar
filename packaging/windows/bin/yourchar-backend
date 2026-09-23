@@ -1,0 +1,17 @@
+#!/usr/bin/env bash
+# YourChar backend entrypoint inside the YourChar WSL2 runtime.
+#
+# Started by the Windows launcher, or by hand:
+#   wsl -d YourChar --exec /opt/yourchar/bin/yourchar-backend --check
+#   wsl -d YourChar --exec /opt/yourchar/bin/yourchar-backend
+#
+# PATH, HOME and the state directory are pinned here so the backend always runs
+# on the runtime that ships inside this distribution and never on host tooling.
+set -euo pipefail
+
+export PATH=/opt/yourchar/node/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+export HOME="${HOME:-/home/yourchar}"
+# State lives outside /opt/yourchar, so replacing the payload keeps user data.
+export YOURCHAR_STATE_DIR="${YOURCHAR_STATE_DIR:-/var/lib/yourchar}"
+
+exec /bin/bash /opt/yourchar/scripts/start-wsl-backend.sh "$@"

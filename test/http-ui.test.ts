@@ -1934,7 +1934,9 @@ test("server serves chat UI and debug model traces", async () => {
     assert.equal(body.logs[0].requestText, "5分钟后提醒我喝水");
     assert.deepEqual(body.logs[0].toolNames, [
       "create_schedule_item",
+      "create_schedule_items",
       "list_schedule_items",
+      "get_schedule_item",
       "update_schedule_item",
       "complete_schedule_item",
       "cancel_schedule_item",
