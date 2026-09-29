@@ -237,8 +237,28 @@ onboarding or translations, or contribute a focused capability.
 [The contribution guide](CONTRIBUTING.md) covers where to start, how to test,
 and what makes a useful issue or pull request.
 
-## License and acknowledgements
+## License
 
 YourChar is licensed under the [MIT License](LICENSE).
 Third-party dependencies and assets retain their respective licenses; see
 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
+
+## Acknowledgements
+
+We thank the following projects and their maintainers for the runtimes, tools,
+assets, and design ideas that support YourChar:
+
+- [Pi](https://github.com/earendil-works/pi): the agent runtime, session management, and model integration.
+- [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness): design references for separating sandbox policy from platform implementations and for ACP subagent interoperability.
+- [OpenClaw](https://github.com/openclaw/openclaw): inspiration for the responsibilities and structure of character `SOUL.md` files.
+- [Microsoft MarkItDown](https://github.com/microsoft/markitdown): document-to-Markdown conversion in an isolated local worker.
+- [MCP TypeScript SDK](https://github.com/modelcontextprotocol/typescript-sdk) and [ACP TypeScript SDK](https://github.com/agentclientprotocol/typescript-sdk): tool integration and agent interoperability.
+- [TypeScript](https://github.com/microsoft/TypeScript) and [TypeScript Language Server](https://github.com/typescript-language-server/typescript-language-server): type checking and cross-file code navigation.
+- [Tencent/openclaw-weixin](https://github.com/Tencent/openclaw-weixin) and the [Feishu / Lark Node SDK](https://github.com/larksuite/node-sdk): the source adapted for the Weixin iLink protocol implementation and the SDK used for Feishu integration.
+- [Lucide](https://github.com/lucide-icons/lucide) and [Twemoji](https://github.com/jdecked/twemoji): interface icons and emoji graphics.
+- [Node.js](https://nodejs.org/), [CPython](https://www.python.org/), and [Astral python-build-standalone](https://github.com/astral-sh/python-build-standalone): application runtimes and the Python distribution used in self-contained packages.
+- [TyloQuant](https://github.com/Tylogi/TyloQuant): the Tylogi AI Lab branding assets used in the READMEs.
+
+Special thanks to the LazyCat team for its official app
+[小龙猫](https://lazycat.cloud/appstore/detail/cloud.lazycat.totoro), whose interaction
+design helped inspire parts of YourChar's user experience.

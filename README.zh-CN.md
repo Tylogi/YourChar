@@ -210,7 +210,25 @@ YourChar 是单用户应用，HTTP 服务仅监听本机回环地址，状态保
 或贡献一个范围清楚的新能力。[贡献指南](CONTRIBUTING.md)提供了代码导航、
 测试方法和 Issue / PR 所需的信息。
 
-## 许可与致谢
+## 许可
 
 YourChar 采用 [MIT 许可证](LICENSE)。第三方依赖与素材仍遵循各自的许可，详见
 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)。
+
+## 致谢
+
+感谢以下项目及其维护者，为 YourChar 提供运行时、工具、素材和设计参考：
+
+- [Pi](https://github.com/earendil-works/pi)：Agent 运行时、会话管理与模型接入。
+- [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness)：沙箱策略与平台实现分层、ACP 子 Agent 互操作的设计参考。
+- [OpenClaw](https://github.com/openclaw/openclaw)：角色 `SOUL.md` 的职责划分与文档结构参考。
+- [Microsoft MarkItDown](https://github.com/microsoft/markitdown)：在隔离的本地工作进程中将文档转换为 Markdown。
+- [MCP TypeScript SDK](https://github.com/modelcontextprotocol/typescript-sdk) 与 [ACP TypeScript SDK](https://github.com/agentclientprotocol/typescript-sdk)：工具接入与 Agent 互操作。
+- [TypeScript](https://github.com/microsoft/TypeScript) 与 [TypeScript Language Server](https://github.com/typescript-language-server/typescript-language-server)：类型检查与跨文件代码导航。
+- [Tencent/openclaw-weixin](https://github.com/Tencent/openclaw-weixin) 与 [飞书 / Lark Node SDK](https://github.com/larksuite/node-sdk)：微信 iLink 协议实现的改编来源与飞书接入。
+- [Lucide](https://github.com/lucide-icons/lucide) 与 [Twemoji](https://github.com/jdecked/twemoji)：界面图标与 Emoji 图形。
+- [Node.js](https://nodejs.org/)、[CPython](https://www.python.org/) 与 [Astral python-build-standalone](https://github.com/astral-sh/python-build-standalone)：应用运行环境与自包含安装包中的 Python 发行版。
+- [TyloQuant](https://github.com/Tylogi/TyloQuant)：首页使用的 Tylogi AI Lab 品牌素材。
+
+也特别感谢懒猫微服团队的官方应用[小龙猫](https://lazycat.cloud/appstore/detail/cloud.lazycat.totoro)，
+其部分交互设计为 YourChar 提供了参考与启发。
