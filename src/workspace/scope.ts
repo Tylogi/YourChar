@@ -76,7 +76,7 @@ export class WorkspaceScopeRegistry {
       conversationSpace: "secret",
       characterId,
       dir,
-      files: new WorkspaceFileService(dir),
+      files: new WorkspaceFileService(dir, () => this.normalWorkspace.files.maximumUploadBytes),
     };
     this.secretWorkspaces.set(characterKey, workspace);
     return workspace;

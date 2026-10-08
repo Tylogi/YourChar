@@ -180,13 +180,12 @@ import {
   TaskBenchValidationError,
 } from "../evaluation/task-bench.js";
 import {
-  MAX_TASK_BENCH_UPLOAD_BYTES,
   TaskBenchUploadError,
   TaskBenchUploadRegistry,
 } from "../evaluation/task-bench-uploads.js";
+import { UploadSettingsValidationError } from "../workspace/upload-settings.js";
 import { TaskBenchReportRepository } from "../evaluation/task-bench-reports.js";
 import {
-  MAX_WORKSPACE_UPLOAD_BYTES,
   WorkspaceFileError,
   type WorkspaceFileAsset,
 } from "../workspace/file-service.js";
@@ -251,7 +250,7 @@ export function createHttpServer(options: HttpServerOptions = {}) {
   const ownsTestRuns = !options.testRuns && testMode;
   const testRuns = options.testRuns ?? (testMode ? new TestRunRegistry() : undefined);
   const ownsTaskBenchUploads = !options.taskBenchUploads;
-  const taskBenchUploads = options.taskBenchUploads ?? new TaskBenchUploadRegistry();
+  const taskBenchUploads = options.taskBenchUploads ?? new TaskBenchUploadRegistry(undefined, () => kernel.uploadSettings.get().maxFileBytes);
   const taskBenchReports = options.taskBenchReports ?? new TaskBenchReportRepository(
     kernel.database,
     { stateDir: kernel.store.stateDir },
@@ -425,6 +424,8 @@ export function createHttpServer(options: HttpServerOptions = {}) {
         sendJson(response, status, { code: error.code, error: error.message });
       } else if (error instanceof OkfBundleError) {
         sendJson(response, 422, { code: error.code, error: error.message });
+      } else if (error instanceof UploadSettingsValidationError) {
+        sendJson(response, 400, { code: error.code, error: error.message });
       } else if (error instanceof AgentPermissionValidationError) {
         sendJson(response, 400, { code: "AGENT_PERMISSION_INVALID", error: error.message });
       } else if (error instanceof AgentModuleSettingsValidationError) {
@@ -677,7 +678,7 @@ async function route(input: {
     const name = requiredString(url.searchParams.get("name"), "name");
     const rawContentType = input.request.headers["content-type"];
     const contentType = Array.isArray(rawContentType) ? rawContentType[0] : rawContentType;
-    const bytes = await readBinary(input.request, MAX_TASK_BENCH_UPLOAD_BYTES);
+    const bytes = await readBinary(input.request, kernel.uploadSettings.get().maxFileBytes);
     sendJson(input.response, 201, {
       upload: input.taskBenchUploads.add({ name, contentType, bytes }),
     });
@@ -2068,6 +2069,15 @@ async function route(input: {
     return;
   }
 
+  const resumeInboxMatch = pathname.match(/^\/api\/v1\/sessions\/([^/]+)\/inbox\/resume$/);
+  if (resumeInboxMatch && method === "POST") {
+    const sessionId = decodeURIComponent(resumeInboxMatch[1]);
+    assertRequestedSessionConversationSpace(kernel, sessionId, url);
+    kernel.resumePrivateMessageInbox(sessionId);
+    sendJson(input.response, 200, { inbox: kernel.privateInboxSnapshot(sessionId) });
+    return;
+  }
+
   const privateInboxTypingMatch = pathname.match(
     /^\/api\/v1\/sessions\/([^/]+)\/inbox\/typing$/,
   );
@@ -2089,7 +2099,7 @@ async function route(input: {
     const sessionId = decodeURIComponent(privateInboxMessageMatch[1]);
     assertRequestedSessionConversationSpace(kernel, sessionId, url);
     const body = asRecord(await readJson(input.request));
-    const message = kernel.updateQueuedPrivateMessage(
+    const message = await kernel.updateQueuedPrivateMessage(
       sessionId,
       decodeURIComponent(privateInboxMessageMatch[2]),
       {
@@ -2600,7 +2610,7 @@ async function route(input: {
     assertSessionWorkspaceScope(kernel, sessionId, url);
     const name = requiredString(url.searchParams.get("name"), "name");
     const directory = optionalString(url.searchParams.get("directory")) ?? "uploads";
-    const bytes = await readBinary(input.request, MAX_WORKSPACE_UPLOAD_BYTES);
+    const bytes = await readBinary(input.request, kernel.uploadSettings.get().maxFileBytes);
     sendJson(input.response, 201, {
       entry: kernel.uploadSessionWorkspaceFile(sessionId, { directory, name, bytes }),
     });
@@ -2687,7 +2697,7 @@ async function route(input: {
   if (pathname === "/api/v1/workspace/files/upload" && method === "POST") {
     const name = requiredString(url.searchParams.get("name"), "name");
     const directory = optionalString(url.searchParams.get("directory")) ?? "uploads";
-    const bytes = await readBinary(input.request, MAX_WORKSPACE_UPLOAD_BYTES);
+    const bytes = await readBinary(input.request, kernel.uploadSettings.get().maxFileBytes);
     sendJson(input.response, 201, {
       entry: kernel.uploadWorkspaceFile({ directory, name, bytes }),
     });
@@ -4744,6 +4754,18 @@ async function route(input: {
       200,
       kernel.setDefaultModelApiProfile(decodeURIComponent(defaultModelProfileMatch[1])),
     );
+    return;
+  }
+
+  if (pathname === "/api/settings/uploads" && method === "GET") {
+    sendJson(input.response, 200, { settings: kernel.uploadSettings.get() });
+    return;
+  }
+  if (pathname === "/api/settings/uploads" && method === "PATCH") {
+    assertLocalControlPlaneMutation(input.request);
+    const body = asRecord(await readJson(input.request));
+    assertOnlyKeys(body, ["maxFileMiB"], "Upload settings");
+    sendJson(input.response, 200, { settings: kernel.uploadSettings.set(body.maxFileMiB) });
     return;
   }
 

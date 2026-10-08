@@ -17,7 +17,7 @@ import {
 } from "node:fs";
 import { basename, dirname, extname, isAbsolute, relative, resolve, sep } from "node:path";
 
-export const MAX_WORKSPACE_UPLOAD_BYTES = 20 * 1024 * 1024;
+export const MAX_WORKSPACE_UPLOAD_BYTES = 100 * 1024 * 1024;
 const MAX_TEXT_PREVIEW_BYTES = 256 * 1024;
 const MAX_DIRECTORY_ENTRIES = 1_000;
 
@@ -73,7 +73,7 @@ export class WorkspaceFileError extends Error {
 export class WorkspaceFileService {
   readonly rootDir: string;
 
-  constructor(workspaceDir: string) {
+  constructor(workspaceDir: string, private readonly uploadLimit: () => number = () => MAX_WORKSPACE_UPLOAD_BYTES) {
     this.rootDir = resolve(workspaceDir);
     mkdirSync(this.rootDir, { recursive: true, mode: 0o700 });
     chmodSync(this.rootDir, 0o700);
@@ -99,11 +99,13 @@ export class WorkspaceFileService {
     };
   }
 
+  get maximumUploadBytes(): number { return this.uploadLimit(); }
+
   upload(input: { directory?: string; name: string; bytes: Buffer }): WorkspaceFileEntry {
-    if (input.bytes.byteLength > MAX_WORKSPACE_UPLOAD_BYTES) {
+    if (input.bytes.byteLength > this.maximumUploadBytes) {
       throw new WorkspaceFileError(
         "WORKSPACE_FILE_TOO_LARGE",
-        `workspace uploads must not exceed ${MAX_WORKSPACE_UPLOAD_BYTES / 1024 / 1024} MiB`,
+        `workspace uploads must not exceed ${this.maximumUploadBytes / 1024 / 1024} MiB`,
       );
     }
     const name = safeFileName(input.name);
@@ -151,6 +153,12 @@ export class WorkspaceFileService {
     return { absolutePath: path, entry, inline };
   }
 
+  isVisionImage(inputPath: string): boolean {
+    // Inspect only the signature: ordinary documents may be large, and neither
+    // their extension nor client-supplied MIME metadata proves they are images.
+    return rasterMimeType(readSignature(this.regularFile(inputPath), 12)) !== undefined;
+  }
+
   visionImage(inputPath: string): WorkspaceVisionImage {
     const path = this.regularFile(inputPath);
     const workspacePath = this.relativePath(path);
@@ -161,10 +169,10 @@ export class WorkspaceFileService {
       );
     }
     const stats = statSync(path);
-    if (stats.size > MAX_WORKSPACE_UPLOAD_BYTES) {
+    if (stats.size > this.maximumUploadBytes) {
       throw new WorkspaceFileError(
         "WORKSPACE_FILE_TOO_LARGE",
-        `vision images must not exceed ${MAX_WORKSPACE_UPLOAD_BYTES / 1024 / 1024} MiB`,
+        `vision images must not exceed ${this.maximumUploadBytes / 1024 / 1024} MiB`,
       );
     }
     const bytes = readFileSync(path);

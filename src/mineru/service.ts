@@ -16,7 +16,6 @@ import { basename, dirname, extname, join } from "node:path";
 import { Agent, FormData, fetch as undiciFetch, type Dispatcher } from "undici";
 import type { Clock } from "../app/clock.js";
 import { SystemClock } from "../app/clock.js";
-import { MAX_WORKSPACE_UPLOAD_BYTES } from "../workspace/file-service.js";
 import type {
   MineruApiConfig,
   MineruApiConfigPatch,
@@ -698,8 +697,8 @@ function readWorkspaceDocument(path: string, workspace: MineruWorkspaceContext) 
     const stats = fstatSync(descriptor);
     if (!stats.isFile()) throw new MineruConfigurationError("MinerU input must be a regular file");
     if (stats.size <= 0) throw new MineruConfigurationError("MinerU input must not be empty");
-    if (stats.size > MAX_WORKSPACE_UPLOAD_BYTES) {
-      throw new MineruConfigurationError(`MinerU input must not exceed ${MAX_WORKSPACE_UPLOAD_BYTES / 1024 / 1024} MiB`);
+    if (stats.size > workspace.workspaceFiles.maximumUploadBytes) {
+      throw new MineruConfigurationError(`MinerU input must not exceed ${workspace.workspaceFiles.maximumUploadBytes / 1024 / 1024} MiB`);
     }
     const bytes = readFileSync(descriptor);
     const mimeType = documentMimeType(extension, bytes);

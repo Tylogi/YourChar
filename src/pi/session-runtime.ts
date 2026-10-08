@@ -132,7 +132,7 @@ import {
   redactModelCredentialValue,
 } from "../model/credential-store.js";
 import { memoryContextVersion } from "../context/memory-version.js";
-import { estimateTokens, roundMetric, stableHash } from "../context/tokens.js";
+import { estimateTokens, estimateModelMessageTokens, roundMetric, stableHash } from "../context/tokens.js";
 import type { ContextBudgetSnapshot, ContextEconomicsPlan, ContextPlan } from "../context/types.js";
 import { createSandboxedShellTool } from "./sandboxed-shell-tool.js";
 import { createDocumentReadTool } from "./document-read-tool.js";
@@ -282,6 +282,8 @@ export type ConversationMetadata = {
   pendingCompactionAt?: string;
   pendingCompactionReason?: PendingConversationCompactionReason;
   lastCompactionAt?: string;
+  /** Last usage record already present at compaction; timestamps can coincide. */
+  lastCompactionContextEconomicsId?: string | null;
   lastCompactionReason?: string;
   lastCompactionStatus?: "completed" | "failed";
   lastCompactionEstimatedTokensBefore?: number;
@@ -959,6 +961,7 @@ export class PiSessionRuntime {
     userText: string,
     allowed: boolean,
     beforeCompact?: () => Promise<void>,
+    signal?: AbortSignal,
   ): Promise<ConversationCompactionResult | undefined> {
     const projected = this.contextBudgetForHandle(handle, estimateTokens(userText), true);
     if (projected.level !== "critical") return undefined;
@@ -972,7 +975,9 @@ export class PiSessionRuntime {
         "上下文基础开销已接近模型窗口，请增大模型上下文窗口或减少启用工具",
       );
     }
+    signal?.throwIfAborted();
     await beforeCompact?.();
+    signal?.throwIfAborted();
     const reason = handle.metadata.pendingCompactionReason === "conversation_sleep"
       ? "conversation_sleep"
       : "budget_preflight";
@@ -1199,11 +1204,15 @@ export class PiSessionRuntime {
       estimateConversationHistoryTokens(handle.session.messages),
       this.conversationLifecycleThresholds,
     );
+    // A preflight estimate may be too high, especially immediately after a
+    // checkpoint. Recheck automatic rest against the completed request's
+    // usage before turning that estimate into a durable sleep request.
+    const hardSleepRequired = decision.hardSleepRequired && measuredPressure.hard;
     if (
       metadata.sleepState === "tired" &&
       !mentionedFatigue &&
       !decision.userAcceptedSleep &&
-      !decision.hardSleepRequired &&
+      !hardSleepRequired &&
       !decision.compactionPending &&
       !metadata.pendingCompactionAt &&
       !measuredPressure.tired
@@ -1220,10 +1229,10 @@ export class PiSessionRuntime {
     const canCompact = this.canCompactAgain(handle, budget);
     const proactive = budget.shouldCompact && canCompact;
     const fatigueRequestsCompaction = mentionedFatigue &&
-      ((budget.shouldCompact && canCompact) || decision.compactionPending || decision.hardSleepRequired);
+      ((budget.shouldCompact && canCompact) || decision.compactionPending || hardSleepRequired);
     const existingReason = metadata.pendingCompactionReason;
     const requestedReason: PendingConversationCompactionReason | undefined =
-      decision.userAcceptedSleep || decision.hardSleepRequired || fatigueRequestsCompaction ||
+      decision.userAcceptedSleep || hardSleepRequired || fatigueRequestsCompaction ||
           existingReason === "conversation_sleep"
         ? "conversation_sleep"
         : proactive || decision.compactionPending
@@ -1471,7 +1480,9 @@ export class PiSessionRuntime {
   async abortSession(sessionId: string): Promise<boolean> {
     const id = normalizeSessionId(sessionId);
     const handle = this.handles.get(id);
-    if (!handle || !handle.session.isStreaming) return false;
+    if (!handle) return false;
+    handle.toolState.toolMutationsAllowed = false;
+    handle.session.abortCompaction();
     await handle.session.abort();
     return true;
   }
@@ -3321,6 +3332,11 @@ export class PiSessionRuntime {
             const handle = this.handles.get(toolState.sessionId);
             const now = this.clock.now().toISOString();
             metadata.lastCompactionAt = now;
+            metadata.lastCompactionContextEconomicsId = this.contextEconomics.latestForSession(
+              metadata.id,
+              metadata.conversationSpace,
+              metadata.conversationSpace === "secret" ? metadata.characterId : undefined,
+            )?.id ?? null;
             metadata.lastCompactionReason = event.reason === "overflow"
               ? "budget_overflow"
               : "manual";
@@ -3814,7 +3830,7 @@ export class PiSessionRuntime {
     const messages = Array.isArray(payload.messages) ? payload.messages : [];
     const messageDigests = messages.map((message) => ({
       hash: stableHash(message),
-      estimatedTokens: estimateTokens(message),
+      estimatedTokens: estimateModelMessageTokens(message),
     }));
     const previous = this.contextEconomics.latestForSession(
       toolState.sessionId,
@@ -3894,18 +3910,21 @@ export class PiSessionRuntime {
       metadata.conversationSpace === "secret" ? metadata.characterId : undefined,
     );
     const options = this.providerPayloadOptions?.(metadata.id) ?? {};
-    const latestAfterCompaction = !metadata.lastCompactionAt ||
-      Boolean(latest && latest.createdAt > metadata.lastCompactionAt);
-    const historyEstimate = estimateConversationHistoryTokens(handle.session.messages);
+    const latestAfterCompaction = !metadata.lastCompactionAt || Boolean(latest && (
+      metadata.lastCompactionContextEconomicsId !== undefined
+        ? latest.id !== metadata.lastCompactionContextEconomicsId
+        : latest.createdAt > metadata.lastCompactionAt
+    ));
+    const currentEstimate = this.estimateCurrentContextTokens(handle);
     const estimatedBase = latest && latestAfterCompaction
       ? latest.estimatedInputTokens
-      : metadata.lastCompactionEstimatedTokensAfter ?? historyEstimate;
+      : currentEstimate;
     const measuredBase = latest && latestAfterCompaction
       ? measuredContextInputTokens(latest.actual)
       : null;
     const isProjection = projectedAdditionalTokens > 0 || includeLatestOutputInProjection;
     const projectionBase = isProjection
-      ? Math.max(estimatedBase, measuredBase ?? 0)
+      ? measuredBase ?? estimatedBase
       : estimatedBase;
     // The latest provider input predates its assistant response. That response
     // becomes part of the next request, so a turn projection must include it
@@ -3944,6 +3963,16 @@ export class PiSessionRuntime {
     });
   }
 
+  private estimateCurrentContextTokens(handle: PiSessionHandle): number {
+    const active = new Set(handle.session.getActiveToolNames());
+    const tools = handle.session.getAllTools().filter(tool => active.has(tool.name))
+      .map(tool => ({ name: tool.name, description: tool.description, parameters: tool.parameters }));
+    const plan = handle.toolState.contextPlan;
+    return estimateConversationHistoryTokens(handle.session.messages) +
+      Math.max(estimateTokens(handle.session.systemPrompt), plan?.stableEstimatedTokens ?? 0) +
+      estimateTokens(tools) + (plan?.dynamicEstimatedTokens ?? 1_024);
+  }
+
   private canCompactAgain(handle: PiSessionHandle, budget: ContextBudgetSnapshot): boolean {
     const metadata = handle.metadata;
     if (metadata.lastCompactionStatus !== "completed") return true;
@@ -3959,14 +3988,17 @@ export class PiSessionRuntime {
   ): Promise<ConversationCompactionResult> {
     const metadata = handle.metadata;
     const budgetBefore = this.contextBudgetForHandle(handle);
-    const historyBefore = estimateConversationHistoryTokens(handle.session.messages);
-    const nonHistoryEstimate = Math.max(0, budgetBefore.estimatedInputTokens - historyBefore);
     try {
       await handle.session.compact(
         "Preserve role and relationship continuity, promises, unresolved threads, important user facts, and the latest complete exchanges. Exclude hidden reasoning and operational status events.",
       );
-      const after = nonHistoryEstimate + estimateConversationHistoryTokens(handle.session.messages);
+      const after = this.estimateCurrentContextTokens(handle);
       metadata.lastCompactionAt = this.clock.now().toISOString();
+      metadata.lastCompactionContextEconomicsId = this.contextEconomics.latestForSession(
+        metadata.id,
+        metadata.conversationSpace,
+        metadata.conversationSpace === "secret" ? metadata.characterId : undefined,
+      )?.id ?? null;
       metadata.lastCompactionReason = reason;
       metadata.lastCompactionStatus = "completed";
       metadata.lastCompactionEstimatedTokensBefore = budgetBefore.estimatedInputTokens;
@@ -4175,11 +4207,11 @@ function estimateConversationHistoryTokens(messages: AgentMessage[]): number {
       continue;
     }
     if (message.role === "assistant") {
-      total += estimateTokens(agentMessageText(message));
+      total += estimateModelMessageTokens(message.content);
       continue;
     }
     if (message.role === "user" || message.role === "toolResult") {
-      total += estimateTokens(agentMessageText(message));
+      total += estimateModelMessageTokens(message.content);
       continue;
     }
     if (message.role === "compactionSummary") {
@@ -5009,6 +5041,11 @@ function normalizeMetadata(value: unknown): ConversationMetadata | undefined {
     pendingCompactionAt,
     pendingCompactionReason: pendingCompactionAt ? pendingCompactionReason : undefined,
     lastCompactionAt: typeof value.lastCompactionAt === "string" ? value.lastCompactionAt : undefined,
+    lastCompactionContextEconomicsId: value.lastCompactionContextEconomicsId === null
+      ? null
+      : typeof value.lastCompactionContextEconomicsId === "string"
+        ? value.lastCompactionContextEconomicsId
+        : undefined,
     lastCompactionReason: typeof value.lastCompactionReason === "string" && value.lastCompactionReason.trim()
       ? value.lastCompactionReason.trim().slice(0, 120)
       : undefined,

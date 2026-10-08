@@ -199,8 +199,8 @@ export const historyScript = String.raw`
         const normalizedMessages = normalizeHistoryMessages(history.raw);
         state.messages = state.activeConversationKind === "direct" ? annotateProactiveMessages(mergeCharacterCollaborations(
           mergeInteractionEvents(preserveActiveBurstMessages(
-            mergePrivateInboxMessages(normalizedMessages, historyScopedEvents(state.privateInboxMessages || [])),
-            historyScopedEvents(state.privateInboxMessages || [])
+            mergePrivateInboxMessages(normalizedMessages, historyScopedEvents(visiblePrivateInboxMessages())),
+            historyScopedEvents(visiblePrivateInboxMessages())
           ), historyScopedEvents(state.interactionEvents || [])),
           historyScopedEvents(visibleCharacterCollaborations())
         ), state.activeProactiveMessages || []) : normalizedMessages;

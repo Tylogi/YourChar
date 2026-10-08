@@ -250,7 +250,7 @@ const mcpDetails: Record<string, string> = {
 - Disabled by default and unavailable until a MinerU Base URL is configured in Settings.
 - The model can choose only a Workspace-relative file and a Markdown line range. It cannot choose or change the endpoint, credentials, backend, language, OCR mode, or timeout.
 - Calling the tool uploads the entire selected PDF, image, DOCX, PPTX, or XLSX file to the configured endpoint. The endpoint may be local, LAN, or remote; this is an explicit open-world capability.
-- Input is restricted to the current normal or secret Workspace and capped at 20 MiB. Incognito sessions never receive this tool.
+- Input is restricted to the current normal or secret Workspace and capped by the upload setting (100 MiB by default). Incognito sessions never receive this tool.
 - Returned Markdown and validated extracted images are saved as one managed document package under the current scoped Workspace's \`tmp/mineru/\` directory for 24 hours. Cleanup never deletes unrelated files.
 `,
   [gitMcpModuleId]: `# Git MCP

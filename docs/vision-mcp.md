@@ -27,7 +27,10 @@ when the character has no valid binding.
 ## Turn flow
 
 1. Chat uploads files into `workspace/uploads` and sends structured attachment
-   metadata with the message request.
+   metadata with the message request. Automatic vision first selects supported
+   raster images by their actual file signatures, before applying `maxImages`.
+   PPTX, PDF, Word, spreadsheets and other files remain ordinary attachments
+   available to document-reading tools; they are not passed to image validation.
 2. The trusted workspace service resolves the relative path, rejects symlinks
    and paths outside `uploads/`, and verifies the raster file signature.
 3. Direct mode creates Pi `ImageContent` blocks on the user prompt.
@@ -66,7 +69,7 @@ ID from the provider is selected; model IDs are treated as case-sensitive.
 Analysis cache keys include prompt version, image SHA-256, endpoint, model,
 output-token budget, question, detail, and requested features. The cache is bounded to 200 entries. A turn may
 process at most the configured `maxImages` value, constrained to `1..8`; each
-upload is constrained by the workspace 20 MiB limit.
+upload follows the Workspace upload setting (100 MiB by default; Settings → Documents).
 
 `maxOutputTokens` defaults to 8,192 and can be set to 1,024–32,768 in Vision
 settings. Keep it within the endpoint model's supported output limit. Independent

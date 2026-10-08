@@ -3,7 +3,7 @@ import { basename } from "node:path";
 import { MAX_WORKSPACE_UPLOAD_BYTES } from "../workspace/file-service.js";
 
 export const MAX_TASK_BENCH_UPLOAD_BYTES = MAX_WORKSPACE_UPLOAD_BYTES;
-export const MAX_TASK_BENCH_UPLOAD_TOTAL_BYTES = 80 * 1024 * 1024;
+export const MAX_TASK_BENCH_UPLOAD_TOTAL_BYTES = 400 * 1024 * 1024;
 export const TASK_BENCH_UPLOAD_TTL_MS = 60 * 60_000;
 
 export type TaskBenchUpload = {
@@ -42,7 +42,7 @@ export class TaskBenchUploadRegistry {
   private readonly cleanupTimer: ReturnType<typeof setInterval>;
   private disposed = false;
 
-  constructor(private readonly now: () => number = () => Date.now()) {
+  constructor(private readonly now: () => number = () => Date.now(), private readonly uploadLimit: () => number = () => MAX_TASK_BENCH_UPLOAD_BYTES) {
     this.cleanupTimer = setInterval(() => this.purgeExpired(), 5 * 60_000);
     this.cleanupTimer.unref?.();
   }
@@ -51,18 +51,18 @@ export class TaskBenchUploadRegistry {
     this.assertActive();
     this.purgeExpired();
     const name = safeUploadName(input.name);
-    if (input.bytes.byteLength > MAX_TASK_BENCH_UPLOAD_BYTES) {
+    if (input.bytes.byteLength > this.uploadLimit()) {
       throw new TaskBenchUploadError(
         "TASK_BENCH_UPLOAD_LIMIT",
-        `单个测试材料不能超过 ${MAX_TASK_BENCH_UPLOAD_BYTES / 1024 / 1024} MiB`,
+        `单个测试材料不能超过 ${this.uploadLimit() / 1024 / 1024} MiB`,
         413,
       );
     }
     const total = [...this.uploads.values()].reduce((sum, upload) => sum + upload.size, 0);
-    if (total + input.bytes.byteLength > MAX_TASK_BENCH_UPLOAD_TOTAL_BYTES) {
+    if (total + input.bytes.byteLength > Math.max(MAX_TASK_BENCH_UPLOAD_TOTAL_BYTES, this.uploadLimit())) {
       throw new TaskBenchUploadError(
         "TASK_BENCH_UPLOAD_LIMIT",
-        `临时测试材料合计不能超过 ${MAX_TASK_BENCH_UPLOAD_TOTAL_BYTES / 1024 / 1024} MiB`,
+        `临时测试材料合计不能超过 ${Math.max(MAX_TASK_BENCH_UPLOAD_TOTAL_BYTES, this.uploadLimit()) / 1024 / 1024} MiB`,
         413,
       );
     }

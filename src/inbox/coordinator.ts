@@ -17,6 +17,7 @@ export type PrivateInboxCoordinatorOptions = {
 type Processor = (
   burst: PrivateMessageBurst,
   onEvent: (event: PrivateInboxEvent) => void,
+  signal: AbortSignal,
 ) => Promise<MessageResponse>;
 
 export class PrivateInboxCoordinator {
@@ -32,6 +33,9 @@ export class PrivateInboxCoordinator {
   private readonly lastQueuedAt = new Map<string, number>();
   private readonly typingUntil = new Map<string, number>();
   private readonly running = new Map<string, Promise<void>>();
+  private readonly active = new Map<string, { burstId: string; controller: AbortController }>();
+  private readonly held = new Set<string>();
+  private readonly pauseVersions = new Map<string, number>();
   private readonly listeners = new Map<string, Set<(event: PrivateInboxEvent) => void>>();
   private started = false;
 
@@ -50,7 +54,7 @@ export class PrivateInboxCoordinator {
       this.quietWindowMs,
       boundedDelay(options.maximumWaitMs, 7_000),
     );
-    this.afterTurnQuietMs = boundedDelay(options.afterTurnQuietMs, 700);
+    this.afterTurnQuietMs = boundedDelay(options.afterTurnQuietMs, 400);
     this.maximumMessagesPerBurst = boundedInteger(options.maximumMessagesPerBurst, 10, 1, 50);
     this.maximumCharactersPerBurst = boundedInteger(options.maximumCharactersPerBurst, 12_000, 256, 100_000);
   }
@@ -64,6 +68,7 @@ export class PrivateInboxCoordinator {
 
   stop(): void {
     this.started = false;
+    for (const active of this.active.values()) active.controller.abort();
     for (const timer of this.timers.values()) clearTimeout(timer);
     this.timers.clear();
     this.firstQueuedAt.clear();
@@ -87,6 +92,7 @@ export class PrivateInboxCoordinator {
     text: string;
     timezone: string;
     attachments: MessageAttachment[];
+    interrupt?: boolean;
   }): PrivateInboxMessage {
     const existing = this.repository.getByClientMessageId(input.sessionId, input.clientMessageId);
     if (existing) {
@@ -99,7 +105,9 @@ export class PrivateInboxCoordinator {
       ...input,
       now,
     });
+    this.resume(input.sessionId, false);
     this.emit(input.sessionId, { type: "message_queued", message });
+    if (input.interrupt !== false) this.interrupt(input.sessionId, "new_message");
     const wallNow = Date.now();
     if (!this.firstQueuedAt.has(input.sessionId)) this.firstQueuedAt.set(input.sessionId, wallNow);
     this.lastQueuedAt.set(input.sessionId, wallNow);
@@ -137,8 +145,55 @@ export class PrivateInboxCoordinator {
     const messages = this.repository.listActive(sessionId);
     return {
       messages,
+      failedMessages: this.repository.listFailed(sessionId),
       running: this.running.has(sessionId) && messages.some((message) => message.status === "processing"),
+      paused: this.repository.isPaused(sessionId),
+      activeBurstId: this.active.get(sessionId)?.burstId,
+      interrupting: this.active.get(sessionId)?.controller.signal.aborted ?? false,
     };
+  }
+
+  interrupt(sessionId: string, reason: "new_message" | "edited" | "stopped"): boolean {
+    const active = this.active.get(sessionId);
+    if (!active || active.controller.signal.aborted) return false;
+    active.controller.abort();
+    this.emit(sessionId, { type: "burst_interrupted", burstId: active.burstId, reason });
+    return true;
+  }
+
+  pause(sessionId: string): boolean {
+    this.pauseVersions.set(sessionId, this.pauseVersion(sessionId) + 1);
+    this.repository.setPaused(sessionId, true);
+    const timer = this.timers.get(sessionId);
+    if (timer) clearTimeout(timer);
+    this.timers.delete(sessionId);
+    this.emit(sessionId, { type: "queue_state", paused: true });
+    return this.interrupt(sessionId, "stopped");
+  }
+
+  pauseVersion(sessionId: string): number { return this.pauseVersions.get(sessionId) ?? 0; }
+
+  resume(sessionId: string, schedule = true): void {
+    if (this.repository.isPaused(sessionId)) {
+      this.repository.setPaused(sessionId, false);
+      this.emit(sessionId, { type: "queue_state", paused: false });
+    }
+    if (schedule) this.schedule(sessionId, this.afterTurnQuietMs);
+  }
+
+  hold(sessionId: string): (() => void) | undefined {
+    if (this.held.has(sessionId)) return undefined;
+    this.held.add(sessionId);
+    return () => { this.held.delete(sessionId); this.schedule(sessionId, this.afterTurnQuietMs); };
+  }
+
+  async whenIdle(sessionId: string): Promise<void> { await this.running.get(sessionId); }
+
+  edited(message: PrivateInboxMessage, resume = true): void {
+    this.firstQueuedAt.set(message.sessionId, Date.now());
+    this.lastQueuedAt.set(message.sessionId, Date.now());
+    this.emit(message.sessionId, { type: "message_updated", message });
+    if (resume) this.resume(message.sessionId);
   }
 
   subscribe(sessionId: string, listener: (event: PrivateInboxEvent) => void): () => void {
@@ -152,6 +207,7 @@ export class PrivateInboxCoordinator {
   }
 
   async flush(sessionId: string): Promise<void> {
+    if (this.repository.isPaused(sessionId) || this.held.has(sessionId)) return;
     const timer = this.timers.get(sessionId);
     if (timer) clearTimeout(timer);
     this.timers.delete(sessionId);
@@ -159,8 +215,9 @@ export class PrivateInboxCoordinator {
     if (active) {
       await active;
       if (!this.repository.listQueued(sessionId).length) return;
+      return this.flush(sessionId);
     }
-    const run = this.processOne(sessionId);
+    const run = Promise.resolve().then(() => this.processOne(sessionId));
     this.running.set(sessionId, run);
     try {
       await run;
@@ -176,7 +233,7 @@ export class PrivateInboxCoordinator {
   }
 
   private schedule(sessionId: string, minimumDelay = this.quietWindowMs): void {
-    if (!this.started || this.running.has(sessionId)) return;
+    if (!this.started || this.running.has(sessionId) || this.held.has(sessionId) || this.repository.isPaused(sessionId)) return;
     const queued = this.repository.listQueued(sessionId);
     const existing = this.timers.get(sessionId);
     if (existing) clearTimeout(existing);
@@ -211,6 +268,7 @@ export class PrivateInboxCoordinator {
   }
 
   private async processOne(sessionId: string): Promise<void> {
+    if (this.repository.isPaused(sessionId) || this.held.has(sessionId)) return;
     const burst = this.repository.claimBurst({
       sessionId,
       burstId: this.idGenerator.next("private-burst"),
@@ -219,12 +277,16 @@ export class PrivateInboxCoordinator {
       maximumCharacters: this.maximumCharactersPerBurst,
     });
     if (!burst) return;
+    const controller = new AbortController();
+    this.active.set(sessionId, { burstId: burst.id, controller });
     this.firstQueuedAt.delete(sessionId);
     this.lastQueuedAt.delete(sessionId);
     this.emit(sessionId, { type: "burst_started", burst });
-    const relay = (event: PrivateInboxEvent) => this.emit(sessionId, event);
+    const relay = (event: PrivateInboxEvent) => {
+      if (!controller.signal.aborted) this.emit(sessionId, event);
+    };
     try {
-      const response = await this.processor(burst, relay);
+      const response = await this.processor(burst, relay, controller.signal);
       const status = response.status === "cancelled"
         ? "cancelled"
         : response.status === "failed" ? "failed" : "completed";
@@ -238,6 +300,14 @@ export class PrivateInboxCoordinator {
       });
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
+      if (controller.signal.aborted) {
+        this.repository.finishBurst(burst.id, "cancelled", this.clock.now().toISOString());
+        this.emit(sessionId, { type: "burst_done", burstId: burst.id,
+          messageIds: burst.messages.map(message => message.id),
+          response: { reply: "本轮生成已停止。", status: "cancelled", messageType: "system",
+            eventType: "cancelled", canRetry: false, actions: [], events: [], nativeModelSuccess: false, recoveryUsed: false } });
+        return;
+      }
       this.repository.finishBurst(burst.id, "failed", this.clock.now().toISOString(), message);
       this.emit(sessionId, {
         type: "burst_failed",
@@ -246,6 +316,7 @@ export class PrivateInboxCoordinator {
         error: message,
       });
     } finally {
+      if (this.active.get(sessionId)?.controller === controller) this.active.delete(sessionId);
       // flush() schedules anything that arrived while this turn held the session lock.
     }
   }

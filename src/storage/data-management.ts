@@ -195,6 +195,7 @@ export class DataManagementRepository {
         DELETE FROM context_log_summaries;
         DELETE FROM usage_events;
         DELETE FROM usage_settings;
+        DELETE FROM file_upload_settings;
         DELETE FROM audit_actions;
         DELETE FROM runtime_event_streams;
       `);

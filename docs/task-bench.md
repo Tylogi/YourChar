@@ -44,8 +44,8 @@ and the directory is recursively deleted.
 
 Direct uploads never enter the normal Workspace or persistent state. The server
 keeps them in memory so the same selection can be reused for repeated and A/B
-runs on the current page. Each file is limited to 20 MiB, all pending task-bench
-uploads are limited to 80 MiB, and the browser UI allows at most 20 files.
+runs on the current page. Each file follows the upload setting (100 MiB by default); all pending task-bench
+uploads are limited to the larger of 400 MiB and the configured per-file limit, and the browser UI allows at most 20 files.
 Removing a file or closing the page requests immediate deletion; one-hour expiry
 and process shutdown provide server-side cleanup fallbacks.
 

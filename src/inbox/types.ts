@@ -29,6 +29,8 @@ export type PrivateMessageBurst = {
 };
 
 export type PrivateInboxEvent =
+  | { type: "queue_state"; paused: boolean }
+  | { type: "burst_interrupted"; burstId: string; reason: "new_message" | "edited" | "stopped" }
   | { type: "message_queued"; message: PrivateInboxMessage }
   | { type: "message_updated"; message: PrivateInboxMessage }
   | { type: "message_retracted"; messageId: string; clientMessageId: string }
@@ -39,5 +41,9 @@ export type PrivateInboxEvent =
 
 export type PrivateInboxSnapshot = {
   messages: PrivateInboxMessage[];
+  failedMessages?: PrivateInboxMessage[];
   running: boolean;
+  paused?: boolean;
+  activeBurstId?: string;
+  interrupting?: boolean;
 };

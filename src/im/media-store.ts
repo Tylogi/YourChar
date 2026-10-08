@@ -3,7 +3,6 @@ import { readFileSync } from "node:fs";
 import { extname } from "node:path";
 import type { MessageAttachment } from "../domain/types.js";
 import {
-  MAX_WORKSPACE_UPLOAD_BYTES,
   WorkspaceFileError,
   WorkspaceFileService,
 } from "../workspace/file-service.js";
@@ -15,7 +14,8 @@ import type {
 } from "./types.js";
 
 export const MAX_IM_ATTACHMENTS_PER_MESSAGE = 8;
-export const MAX_IM_ATTACHMENT_BYTES = MAX_WORKSPACE_UPLOAD_BYTES;
+// Bundled IM connectors have their own transport limits, independent of browser uploads.
+export const MAX_IM_ATTACHMENT_BYTES = 20 * 1024 * 1024;
 export const MAX_IM_ATTACHMENTS_TOTAL_BYTES = 40 * 1024 * 1024;
 
 export class LocalImMediaError extends Error {
@@ -37,7 +37,7 @@ export class LocalImMediaStore {
   private readonly workspaceFiles: WorkspaceFileService;
 
   constructor(normalWorkspaceDirectory: string) {
-    this.workspaceFiles = new WorkspaceFileService(normalWorkspaceDirectory);
+    this.workspaceFiles = new WorkspaceFileService(normalWorkspaceDirectory, () => MAX_IM_ATTACHMENT_BYTES);
   }
 
   async saveInboundAttachment(input: ImInboundAttachmentInput): Promise<ImAttachment> {

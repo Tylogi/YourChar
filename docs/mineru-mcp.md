@@ -10,7 +10,7 @@ MinerU support is an optional, explicitly enabled document-processing capability
 4. Open **Management → Agent** and enable **MinerU Document MCP**.
 5. Give the Agent at least read-only Workspace access. The tool is absent when Workspace access is off.
 
-The current integration targets MinerU's self-hosted synchronous multipart API. It uploads one document in the `files` form field and requests Markdown output from `/file_parse`. Supported Workspace inputs are PDF, PNG, JPEG, DOCX, PPTX, and XLSX, with a 20 MiB limit.
+The current integration targets MinerU's self-hosted synchronous multipart API. It uploads one document in the `files` form field and requests Markdown output from `/file_parse`. Supported Workspace inputs are PDF, PNG, JPEG, DOCX, PPTX, and XLSX, with the configurable upload limit (100 MiB by default; Settings → Documents).
 
 ## Trust and privacy boundary
 

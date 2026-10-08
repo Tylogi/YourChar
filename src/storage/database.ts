@@ -4011,6 +4011,19 @@ const migrations: Migration[] = [
       );
     `,
   },
+  {
+    version: 72,
+    sql: `
+      CREATE TABLE file_upload_settings (
+        singleton INTEGER PRIMARY KEY CHECK(singleton = 1),
+        max_file_mib INTEGER NOT NULL CHECK(max_file_mib BETWEEN 1 AND 1024)
+      );
+      CREATE TABLE private_inbox_controls (
+        session_id TEXT PRIMARY KEY REFERENCES role_sessions(app_session_id) ON DELETE CASCADE,
+        paused INTEGER NOT NULL DEFAULT 0 CHECK(paused IN (0, 1))
+      );
+    `,
+  },
 ];
 
 export class AppDatabase {

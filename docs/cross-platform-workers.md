@@ -11,7 +11,7 @@ Workspace, or a network exception. There is no unconfined fallback.
 | Disposable state | Verified `/dev/shm` tmpfs | Verified, owned case-sensitive RAM volume |
 | Python | uv development environment or bundled runtime | uv development environment or bundled release runtime |
 
-Conversion retains the 20 MiB input cap, two-conversion concurrency limit,
+Conversion follows the configurable upload input cap (100 MiB by default), two-conversion concurrency limit,
 90-second deadline, output bounds and CPU/core/file-descriptor limits. Linux also
 enforces its existing address-space limit; macOS does **not** claim an equivalent
 hard memory limit. LSP retains bounded JSON-RPC messages, request deadlines,

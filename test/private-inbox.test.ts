@@ -79,7 +79,7 @@ test("private inbox completion snapshots stop reporting a finished burst as runn
   }
 });
 
-test("messages arriving during generation wait for the next private burst", async () => {
+test("messages arriving during generation interrupt the old reply and preserve all user input", async () => {
   const runtime = createTestRuntime({
     seed: "private-inbox-followup",
     startPrivateInboxCoordinator: false,
@@ -109,6 +109,7 @@ test("messages arriving during generation wait for the next private burst", asyn
       text: "还有第三条。",
     }, "third");
     await firstTurn;
+    assert.equal(runtime.kernel.privateInbox.repository.getByClientMessageId("private-inbox-followup", "first")?.status, "cancelled");
 
     assert.deepEqual(
       runtime.kernel.privateInboxSnapshot("private-inbox-followup").messages.map((message) => message.text),
@@ -122,10 +123,175 @@ test("messages arriving during generation wait for the next private burst", asyn
         Boolean(message && typeof message === "object" && (message as { role?: unknown }).role === "user"))
       .map(modelMessageText)
       .filter((text) => !text.includes("RP_AGENT_RUNTIME_CONTEXT"));
-    assert.equal(secondUsers.at(-1), "生成时发的第二条。\n还有第三条。");
+    assert.equal(secondUsers.at(-1), "第一条。\n生成时发的第二条。\n还有第三条。");
   } finally {
     runtime.dispose();
   }
+});
+
+test("editing a processing inbox message interrupts it and replaces the effective user input", async () => {
+  const runtime = createTestRuntime({ seed: "inbox-edit-active", startPrivateInboxCoordinator: false });
+  try {
+    const character = runtime.kernel.createCharacter({ name: "纠错角色" });
+    runtime.model.enqueue([
+      { kind: "assistant_text", text: "旧回复不应继续。", delayMs: 200 },
+      { kind: "assistant_text", text: "好的，改成后天下午。" },
+    ]);
+    const message = await runtime.kernel.enqueuePrivateMessage("inbox-edit-active", {
+      mode: "sms", characterId: character.id, text: "明天上午出发。",
+    }, "original");
+    const first = runtime.kernel.flushPrivateMessageInbox(message.sessionId);
+    await waitFor(() => runtime.model.requests.length === 1);
+    const edited = await runtime.kernel.updateQueuedPrivateMessage(message.sessionId, message.id, { text: "后天下午出发。" });
+    await first;
+    assert.equal(edited.status, "queued");
+    await runtime.kernel.flushPrivateMessageInbox(message.sessionId);
+    assert.equal(runtime.model.requests.length, 2);
+    const users = runtime.model.requests[1].messages.filter((message): message is Record<string, unknown> =>
+      Boolean(message && typeof message === "object" && (message as { role?: string }).role === "user"))
+      .map(modelMessageText).filter(text => !text.includes("RP_AGENT_RUNTIME_CONTEXT"));
+    assert.equal(users.at(-1), "后天下午出发。");
+    assert.ok(!users.some(text => text.includes("明天上午出发")));
+    const transcript = await runtime.kernel.getConversationTranscript(message.sessionId);
+    assert.deepEqual(transcript.filter(message => message.role === "user").map(agentMessageText), ["后天下午出发。"]);
+  } finally { runtime.dispose(); }
+});
+
+test("a stop received while an edit is settling keeps the corrected message paused", async () => {
+  const runtime = createTestRuntime({ seed: "inbox-edit-stop", startPrivateInboxCoordinator: false });
+  try {
+    const character = runtime.kernel.createCharacter({ name: "纠错后停止" });
+    runtime.model.enqueue([{ kind: "assistant_text", text: "旧回复", delayMs: 200 }]);
+    const message = await runtime.kernel.enqueuePrivateMessage("inbox-edit-stop", {
+      mode: "sms", characterId: character.id, text: "原来的消息",
+    }, "original");
+    const running = runtime.kernel.flushPrivateMessageInbox(message.sessionId);
+    await waitFor(() => runtime.model.requests.length === 1);
+    const editing = runtime.kernel.updateQueuedPrivateMessage(message.sessionId, message.id, { text: "改好的消息" });
+    await runtime.kernel.cancelMessage(message.sessionId);
+    await Promise.all([running, editing]);
+    await runtime.kernel.flushPrivateMessageInbox(message.sessionId);
+    assert.equal(runtime.model.requests.length, 1);
+    const snapshot = runtime.kernel.privateInboxSnapshot(message.sessionId);
+    assert.equal(snapshot.paused, true);
+    assert.equal(snapshot.messages[0]?.text, "改好的消息");
+    assert.equal(snapshot.messages[0]?.status, "queued");
+  } finally { runtime.dispose(); }
+});
+
+test("duplicate delivery does not interrupt a turn; stop pauses queued input until explicit resume", async () => {
+  const runtime = createTestRuntime({ seed: "inbox-stop", startPrivateInboxCoordinator: false });
+  try {
+    const character = runtime.kernel.createCharacter({ name: "停止角色" });
+    const request = { mode: "sms" as const, characterId: character.id, text: "第一条。" };
+    runtime.model.enqueue([
+      { kind: "assistant_text", text: "旧回复。", delayMs: 200 },
+      { kind: "assistant_text", text: "现在处理第二条。" },
+    ]);
+    const first = await runtime.kernel.enqueuePrivateMessage("inbox-stop", request, "first");
+    const running = runtime.kernel.flushPrivateMessageInbox(first.sessionId);
+    await waitFor(() => runtime.model.requests.length === 1);
+    await runtime.kernel.enqueuePrivateMessage(first.sessionId, request, "first");
+    assert.equal(runtime.kernel.privateInboxSnapshot(first.sessionId).interrupting, false);
+    await runtime.kernel.enqueuePrivateMessage(first.sessionId, { ...request, text: "第二条。" }, "second", { interrupt: false });
+    assert.equal(await runtime.kernel.cancelMessage(first.sessionId), true);
+    await running;
+    await runtime.kernel.flushPrivateMessageInbox(first.sessionId);
+    assert.equal(runtime.model.requests.length, 1);
+    assert.equal(runtime.kernel.privateInboxSnapshot(first.sessionId).paused, true);
+    assert.equal(runtime.kernel.privateInboxSnapshot(first.sessionId).messages[0]?.text, "第二条。");
+    runtime.kernel.resumePrivateMessageInbox(first.sessionId);
+    await Promise.all([
+      runtime.kernel.flushPrivateMessageInbox(first.sessionId),
+      runtime.kernel.flushPrivateMessageInbox(first.sessionId),
+    ]);
+    assert.equal(runtime.model.requests.length, 2, "concurrent flushes must consume a message only once");
+  } finally { runtime.dispose(); }
+});
+
+test("interrupting after a tool commit preserves the result and prevents unsafe revision or replay", async () => {
+  const runtime = createTestRuntime({ seed: "inbox-tool-interrupt", startPrivateInboxCoordinator: false });
+  try {
+    const character = runtime.kernel.createCharacter({ name: "工具角色" });
+    runtime.model.enqueue([
+      { kind: "tool_call", name: "create_schedule_item", arguments: {
+        kind: "reminder", title: "喝水", timeExpression: "5分钟后", timezone: "Asia/Shanghai",
+      } },
+      { kind: "assistant_text", text: "已经创建提醒。", delayMs: 200 },
+      { kind: "assistant_text", text: "之前的提醒已创建，我记下了补充。" },
+    ]);
+    const first = await runtime.kernel.enqueuePrivateMessage("inbox-tool-interrupt", {
+      mode: "sms", characterId: character.id, text: "5分钟后提醒我喝水", timezone: "Asia/Shanghai",
+    }, "first");
+    const turn = runtime.kernel.flushPrivateMessageInbox(first.sessionId);
+    await waitFor(() => runtime.model.requests.length === 2);
+    await assert.rejects(runtime.kernel.updateQueuedPrivateMessage(first.sessionId, first.id, {
+      text: "改成明天提醒我",
+    }), /already completed create_schedule_item/);
+    await turn;
+    assert.equal(runtime.kernel.listScheduleItems().length, 1);
+    assert.equal(runtime.kernel.recentContextLogs(1)[0].status, "cancelled");
+    assert.equal(runtime.kernel.recentContextLogs(1)[0].canRetry, false);
+    await runtime.kernel.enqueuePrivateMessage(first.sessionId, {
+      mode: "sms", characterId: character.id, text: "知道了，先保留这个提醒。",
+    }, "correction");
+    await runtime.kernel.flushPrivateMessageInbox(first.sessionId);
+    assert.equal(runtime.kernel.listScheduleItems().length, 1);
+    assert.match(JSON.stringify(runtime.model.requests.at(-1)?.messages), /create_schedule_item/);
+  } finally { runtime.dispose(); }
+});
+
+test("a preparation failure preserves every input in history and remains retryable after restart", async () => {
+  const stateDir = mkdtempSync(join(tmpdir(), "yourchar-preflight-failure-"));
+  const first = createTestRuntime({ stateDir, seed: "preflight-failure", startPrivateInboxCoordinator: false });
+  try {
+    const character = first.kernel.createCharacter({ name: "准备失败" });
+    first.kernel.sessionRuntime.compactBeforeTurnIfNeeded = async () => { throw new Error("synthetic context preparation failure"); };
+    for (const [index, text] of ["这张截图不用归档", "只是问一下问题"].entries()) {
+      await first.kernel.enqueuePrivateMessage("preflight-failure", { mode: "sms", characterId: character.id, text }, String(index));
+    }
+    await first.kernel.flushPrivateMessageInbox("preflight-failure");
+    assert.equal(first.model.requests.length, 0);
+    const history = await first.kernel.getConversationTranscript("preflight-failure");
+    assert.deepEqual(history.filter(message => message.role === "user").map(agentMessageText), ["这张截图不用归档", "只是问一下问题"]);
+    assert.equal(first.kernel.recentContextLogs(1)[0].canRetry, true);
+    const snapshot = first.kernel.privateInboxSnapshot("preflight-failure");
+    assert.equal(snapshot.messages.length, 0);
+    assert.equal(snapshot.failedMessages?.length, 2);
+  } finally { first.dispose(); }
+  const second = createTestRuntime({ stateDir, seed: "preflight-restart", startPrivateInboxCoordinator: false });
+  try {
+    assert.equal(second.kernel.privateInboxSnapshot("preflight-failure").failedMessages?.length, 2);
+    assert.equal((await second.kernel.getConversationTranscript("preflight-failure")).filter(message => message.role === "user").length, 2);
+    second.model.enqueue([{ kind: "assistant_text", text: "收到，只回答问题。" }]);
+    assert.equal((await second.kernel.retryLastMessage("preflight-failure")).status, "completed");
+    const users = second.model.requests[0].messages.filter((message): message is Record<string, unknown> =>
+      Boolean(message && typeof message === "object" && (message as { role?: string }).role === "user"))
+      .map(modelMessageText).filter(text => !text.includes("RP_AGENT_RUNTIME_CONTEXT"));
+    assert.equal(users.join("\n").split("这张截图不用归档").length - 1, 1);
+  } finally { second.dispose(); rmSync(stateDir, { recursive: true, force: true }); }
+});
+
+test("a stopped queue remains paused after restart and a new send resumes it", async () => {
+  const stateDir = mkdtempSync(join(tmpdir(), "yourchar-paused-inbox-"));
+  const first = createTestRuntime({ stateDir, seed: "pause-persist", startPrivateInboxCoordinator: false });
+  let characterId: string;
+  try {
+    characterId = first.kernel.createCharacter({ name: "暂停角色" }).id;
+    await first.kernel.enqueuePrivateMessage("pause-persist", { mode: "sms", characterId, text: "保留这条。" }, "retained");
+    await first.kernel.cancelMessage("pause-persist");
+  } finally { first.dispose(); }
+  const second = createTestRuntime({ stateDir, seed: "pause-restart", startPrivateInboxCoordinator: false });
+  try {
+    assert.equal(second.kernel.privateInboxSnapshot("pause-persist").paused, true);
+    await second.kernel.flushPrivateMessageInbox("pause-persist");
+    assert.equal(second.model.requests.length, 0);
+    second.model.enqueue([{ kind: "assistant_text", text: "两条都收到了。" }]);
+    await second.kernel.enqueuePrivateMessage("pause-persist", { mode: "sms", characterId, text: "可以继续了。" }, "resume");
+    assert.equal(second.kernel.privateInboxSnapshot("pause-persist").paused, false);
+    await second.kernel.flushPrivateMessageInbox("pause-persist");
+    assert.equal(second.model.requests.length, 1);
+  } finally { second.dispose(); rmSync(stateDir, {recursive:true,force:true}); }
 });
 
 test("private inbox gives the first message an accumulation grace period", async () => {
