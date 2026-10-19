@@ -62,7 +62,8 @@ YourChar 是一款开源、可自行部署的 AI 角色应用。你可以为角�
 无痕快照使用可验证的 `tmpfs` 内存文件系统。
 
 Apple Silicon 用户（macOS 13+）可直接[下载 macOS 预览版](https://github.com/Tylogi/YourChar/releases/tag/v0.2.0-macos-preview.1)，
-无需另装 Node/Python；安装和覆盖升级见[使用说明](docs/macos-release.md#install-or-upgrade)。
+该已发布版本内置 Node/Python；当前源码已将文档转换迁移到 AnyDoc。
+安装和覆盖升级见[使用说明](docs/macos-release.md#install-or-upgrade)。
 当前预览版采用 ad-hoc 签名，尚未经过 Apple 公证。文档转换和 TypeScript LSP
 使用独立断网的 Seatbelt 沙盒，无痕模式使用私有 RAM 盘。Windows 采用 WSL2 后端，
 实机验收尚待完成；安装方法和测试清单见[跨平台适配说明](docs/cross-platform-workers.md)。
@@ -103,14 +104,8 @@ npm run dev
 <details>
 <summary>可选：文档工具与常驻运行</summary>
 
-PDF / Office 文档转换还需要 `uv`、Python 3.11+ 和 `/usr/bin/bwrap`。
-安装这些依赖后执行：
-
-```bash
-npm run setup:markitdown
-```
-
-该命令会建立 `services/markitdown/.venv`。基础聊天不依赖文档转换环境，
+PDF / Office 文档转换使用 `npm ci` 安装的 AnyDoc JS 包，
+Linux 还需要 `/usr/bin/bwrap` 来运行现有断网沙箱，无需安装 Python 或 uv。
 角色默认可读写专用 Workspace，已保存的关闭或只读选择不会被覆盖；
 Shell 等高权限工具仍需在 Agent 管理中单独开启。
 
@@ -222,12 +217,12 @@ YourChar 采用 [MIT 许可证](LICENSE)。第三方依赖与素材仍遵循各�
 - [Pi](https://github.com/earendil-works/pi)：Agent 运行时、会话管理与模型接入。
 - [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness)：沙箱策略与平台实现分层、ACP 子 Agent 互操作的设计参考。
 - [OpenClaw](https://github.com/openclaw/openclaw)：角色 `SOUL.md` 的职责划分与文档结构参考。
-- [Microsoft MarkItDown](https://github.com/microsoft/markitdown)：在隔离的本地工作进程中将文档转换为 Markdown。
+- [AnyDoc](https://github.com/firecrawl/anydoc)：通过 JS API 在本地将 PDF 和 Office 文档转成 Markdown。
 - [MCP TypeScript SDK](https://github.com/modelcontextprotocol/typescript-sdk) 与 [ACP TypeScript SDK](https://github.com/agentclientprotocol/typescript-sdk)：工具接入与 Agent 互操作。
 - [TypeScript](https://github.com/microsoft/TypeScript) 与 [TypeScript Language Server](https://github.com/typescript-language-server/typescript-language-server)：类型检查与跨文件代码导航。
 - [Tencent/openclaw-weixin](https://github.com/Tencent/openclaw-weixin) 与 [飞书 / Lark Node SDK](https://github.com/larksuite/node-sdk)：微信 iLink 协议实现的改编来源与飞书接入。
 - [Lucide](https://github.com/lucide-icons/lucide) 与 [Twemoji](https://github.com/jdecked/twemoji)：界面图标与 Emoji 图形。
-- [Node.js](https://nodejs.org/)、[CPython](https://www.python.org/) 与 [Astral python-build-standalone](https://github.com/astral-sh/python-build-standalone)：应用运行环境与自包含安装包中的 Python 发行版。
+- [Node.js](https://nodejs.org/)：应用运行环境，自包含安装包内置该运行时。
 - [TyloQuant](https://github.com/Tylogi/TyloQuant)：首页使用的 Tylogi AI Lab 品牌素材。
 
 也特别感谢懒猫微服团队的官方应用[小龙猫](https://lazycat.cloud/appstore/detail/cloud.lazycat.totoro)，

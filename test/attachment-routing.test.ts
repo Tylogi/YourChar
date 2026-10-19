@@ -18,7 +18,7 @@ const attachmentText = (paths: string[]) => "请查看附件。\n\n[附件已上
   paths.map(path => `- 文件 | workspace: ${path} | application/octet-stream`).join("\n");
 
 for (const mode of ["direct", "mcp"] as const) {
-  test(`${mode} vision leaves documents for read_document and selects only images from mixed uploads`, async () => {
+  test(`${mode} vision leaves documents for Workspace tools and selects only images from mixed uploads`, async () => {
     const workspaceDir = mkdtempSync(join(tmpdir(), "yourchar-attachment-routing-"));
     let visionCalls = 0;
     const documentPaths: string[] = [];
@@ -34,7 +34,7 @@ for (const mode of ["direct", "mcp"] as const) {
       workspaceDir, visionService,
       documentService: new DocumentConversionService({ runner: async ({ absolutePath }) => {
         documentPaths.push(absolutePath);
-        return { version: 1, engine: "markitdown", markdown: "课件正文：变量与数据类型。" };
+        return { version: 1, engine: "anydoc", markdown: "课件正文：变量与数据类型。" };
       } }),
     });
     try {

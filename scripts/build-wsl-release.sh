@@ -3,11 +3,11 @@ set -euo pipefail
 IFS=$'\n\t'
 
 # Build the distributable YourChar runtime for Windows users: a self-contained
-# WSL2 distribution (Linux userspace + Node + Bubblewrap + bundled CPython with
-# MarkItDown/Magika/ONNX Runtime) plus the application payload.
+# WSL2 distribution (Linux userspace + Node + Bubblewrap) plus the application
+# payload, including AnyDoc's target-platform native module.
 #
 # The end user installs none of that: importing the archive into WSL2 is the
-# whole setup. uv is a build-time tool only and is never shipped.
+# whole setup.
 
 usage() {
   cat <<'EOF'
@@ -29,8 +29,6 @@ Environment:
                              (default: http://archive.ubuntu.com/ubuntu)
   YOURCHAR_WSL_UBUNTU_BASE   Base rootfs URL (default: pinned 26.04.1 amd64)
   YOURCHAR_WSL_UBUNTU_SHA256 Expected sha256 of the base rootfs
-  YOURCHAR_BUILD_UV          uv executable used to bundle MarkItDown
-                             (default: first uv on PATH)
 
 Requires root, or a sudo that can elevate, because the rootfs is assembled with
 chroot. Nothing is written to the source checkout: all staging happens in a
@@ -75,10 +73,6 @@ if [[ ! "$node_version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
   echo "Invalid Node version in .nvmrc: $node_version" >&2
   exit 1
 fi
-python_version="3.13.5"
-markitdown_address_space_bytes=4294967296
-
-version="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["version"])' "$repo_root/package.json")"
 # Running through sudo makes the checkout look foreign to git, which would
 # otherwise refuse to read it.
 git_repo() { git -c safe.directory="$repo_root" -C "$repo_root" "$@"; }
@@ -88,15 +82,6 @@ if [[ -n "$(git_repo status --porcelain=v1)" ]]; then
   dirty_tree="yes"
 else
   dirty_tree="no"
-fi
-artifact_stem="YourChar-${version}-wsl-amd64"
-
-# The payload ships the verified address-space bound for the document worker.
-if ! grep -q "RLIMIT_AS, (${markitdown_address_space_bytes}, ${markitdown_address_space_bytes})" \
-  "$repo_root/services/markitdown/worker.py"; then
-  echo "services/markitdown/worker.py does not carry the verified ${markitdown_address_space_bytes}-byte RLIMIT_AS." >&2
-  echo "The document worker would fail nondeterministically; refusing to build." >&2
-  exit 1
 fi
 
 if [[ "$output_dir" != /* ]]; then
@@ -178,7 +163,7 @@ export DEBIAN_FRONTEND=noninteractive
 chroot "$rootfs" /bin/bash -euo pipefail -c '
   apt-get update
   apt-get install --yes --no-install-recommends \
-    bubblewrap ca-certificates curl git libgomp1 libstdc++6 passwd util-linux
+    bubblewrap ca-certificates curl git libstdc++6 passwd util-linux
   apt-get clean
   rm -rf /var/lib/apt/lists/* /var/cache/apt/archives/*.deb
   useradd --create-home --uid 1000 --shell /bin/bash yourchar
@@ -195,13 +180,14 @@ rm -rf "$rootfs/opt/yourchar/node/include" "$rootfs/opt/yourchar/node/share"
 ln -sf /opt/yourchar/node/bin/node "$rootfs/usr/local/bin/node"
 ln -sf /opt/yourchar/node/bin/npm "$rootfs/usr/local/bin/npm"
 ln -sf /opt/yourchar/node/bin/npx "$rootfs/usr/local/bin/npx"
+version="$("$rootfs/opt/yourchar/node/bin/node" --input-type=module -e \
+  'import { readFileSync } from "node:fs"; console.log(JSON.parse(readFileSync(process.argv[1], "utf8")).version)' "$repo_root/package.json")"
+artifact_stem="YourChar-${version}-wsl-amd64"
 
 echo "== Building application payload =="
 mkdir -p "$source_root"
 tar -C "$repo_root" \
   --exclude=./.git --exclude=./node_modules --exclude=./release --exclude=./dist \
-  --exclude='./services/markitdown/runtime' --exclude='./services/markitdown/.venv' \
-  --exclude='./services/markitdown/.bundle-*' \
   -cf - . | tar -C "$source_root" -xf -
 
 # Build with the Node runtime that ships in the image, not the host's.
@@ -209,24 +195,19 @@ export PATH="$rootfs/opt/yourchar/node/bin:$PATH"
 export npm_config_audit=false
 export npm_config_fund=false
 export npm_config_cache="$cache_dir/npm"
-export UV_CACHE_DIR="${UV_CACHE_DIR:-$cache_dir/uv}"
-export YOURCHAR_BUILD_UV="${YOURCHAR_BUILD_UV:-$(command -v uv || true)}"
-if [[ -z "$YOURCHAR_BUILD_UV" ]]; then
-  echo "uv is required at build time to bundle MarkItDown; set YOURCHAR_BUILD_UV." >&2
-  exit 1
-fi
 (
   cd "$source_root"
   npm ci
-  npm run bundle:markitdown
   npm run build
   npm prune --omit=dev
   npm ls --omit=dev --depth=0 >/dev/null
+  YOURCHAR_REQUIRE_WORKERS=1 node --disable-warning=ExperimentalWarning --test --test-concurrency=1 \
+    dist/test/offline-workers.test.js dist/test/document-reader.test.js
 )
 
 echo "== Assembling payload =="
 mkdir -p "$payload_root/bin" "$payload_root/scripts"
-for path in dist assets skills node_modules package.json LICENSE THIRD_PARTY_NOTICES.md services/markitdown; do
+for path in dist/src assets skills node_modules package.json LICENSE THIRD_PARTY_NOTICES.md; do
   if [[ -e "$source_root/$path" ]]; then
     mkdir -p "$(dirname "$payload_root/$path")"
     cp -a "$source_root/$path" "$payload_root/$path"
@@ -234,7 +215,6 @@ for path in dist assets skills node_modules package.json LICENSE THIRD_PARTY_NOT
 done
 cp -a "$repo_root/scripts/start-wsl-backend.sh" "$payload_root/scripts/start-wsl-backend.sh"
 install -m 755 "$repo_root/packaging/windows/bin/yourchar-backend" "$payload_root/bin/yourchar-backend"
-rm -rf "$payload_root/services/markitdown/.venv" "$payload_root/services/markitdown/.bundle-"*
 
 cat > "$payload_root/BUILD-INFO.txt" <<EOF
 YourChar version: $version
@@ -243,8 +223,7 @@ Architecture: amd64
 Ubuntu base: $(basename "$ubuntu_base_archive")
 Ubuntu base sha256: $ubuntu_base_sha
 Embedded Node.js: $node_version
-Bundled CPython: $python_version
-Document worker RLIMIT_AS: $markitdown_address_space_bytes bytes
+Document converter: AnyDoc (npm-locked native module)
 State directory: /var/lib/yourchar
 EOF
 

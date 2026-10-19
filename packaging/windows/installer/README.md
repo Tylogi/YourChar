@@ -29,7 +29,7 @@ packaging/windows/installer/out/YourChar-Setup-<version>.exe
   and never deletes `%LOCALAPPDATA%\YourChar`. Only `YourChar.exe` touches WSL,
   because only `YourChar.exe` can tell a YourChar distribution from someone
   else's. This is what makes install, repair and update unable to lose data.
-- It does not bundle a runtime for Node, Python, uv, MarkItDown or Bubblewrap on
+- It does not bundle a runtime for Node, AnyDoc or Bubblewrap on
   the Windows side. They live inside the distribution.
 - No auto-update, no code signing, no WebView2 shell.
 

@@ -5,7 +5,7 @@
 // run, start the Linux backend, wait for readiness, open the browser UI, watch
 // the backend for the whole session and shut it down gracefully on exit.
 //
-// The user never types a WSL, PowerShell, npm, Node, Python or uv command.
+// The user never types a WSL, PowerShell, npm or Node command.
 // Built with the in-box .NET Framework compiler (see build.ps1), so end users
 // install nothing: no .NET download, no runtime prerequisites.
 using System;

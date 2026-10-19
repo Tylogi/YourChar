@@ -100,14 +100,12 @@ runtime_node="$runtime_root/bin/node"
 chmod 755 "$runtime_node"
 
 git -C "$repo_root" archive --format=tar HEAD | /usr/bin/tar -xf - -C "$source_root"
-export YOURCHAR_BUILD_UV="${YOURCHAR_BUILD_UV:-$(command -v uv)}"
 export PATH="$node_distribution/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
 export npm_config_audit=false
 export npm_config_fund=false
 (
   cd "$source_root"
   npm ci
-  npm run bundle:markitdown
   if [[ "${MACOS_SKIP_TESTS:-0}" == "1" ]]; then
     npm run build
   else
@@ -124,7 +122,7 @@ export npm_config_fund=false
   "$node_distribution/bin/node" scripts/scan-sensitive.mjs
 )
 
-for path in dist assets skills services/markitdown; do
+for path in dist/src assets skills; do
   /usr/bin/ditto "$source_root/$path" "$application_root/$path"
 done
 for path in package.json package-lock.json LICENSE THIRD_PARTY_NOTICES.md README.md README.zh-CN.md; do
@@ -173,13 +171,20 @@ chmod 755 "$contents/MacOS/YourChar"
 [[ "$(/usr/bin/lipo -archs "$contents/MacOS/YourChar")" == "arm64" ]]
 [[ "$(/usr/bin/lipo -archs "$runtime_node")" == "arm64" ]]
 
-# Re-test the relocated, pruned and signed payload, not just the build tree.
+# Keep test code outside the app and exercise the relocated, pruned, signed code.
+validation_root="$build_root/validation"
+mkdir -p "$validation_root/dist"
+/usr/bin/ditto "$source_root/dist/test" "$validation_root/dist/test"
+/usr/bin/ditto "$source_root/test/fixtures/documents" "$validation_root/test/fixtures/documents"
+/usr/bin/ditto "$application_root/package.json" "$validation_root/package.json"
+ln -s "$application_root/dist/src" "$validation_root/dist/src"
+ln -s "$application_root/node_modules" "$validation_root/node_modules"
 (
   cd "$application_root"
   YOURCHAR_REQUIRE_WORKERS=1 "$runtime_node" --disable-warning=ExperimentalWarning \
     --test --test-concurrency=1 \
-    --test-name-pattern='real MarkItDown worker|bundled TypeScript LSP resolves' \
-    dist/test/document-reader.test.js dist/test/lsp-navigation.test.js
+    --test-name-pattern='sandboxed document conversion|bundled TypeScript LSP resolves' \
+    "$validation_root/dist/test/document-reader.test.js" "$validation_root/dist/test/lsp-navigation.test.js"
 )
 
 smoke_port="$($runtime_node -e 'const net=require("node:net");const server=net.createServer();server.listen(0,"127.0.0.1",()=>{console.log(server.address().port);server.close();});')"
@@ -199,7 +204,7 @@ smoke_ready=0
 for _ in {1..120}; do
   if /usr/bin/curl --fail --silent --max-time 1 --output "$smoke_response" \
     "http://127.0.0.1:${smoke_port}/api/v1/readiness" &&
-    "$runtime_node" -e 'const fs=require("node:fs");try{const value=JSON.parse(fs.readFileSync(process.argv[1],"utf8"));process.exit(value.status==="ready"&&value.database==="ok"&&value.markitdownAvailable===true?0:1);}catch{process.exit(1);}' "$smoke_response"
+    "$runtime_node" -e 'const fs=require("node:fs");try{const value=JSON.parse(fs.readFileSync(process.argv[1],"utf8"));process.exit(value.status==="ready"&&value.database==="ok"&&value.anydocAvailable===true?0:1);}catch{process.exit(1);}' "$smoke_response"
   then
     smoke_ready=1
     break

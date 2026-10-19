@@ -3,8 +3,8 @@
 YourChar can be packaged as a self-contained Apple Silicon application. The
 release contains a native AppKit/WebKit window, the compiled YourChar server,
 production npm dependencies, the bundled Skills, and a verified Node.js arm64
-runtime, plus a self-contained CPython/MarkItDown worker. Users do not need to
-install Node.js, Python, or uv.
+runtime and AnyDoc's native npm module. Users do not need to install Node.js;
+Python and uv are not required by the current source build.
 
 ## Install or upgrade
 
@@ -75,8 +75,7 @@ Requirements:
 
 - Apple Silicon Mac running macOS 13 or newer (the bundled document libraries require macOS 13)
 - Xcode Command Line Tools with Swift, `codesign`, `iconutil`, and `hdiutil`
-- uv (build-time only; `YOURCHAR_BUILD_UV` may name its executable)
-- Network access to npm, `nodejs.org`, Python package downloads and Astral's Python releases
+- Network access to npm and `nodejs.org`
 - A clean Git working tree
 
 Run from the repository root:
@@ -88,8 +87,8 @@ npm run package:macos
 The builder exports committed `HEAD` into a clean staging directory, downloads
 the Node version pinned by `.nvmrc`, verifies it against Node's published
 `SHASUMS256.txt`, installs locked dependencies, runs the macOS packaging gate
-and sensitive-information scan, bundles CPython 3.13.5 with hash-locked
-MarkItDown wheels, prunes development-only packages, compiles the
+and sensitive-information scan, includes AnyDoc's locked platform-native npm
+module, prunes development-only packages, compiles the
 native launcher and icon, performs a packaged-server readiness smoke test, and
 then produces:
 
@@ -116,7 +115,7 @@ and portable incognito lifecycle tests. Linux `/proc`/tmpfs-specific assertions
 remain Linux-only and are not counted as macOS verification. For a bounded-heap validation on a shared Mac, run:
 
 ```bash
-npm run setup:markitdown # development checkout; release builds bundle Python instead
+npm ci
 NODE_OPTIONS=--max-old-space-size=2048 npm run test:macos
 ```
 

@@ -3473,7 +3473,7 @@ export class CompanionKernel {
       visionConfigured: this.visionService.isConfigured(),
       mineruConfigured: this.mineruService.isConfigured(),
       gitConfigured: this.gitService.isConfigured(),
-      markitdownAvailable: this.documentService.isAvailable(),
+      anydocAvailable: this.documentService.isAvailable(),
       imGatewayConfigured: this.imIntegrations.gateway.configured,
       worldCount: this.worldService.listWorlds(true).length,
       notificationChannel: this.notificationChannel,

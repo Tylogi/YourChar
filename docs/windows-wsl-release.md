@@ -19,33 +19,28 @@ tree other than `./release`.
 ## What the image contains
 
 - Ubuntu base rootfs (pinned release and sha256), with `bubblewrap`,
-  `ca-certificates`, `curl`, `git`, `libgomp1`, `libstdc++6` and `util-linux`
+  `ca-certificates`, `curl`, `git`, `libstdc++6` and `util-linux`
   installed by the builder
 - Node.js from the official archive, verified against `SHASUMS256.txt`, at
   `/opt/yourchar/node` and linked into `/usr/local/bin`
 - the application payload at `/opt/yourchar`: `dist`, `node_modules` (production
-  dependencies only), `assets`, `skills`, the document service and its
-  self-contained CPython runtime
+  dependencies only), `assets`, `skills`, and the document service with AnyDoc's
+  Linux native npm module; tests and fixtures are excluded
 - `/etc/wsl.conf` selecting the non-root `yourchar` user and keeping the Windows
   `PATH` out of the distribution
 - `/var/lib/yourchar`, owned by `yourchar`, for user data
 
-`uv` is a build-time tool. It bundles CPython and the hash-locked wheels into
-`services/markitdown/runtime` through `scripts/bundle-markitdown.mjs`; it is not
-installed in the image.
-
-The document worker runs with a 4 GiB address-space limit. MarkItDown pulls in
-Magika and ONNX Runtime, which reserve several GiB of virtual address space
-(measured peak 2.1 GiB with 2 CPUs and 3.0 GiB with 24 CPUs) while resident
-memory stays near 140 MiB, so a tighter bound makes worker startup fail
-nondeterministically. The builder refuses to package a `worker.py` that does not
-carry the verified bound.
+Python and uv are not required. Document conversion uses AnyDoc's JS API
+inside the existing offline sandbox, with CPU, file-descriptor and output
+bounds, a 90-second deadline, a 256 MiB V8 heap limit and a Linux 4 GiB
+address-space limit. The heap limit alone does not bound native allocations.
+The builder runs the real conversion and isolation tests with production npm
+dependencies before assembling the payload.
 
 ## Building
 
 ```bash
 sudo YOURCHAR_WSL_APT_MIRROR=http://mirrors.example.org/ubuntu \
-     YOURCHAR_BUILD_UV="$HOME/.local/bin/uv" \
      npm run package:windows
 ```
 
