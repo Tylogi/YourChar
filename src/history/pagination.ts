@@ -27,7 +27,20 @@ export function historyMessagePayload(value: unknown): Record<string, unknown> {
   }));
   if (message.details && typeof message.details === "object") {
     const details = message.details as Record<string, unknown>;
-    output.details = { status: details.status, eventType: details.eventType, canRetry: details.canRetry };
+    const safeDetails: Record<string, unknown> = { status: details.status, eventType: details.eventType, canRetry: details.canRetry };
+    if (message.role === "custom" && message.customType === "rp-agent/system_event" &&
+        typeof details.notificationOutboxId === "string" && typeof details.occurrenceId === "string") {
+      safeDetails.notificationOutboxId = details.notificationOutboxId;
+      safeDetails.occurrenceId = details.occurrenceId;
+      if (details.reminder && typeof details.reminder === "object") {
+        const reminder = details.reminder as Record<string, unknown>;
+        safeDetails.reminder = Object.fromEntries(
+          ["title", "scheduleItemId", "eventAt", "dueAt", "timezone"]
+            .filter(key => typeof reminder[key] === "string").map(key => [key, reminder[key]]),
+        );
+      }
+    }
+    output.details = safeDetails;
   }
   return output;
 }

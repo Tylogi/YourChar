@@ -242,6 +242,7 @@ import {
 } from "../git/index.js";
 import { visionToolResult } from "../mcp/vision-server.js";
 import { WorkspaceFileService } from "../workspace/file-service.js";
+import { UploadSettingsService } from "../workspace/upload-settings.js";
 import { WorkspaceScopeRegistry, type ScopedWorkspace } from "../workspace/scope.js";
 import {
   backgroundThinkingPolicy,
@@ -253,12 +254,14 @@ import {
   openAiCompatibleProviderAdapter,
 } from "../model/openai-compatible.js";
 import { firstPartyNativeModelProviderAdapters } from "../model/native-providers.js";
+import { CodexLoginManager, type CodexLoginMethod } from "../model/codex-login.js";
 import {
   containsModelCredentialValue,
   ModelCredentialValidationError,
   ModelCredentialVerificationError,
   redactModelCredentialText,
   redactModelCredentialValue,
+  modelCredentialSecrets,
 } from "../model/credential-store.js";
 import {
   isModelProviderId,
@@ -607,6 +610,7 @@ export class CompanionKernel {
   readonly store: CompanionStore;
   readonly sessionRuntime: PiSessionRuntime;
   readonly modelProviders: ModelProviderRegistry;
+  private readonly codexLogins = new CodexLoginManager();
   private readonly additionalModelProviderAdapters: readonly ModelProviderAdapter[];
   private readonly agentRuntimeConfiguration: AgentRuntimeConfigurationManager;
   private readonly executionJobCapability: SessionCapability;
@@ -640,6 +644,7 @@ export class CompanionKernel {
   readonly avatarService: AvatarService;
   readonly systemPromptService: SystemPromptService;
   readonly workspaceFiles: WorkspaceFileService;
+  readonly uploadSettings: UploadSettingsService;
   readonly imMediaStore: LocalImMediaStore;
   readonly workspaceRegistry: WorkspaceScopeRegistry;
   readonly memoryVault: MemoryVaultService;
@@ -680,6 +685,7 @@ export class CompanionKernel {
   private readonly clock: Clock;
   private readonly incognitoChild: boolean;
   private readonly executionQueue = new SessionExecutionQueue();
+  private readonly activeMessageTurns = new Map<string, AbortController>();
   private readonly conversationWakeComposer?: ConversationWakeComposer;
   private readonly conversationWakeRetryDelaysMs: readonly number[];
   private readonly conversationWakeTimers = new Map<string, NodeJS.Timeout>();
@@ -874,7 +880,8 @@ export class CompanionKernel {
           })
         : undefined);
     this.permissionCatalog = new AgentPermissionCatalog(this.database, this.clock, workspaceDir);
-    this.workspaceFiles = new WorkspaceFileService(workspaceDir);
+    this.uploadSettings = new UploadSettingsService(this.database);
+    this.workspaceFiles = new WorkspaceFileService(workspaceDir, () => this.uploadSettings.get().maxFileBytes);
     this.imMediaStore = new LocalImMediaStore(workspaceDir);
     this.workspaceRegistry = new WorkspaceScopeRegistry(workspaceDir, this.workspaceFiles);
     this.profileService = new UserProfileService({
@@ -1382,7 +1389,7 @@ export class CompanionKernel {
       privateInboxRepository,
       this.clock,
       this.store.idGenerator,
-      (burst, onEvent) => this.processPrivateMessageBurst(burst, onEvent),
+      (burst, onEvent, signal) => this.processPrivateMessageBurst(burst, onEvent, signal),
       normalizedOptions.privateInboxOptions,
     );
     if (!this.incognitoChild) this.migrateLegacyDirectInbox(privateInboxRepository);
@@ -1531,6 +1538,7 @@ export class CompanionKernel {
     sessionId: string,
     request: MessageRequest,
     clientMessageId: string,
+    options: { interrupt?: boolean } = {},
   ): Promise<PrivateInboxMessage> {
     this.assertKnownIncognitoSessionId(sessionId);
     this.incognitoSessions?.assertUnsupported(sessionId, "private inbox delivery");
@@ -1564,6 +1572,7 @@ export class CompanionKernel {
       );
     }
     this.sessionRuntime.ensureConversationTitle(handle.metadata.id, normalized.text);
+    const duplicate = this.privateInbox.repository.getByClientMessageId(handle.metadata.id, normalizedClientId);
     const message = this.privateInbox.enqueue({
       clientMessageId: normalizedClientId,
       sessionId: handle.metadata.id,
@@ -1572,7 +1581,9 @@ export class CompanionKernel {
       text: normalized.text,
       timezone: normalized.timezone,
       attachments: normalized.attachments,
+      interrupt: options.interrupt,
     });
+    if (!duplicate && options.interrupt !== false) this.activeMessageTurns.get(handle.metadata.id)?.abort();
     // Inbox delivery is queued separately, so it cannot register a foreground
     // queue intent yet. It can still promptly abort an in-flight wake compose;
     // the durable queued message keeps subsequent wake attempts deferred.
@@ -1602,19 +1613,22 @@ export class CompanionKernel {
     return this.privateInbox.subscribe(sessionId, listener);
   }
 
-  updateQueuedPrivateMessage(
+  async updateQueuedPrivateMessage(
     sessionId: string,
     messageId: string,
     input: Pick<MessageRequest, "text" | "attachments">,
-  ): PrivateInboxMessage {
+  ): Promise<PrivateInboxMessage> {
     this.assertKnownIncognitoSessionId(sessionId);
     this.incognitoSessions?.assertUnsupported(sessionId, "private inbox editing");
     this.assertPrivateInboxSession(sessionId);
     const text = input.text.trim();
     if (!text) throw new PrivateInboxMutationError("queued message text must not be empty");
     const existing = this.privateInbox.repository.get(messageId);
-    if (!existing || existing.sessionId !== sessionId || existing.status !== "queued") {
-      throw new PrivateInboxMutationError("only a queued private message can be edited");
+    if (!existing || existing.sessionId !== sessionId) {
+      throw new PrivateInboxMutationError("private message not found");
+    }
+    if (existing.status !== "queued") {
+      return this.reviseProcessingPrivateMessage(sessionId, existing, text, input.attachments);
     }
     const message = this.privateInbox.updateQueued(
       sessionId,
@@ -1628,6 +1642,47 @@ export class CompanionKernel {
       throw new PrivateInboxMutationError("only a queued private message can be edited");
     }
     return message;
+  }
+
+  private async reviseProcessingPrivateMessage(
+    sessionId: string, existing: PrivateInboxMessage, text: string, attachments?: MessageAttachment[],
+  ): Promise<PrivateInboxMessage> {
+    const latest = this.database.connection.prepare(`
+      SELECT id FROM private_message_inbox WHERE session_id = ? AND burst_id IS NOT NULL
+      ORDER BY created_at DESC, id DESC LIMIT 1
+    `).get(sessionId) as { id: string } | undefined;
+    const activeBurst = this.privateInbox.snapshot(sessionId).activeBurstId;
+    if (latest?.id !== existing.id || (activeBurst && activeBurst !== existing.burstId)) {
+      throw new PrivateInboxMutationError("only the latest processing message can be edited");
+    }
+    const normalizedAttachments = attachments === undefined ? existing.attachments : normalizeMessageAttachments(attachments);
+    const pauseVersion = this.privateInbox.pauseVersion(sessionId);
+    const release = this.privateInbox.hold(sessionId);
+    if (!release) throw new PrivateInboxMutationError("a message revision is already in progress");
+    try {
+      this.privateInbox.interrupt(sessionId, "edited");
+      this.activeMessageTurns.get(sessionId)?.abort();
+      await this.privateInbox.whenIdle(sessionId);
+      return await this.executionQueue.run(sessionId, () => this.withSessionActionScope(sessionId, async () => {
+        const transcript = await this.sessionRuntime.getConversationTranscript(sessionId);
+        const user = transcript.find(message => message.latestUser);
+        if (!user || user.role !== "user") throw new PrivateInboxMutationError("message is no longer available to edit");
+        const original = typeof user.content === "string" ? user.content : user.content
+          .filter(part => part.type === "text").map(part => part.text).join("\n");
+        if (original !== existing.text) throw new PrivateInboxMutationError("a newer message has already replaced this turn");
+        this.assertLatestTurnRevisionSafe(sessionId);
+        await this.sessionRuntime.branchBeforeLatestUser(sessionId, user.entryId);
+        this.store.addAction("edit_user_message", "completed", { sessionId, entryId: user.entryId });
+        const message = this.privateInbox.repository.requeueEdited(existing.id, text, normalizedAttachments, this.clock.now().toISOString());
+        this.privateInbox.edited(message, this.privateInbox.pauseVersion(sessionId) === pauseVersion);
+        return message;
+      }));
+    } finally { release(); }
+  }
+
+  resumePrivateMessageInbox(sessionId: string): void {
+    this.assertPrivateInboxSession(sessionId);
+    this.privateInbox.resume(sessionId);
   }
 
   retractQueuedPrivateMessage(sessionId: string, messageId: string): PrivateInboxMessage {
@@ -1653,7 +1708,11 @@ export class CompanionKernel {
     if (this.incognitoSessions?.has(sessionId)) {
       return this.incognitoSessions.cancelMessage(sessionId);
     }
-    return this.sessionRuntime.abortSession(sessionId);
+    this.sessionRuntime.assertConversationActive(sessionId);
+    const interrupted = this.privateInbox.pause(sessionId);
+    const active = this.activeMessageTurns.get(sessionId);
+    active?.abort();
+    return interrupted || Boolean(active);
   }
 
   async retryLastMessage(sessionId: string): Promise<MessageResponse> {
@@ -1675,7 +1734,9 @@ export class CompanionKernel {
       await this.sessionRuntime.branchBeforeLatestUser(sessionId, latestUser.entryId);
       return this.sendMessageLocked(sessionId, normalizeRequest({
         mode: log.mode,
-        text: log.requestText,
+        // Earlier members of a failed inbox burst remain on the branch.
+        // Replaying the merged log text would duplicate those user messages.
+        text: agentEventMessageText(latestUser) || log.requestText,
         characterId: metadata?.characterId,
         conversationSpace: metadata?.conversationSpace,
       }));
@@ -1717,6 +1778,8 @@ export class CompanionKernel {
     this.incognitoSessions?.assertUnsupported(sessionId, "message editing");
     const edited = text.trim();
     if (!edited) throw new MessageRevisionError("edited message must not be empty");
+    this.privateInbox.pause(sessionId);
+    this.activeMessageTurns.get(sessionId)?.abort();
     return this.executionQueue.run(sessionId, () => this.withSessionActionScope(sessionId, async () => {
       const metadata = this.requireRevisionMetadata(sessionId);
       this.assertLatestTurnRevisionSafe(sessionId);
@@ -1734,6 +1797,8 @@ export class CompanionKernel {
   async retractLatestUserMessage(sessionId: string, entryId: string) {
     this.assertKnownIncognitoSessionId(sessionId);
     this.incognitoSessions?.assertUnsupported(sessionId, "message retraction");
+    this.privateInbox.pause(sessionId);
+    this.activeMessageTurns.get(sessionId)?.abort();
     return this.executionQueue.run(sessionId, () => this.withSessionActionScope(sessionId, async () => {
       const metadata = this.requireRevisionMetadata(sessionId);
       this.assertLatestTurnRevisionSafe(sessionId);
@@ -5511,6 +5576,9 @@ export class CompanionKernel {
       this.store.previewModelApiProfilePatch(patch),
     );
     const config = this.store.patchModelApiConfig(patch);
+    if (patch.provider !== undefined || modelApiPatchChangesCredential(patch)) {
+      this.codexLogins.cancelProfile(this.store.listModelApiProfiles().defaultProfileId);
+    }
     if (modelApiPatchChangesCredential(patch)) {
       this.recordModelCredentialChange("patch", this.store.listModelApiProfiles().defaultProfileId, config);
     }
@@ -5543,6 +5611,7 @@ export class CompanionKernel {
       this.store.previewModelApiProfilePatch(patch, id),
     );
     const profile = this.store.patchModelApiProfile(id, patch);
+    if (patch.provider !== undefined || modelApiPatchChangesCredential(patch)) this.codexLogins.cancelProfile(id);
     if (modelApiPatchChangesCredential(patch)) {
       this.recordModelCredentialChange("patch", id, profile);
     }
@@ -5626,6 +5695,7 @@ export class CompanionKernel {
     assertCredentialLifecycleRevision(expectedRevision);
     this.assertModelSettingsMutable();
     const profile = this.store.revokeModelApiCredential(id, expectedRevision);
+    this.codexLogins.cancelProfile(id);
     this.recordModelCredentialChange("revoke", id, profile);
     this.sessionRuntime.invalidateCapabilities("model_credential_changed");
     return profile;
@@ -5637,6 +5707,51 @@ export class CompanionKernel {
     const profile = this.store.rollbackModelApiCredential(id, expectedRevision);
     this.recordModelCredentialChange("rollback", id, profile);
     this.sessionRuntime.invalidateCapabilities("model_credential_changed");
+    return profile;
+  }
+
+  startCodexLogin(id: string, method: CodexLoginMethod, expectedRevision: number) {
+    assertCredentialLifecycleRevision(expectedRevision);
+    this.assertModelSettingsMutable();
+    this.requireCodexProfile(id);
+    this.store.assertModelApiCredentialRevision(id, expectedRevision);
+    return this.codexLogins.start(id, method, (credential) => {
+      this.assertModelSettingsMutable();
+      this.requireCodexProfile(id);
+      const profile = this.store.setModelOAuthCredential(id, credential, expectedRevision);
+      this.recordModelCredentialChange("set", id, profile);
+      this.sessionRuntime.invalidateCapabilities("model_credential_changed");
+    });
+  }
+
+  getCodexLogin(id: string, loginId: string) {
+    this.requireCodexProfile(id);
+    return this.codexLogins.status(id, loginId);
+  }
+
+  submitCodexLogin(id: string, loginId: string, callbackUrl: string) {
+    this.requireCodexProfile(id);
+    return this.codexLogins.submit(id, loginId, callbackUrl);
+  }
+
+  cancelCodexLogin(id: string, loginId: string) {
+    return this.codexLogins.cancel(id, loginId);
+  }
+
+  logoutCodex(id: string, expectedRevision: number) {
+    assertCredentialLifecycleRevision(expectedRevision);
+    this.assertModelSettingsMutable();
+    const profile = this.requireCodexProfile(id);
+    this.store.assertModelApiCredentialRevision(id, expectedRevision);
+    this.codexLogins.cancelProfile(id);
+    return profile.credentialRef ? this.revokeModelApiCredential(id, expectedRevision) : profile;
+  }
+
+  private requireCodexProfile(id: string) {
+    const profile = this.store.getModelApiProfile(id);
+    if (!profile || profile.provider !== "openai-codex") {
+      throw new ModelCredentialValidationError("请先保存 Codex 模型配置。");
+    }
     return profile;
   }
 
@@ -5734,6 +5849,7 @@ export class CompanionKernel {
   deleteModelApiProfile(id: string) {
     this.assertModelSettingsMutable();
     const result = this.store.deleteModelApiProfile(id);
+    this.codexLogins.remove(id);
     this.rpService.repository.clearModelProfileBindings(id);
     this.sessionRuntime.invalidateCapabilities("model_profile_changed");
     return result;
@@ -5854,6 +5970,7 @@ export class CompanionKernel {
   }
 
   dispose(): void {
+    this.codexLogins.dispose();
     this.creator.dispose();
     this.stopConversationWakeNotifications();
     this.stopSubagentJobDeliveries();
@@ -5948,6 +6065,7 @@ export class CompanionKernel {
   private async processPrivateMessageBurst(
     burst: PrivateMessageBurst,
     onEvent: (event: PrivateInboxEvent) => void,
+    signal: AbortSignal,
   ): Promise<MessageResponse> {
     const latest = burst.messages.at(-1);
     if (!latest) throw new PrivateInboxMutationError("private message burst is empty");
@@ -5971,6 +6089,7 @@ export class CompanionKernel {
           burst.sessionId,
           request,
           (event) => onEvent({ type: "agent_event", burstId: burst.id, event }),
+          signal,
         );
       } finally {
         this.finishConversationWakeForegroundTurn(burst.sessionId);
@@ -5984,6 +6103,11 @@ export class CompanionKernel {
     onEvent?: (event: AgentSessionEvent) => void,
     signal?: AbortSignal,
   ): Promise<MessageResponse> {
+    const controller = new AbortController();
+    this.activeMessageTurns.set(sessionId, controller);
+    const turnSignal = signal ? AbortSignal.any([signal, controller.signal]) : controller.signal;
+    const abortTurn = () => { void this.sessionRuntime.abortSession(sessionId); };
+    turnSignal.addEventListener("abort", abortTurn, { once: true });
     this.sessionRuntime.beginCapabilityTurn();
     try {
       return await this.store.withActionScope({
@@ -5991,8 +6115,10 @@ export class CompanionKernel {
         ...(request.conversationSpace === "secret" && request.characterId
           ? { secretOwnerCharacterId: request.characterId }
           : {}),
-      }, () => this.sendMessageLockedInScope(sessionId, request, onEvent, signal));
+      }, () => this.sendMessageLockedInScope(sessionId, request, onEvent, turnSignal));
     } finally {
+      turnSignal.removeEventListener("abort", abortTurn);
+      if (this.activeMessageTurns.get(sessionId) === controller) this.activeMessageTurns.delete(sessionId);
       this.sessionRuntime.finishCapabilityTurn();
     }
   }
@@ -6211,66 +6337,84 @@ export class CompanionKernel {
       events.push(event);
       guardedEvents.push(event);
     };
-    const queuedBehindCurrentTurn = this.privateInbox.repository.listQueued(handle.metadata.id).length > 0;
-    const preflightCompaction = await this.sessionRuntime.compactBeforeTurnIfNeeded(
-      handle,
-      request.text,
-      !queuedBehindCurrentTurn,
-      () => this.flushDurableTurnCoordinators(),
+    const cancelledBeforePrompt = () => this.persistSystemExchange(
+      handle, request, messageCountBefore, actions, "本轮生成已停止。",
+      { status: "cancelled", eventType: "cancelled", canRetry: !hasCompletedSideEffect(actions) },
     );
-    if (preflightCompaction) {
-      actions.push(this.store.addAction(
-        preflightCompaction.reason === "conversation_sleep"
-          ? "conversation_sleep_checkpoint"
-          : "context_compaction",
-        "completed",
-        {
-          sessionId: handle.metadata.id,
-          reason: preflightCompaction.reason,
-          estimatedTokensBefore: preflightCompaction.budgetBefore.estimatedInputTokens,
-          estimatedTokensAfter: preflightCompaction.budgetAfter.estimatedInputTokens,
-        },
-      ));
-      if (preflightCompaction.reason === "conversation_sleep") {
-        this.scheduleConversationWakeNotification(handle.metadata.id);
+    const preparation = await (async () => {
+      signal?.throwIfAborted();
+      const queuedBehindCurrentTurn = this.privateInbox.repository.listQueued(handle.metadata.id).length > 0;
+      const preflightCompaction = await this.sessionRuntime.compactBeforeTurnIfNeeded(
+        handle,
+        request.text,
+        !queuedBehindCurrentTurn,
+        () => this.flushDurableTurnCoordinators(),
+        signal,
+      );
+      signal?.throwIfAborted();
+      if (preflightCompaction) {
+        actions.push(this.store.addAction(
+          preflightCompaction.reason === "conversation_sleep"
+            ? "conversation_sleep_checkpoint"
+            : "context_compaction",
+          "completed",
+          {
+            sessionId: handle.metadata.id,
+            reason: preflightCompaction.reason,
+            estimatedTokensBefore: preflightCompaction.budgetBefore.estimatedInputTokens,
+            estimatedTokensAfter: preflightCompaction.budgetAfter.estimatedInputTokens,
+          },
+        ));
+        if (preflightCompaction.reason === "conversation_sleep") {
+          this.scheduleConversationWakeNotification(handle.metadata.id);
+        }
       }
-    }
-    const visionInput = await this.prepareVisionInput(handle, request, config, actions, emitEvent, signal);
-    const lifecycle = this.sessionRuntime.prepareConversationLifecycle(handle, request.text);
+      const visionInput = await this.prepareVisionInput(handle, request, config, actions, emitEvent, signal);
+      signal?.throwIfAborted();
+      const lifecycle = this.sessionRuntime.prepareConversationLifecycle(handle, request.text);
 
-    this.sessionRuntime.refreshResidentMemoryContext(handle);
-    const assembledContext = this.buildContextPlan({
-      mode: request.mode,
-      sessionId: handle.metadata.id,
-      characterId: handle.metadata.characterId,
-      conversationSpace: handle.metadata.conversationSpace,
-      query: request.text,
-      timezone: request.timezone,
-    });
-    const lifecycleContext = [visionInput.turnContext, lifecycle.context].filter(Boolean).join("\n\n");
-    if (lifecycleContext) {
-      assembledContext.volatileContext = [assembledContext.volatileContext, lifecycleContext]
-        .filter(Boolean).join("\n\n");
-      assembledContext.turnContext = [assembledContext.volatileContext, assembledContext.memoryContext]
-        .filter(Boolean).join("\n\n");
-      assembledContext.dynamicEstimatedTokens = estimateRpContextTokens([
-        assembledContext.runtimeEnvelope,
-        assembledContext.turnContext,
-      ].filter(Boolean).join("\n\n"));
-    }
-    handle.toolState.timezone = request.timezone;
-    handle.toolState.stableContextPrompt = assembledContext.stableSystemContext;
-    handle.toolState.turnContextPrompt = assembledContext.turnContext;
-    handle.toolState.contextPlan = assembledContext;
-    await this.sessionRuntime.prepareForTurn(handle);
+      this.sessionRuntime.refreshResidentMemoryContext(handle);
+      const assembledContext = this.buildContextPlan({
+        mode: request.mode,
+        sessionId: handle.metadata.id,
+        characterId: handle.metadata.characterId,
+        conversationSpace: handle.metadata.conversationSpace,
+        query: request.text,
+        timezone: request.timezone,
+      });
+      const lifecycleContext = [visionInput.turnContext, lifecycle.context].filter(Boolean).join("\n\n");
+      if (lifecycleContext) {
+        assembledContext.volatileContext = [assembledContext.volatileContext, lifecycleContext]
+          .filter(Boolean).join("\n\n");
+        assembledContext.turnContext = [assembledContext.volatileContext, assembledContext.memoryContext]
+          .filter(Boolean).join("\n\n");
+        assembledContext.dynamicEstimatedTokens = estimateRpContextTokens([
+          assembledContext.runtimeEnvelope,
+          assembledContext.turnContext,
+        ].filter(Boolean).join("\n\n"));
+      }
+      handle.toolState.timezone = request.timezone;
+      handle.toolState.stableContextPrompt = assembledContext.stableSystemContext;
+      handle.toolState.turnContextPrompt = assembledContext.turnContext;
+      handle.toolState.contextPlan = assembledContext;
+      await this.sessionRuntime.prepareForTurn(handle);
+      signal?.throwIfAborted();
+      return { visionInput, lifecycle };
+    })().catch(error => ({ failure: signal?.aborted ? cancelledBeforePrompt() : this.persistSystemExchange(
+      handle, request, messageCountBefore, actions,
+      "回复准备失败：" + redactModelCredentialText(safeErrorMessage(error), modelCredentialSecrets(config)),
+      { status: "failed", eventType: "operation_failed", canRetry: !hasCompletedSideEffect(actions) },
+    ) }));
+    if ("failure" in preparation) return preparation.failure;
+    const { visionInput, lifecycle } = preparation;
     const prefixMessages = privateBurstPrefixUserMessages(request);
     if (prefixMessages.length) this.sessionRuntime.appendMessages(handle, prefixMessages);
     let credentialRedactionObserved = false;
     const unsubscribe = handle.session.subscribe((event) => {
-      if (containsModelCredentialValue(event, config.apiKey)) {
+      if (containsModelCredentialValue(event, modelCredentialSecrets(config))) {
         credentialRedactionObserved = true;
       }
-      const safeEvent = redactModelCredentialValue(event, config.apiKey);
+      const safeEvent = redactModelCredentialValue(event, modelCredentialSecrets(config));
       events.push(safeEvent);
       guardedEvents.push(safeEvent);
     });
@@ -6278,18 +6422,22 @@ export class CompanionKernel {
     signal?.addEventListener("abort", abort, { once: true });
     let promptError: unknown;
     try {
+      signal?.throwIfAborted();
       await handle.session.prompt(request.burstMessages?.at(-1)?.text ?? request.text, {
         expandPromptTemplates: false,
         source: "rpc",
         ...(visionInput.images.length ? { images: visionInput.images } : {}),
       });
+      signal?.throwIfAborted();
       await retryMissingInteractiveThinking(
         handle,
         request.mode,
         actions,
         this.sessionRuntime,
       );
+      signal?.throwIfAborted();
       await retryLeakedToolProtocol(handle, request.mode, actions);
+      signal?.throwIfAborted();
       const outputGuardRecovered = await retryBlockedOutputGuard(
         handle,
         request,
@@ -6297,6 +6445,7 @@ export class CompanionKernel {
         this.sessionRuntime,
       );
       if (outputGuardRecovered) {
+        signal?.throwIfAborted();
         await retryMissingInteractiveThinking(
           handle,
           request.mode,
@@ -6304,6 +6453,7 @@ export class CompanionKernel {
           this.sessionRuntime,
         );
       }
+      signal?.throwIfAborted();
       const lengthRecoveryUsed = await retryLengthTruncatedTurn(
         handle,
         request.mode,
@@ -6312,13 +6462,16 @@ export class CompanionKernel {
         signal,
       );
       if (lengthRecoveryUsed) {
+        signal?.throwIfAborted();
         await retryMissingInteractiveThinking(
           handle,
           request.mode,
           actions,
           this.sessionRuntime,
         );
+        signal?.throwIfAborted();
         await retryLeakedToolProtocol(handle, request.mode, actions);
+        signal?.throwIfAborted();
         const recoveredContinuation = await retryBlockedOutputGuard(
           handle,
           request,
@@ -6326,6 +6479,7 @@ export class CompanionKernel {
           this.sessionRuntime,
         );
         if (recoveredContinuation) {
+          signal?.throwIfAborted();
           await retryMissingInteractiveThinking(
             handle,
             request.mode,
@@ -6344,7 +6498,7 @@ export class CompanionKernel {
 
     this.sessionRuntime.redactModelCredential(
       handle,
-      config.apiKey,
+      modelCredentialSecrets(config),
       credentialRedactionObserved,
     );
 
@@ -6365,10 +6519,10 @@ export class CompanionKernel {
       : promptError
         ? `模型调用失败：${redactModelCredentialText(
             promptError instanceof Error ? promptError.message : String(promptError),
-            config.apiKey,
+            modelCredentialSecrets(config),
           )}`
         : modelResult.errorMessage
-          ? `模型调用失败：${redactModelCredentialText(modelResult.errorMessage, config.apiKey)}`
+          ? `模型调用失败：${redactModelCredentialText(modelResult.errorMessage, modelCredentialSecrets(config))}`
           : internalAnalysisBlocked
             ? "模型输出包含内部分析，已阻止展示。"
             : unfulfilledLengthTruncation
@@ -7128,6 +7282,9 @@ export class CompanionKernel {
       paths = recentRecoverableAttachmentPaths(handle.session.messages);
       recoveredFromRecentTurn = paths.length > 0;
     }
+    // Attachment lists also contain documents. Select supported raster files
+    // before applying image limits or running either automatic vision route.
+    paths = paths.filter(path => handle.workspace.files.isVisionImage(path));
     if (!paths.length) return { images: [], turnContext: "" };
 
     const visionConfig = this.visionService.getConfig();
@@ -7514,9 +7671,23 @@ export class CompanionKernel {
       const handle = metadata.characterId
         ? await this.ensureCanonicalPrivateConversation(metadata.characterId, sessionId, "normal")
         : await this.sessionRuntime.getOrCreate(sessionId,metadata.mode);
-      if (handle.session.messages.some(message => message.role === "custom" && (message.details as Record<string, unknown> | undefined)?.notificationOutboxId === notification.outboxId)) return;
-      this.sessionRuntime.appendMessages(handle,[createSystemEventMessage(notification.body,this.clock.now().getTime(),"operation_completed","completed",false,
-        { notificationOutboxId: notification.outboxId, occurrenceId: notification.occurrenceId })]);
+      if (handle.session.messages.some(message => message.role === "custom" &&
+        ((message.details as Record<string, unknown> | undefined)?.notificationOutboxId === notification.outboxId ||
+          (message.details as Record<string, unknown> | undefined)?.occurrenceId === notification.occurrenceId))) return;
+      this.sessionRuntime.appendMessages(handle, [createSystemEventMessage(
+        notification.body, this.clock.now().getTime(), "operation_completed", "completed", false,
+        {
+          notificationOutboxId: notification.outboxId,
+          occurrenceId: notification.occurrenceId,
+          reminder: {
+            title: notification.title,
+            scheduleItemId: notification.scheduleItemId,
+            eventAt: notification.eventAt ?? notification.dueAt,
+            dueAt: notification.dueAt,
+            timezone: notification.timezone,
+          },
+        },
+      )]);
     });
   }
 
@@ -7675,10 +7846,10 @@ export class CompanionKernel {
     try {
       return await this.modelProviders.registerModel(modelRuntime, config);
     } catch (error) {
-      if (!config.apiKey) throw error;
+      if (!modelCredentialSecrets(config).length) throw error;
       throw new Error(redactModelCredentialText(
         error instanceof Error ? error.message : String(error),
-        config.apiKey,
+        modelCredentialSecrets(config),
       ));
     }
   }

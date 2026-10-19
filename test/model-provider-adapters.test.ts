@@ -192,6 +192,7 @@ test("provider descriptors are exposed without credentials and persisted missing
       "anthropic",
       "google",
       "openai",
+      "openai-codex",
     ]);
     assert.ok(body.providers.every((provider) => provider.description.length > 0));
     assert.ok(body.providers.every((provider) => provider.configurationFields.length > 0));

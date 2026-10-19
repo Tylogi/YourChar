@@ -14,6 +14,9 @@ import type { ModelReasoningEffort } from "./reasoning-effort.js";
 import {
   redactModelCredentialText,
   redactModelCredentialValue,
+  modelCredentialSecrets,
+  type ModelCredentialSecrets,
+  type ModelOAuthBinding,
 } from "./credential-store.js";
 
 export type ModelProviderConfiguration = {
@@ -23,6 +26,7 @@ export type ModelProviderConfiguration = {
   model: string;
   visionInputEnabled: boolean;
   apiKey?: string;
+  oauth?: ModelOAuthBinding;
   credentialRef?: string;
   credentialStatus?: "not_set" | "active" | "missing" | "revoked";
   credentialRevision?: number;
@@ -74,6 +78,7 @@ export type ModelProviderDescriptor = {
   configurationFields: readonly ModelProviderConfigurationFieldDescriptor[];
   connectionTestSupported: boolean;
   modelDiscoverySupported: boolean;
+  authentication?: "oauth";
 };
 
 export type ModelProviderInteractivePolicy = {
@@ -115,6 +120,7 @@ export type ModelProviderAdapter = {
   readonly label: string;
   readonly description: string;
   readonly configurationFields: readonly ModelProviderConfigurationFieldDescriptor[];
+  readonly authentication?: "oauth";
   isConfigured(config: ModelProviderConfiguration): boolean;
   validateConfiguration?(config: ModelProviderConfiguration): readonly string[];
   createModel(config: ModelProviderConfiguration): Model<Api>;
@@ -229,6 +235,7 @@ export class ModelProviderRegistry {
         )),
         connectionTestSupported: Boolean(adapter.testConnection),
         modelDiscoverySupported: Boolean(adapter.discoverModels),
+        ...(adapter.authentication ? { authentication: adapter.authentication } : {}),
       })),
     );
   }
@@ -270,7 +277,7 @@ export class ModelProviderRegistry {
         issues.push("model credential is missing");
       } else if (
         config.credentialRef &&
-        (config.credentialStatus !== "active" || !config.apiKey)
+        (config.credentialStatus !== "active" || (!config.apiKey && !config.oauth))
       ) {
         issues.push("model credential is missing");
       }
@@ -284,7 +291,7 @@ export class ModelProviderRegistry {
     }
     for (const issue of adapter.validateConfiguration?.(config) ?? []) {
       if (typeof issue !== "string") continue;
-      const normalized = redactModelCredentialText(issue.trim(), config.apiKey);
+      const normalized = redactModelCredentialText(issue.trim(), modelCredentialSecrets(config));
       if (normalized && !issues.includes(normalized)) issues.push(normalized.slice(0, 500));
       if (issues.length >= 20) break;
     }
@@ -390,7 +397,7 @@ export class ModelProviderRegistry {
           ? { apiKey: config.apiKey }
           : {}),
       });
-      const result = redactModelCredentialValue(message, config.apiKey);
+      const result = redactModelCredentialValue(message, modelCredentialSecrets(config));
       try {
         this.observeUsage?.({
           provider: config.provider,
@@ -402,7 +409,7 @@ export class ModelProviderRegistry {
       }
       return result;
     } catch (error) {
-      throw redactModelProviderError(error, config.apiKey);
+      throw redactModelProviderError(error, modelCredentialSecrets(config));
     }
   }
 
@@ -419,9 +426,9 @@ export class ModelProviderRegistry {
       throw new ModelProviderOperationUnsupportedError(adapter.id, "connection_test");
     }
     try {
-      return redactModelCredentialValue(await adapter.testConnection(config), config.apiKey);
+      return redactModelCredentialValue(await adapter.testConnection(config), modelCredentialSecrets(config));
     } catch (error) {
-      throw redactModelProviderError(error, config.apiKey);
+      throw redactModelProviderError(error, modelCredentialSecrets(config));
     }
   }
 
@@ -439,9 +446,9 @@ export class ModelProviderRegistry {
     try {
       const models = await adapter.discoverModels(config);
       return [...new Set(models.filter((model) => typeof model === "string" && model.trim())
-        .map((model) => redactModelCredentialText(model.trim(), config.apiKey)))].sort();
+        .map((model) => redactModelCredentialText(model.trim(), modelCredentialSecrets(config))))].sort();
     } catch (error) {
-      throw redactModelProviderError(error, config.apiKey);
+      throw redactModelProviderError(error, modelCredentialSecrets(config));
     }
   }
 }
@@ -453,13 +460,13 @@ function modelCredentialConfigurationIssue(
   if (config.credentialStatus === "missing") return "model credential is missing";
   if (
     config.credentialRef &&
-    (config.credentialStatus !== "active" || !config.apiKey)
+    (config.credentialStatus !== "active" || (!config.apiKey && !config.oauth))
   ) return "model credential is missing";
   return undefined;
 }
 
-function redactModelProviderError(error: unknown, secret: string | undefined): unknown {
-  if (!secret) return error;
+function redactModelProviderError(error: unknown, secret: ModelCredentialSecrets): unknown {
+  if (!secret || (Array.isArray(secret) && secret.length === 0)) return error;
   return new Error(redactModelCredentialText(
     error instanceof Error ? error.message : String(error),
     secret,

@@ -5165,6 +5165,7 @@ export function renderAppHtml(): string {
           <div class="chat-thread">
             <div id="incognitoNotice" class="incognito-notice" role="status" hidden><i data-lucide="eye-off" aria-hidden="true"></i><span>无痕会话仅保存在 YourChar 内存盘；退出或重启后丢弃。模型提供商仍可能保留请求。</span></div>
             <div id="messages" class="messages" aria-live="polite"></div>
+            <div id="privateQueueState" class="history-position-bar" role="status" hidden><span>发送队列已暂停，消息已保留</span><button id="resumePrivateQueueBtn" class="text-button" type="button">继续发送</button></div>
             <form id="composer" class="composer">
               <div id="historyPositionBar" class="history-position-bar" hidden><span>正在查看历史记录</span><button id="historyLatestBtn" class="text-button" type="button">回到最新</button></div>
               <div id="attachmentQueue" class="attachment-queue" hidden></div>
@@ -5834,7 +5835,7 @@ export function renderAppHtml(): string {
                 <label class="task-bench-field task-bench-wide"><span>Judge 评分标准</span><textarea id="taskBenchRubric" maxlength="12000" placeholder="例如：结论需由报告数据支持；指出至少三个主要风险；不得使用报告期后的信息"></textarea></label>
                 <div class="task-bench-upload task-bench-wide">
                   <div class="task-bench-upload-head"><span>直接上传测试材料</span><div class="task-bench-upload-actions"><input id="taskBenchUploadInput" type="file" multiple hidden /><button id="taskBenchUploadBtn" class="secondary" type="button"><i data-lucide="paperclip" aria-hidden="true"></i><span>选择文件</span></button><span id="taskBenchUploadState" class="task-bench-upload-state">尚未上传</span></div></div>
-                  <p class="task-bench-upload-help">文件只在服务内存中临时保留，可复用于本页的多轮评测；单个不超过 20 MiB、合计不超过 80 MiB，关闭页面或一小时后自动清理。</p>
+                  <p class="task-bench-upload-help">文件临时保留，可复用于本页的多轮评测。单个文件遵循上传设置（默认 100 MiB），合计上限为 400 MiB 或单文件上限中的较大值；关闭页面或一小时后自动清理。</p>
                   <div id="taskBenchUploadList" class="task-bench-upload-list" aria-live="polite"></div>
                 </div>
               </div>
@@ -5967,6 +5968,25 @@ export function renderAppHtml(): string {
                 <label for="apiKey">API Key</label>
                 <input id="apiKey" type="password" placeholder="留空表示不修改" autocomplete="off" />
               </div>
+              <div id="codexLoginPanel" class="settings-field full" hidden>
+                <strong>ChatGPT 账号</strong>
+                <span class="muted">使用账号的 Codex 额度。远程部署可选择设备码登录。</span>
+                <div class="settings-actions">
+                  <button id="codexBrowserLoginBtn" class="secondary" type="button">浏览器登录</button>
+                  <button id="codexDeviceLoginBtn" class="secondary" type="button">设备码登录</button>
+                  <button id="codexLogoutBtn" class="secondary" type="button" hidden>退出登录</button>
+                  <button id="codexCancelLoginBtn" class="secondary" type="button" hidden>取消登录</button>
+                </div>
+                <span id="codexLoginStatus" class="muted" role="status" aria-live="polite"></span>
+                <a id="codexAuthLink" target="_blank" rel="noopener noreferrer" referrerpolicy="no-referrer" hidden>打开 ChatGPT 授权页面</a>
+                <div id="codexDeviceCodePanel" hidden><span>在授权页面输入设备码：</span> <strong id="codexDeviceCode"></strong></div>
+                <details id="codexManualPanel" hidden>
+                  <summary>授权后未自动返回？</summary>
+                  <label for="codexCallbackUrl">粘贴浏览器地址栏中的完整回调地址</label>
+                  <input id="codexCallbackUrl" type="password" autocomplete="off" spellcheck="false" placeholder="http://localhost:1455/auth/callback?…" />
+                  <button id="codexSubmitCodeBtn" class="secondary" type="button">完成登录</button>
+                </details>
+              </div>
               <div class="settings-field" data-model-provider-field="temperature">
                 <label for="apiTemperature">Temperature</label>
                 <input id="apiTemperature" type="number" step="0.1" min="0" max="2" placeholder="可选" />
@@ -6070,6 +6090,13 @@ export function renderAppHtml(): string {
             </div>
           </section>
           <section id="documentSettingsPanel" class="management-panel settings-panel" hidden>
+            <h3>文件上传</h3>
+            <div class="settings-grid"><div class="settings-field">
+              <label for="uploadLimitMiB">单个文件上传上限（MiB）</label>
+              <input id="uploadLimitMiB" type="number" min="1" max="1024" step="1" value="100" />
+              <small>默认 100 MiB，可设置为 1–1024 MiB；保存后立即生效。</small>
+            </div></div>
+            <div class="settings-actions"><button id="saveUploadSettingsBtn" class="primary" type="button">保存上传设置</button><span id="uploadSettingsState" class="muted" role="status"></span></div>
             <h3>MinerU 深度文档解析</h3>
             <p class="im-privacy-banner"><strong>显式外发能力。</strong> MarkItDown 仍在 YourChar 本机做轻量转换；MinerU MCP 会把 Agent 选中的整份 Workspace 文档发送到这里配置的 MinerU 服务。返回的 Markdown 与提取图片会组成完整文档包，暂存在当前空间的 <code>tmp/mineru/</code>，保留 24 小时后由 YourChar 清理；不会清理该目录中的其他文件。API 配置本身不会启用工具，还需在“管理 → Agent”中单独打开 MinerU Document MCP。</p>
             <div class="settings-grid">
@@ -6787,6 +6814,9 @@ export function renderAppHtml(): string {
 	      meetingPresetImportOrderOptions: [],
 	      discoveredModels: [],
       modelProviders: [],
+      codexLogin: null,
+      codexLoginTimer: null,
+      codexLoginBusy: false,
       modelProfiles: [],
       defaultModelProfileId: "",
       selectedModelProfileId: "",
@@ -6800,7 +6830,11 @@ export function renderAppHtml(): string {
       privateInboxSource: null,
       privateInboxSessionId: "",
       privateInboxMessages: [],
+      privateInboxFailures: [],
       privateInboxRunning: false,
+      privateInboxPaused: false,
+      privateActiveBurstId: null,
+      privateInterruptedBursts: new Set(),
       privateTypingHeartbeatTimer: null,
       privateTypingHeartbeatLastSentAt: 0,
       okfImportFile: null,
@@ -7105,6 +7139,7 @@ export function renderAppHtml(): string {
       chatAttachmentInput: document.getElementById("chatAttachmentInput"),
       attachFileBtn: document.getElementById("attachFileBtn"),
       sendBtn: document.getElementById("sendBtn"),
+      privateQueueState: document.getElementById("privateQueueState"),
       cancelMessageBtn: document.getElementById("cancelMessageBtn"),
       retryMessageBtn: document.getElementById("retryMessageBtn"),
       status: document.getElementById("status"),
@@ -7449,6 +7484,18 @@ export function renderAppHtml(): string {
       apiProfileName: document.getElementById("apiProfileName"),
       apiProvider: document.getElementById("apiProvider"),
       apiProviderDescription: document.getElementById("apiProviderDescription"),
+      codexLoginPanel: document.getElementById("codexLoginPanel"),
+      codexBrowserLoginBtn: document.getElementById("codexBrowserLoginBtn"),
+      codexDeviceLoginBtn: document.getElementById("codexDeviceLoginBtn"),
+      codexLogoutBtn: document.getElementById("codexLogoutBtn"),
+      codexCancelLoginBtn: document.getElementById("codexCancelLoginBtn"),
+      codexLoginStatus: document.getElementById("codexLoginStatus"),
+      codexAuthLink: document.getElementById("codexAuthLink"),
+      codexDeviceCodePanel: document.getElementById("codexDeviceCodePanel"),
+      codexDeviceCode: document.getElementById("codexDeviceCode"),
+      codexManualPanel: document.getElementById("codexManualPanel"),
+      codexCallbackUrl: document.getElementById("codexCallbackUrl"),
+      codexSubmitCodeBtn: document.getElementById("codexSubmitCodeBtn"),
       newApiProfileBtn: document.getElementById("newApiProfileBtn"),
       defaultApiProfileBtn: document.getElementById("defaultApiProfileBtn"),
       deleteApiProfileBtn: document.getElementById("deleteApiProfileBtn"),
@@ -7704,6 +7751,11 @@ export function renderAppHtml(): string {
     nodes.saveApiSettingsBtn.addEventListener("click", () => saveApiSettings());
     nodes.apiProfileSelect.addEventListener("change", selectApiProfile);
     nodes.apiProvider.addEventListener("change", selectModelProvider);
+    nodes.codexBrowserLoginBtn.addEventListener("click", () => startCodexLogin("browser"));
+    nodes.codexDeviceLoginBtn.addEventListener("click", () => startCodexLogin("device_code"));
+    nodes.codexCancelLoginBtn.addEventListener("click", cancelCodexLogin);
+    nodes.codexLogoutBtn.addEventListener("click", logoutCodex);
+    nodes.codexSubmitCodeBtn.addEventListener("click", submitCodexCode);
     nodes.newApiProfileBtn.addEventListener("click", createApiProfile);
     nodes.defaultApiProfileBtn.addEventListener("click", setDefaultApiProfile);
     nodes.deleteApiProfileBtn.addEventListener("click", deleteApiProfile);
@@ -7943,6 +7995,8 @@ export function renderAppHtml(): string {
     nodes.memoryForm.addEventListener("submit", pinMemory);
     nodes.memoryList.addEventListener("click", handleMemoryAction);
     nodes.cancelMessageBtn.addEventListener("click", cancelMessage);
+    document.getElementById("resumePrivateQueueBtn").addEventListener("click", resumePrivateQueue);
+    document.getElementById("saveUploadSettingsBtn").addEventListener("click", saveUploadSettings);
     nodes.retryMessageBtn.addEventListener("click", retryMessage);
     nodes.attachFileBtn.addEventListener("click", () => nodes.chatAttachmentInput.click());
     nodes.emojiPickerBtn.addEventListener("pointerdown", (event) => event.preventDefault());
@@ -8286,7 +8340,7 @@ export function renderAppHtml(): string {
       if (tab === "model") loadApiSettings();
       if (tab === "im") loadImSettingsView();
       if (tab === "vision") loadVisionSettings();
-      if (tab === "document") loadMineruSettings();
+      if (tab === "document") { loadMineruSettings(); void loadUploadSettings().then(settings => { document.getElementById("uploadLimitMiB").value = settings.maxFileMiB; }).catch(error => { document.getElementById("uploadSettingsState").textContent = error.message; }); }
       if (tab === "git") loadGitSettings();
       if (tab === "search") loadTavilySettings();
       if (tab === "prompt") setPromptSettingsView(state.promptSettingsView);
@@ -9320,10 +9374,32 @@ export function renderAppHtml(): string {
       nodes.chatImageDownloadBtn.removeAttribute("href");
     }
 
+    async function loadUploadSettings() {
+      const response = await fetch("/api/settings/uploads");
+      const body = await response.json();
+      if (!response.ok) throw new Error(body.error || "上传设置读取失败");
+      return body.settings;
+    }
+
+    async function saveUploadSettings() {
+      const button = document.getElementById("saveUploadSettingsBtn");
+      const status = document.getElementById("uploadSettingsState");
+      button.disabled = true;
+      try {
+        const response = await controlPlaneFetch("/api/settings/uploads", {
+          method: "PATCH", headers: { "content-type": "application/json" },
+          body: JSON.stringify({ maxFileMiB: Number(document.getElementById("uploadLimitMiB").value) })
+        });
+        const body = await response.json();
+        if (!response.ok) throw new Error(body.error || "上传设置保存失败");
+        document.getElementById("uploadLimitMiB").value = body.settings.maxFileMiB;
+        status.textContent = "上传设置已保存";
+      } catch (error) { status.textContent = error.message || String(error); }
+      finally { button.disabled = false; }
+    }
+
     async function uploadWorkspaceFiles(files, directory, sessionScoped = false, requestScope = null) {
-      const entries = [];
-      for (const file of files) {
-        if (file.size > 20 * 1024 * 1024) throw new Error(file.name + " 超过 20 MiB 上传限制");
+      const uploads = files.map(file => {
         const query = new URLSearchParams({ directory, name: file.name });
         const uploadUrl = requestScope
           ? workspaceManagerUrl(requestScope, "/upload", query.toString())
@@ -9334,6 +9410,13 @@ export function renderAppHtml(): string {
               "/workspace/files/upload?" + query.toString()
             )
           : "/api/v1/workspace/files/upload?" + query.toString();
+        return { file, uploadUrl };
+      });
+      const uploadSettings = await loadUploadSettings();
+      const entries = [];
+      if (requestScope && !workspaceManagerScopeIsCurrent(requestScope)) return entries;
+      for (const { file, uploadUrl } of uploads) {
+        if (file.size > uploadSettings.maxFileBytes) throw new Error(file.name + " 超过 " + uploadSettings.maxFileMiB + " MiB 上传限制");
         const response = await fetch(uploadUrl, {
           method: "POST",
           headers: { "content-type": file.type || "application/octet-stream" },
@@ -10072,7 +10155,11 @@ export function renderAppHtml(): string {
       state.pendingAttachments = [];
       state.attachmentUploadQueue = [];
       state.privateInboxMessages = [];
+      state.privateInboxFailures = [];
       state.privateInboxRunning = false;
+      state.privateInboxPaused = false;
+      state.privateActiveBurstId = null;
+      state.privateInterruptedBursts = new Set();
       state.contextBudget = null;
       state.characterLiveState = null;
       state.characterFunction = null;
@@ -10733,7 +10820,11 @@ export function renderAppHtml(): string {
       state.attachmentUploadQueue = [];
       renderAttachmentQueue();
       state.privateInboxMessages = [];
+      state.privateInboxFailures = [];
       state.privateInboxRunning = false;
+      state.privateInboxPaused = false;
+      state.privateActiveBurstId = null;
+      state.privateInterruptedBursts = new Set();
       state.contextBudget = null;
       state.characterLiveState = null;
       updateContextBudgetChrome();
@@ -10940,7 +11031,11 @@ export function renderAppHtml(): string {
       resetMessageHistory();
       state.messages = [];
       state.privateInboxMessages = [];
+      state.privateInboxFailures = [];
       state.privateInboxRunning = false;
+      state.privateInboxPaused = false;
+      state.privateActiveBurstId = null;
+      state.privateInterruptedBursts = new Set();
       state.activeProactiveMessages = [];
       state.meetingReturnSessionId = "";
       state.contextBudget = null;
@@ -17636,6 +17731,9 @@ export function renderAppHtml(): string {
         updateInteractionChrome();
         state.contextBudget = budgetResponse.ok ? budgetBody.budget || null : null;
         updateContextBudgetChrome();
+        state.privateInboxFailures = Array.isArray(inboxBody.failedMessages) ? inboxBody.failedMessages : [];
+        state.privateInboxPaused = Boolean(inboxBody.paused);
+        state.privateActiveBurstId = inboxBody.activeBurstId || null;
         state.privateInboxMessages = inboxResponse?.ok && Array.isArray(inboxBody.messages)
           ? inboxBody.messages
           : [];
@@ -17658,15 +17756,15 @@ export function renderAppHtml(): string {
         if (scope.incognito) {
           for (const message of storedMessages) message.attachments = [];
         }
-        const withInbox = mergePrivateInboxMessages(storedMessages, historyScopedEvents(state.privateInboxMessages));
+        const withInbox = mergePrivateInboxMessages(storedMessages, historyScopedEvents(visiblePrivateInboxMessages()));
         const messages = annotateProactiveMessages(mergeCharacterCollaborations(
           mergeInteractionEvents(
-            preserveActiveBurstMessages(withInbox, historyScopedEvents(state.privateInboxMessages)),
+            preserveActiveBurstMessages(withInbox, historyScopedEvents(visiblePrivateInboxMessages())),
             historyScopedEvents(state.interactionEvents)
           ),
           historyScopedEvents(visibleCharacterCollaborations())
         ), state.activeProactiveMessages);
-        const latestOutcome = [...messages].reverse().find((message) => message.status);
+        const latestOutcome = [...messages].reverse().find((message) => message.role !== "reminder" && message.status);
         if (latestOutcome) {
           state.lastTurnStatus = latestOutcome.status;
           state.lastTurnCanRetry = Boolean(latestOutcome.canRetry);
@@ -17906,10 +18004,14 @@ export function renderAppHtml(): string {
       }
       if (event.type === "snapshot") {
         const inbox = event.inbox || {};
+        state.privateInboxPaused = Boolean(inbox.paused);
+        state.privateActiveBurstId = inbox.activeBurstId || null;
+        if (inbox.interrupting && inbox.activeBurstId) state.privateInterruptedBursts.add(inbox.activeBurstId);
         state.privateInboxMessages = Array.isArray(inbox.messages) ? inbox.messages : [];
+        state.privateInboxFailures = Array.isArray(inbox.failedMessages) ? inbox.failedMessages : [];
         const activeBurstIds = activePrivateBurstIds(state.privateInboxMessages);
         state.privateInboxRunning = Boolean(inbox.running && activeBurstIds.size);
-        state.privateInboxMessages.forEach(syncPrivateInboxUserBubble);
+        visiblePrivateInboxMessages().forEach(syncPrivateInboxUserBubble);
         for (const message of state.privateInboxMessages) {
           if (message.status === "processing" && message.burstId) {
             ensurePrivateBurstMessage(message.burstId, message.createdAt);
@@ -17938,9 +18040,24 @@ export function renderAppHtml(): string {
         }
         return;
       }
+      if (event.type === "queue_state") {
+        state.privateInboxPaused = Boolean(event.paused);
+        updateDirectGenerationControls();
+        return;
+      }
+      if (event.type === "burst_interrupted") {
+        state.privateInterruptedBursts.add(event.burstId);
+        if (state.privateInterruptedBursts.size > 256) state.privateInterruptedBursts.delete(state.privateInterruptedBursts.values().next().value);
+        const index = privateBurstIndex(event.burstId);
+        if (index >= 0) completeMessageProgress(index, "cancelled");
+        setStatus(event.reason === "new_message" ? "已收到补充，正在接续回复" : "正在停止当前回复");
+        renderMessages();
+        return;
+      }
       if (event.type === "message_queued" || event.type === "message_updated") {
         upsertPrivateInboxMessage(event.message);
         syncPrivateInboxUserBubble(event.message);
+        updateDirectGenerationControls();
         renderMessages();
         return;
       }
@@ -17951,11 +18068,13 @@ export function renderAppHtml(): string {
         state.messages = state.messages.filter((message) =>
           message.inboxMessageId !== event.messageId && message.clientMessageId !== event.clientMessageId
         );
+        updateDirectGenerationControls();
         renderMessages();
         return;
       }
       if (event.type === "burst_started") {
         const burst = event.burst || {};
+        state.privateActiveBurstId = burst.id;
         void captureInsightReceiptBaseline(burst.id);
         const messages = Array.isArray(burst.messages) ? burst.messages : [];
         messages.forEach((message) => {
@@ -17969,17 +18088,26 @@ export function renderAppHtml(): string {
         return;
       }
       if (event.type === "agent_event") {
-        applyPrivateAgentEvent(event.burstId, event.event);
+        if (!state.privateInterruptedBursts.has(event.burstId) && (!state.privateActiveBurstId || state.privateActiveBurstId === event.burstId)) applyPrivateAgentEvent(event.burstId, event.event);
         return;
       }
       if (event.type === "burst_done") {
         finishPrivateBurst(event.burstId, event.response || {});
+        const completedIds = new Set(event.messageIds || []);
+        state.privateInboxFailures = (state.privateInboxFailures || []).filter(message => !completedIds.has(message.id));
+        if (event.response?.status === "failed") {
+          state.privateInboxFailures.push(...state.privateInboxMessages.filter(message => completedIds.has(message.id))
+            .map(message => ({ ...message, status: "failed", lastError: event.response.reply, completedAt: new Date().toISOString() })));
+        }
         state.privateInboxMessages = state.privateInboxMessages.filter((message) =>
           !Array.isArray(event.messageIds) || !event.messageIds.includes(message.id)
         );
-        state.privateInboxRunning = false;
+        if (!state.privateActiveBurstId || state.privateActiveBurstId === event.burstId) {
+          state.privateInboxRunning = false;
+          state.privateActiveBurstId = null;
+          applyTurnOutcome(event.response || {});
+        }
         updateDirectGenerationControls();
-        applyTurnOutcome(event.response || {});
         await refreshSessionMessages(true, expectedEpoch, expectedViewEpoch);
         if (!conversationViewIsCurrent("direct", expectedSessionId, expectedViewEpoch)) return;
         await loadConversationScene(false, expectedViewEpoch);
@@ -18004,14 +18132,20 @@ export function renderAppHtml(): string {
           message.working = false;
         }
         const failedIds = new Set(Array.isArray(event.messageIds) ? event.messageIds : []);
+        state.privateInboxFailures = [...(state.privateInboxFailures || []).filter(message => !failedIds.has(message.id)),
+          ...state.privateInboxMessages.filter(message => failedIds.has(message.id))
+            .map(message => ({ ...message, status: "failed", lastError: event.error, completedAt: new Date().toISOString() }))];
         state.privateInboxMessages = state.privateInboxMessages.filter((entry) => !failedIds.has(entry.id));
         state.messages.forEach((entry) => {
           if (failedIds.has(entry.inboxMessageId)) entry.queueStatus = "failed";
         });
-        state.privateInboxRunning = false;
+        if (!state.privateActiveBurstId || state.privateActiveBurstId === event.burstId) {
+          state.privateInboxRunning = false;
+          state.privateActiveBurstId = null;
+          setStatus(event.error || "模型调用失败", true);
+        }
         updateDirectGenerationControls();
         renderMessages();
-        setStatus(event.error || "模型调用失败", true);
       }
     }
 
@@ -18216,10 +18350,17 @@ export function renderAppHtml(): string {
     }
 
     function updateDirectGenerationControls() {
-      if (state.activeConversationKind !== "direct") return;
+      if (state.activeConversationKind !== "direct") {
+        if (nodes.privateQueueState) nodes.privateQueueState.hidden = true;
+        return;
+      }
       const incognito = incognitoConversationIsActive();
       nodes.sendBtn.disabled = state.uploadingAttachments || state.incognitoTransitioning || state.privateModeTransitioning;
-      nodes.cancelMessageBtn.disabled = incognito ? !state.busy : !state.privateInboxRunning;
+      const queued = state.privateInboxMessages.some(message => message.status === "queued");
+      nodes.cancelMessageBtn.disabled = incognito ? !state.busy : !state.privateInboxRunning && (!queued || state.privateInboxPaused);
+      const sendLabel = nodes.sendBtn.querySelector?.("span");
+      if (sendLabel) sendLabel.textContent = !incognito && state.privateInboxRunning ? "插话" : "发送";
+      if (nodes.privateQueueState) nodes.privateQueueState.hidden = incognito || !state.privateInboxPaused || !queued;
       updateRetryState();
       updateSessionActionState();
       updateInteractionChrome();
@@ -18322,7 +18463,8 @@ export function renderAppHtml(): string {
       const expectedViewEpoch = state.conversationViewEpoch;
       const requestedSpace = state.conversationSpace;
       const clientMessageId = generateClientMessageId();
-      setStatus("已加入发送队列");
+      const inboxRevision = ensureMessageHistory().liveRevision || 0;
+      setStatus(state.privateInboxRunning ? "正在插话..." : "已加入发送队列");
       closeEmojiPicker();
       nodes.textInput.value = "";
       state.pendingAttachments = [];
@@ -18365,14 +18507,19 @@ export function renderAppHtml(): string {
         ) {
           const resolvedSessionId = body.message?.sessionId || sessionIdValue;
           const localMessage = state.messages.find((message) => message.localId === localId);
-          if (localMessage && body.message) {
+          if (localMessage && body.message && !localMessage.inboxMessageId) {
             localMessage.inboxMessageId = body.message.id;
             localMessage.queueStatus = body.message.status || "queued";
           }
-          state.privateInboxMessages = Array.isArray(body.inbox?.messages)
-            ? body.inbox.messages
-            : state.privateInboxMessages;
-          state.privateInboxRunning = Boolean(body.inbox?.running);
+          if ((ensureMessageHistory().liveRevision || 0) === inboxRevision) {
+            state.privateInboxMessages = Array.isArray(body.inbox?.messages)
+              ? body.inbox.messages
+              : state.privateInboxMessages;
+            state.privateInboxRunning = Boolean(body.inbox?.running);
+            state.privateInboxFailures = Array.isArray(body.inbox?.failedMessages) ? body.inbox.failedMessages : [];
+            state.privateInboxPaused = Boolean(body.inbox?.paused);
+            state.privateActiveBurstId = body.inbox?.activeBurstId || null;
+          }
           const wasDraft = state.sessionDraft;
           ensureCharacterCollaborationSession(resolvedSessionId);
           state.activeSessionId = resolvedSessionId;
@@ -18809,16 +18956,33 @@ export function renderAppHtml(): string {
         setStatus("正在停止无痕生成...");
         return;
       }
-      if (!state.privateInboxRunning) return;
-      const sessionId = encodeURIComponent(state.activeSessionId);
+      if (!state.privateInboxRunning && !state.privateInboxMessages.some(message => message.status === "queued")) return;
+      const activeSessionId = state.activeSessionId;
+      const sessionId = encodeURIComponent(activeSessionId);
       try {
-        await fetch(withConversationSpace(
+        const response = await fetch(withConversationSpace(
           "/api/v1/sessions/" + sessionId + "/messages/cancel"
         ), { method: "POST" });
-        setStatus("正在停止...");
+        if (!response.ok) throw new Error("停止失败，请重试");
+        if (activeSessionId !== state.activeSessionId) return;
+        state.privateInboxPaused = true;
+        updateDirectGenerationControls();
+        setStatus("已请求停止，发送队列已暂停");
       } catch (error) {
         setStatus(error.message || String(error), true);
       }
+    }
+
+    async function resumePrivateQueue() {
+      const sessionId = state.activeSessionId;
+      try {
+        const response = await fetch(withConversationSpace("/api/v1/sessions/" + encodeURIComponent(sessionId) + "/inbox/resume"), { method: "POST" });
+        if (!response.ok) throw new Error("继续发送失败");
+        if (sessionId !== state.activeSessionId) return;
+        state.privateInboxPaused = false;
+        updateDirectGenerationControls();
+        setStatus("已继续发送");
+      } catch (error) { setStatus(error.message || String(error), true); }
     }
 
     async function retryMessage() {
@@ -18916,8 +19080,13 @@ export function renderAppHtml(): string {
       const at = message.timestamp ? new Date(message.timestamp).toLocaleTimeString() : "";
       const timestampMs = message.timestamp ? new Date(message.timestamp).getTime() : 0;
       const details = message.details && typeof message.details === "object" ? message.details : {};
+      const reminder = isSystemEvent && typeof details.notificationOutboxId === "string" &&
+        typeof details.occurrenceId === "string"
+        ? { ...details.reminder, occurrenceId: details.occurrenceId, notificationOutboxId: details.notificationOutboxId }
+        : null;
       return {
-        role,
+        role: reminder ? "reminder" : role,
+        reminder,
         text: presentation.text,
         rawText: content,
         attachments,
@@ -18988,17 +19157,24 @@ export function renderAppHtml(): string {
       return merged;
     }
 
+    function visiblePrivateInboxMessages() {
+      const activeIds = new Set(state.privateInboxMessages.map(message => message.id));
+      return [...state.privateInboxMessages, ...(state.privateInboxFailures || []).filter(message => !activeIds.has(message.id))];
+    }
+
     function mergePrivateInboxMessages(messages, inboxMessages) {
       const merged = [...messages];
       const consumedTranscriptIndexes = new Set();
       for (const inboxMessage of Array.isArray(inboxMessages) ? inboxMessages : []) {
         const normalized = normalizeInboxMessage(inboxMessage);
-        const transcriptIndex = inboxMessage.status === "processing"
+        const transcriptIndex = ["processing", "failed"].includes(inboxMessage.status)
           ? merged.findIndex((message, index) =>
               !consumedTranscriptIndexes.has(index) &&
               message.role === "user" &&
               String(message.rawText || message.text || "") === String(inboxMessage.text || "") &&
-              Math.abs((message.timestampMs || 0) - normalized.timestampMs) < 120_000
+              (Math.abs((message.timestampMs || 0) - normalized.timestampMs) < 120_000 ||
+                (inboxMessage.status === "failed" && message.timestampMs >= normalized.timestampMs &&
+                  message.timestampMs <= Date.parse(inboxMessage.completedAt || inboxMessage.updatedAt) + 1000))
             )
           : -1;
         if (transcriptIndex >= 0) {
@@ -19007,7 +19183,8 @@ export function renderAppHtml(): string {
             inboxMessageId: normalized.inboxMessageId,
             inboxBurstId: normalized.inboxBurstId,
             clientMessageId: normalized.clientMessageId,
-            queueStatus: normalized.queueStatus
+            queueStatus: normalized.queueStatus,
+            queueError: normalized.queueError
           });
         } else if (!merged.some((message) =>
           message.inboxMessageId === normalized.inboxMessageId ||
@@ -19219,11 +19396,15 @@ export function renderAppHtml(): string {
     }
 
     function dedupeSystemEvents(messages) {
-      return messages.filter((message, index) => !(
-        message.role === "system" &&
-        messages[index + 1]?.role === "system" &&
-        messages[index + 1]?.text === message.text
-      ));
+      const reminders = new Set();
+      return messages.filter((message, index) => {
+        if (message.role === "reminder") {
+          if (reminders.has(message.reminder.occurrenceId)) return false;
+          reminders.add(message.reminder.occurrenceId);
+        }
+        return !(message.role === "system" && messages[index + 1]?.role === "system" &&
+          messages[index + 1]?.text === message.text);
+      });
     }
 
     function preserveLocalMessageProgress(messages) {
@@ -19344,6 +19525,7 @@ export function renderAppHtml(): string {
     }
 
     function renderStandardMessage(message, index) {
+        if (message.role === "reminder") return renderReminderTimelineCard(message);
         if (message.role === "collaboration") return renderCollaborationEvent(message);
         if (message.role === "interaction") return renderInteractionEvent(message);
         if (message.role === "system") {
@@ -19686,12 +19868,17 @@ export function renderAppHtml(): string {
           '</div></details></span>';
       }
       if (message.role !== "user") return "";
+      if (message.queueStatus === "failed" && message.inboxMessageId) {
+        return '<span class="message-actions"><button class="message-action" type="button" data-message-action="restore" data-message-index="' + index + '" title="放回输入框" aria-label="放回输入框"><i data-lucide="corner-up-left" aria-hidden="true"></i></button></span>';
+      }
       const queued = message.queueStatus === "queued" && Boolean(message.inboxMessageId);
+      const processing = message.queueStatus === "processing" && Boolean(message.inboxMessageId) &&
+        state.privateInboxMessages.filter(entry => entry.status === "processing").at(-1)?.id === message.inboxMessageId;
       const storedLatest = message.latestUser && Boolean(message.entryId);
-      if (!queued && !storedLatest) return "";
+      if (!queued && !processing && !storedLatest) return "";
       return '<span class="message-actions">' +
         (message.text ? '<button class="message-action" type="button" data-message-action="edit" data-message-index="' + index + '" title="编辑并重新发送" aria-label="编辑消息"><i data-lucide="pencil" aria-hidden="true"></i></button>' : '') +
-        '<button class="message-action" type="button" data-message-action="retract" data-message-index="' + index + '" title="撤回消息" aria-label="撤回消息"><i data-lucide="undo-2" aria-hidden="true"></i></button>' +
+        (processing ? '' : '<button class="message-action" type="button" data-message-action="retract" data-message-index="' + index + '" title="撤回消息" aria-label="撤回消息"><i data-lucide="undo-2" aria-hidden="true"></i></button>') +
         '</span>';
     }
 
@@ -19735,8 +19922,21 @@ export function renderAppHtml(): string {
       const button = event.target.closest("button[data-message-action]");
       if (!button || state.busy || state.incognitoTransitioning || incognitoConversationIsActive()) return;
       const message = state.messages[Number(button.dataset.messageIndex)];
+      if (button.dataset.messageAction === "restore" && message?.queueStatus === "failed") {
+        if (nodes.textInput.value.trim() || state.pendingAttachments.length) {
+          setStatus("请先发送或清空当前草稿", true);
+          return;
+        }
+        nodes.textInput.value = message.text || "";
+        state.pendingAttachments = [...(message.attachments || [])];
+        renderAttachmentQueue();
+        nodes.textInput.focus();
+        setStatus("消息已放回输入框，确认后发送");
+        return;
+      }
       const queued = message?.queueStatus === "queued" && Boolean(message?.inboxMessageId);
-      if (!queued && (!message?.entryId || !message.latestUser)) return;
+      const processing = message?.queueStatus === "processing" && Boolean(message?.inboxMessageId);
+      if (!queued && !processing && (!message?.entryId || !message.latestUser)) return;
       if (button.dataset.messageAction === "edit") {
         editingMessage = message;
         nodes.messageEditText.value = message.text;
@@ -19773,12 +19973,12 @@ export function renderAppHtml(): string {
     }
 
     async function reviseMessage(message, action, text) {
-      const queued = message.queueStatus === "queued" && Boolean(message.inboxMessageId);
+      const queued = ["queued", "processing"].includes(message.queueStatus) && Boolean(message.inboxMessageId);
       state.busy = true;
       nodes.submitMessageEditBtn.disabled = true;
       nodes.messageEditError.textContent = "";
       setStatus(action === "edit"
-        ? queued ? "正在更新待发送消息..." : "正在重新生成回复..."
+        ? queued ? "正在更新消息..." : "正在重新生成回复..."
         : "正在撤回...");
       try {
         const response = queued
@@ -19810,7 +20010,7 @@ export function renderAppHtml(): string {
         await refreshSessionMessages(true);
         await loadSessions();
         setStatus(action === "edit"
-          ? queued ? "待发送消息已更新" : "消息已编辑并重新发送"
+          ? queued ? "消息已更新，将按修改后的内容回复" : "消息已编辑并重新发送"
           : "消息已撤回");
       } catch (error) {
         const messageText = error.message || String(error);
@@ -21017,13 +21217,16 @@ export function renderAppHtml(): string {
       const files = Array.from(event.target.files || []);
       event.target.value = "";
       if (!files.length || state.taskBenchRunning || state.taskBenchUploading) return;
-      const maximumFileBytes = 20 * 1024 * 1024;
-      const maximumTotalBytes = 80 * 1024 * 1024;
+      let uploadSettings;
+      try { uploadSettings = await loadUploadSettings(); }
+      catch (error) { nodes.taskBenchState.textContent = error.message; return; }
+      const maximumFileBytes = uploadSettings.maxFileBytes;
+      const maximumTotalBytes = Math.max(400 * 1024 * 1024, maximumFileBytes);
       const existingBytes = state.taskBenchUploads.reduce((total, entry) => total + Number(entry.size || 0), 0);
       const selectedBytes = files.reduce((total, file) => total + file.size, 0);
       const oversized = files.find((file) => file.size > maximumFileBytes);
       if (oversized) {
-        nodes.taskBenchState.textContent = oversized.name + " 超过 20 MiB 上传限制。";
+        nodes.taskBenchState.textContent = oversized.name + " 超过 " + uploadSettings.maxFileMiB + " MiB 上传限制。";
         return;
       }
       if (state.taskBenchUploads.length + files.length > 20) {
@@ -21031,7 +21234,7 @@ export function renderAppHtml(): string {
         return;
       }
       if (existingBytes + selectedBytes > maximumTotalBytes) {
-        nodes.taskBenchState.textContent = "临时测试材料合计不能超过 80 MiB。";
+        nodes.taskBenchState.textContent = "临时测试材料合计不能超过 " + (maximumTotalBytes / 1024 / 1024) + " MiB。";
         return;
       }
       const batch = files.map((file, index) => ({
@@ -21519,14 +21722,16 @@ export function renderAppHtml(): string {
       nodes.clearApiKeyBtn.hidden = !fields.has("apiKey");
       nodes.rollbackApiKeyBtn.hidden = !fields.has("apiKey") ||
         !state.modelProfiles.find((profile) => profile.id === state.selectedModelProfileId)?.credentialCanRollback;
+      renderCodexLogin();
       updateModelProviderActions();
     }
 
     function updateModelProviderActions() {
       const descriptor = selectedModelProviderDescriptor();
-      nodes.testModelBtn.disabled = !descriptor?.connectionTestSupported;
+      const loginBusy = state.codexLoginBusy || codexLoginPending(state.codexLogin);
+      nodes.testModelBtn.disabled = Boolean(loginBusy) || !descriptor?.connectionTestSupported;
       nodes.testModelBtn.title = descriptor?.connectionTestSupported ? "" : "该 Provider 不支持连接测试";
-      nodes.discoverModelsBtn.disabled = !descriptor?.modelDiscoverySupported;
+      nodes.discoverModelsBtn.disabled = Boolean(loginBusy) || !descriptor?.modelDiscoverySupported;
       nodes.discoverModelsBtn.title = descriptor?.modelDiscoverySupported ? "" : "该 Provider 不支持模型发现";
     }
 
@@ -21593,7 +21798,9 @@ export function renderAppHtml(): string {
     function formatModelCredentialState(config, prefix) {
       const revision = config.credentialRevision ? " · revision " + config.credentialRevision : "";
       const defaultPrefix = config.isDefault ? "系统默认 · " : "";
-      const status = config.credentialStatus === "active"
+      const status = config.provider === "openai-codex"
+        ? (config.credentialType === "oauth" && config.credentialStatus === "active" ? "ChatGPT 已登录" : "ChatGPT 未登录")
+        : config.credentialStatus === "active"
         ? "Key: " + (config.apiKeyMasked || "已保存")
         : config.credentialStatus === "revoked"
           ? "Key 已撤销"
@@ -21628,7 +21835,8 @@ export function renderAppHtml(): string {
         nodes.apiContextWindowTokens.value = config.contextWindowTokens ?? "";
         nodes.apiSettingsState.textContent = formatModelCredentialState(config);
         nodes.clearApiKeyBtn.disabled = config.credentialStatus !== "active";
-        nodes.rollbackApiKeyBtn.hidden = !config.credentialCanRollback;
+        nodes.rollbackApiKeyBtn.hidden = !config.credentialCanRollback || config.provider === "openai-codex";
+        renderCodexLogin();
         renderCharacterOptions();
       } catch (error) {
         nodes.apiSettingsState.textContent = error.message || String(error);
@@ -21636,12 +21844,15 @@ export function renderAppHtml(): string {
     }
 
     function selectApiProfile() {
+      resetCodexLogin();
       state.selectedModelProfileId = nodes.apiProfileSelect.value;
       state.discoveredModels = [];
       void loadApiSettings(state.selectedModelProfileId);
     }
 
     function selectModelProvider() {
+      resetCodexLogin();
+      nodes.apiKey.value = "";
       state.discoveredModels = [];
       nodes.apiModelCustom.value = "";
       applyModelProviderDescriptor();
@@ -21649,7 +21860,153 @@ export function renderAppHtml(): string {
       nodes.apiSettingsState.textContent = "Provider 已切换；保存后可读取该 Provider 的模型。";
     }
 
+    function codexLoginPending(login) {
+      return login && (login.status === "pending" || login.status === "authorizing");
+    }
+
+    function renderCodexLogin() {
+      const enabled = selectedModelProviderDescriptor()?.authentication === "oauth";
+      nodes.codexLoginPanel.hidden = !enabled;
+      const login = state.codexLogin?.profileId === state.selectedModelProfileId ? state.codexLogin : null;
+      const pending = codexLoginPending(login);
+      const busy = pending || state.codexLoginBusy;
+      nodes.apiProfileSelect.disabled = state.codexLoginBusy;
+      nodes.apiProvider.disabled = state.codexLoginBusy;
+      nodes.newApiProfileBtn.disabled = state.codexLoginBusy;
+      nodes.saveApiSettingsBtn.disabled = Boolean(busy);
+      const profile = state.modelProfiles.find((item) => item.id === state.selectedModelProfileId);
+      const active = profile?.provider === nodes.apiProvider.value && profile?.credentialType === "oauth" && profile?.credentialStatus === "active";
+      nodes.codexBrowserLoginBtn.disabled = Boolean(busy);
+      nodes.codexDeviceLoginBtn.disabled = Boolean(busy);
+      nodes.codexLogoutBtn.hidden = !active;
+      nodes.codexLogoutBtn.disabled = Boolean(state.codexLoginBusy);
+      nodes.codexCancelLoginBtn.hidden = !pending;
+      nodes.codexLoginStatus.textContent = login?.error || (state.codexLoginBusy ? "正在处理登录…"
+        : login?.status === "pending" ? "正在准备授权…"
+        : pending ? "请在 ChatGPT 授权页面完成登录，本页会自动更新。"
+        : active ? "ChatGPT 已登录" : "ChatGPT 未登录");
+      const url = pending && (login.authUrl || login.verificationUri);
+      nodes.codexAuthLink.hidden = !url;
+      if (url) nodes.codexAuthLink.href = url;
+      else nodes.codexAuthLink.removeAttribute("href");
+      nodes.codexDeviceCodePanel.hidden = !pending || !login?.userCode;
+      nodes.codexDeviceCode.textContent = pending ? login.userCode || "" : "";
+      nodes.codexManualPanel.hidden = !pending || !login?.manualCode;
+      if (!pending) nodes.codexCallbackUrl.value = "";
+      updateModelProviderActions();
+    }
+
+    async function codexLoginRequest(profileId, operation, body) {
+      const response = await controlPlaneFetch("/api/v1/model-profiles/" + encodeURIComponent(profileId) + "/oauth/" + operation, {
+        method: "POST", body: JSON.stringify(body)
+      });
+      const result = await response.json();
+      if (!response.ok) throw new Error(result.error || "Codex 登录操作失败");
+      return result;
+    }
+
+    function resetCodexLogin() {
+      const login = state.codexLogin;
+      clearTimeout(state.codexLoginTimer);
+      state.codexLoginTimer = null;
+      state.codexLogin = null;
+      nodes.codexCallbackUrl.value = "";
+      if (codexLoginPending(login)) {
+        void codexLoginRequest(login.profileId, "cancel", { loginId: login.id }).catch(() => undefined);
+      }
+    }
+
+    async function startCodexLogin(method) {
+      if (state.codexLoginBusy || codexLoginPending(state.codexLogin)) return;
+      const profileId = state.selectedModelProfileId;
+      state.codexLoginBusy = true;
+      state.codexLogin = null;
+      renderCodexLogin();
+      try {
+        const profile = await saveApiSettings(true);
+        if (state.selectedModelProfileId !== profileId || nodes.apiProvider.value !== "openai-codex") return;
+        const result = await codexLoginRequest(profileId, "start", { method, expectedRevision: profile.credentialRevision || 0 });
+        if (state.selectedModelProfileId !== profileId || nodes.apiProvider.value !== "openai-codex") {
+          await codexLoginRequest(profileId, "cancel", { loginId: result.login.id });
+          return;
+        }
+        state.codexLogin = result.login;
+        state.codexLoginTimer = setTimeout(pollCodexLogin, 300);
+      } catch (error) {
+        if (state.selectedModelProfileId === profileId) state.codexLogin = { profileId, status: "failed", error: error.message || String(error) };
+      } finally {
+        state.codexLoginBusy = false;
+        renderCodexLogin();
+      }
+    }
+
+    async function pollCodexLogin() {
+      const login = state.codexLogin;
+      if (!codexLoginPending(login)) return;
+      if (login.profileId !== state.selectedModelProfileId || nodes.apiProvider.value !== "openai-codex") {
+        resetCodexLogin();
+        return;
+      }
+      try {
+        const result = await codexLoginRequest(login.profileId, "status", { loginId: login.id });
+        if (state.codexLogin?.id !== login.id || state.selectedModelProfileId !== login.profileId) return;
+        state.codexLogin = result.login;
+        renderCodexLogin();
+        if (result.login.status === "complete") {
+          await loadApiSettings(login.profileId);
+          if (state.selectedModelProfileId === login.profileId) await discoverModels();
+        } else if (codexLoginPending(result.login)) {
+          state.codexLoginTimer = setTimeout(pollCodexLogin, 1200);
+        }
+      } catch (error) {
+        if (state.codexLogin?.id !== login.id) return;
+        state.codexLogin = { ...login, status: "failed", error: error.message || String(error) };
+        renderCodexLogin();
+      }
+    }
+
+    async function cancelCodexLogin() {
+      const login = state.codexLogin;
+      if (!codexLoginPending(login)) return;
+      try {
+        const result = await codexLoginRequest(login.profileId, "cancel", { loginId: login.id });
+        if (state.codexLogin?.id === login.id) {
+          clearTimeout(state.codexLoginTimer);
+          state.codexLogin = result.login;
+          renderCodexLogin();
+        }
+      } catch (error) { nodes.codexLoginStatus.textContent = error.message || String(error); }
+    }
+
+    async function submitCodexCode() {
+      const login = state.codexLogin;
+      if (!codexLoginPending(login)) return;
+      const callbackUrl = nodes.codexCallbackUrl.value;
+      nodes.codexCallbackUrl.value = "";
+      nodes.codexSubmitCodeBtn.disabled = true;
+      try {
+        await codexLoginRequest(login.profileId, "submit", { loginId: login.id, callbackUrl });
+      } catch (error) { nodes.codexLoginStatus.textContent = error.message || String(error); }
+      finally { nodes.codexSubmitCodeBtn.disabled = false; }
+    }
+
+    async function logoutCodex() {
+      const profileId = state.selectedModelProfileId;
+      state.codexLoginBusy = true;
+      renderCodexLogin();
+      try {
+        await codexLoginRequest(profileId, "logout", { expectedRevision: state.loadedModelCredentialRevision });
+        if (state.selectedModelProfileId === profileId) {
+          resetCodexLogin();
+          await loadApiSettings(profileId);
+        }
+      } catch (error) {
+        if (state.selectedModelProfileId === profileId) state.codexLogin = { profileId, status: "failed", error: error.message || String(error) };
+      } finally { state.codexLoginBusy = false; renderCodexLogin(); }
+    }
+
     async function createApiProfile() {
+      resetCodexLogin();
       nodes.newApiProfileBtn.disabled = true;
       try {
         const response = await fetch("/api/v1/model-profiles", {
@@ -22360,7 +22717,7 @@ export function renderAppHtml(): string {
           field.key === "baseUrl" && field.required
         );
         if (baseUrlRequired && !profilePatch.baseUrl) throw new Error("请先填写 Base URL");
-        const secret = nodes.apiKey.value;
+        const secret = selectedModelProviderDescriptor()?.configurationFields?.some((field) => field.key === "apiKey") ? nodes.apiKey.value : "";
         const response = await controlPlaneFetch("/api/v1/diagnostics/model/models", {
           method: "POST",
           body: JSON.stringify({
@@ -22795,14 +23152,15 @@ export function renderAppHtml(): string {
         const body = await response.json();
         if (!response.ok) throw new Error(body.error || "保存失败");
         const config = body.profile;
-        state.loadedModelProviderId = config.provider || provider;
+        state.loadedModelProviderId = config.provider || payload.provider;
         state.loadedModelCredentialRevision = config.credentialRevision || 0;
         state.loadedModelCredentialStatus = config.credentialStatus || "not_set";
         nodes.apiKey.value = "";
         nodes.apiSettingsState.textContent = formatModelCredentialState(config, "已保存 · ");
         nodes.clearApiKeyBtn.disabled = config.credentialStatus !== "active";
-        nodes.rollbackApiKeyBtn.hidden = !config.credentialCanRollback;
+        nodes.rollbackApiKeyBtn.hidden = !config.credentialCanRollback || config.provider === "openai-codex";
         await loadModelProfiles(config.id);
+        renderCodexLogin();
         renderCharacterOptions();
         setStatus("API 设置已保存");
         return config;

@@ -19,13 +19,12 @@ import {
 } from "../modules/catalog.js";
 import type { WorkspaceAccess } from "../modules/types.js";
 import { backgroundThinkingPolicy } from "../model/background-thinking-policy.js";
-import type { TaskBenchUploadFixture } from "./task-bench-uploads.js";
+import { MAX_TASK_BENCH_UPLOAD_TOTAL_BYTES, type TaskBenchUploadFixture } from "./task-bench-uploads.js";
 
 const maximumTaskCharacters = 30_000;
 const maximumRubricCharacters = 12_000;
 const maximumReferenceCharacters = 30_000;
 const maximumFixtureFiles = 20;
-const maximumFixtureBytes = 80 * 1024 * 1024;
 const maximumRepetitions = 5;
 const defaultTaskTimeoutSeconds = 30 * 60;
 const maximumTaskTimeoutSeconds = 2 * 60 * 60;
@@ -584,6 +583,7 @@ function prepareTarget(
     throw new TaskBenchValidationError(`测试材料不能超过 ${maximumFixtureFiles} 个`);
   }
   const totalBytes = fixtures.reduce((total, fixture) => total + fixture.bytes.byteLength, 0);
+  const maximumFixtureBytes = Math.max(MAX_TASK_BENCH_UPLOAD_TOTAL_BYTES, source.uploadSettings.get().maxFileBytes);
   if (totalBytes > maximumFixtureBytes) {
     throw new TaskBenchValidationError(`测试材料合计不能超过 ${maximumFixtureBytes / 1024 / 1024} MiB`);
   }
@@ -630,6 +630,7 @@ async function executeIteration(
   let taskDeadline: AbortSignal | undefined;
   try {
     cloneEvaluationConfiguration(source, runtime, prepared.request.modelProfileId);
+    runtime.uploadSettings.set(source.uploadSettings.get().maxFileMiB);
     const meetingPresetId = prepared.character && prepared.request.includeMeetingPreset
       ? cloneMeetingPreset(source, runtime, prepared.character.meetingPresetId)
       : undefined;

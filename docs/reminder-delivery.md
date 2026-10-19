@@ -32,6 +32,14 @@ briefly shows a toast for newly observed, unacknowledged reminders. Calendar lis
 entries offer retry for individual failed channels. This is not browser Web Push;
 with the page closed, delivery is retained in the UI inbox for the next visit.
 
+The source conversation shows each delivered occurrence as a compact **Schedule
+reminder** card, separate from the character's replies. The card contains the
+event title and local time, with acknowledgement, ten-minute snooze, and details
+controls. Its status stays in sync with the notification center. Acknowledged or
+snoozed cards remain in history, and repeated deliveries of one occurrence do
+not create additional cards. The full notification text remains in the center;
+the timeline does not present it as character dialogue.
+
 ## Delivery and acknowledgement
 
 - UI delivery is durable inbox availability, not proof that the user viewed it.
@@ -76,6 +84,12 @@ fields and a bounded character style excerpt, without chat history, tools, or a
 foreground Pi turn. Drafts do not enter the chat transcript or memory. Only the
 selected delivery message may subsequently be mirrored into its normal source
 conversation as a system event, without interrupting an active turn.
+The event carries a bounded title/time snapshot for the card, including in paged
+history. These events are filtered from model history and continuity summaries.
+Ordinary conversation instructions keep real calendars in the background: the
+character responds to the current topic, uses calendar tools when relevant, and
+avoids repeating notifications or pursuing acknowledged items. This does not
+change notification deadlines, channel settings, or retry behavior.
 
 The one-second scheduler never awaits model drafting. At notification time, an
 unfinished or failed draft is replaced by a deterministic title/time/notes

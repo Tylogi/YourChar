@@ -256,10 +256,11 @@ test("bootstrap is preview-safe, survives preparation failure, and commits only 
     runtime.kernel.sessionRuntime.prepareForTurn = async () => {
       throw new Error("synthetic preparation failure");
     };
-    await assert.rejects(
-      runtime.kernel.sendMessage("bootstrap-session", { mode: "sms", text: "第一次尝试" }),
-      /synthetic preparation failure/,
-    );
+    const failedPreparation = await runtime.kernel.sendMessage("bootstrap-session", { mode: "sms", text: "第一次尝试" });
+    assert.equal(failedPreparation.status, "failed");
+    assert.equal(failedPreparation.messageType, "system");
+    assert.match(failedPreparation.reply, /synthetic preparation failure/);
+    assert.equal(runtime.model.requests.length, 0);
     runtime.kernel.sessionRuntime.prepareForTurn = originalPrepare;
     assert.equal(runtime.kernel.contextEconomics.bootstrapConsumed("bootstrap-session"), false);
 
@@ -551,7 +552,7 @@ test("a tired tool turn is checkpointed at the next safe boundary without anothe
         kind: "assistant_text",
         // Exercise planned pressure, with room for tool-schema growth below the
         // emergency preflight threshold (which is tested separately).
-        text: `这是后续操作需要保留的上下文。${"abcd".repeat(39_282)}`,
+        text: `这是后续操作需要保留的上下文。${"abcd".repeat(39_000)}`,
       },
       { kind: "tool_call", name: "write", arguments: { path: "second.txt", content: "second" } },
       {
@@ -870,7 +871,8 @@ test("a side-effect-deferred rest checkpoint wakes once at its later safe bounda
     runtime.kernel.patchAgentPermissions({ workspaceAccess: "read_write" });
     const character = runtime.kernel.createCharacter({ name: "延后唤醒角色" });
     runtime.model.enqueue([
-      { kind: "assistant_text", text: `这是操作所需的较长背景。${"abcd".repeat(37_482)}` },
+      // Leave room for the current conversation policy below emergency preflight.
+      { kind: "assistant_text", text: `这是操作所需的较长背景。${"abcd".repeat(37_200)}` },
       { kind: "tool_call", name: "write", arguments: { path: "deferred-wake.txt", content: "done" } },
       { kind: "assistant_text", text: "文件写完了，我确实有点困，想休息一下。" },
       { kind: "assistant_text", text: "好，等我休息好再回来。" },

@@ -21,7 +21,6 @@ import type {
 } from "./types.js";
 
 const defaultTimeoutMs = 90_000;
-const maximumInputBytes = 20 * 1024 * 1024;
 const maximumWorkerOutputBytes = 18 * 1024 * 1024;
 const maximumWorkerErrorBytes = 32 * 1024;
 const maximumCacheBytes = 32 * 1024 * 1024;
@@ -105,8 +104,8 @@ export class DocumentConversionService {
   ): Promise<DocumentReadResult> {
     const source = workspace.workspaceFiles.asset(input.path, "attachment");
     const extension = extname(source.entry.name).toLowerCase();
-    const sourceBytes = readRegularSource(source.absolutePath);
-    assertSupportedSource(extension, sourceBytes);
+    const sourceBytes = readRegularSource(source.absolutePath, workspace.workspaceFiles.maximumUploadBytes);
+    assertSupportedSource(extension, sourceBytes, workspace.workspaceFiles.maximumUploadBytes);
     const sourceSha256 = createHash("sha256").update(sourceBytes).digest("hex");
     const cacheKey = createHash("sha256").update(JSON.stringify({
       version: 1,
@@ -201,7 +200,7 @@ export class DocumentConversionError extends Error {
   }
 }
 
-function assertSupportedSource(extension: string, bytes: Buffer): void {
+function assertSupportedSource(extension: string, bytes: Buffer, maximumInputBytes: number): void {
   if (!supportedExtensions.has(extension)) {
     throw new DocumentConversionError(
       "DOCUMENT_FORMAT_UNSUPPORTED",
@@ -434,7 +433,7 @@ async function runMarkItDownWorker(
   }
 }
 
-function readRegularSource(path: string): Buffer {
+function readRegularSource(path: string, maximumInputBytes: number): Buffer {
   const descriptor = openSync(path, constants.O_RDONLY | constants.O_NOFOLLOW);
   try {
     const stats = fstatSync(descriptor);

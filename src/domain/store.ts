@@ -20,6 +20,7 @@ import {
   ModelCredentialValidationError,
   type ModelCredentialMetadata,
   type ModelCredentialResolver,
+  type ModelOAuthBinding,
 } from "../model/credential-store.js";
 import { durableAtomicWrite } from "../memory-vault/durability.js";
 import type {
@@ -42,6 +43,7 @@ type StoredModelApiConfig = Omit<
   | "credentialStatus"
   | "credentialRevision"
   | "credentialCanRollback"
+  | "credentialType"
 >;
 type StoredModelApiProfile = StoredModelApiConfig & { id: string; name: string };
 type StoredModelApiDocument = {
@@ -50,7 +52,7 @@ type StoredModelApiDocument = {
   profiles: StoredModelApiProfile[];
 };
 
-export type RawModelApiConfig = ModelApiConfig & { apiKey?: string };
+export type RawModelApiConfig = ModelApiConfig & { apiKey?: string; oauth?: ModelOAuthBinding };
 
 export type CompanionStoreOptions = {
   stateDir?: string | false;
@@ -443,6 +445,21 @@ export class CompanionStore {
     return this.safeModelProfile(profile, id === this.modelApiDocument.defaultProfileId);
   }
 
+  setModelOAuthCredential(
+    id: string,
+    credential: import("@earendil-works/pi-ai").OAuthCredential,
+    expectedRevision: number,
+  ): ModelApiProfile {
+    const profile = this.requireStoredModelProfile(id);
+    if (profile.provider !== "openai-codex") throw new ModelApiConfigValidationError("profile is not a Codex provider");
+    this.assertModelApiCredentialRevision(id, expectedRevision);
+    const saved = this.modelCredentials.setOAuth(id, credential, expectedRevision, profile.credentialRef);
+    profile.credentialRef = saved.credentialRef;
+    profile.updatedAt = this.clock.now().toISOString();
+    this.persistModelApiConfig();
+    return this.safeModelProfile(profile, id === this.modelApiDocument.defaultProfileId);
+  }
+
   rollbackModelApiCredential(id: string, expectedRevision?: number): ModelApiProfile {
     const profile = this.requireStoredModelProfile(id);
     if (!profile.credentialRef) {
@@ -532,6 +549,9 @@ export class CompanionStore {
       ...safe,
       ...(credential.status === "active" && credential.apiKey
         ? { apiKey: credential.apiKey }
+        : {}),
+      ...(credential.status === "active" && credential.oauth && profile.provider === credential.oauth.providerId
+        ? { oauth: credential.oauth }
         : {}),
     };
   }
@@ -835,8 +855,9 @@ function modelConfigWithCredential(
     ...(credential.revision !== undefined
       ? { credentialRevision: credential.revision }
       : {}),
-    apiKeySet: active,
-    apiKeyMasked: active ? credential.masked : "",
+    apiKeySet: active && credential.authType !== "oauth",
+    apiKeyMasked: active && credential.authType !== "oauth" ? credential.masked : "",
+    ...(credential.authType ? { credentialType: credential.authType } : {}),
   };
 }
 

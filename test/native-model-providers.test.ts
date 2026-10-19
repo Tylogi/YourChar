@@ -36,6 +36,7 @@ test("first-party native providers expose safe schemas and validate catalog cons
       "anthropic",
       "google",
       "openai",
+      "openai-codex",
     ]);
     assert.ok(descriptors.every((provider) => provider.configurationFields.length > 0));
     assert.ok(descriptors.every((provider) =>

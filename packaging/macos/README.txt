@@ -14,7 +14,7 @@ To upgrade, quit YourChar with Command-Q, back up the application data directory
 then replace /Applications/YourChar.app with this app. Do not delete the data
 directory. Eject the installer disk image and launch the app from Applications.
 Closing a window alone does not quit YourChar; also stop any separately running
-YourChar backend before upgrading. There is no automatic updater in this preview.
+YourChar backend before upgrading. There is no automatic updater in this release.
 
 Application data:
   ~/Library/Application Support/YourChar
@@ -44,14 +44,9 @@ worlds, schedules and network integrations remain available.
 Signing
 -------
 
-This preview is ad-hoc signed and is not Apple-notarized. macOS may block its
-first launch. Only if you trust the source and have verified the download,
-follow Apple's instructions to allow this specific app; do not disable
-Gatekeeper globally:
-  https://support.apple.com/en-us/102445
-
-A notarized distribution will require an Apple Developer ID Application
-certificate and Apple's notarization service.
+This release uses a Developer ID Application certificate and Apple's
+notarization service. The app and disk image include stapled notarization
+tickets, so Gatekeeper can verify them without an additional download.
 
 YourChar is licensed under MIT. See the bundled LICENSE and
 THIRD_PARTY_NOTICES.md. The embedded Node.js runtime retains its own LICENSE.

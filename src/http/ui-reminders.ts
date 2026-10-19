@@ -3,6 +3,7 @@ export const reminderCss = `
 #reminderInboxBtn{position:relative}#reminderInboxBadge{position:absolute;right:0;top:0;width:7px;height:7px;border-radius:50%;background:var(--primary)}
 .reminder-center{width:min(520px,calc(100vw - 28px));max-height:80dvh;overflow:auto;background:var(--panel);color:var(--text);border:1px solid var(--line);border-radius:16px;padding:20px}.reminder-center-head{display:flex;justify-content:space-between;align-items:center;gap:12px;margin-bottom:16px}.reminder-center-head h3{margin:0;font-size:17px}.reminder-card{border-top:1px solid var(--line);padding:16px 0;overflow-wrap:anywhere}.reminder-card h4{margin:0 0 8px;font-size:14px}.reminder-card p{white-space:pre-wrap;font-size:13px;line-height:1.6;margin:8px 0}.reminder-card small{color:var(--muted);font-size:12px}.reminder-actions{display:flex;gap:8px;flex-wrap:wrap;margin-top:12px}
 .reminder-toast{position:fixed;top:70px;right:20px;z-index:90;max-width:calc(100vw - 40px);display:flex;align-items:center;gap:10px;padding:12px 16px;border:1px solid var(--line);border-radius:12px;background:var(--panel);color:var(--text);box-shadow:var(--shadow);font-size:13px}
+.message-row.reminder{justify-content:center;padding:6px 12px}.reminder-timeline-card{width:min(100%,420px);min-width:0;padding:14px 16px;border:1px solid var(--line);border-radius:14px;background:var(--panel);color:var(--text);overflow-wrap:anywhere}.reminder-timeline-head{display:flex;align-items:center;gap:7px;color:var(--muted);font-size:11px;margin-bottom:9px}.reminder-timeline-head svg{width:14px;height:14px;flex:none}.reminder-timeline-status{margin-left:auto}.reminder-timeline-card h4{font-size:14px;line-height:1.5;margin:0 0 5px}.reminder-timeline-time{display:block;color:var(--muted);font-size:12px;line-height:1.6}.reminder-timeline-card .reminder-actions{margin-top:11px;gap:6px}.reminder-timeline-card .reminder-actions button{font-size:12px;padding:6px 10px;min-height:32px}.reminder-card-error{font-size:12px;color:var(--danger,var(--text));margin:8px 0 0}
 `;
 export const reminderPolicyHtml = `
 <div id="scheduleReminderOptions" class="reminder-options">
@@ -20,10 +21,14 @@ export const reminderCenterHtml = `
 export const reminderScript = String.raw`
     let reminderInboxData = [], reminderInboxSerial = 0, reminderEditorPrepareMinutes = 10, reminderToastTimer;
     const seenReminderIds = new Set();
+    const pendingReminderActions = new Set();
+    const reminderActionErrors = new Map();
     const reminderNode = id => document.getElementById(id);
     function reminderUiAllowed() { return state.conversationSpace === "normal" && !incognitoConversationIsActive() && !state.incognitoTransitioning; }
     function clearReminderUi() {
       ++reminderInboxSerial; reminderInboxData = []; reminderNode("reminderInboxList").replaceChildren();
+      reminderActionErrors.clear();
+      nodes.messages.querySelectorAll(".message-row.reminder").forEach(node => node.remove());
       reminderNode("reminderInboxBadge").hidden = true; reminderNode("reminderToast").hidden = true;
       if (reminderNode("reminderInboxDialog").open) reminderNode("reminderInboxDialog").close();
     }
@@ -40,16 +45,64 @@ export const reminderScript = String.raw`
         reminderNode("reminderInboxBadge").hidden = !pending.length;
         if (pending.some(e => !seenReminderIds.has(e.occurrence.id))) { reminderNode("reminderToast").hidden = false; clearTimeout(reminderToastTimer); reminderToastTimer = setTimeout(() => { reminderNode("reminderToast").hidden = true; },8000); }
         if (seenReminderIds.size > 500) seenReminderIds.clear(); reminderInboxData.forEach(e => seenReminderIds.add(e.occurrence.id)); renderReminderInbox();
+        if (state.messages.some(message => message.role === "reminder")) renderMessages({ preserveScroll: true });
+        refreshReminderTimeline();
       } catch (error) { if (serial === reminderInboxSerial) reminderNode("reminderInboxStatus").textContent = error.message; }
     }
     function reminderChannelLabel(channel) { return ({in_app:"UI",wechat:"微信",feishu:"飞书",desktop:"桌面"})[channel] || channel; }
+    function refreshReminderTimeline() {
+      if (state.activeConversationKind !== "direct" || !state.activeSessionId || state.sessionDraft ||
+          state.conversationViewLoading || messageHistory?.page.hasLater) return;
+      const visible = new Set(state.messages.filter(m => m.role === "reminder").map(m => m.reminder.occurrenceId));
+      const first = state.messages.find(m => m.timestampMs)?.timestampMs || 0;
+      const missing = reminderInboxData.some(e => e.item.sourceSessionId === state.activeSessionId &&
+        !visible.has(e.occurrence.id) && (!messageHistory?.page.hasEarlier || e.channels.some(c =>
+          c.status === "delivered" && new Date(c.updatedAt).getTime() >= first)));
+      if (missing) void refreshSessionMessages(true);
+    }
+    function reminderCopy(zh, en) { return uiLocale() === "en" ? en : zh; }
+    function reminderStopped(entry) {
+      return Boolean(entry && (entry.occurrence.acknowledgedAt || ["cancelled", "snoozed"].includes(entry.occurrence.status) || entry.item.status !== "scheduled"));
+    }
+    function reminderStateLabel(entry) {
+      if (!entry) return reminderCopy("已通知", "Notified");
+      if (entry.occurrence.acknowledgedAt) return reminderCopy("已确认", "Acknowledged");
+      if (entry.occurrence.status === "snoozed") return reminderCopy("已延后", "Snoozed");
+      return reminderStopped(entry) ? reminderCopy("已停止本次提醒", "Reminder stopped") : reminderCopy("待确认", "Awaiting acknowledgement");
+    }
+    function reminderTimeText(eventAt, timezone) {
+      const at = new Date(eventAt || "");
+      if (!Number.isFinite(at.getTime())) return "";
+      try { return new Intl.DateTimeFormat(uiLocale(), { timeZone: timezone || undefined, year: "numeric", month: "short", day: "numeric", hour: "2-digit", minute: "2-digit", hourCycle: "h23" }).format(at) + (timezone ? " · " + timezone : ""); }
+      catch { return at.toLocaleString(uiLocale()); }
+    }
+    function reminderActionHtml(id, entry) {
+      const disabled = pendingReminderActions.has(id) ? " disabled" : "";
+      const actions = entry && !reminderStopped(entry)
+        ? '<button class="secondary" type="button" data-reminder-action="acknowledge"'+disabled+'>'+reminderCopy("知道了", "Got it")+'</button><button class="secondary" type="button" data-reminder-action="snooze"'+disabled+'>'+reminderCopy("稍后 10 分钟", "Snooze 10 min")+'</button>' : "";
+      const error = reminderActionErrors.get(id);
+      return '<div class="reminder-actions">'+actions+'<button class="secondary" type="button" data-reminder-open>'+reminderCopy("查看详情", "Details")+'</button></div>'+
+        (error ? '<p class="reminder-card-error" role="alert">'+escapeHtml(error)+'</p>' : "");
+    }
+    function renderReminderTimelineCard(message) {
+      if (!reminderUiAllowed()) return "";
+      const r = message.reminder, entry = reminderInboxData.find(e => e.occurrence.id === r.occurrenceId);
+      const title = r.title || entry?.channels.find(c => c.deliveryTitle)?.deliveryTitle || entry?.item.title || reminderCopy("日程提醒", "Schedule reminder");
+      const eventAt = r.eventAt || entry?.occurrence.eventAt || entry?.item.startAt;
+      const time = reminderTimeText(eventAt, r.timezone || entry?.item.timezone);
+      return '<div class="message-row reminder"><article class="reminder-timeline-card" data-reminder-id="'+escapeHtml(r.occurrenceId)+'" aria-label="'+reminderCopy("日程提醒", "Schedule reminder")+'">'+
+        '<div class="reminder-timeline-head"><i data-lucide="calendar-clock" aria-hidden="true"></i><span>'+reminderCopy("日程提醒", "Schedule reminder")+'</span><span class="reminder-timeline-status">'+escapeHtml(reminderStateLabel(entry))+'</span></div>'+
+        '<h4>'+escapeHtml(title)+'</h4>'+(time ? '<time class="reminder-timeline-time" datetime="'+escapeHtml(eventAt)+'">'+escapeHtml(time)+'</time>' : "")+
+        reminderActionHtml(r.occurrenceId, entry)+'</article></div>';
+    }
     function renderReminderInbox() {
       reminderNode("reminderInboxStatus").textContent = reminderInboxData.length ? "发送成功不代表已读；各通道共享确认状态。" : "暂时没有已触发的提醒。";
       reminderNode("reminderInboxList").innerHTML = reminderInboxData.map(e => {
-        const o=e.occurrence, stopped=o.acknowledgedAt || ["cancelled","snoozed"].includes(o.status) || e.item.status!=="scheduled";
+        const o=e.occurrence, stopped=reminderStopped(e);
         const body=e.channels.find(c=>c.deliveryBody)?.deliveryBody || e.item.title;
         const channels=e.channels.map(c=>reminderChannelLabel(c.channel)+"："+(c.suppressedAt?"已停止":notificationStatusLabel(c.status))+(c.lastError?"（"+c.lastError+"）":"")).join(" · ");
-        return '<article class="reminder-card" data-reminder-id="'+escapeHtml(o.id)+'"><h4>'+escapeHtml(e.item.title)+'</h4><p>'+escapeHtml(body)+'</p><small>'+escapeHtml(channels)+'</small>'+(stopped?'<p class="muted">'+(o.acknowledgedAt?"已确认":"已停止本次提醒")+'</p>':'<div class="reminder-actions"><button class="primary" type="button" data-reminder-action="acknowledge">知道了</button><button class="secondary" type="button" data-reminder-action="snooze">稍后 10 分钟</button></div>')+'</article>';
+        const disabled=pendingReminderActions.has(o.id)?" disabled":"", error=reminderActionErrors.get(o.id);
+        return '<article class="reminder-card" data-reminder-id="'+escapeHtml(o.id)+'"><h4>'+escapeHtml(e.item.title)+'</h4><p>'+escapeHtml(body)+'</p><small>'+escapeHtml(channels)+'</small>'+(stopped?'<p class="muted">'+reminderStateLabel(e)+'</p>':'<div class="reminder-actions"><button class="primary" type="button" data-reminder-action="acknowledge"'+disabled+'>知道了</button><button class="secondary" type="button" data-reminder-action="snooze"'+disabled+'>稍后 10 分钟</button></div>')+(error?'<p class="reminder-card-error" role="alert">'+escapeHtml(error)+'</p>':"")+'</article>';
       }).join("");
     }
     async function openReminderInbox() { if (!reminderUiAllowed()) return; reminderNode("reminderToast").hidden=true; if (!reminderNode("reminderInboxDialog").open) reminderNode("reminderInboxDialog").showModal(); await refreshReminderNotifications(); }
@@ -72,10 +125,33 @@ export const reminderScript = String.raw`
     }
     reminderNode("reminderInboxBtn").addEventListener("click",openReminderInbox); reminderNode("openReminderToastBtn").addEventListener("click",openReminderInbox);
     reminderNode("closeReminderInboxBtn").addEventListener("click",()=>reminderNode("reminderInboxDialog").close()); reminderNode("dismissReminderToastBtn").addEventListener("click",()=>{reminderNode("reminderToast").hidden=true;});
-    reminderNode("reminderInboxList").addEventListener("click",async event=>{
-      const button=event.target.closest("[data-reminder-action]"); if (!button || !reminderUiAllowed()) return; const id=button.closest("[data-reminder-id]").dataset.reminderId; button.disabled=true;
-      try { const r=await fetch("/api/v1/reminder-occurrences/"+encodeURIComponent(id)+"/"+button.dataset.reminderAction,{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({minutes:10})}); if (!r.ok) throw new Error((await r.json()).error || "提醒更新失败"); await refreshReminderNotifications(); } catch(error){reminderNode("reminderInboxStatus").textContent=error.message;} finally{button.disabled=false;}
-    });
+    async function handleReminderCardClick(event) {
+      const button=event.target.closest("[data-reminder-action], [data-reminder-open]");
+      if (!button || !reminderUiAllowed()) return;
+      const id=button.closest("[data-reminder-id]")?.dataset.reminderId;
+      if (!id) return;
+      if (button.hasAttribute("data-reminder-open")) {
+        await openReminderInbox();
+        if (reminderUiAllowed()) reminderNode("reminderInboxList").querySelector('[data-reminder-id="'+CSS.escape(id)+'"]')?.scrollIntoView({block:"nearest"});
+        return;
+      }
+      const action=button.dataset.reminderAction;
+      if (!["acknowledge","snooze"].includes(action) || pendingReminderActions.has(id)) return;
+      const epoch=state.conversationSpaceEpoch;
+      pendingReminderActions.add(id); reminderActionErrors.delete(id); renderReminderInbox(); renderMessages({preserveScroll:true});
+      try {
+        const r=await fetch("/api/v1/reminder-occurrences/"+encodeURIComponent(id)+"/"+action,{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({minutes:10})});
+        if (!r.ok) throw new Error((await r.json()).error || reminderCopy("提醒更新失败", "Could not update reminder"));
+        if (epoch===state.conversationSpaceEpoch && reminderUiAllowed()) await refreshReminderNotifications();
+      } catch(error) {
+        if (epoch===state.conversationSpaceEpoch && reminderUiAllowed()) reminderActionErrors.set(id,error.message);
+      } finally {
+        pendingReminderActions.delete(id);
+        if (epoch===state.conversationSpaceEpoch && reminderUiAllowed()) { renderReminderInbox(); renderMessages({preserveScroll:true}); }
+      }
+    }
+    reminderNode("reminderInboxList").addEventListener("click",handleReminderCardClick);
+    nodes.messages.addEventListener("click",handleReminderCardClick);
     nodes.scheduleForm.addEventListener("change",updateReminderEditor); nodes.scheduleKind.addEventListener("change",()=>{if(!state.editingScheduleId)setScheduleReminderPolicy();});
     window.setInterval(()=>void refreshReminderNotifications(),5000);
 `;

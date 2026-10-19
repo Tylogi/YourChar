@@ -7,10 +7,12 @@ import { createTestRuntime } from "../dist/src/testing/index.js";
 import { createHttpServer } from "../dist/src/http/router.js";
 
 export async function runReminderDeliveryChecks(browser,outputDir) {
-  for (const [width,colorScheme] of [[390,"dark"],[1440,"light"]]) {
+  for (const [width,colorScheme] of [[320,"dark"],[390,"dark"],[1440,"light"]]) {
     const runtime=createTestRuntime({now:"2026-09-08T01:00:00Z"});
     const character=runtime.kernel.createCharacter({name:"提醒测试角色"});
     const session=await runtime.kernel.openCanonicalPrivateConversation(character.id);
+    runtime.model.enqueue([{kind:"assistant_text",text:"那就先聊电影吧。你最喜欢哪一段？"}]);
+    await runtime.kernel.sendMessage(session.id,{mode:"sms",characterId:character.id,text:"今天有点累，想聊聊刚看的电影。"});
     const server=createHttpServer({kernel:runtime.kernel}); await new Promise(resolve=>server.listen(0,"127.0.0.1",resolve));
     const page=await browser.newPage({viewport:{width,height:900},locale:"zh-CN",colorScheme,reducedMotion:"reduce"});const errors=[];page.on("pageerror",error=>errors.push(error.message));
     try{
@@ -53,13 +55,62 @@ export async function runReminderDeliveryChecks(browser,outputDir) {
       runtime.clock.advance(60000);await runtime.schedulerTick();
       await page.evaluate(()=>refreshReminderNotifications());
       assert.equal(await page.locator("#reminderToast").isVisible(),true);
+      const card=page.locator('#messages .reminder-timeline-card[data-reminder-id="'+created.occurrence.id+'"]');
+      await card.waitFor();
+      assert.equal(await card.locator(".reminder-timeline-head").innerText().then(text=>text.includes("日程提醒")),true);
+      assert.match(await card.locator("time").innerText(),/09:01/);
+      assert.equal(await card.locator(".bubble, .message-avatar").count(),0);
+      assert.equal(await card.locator(".reminder-timeline-status").innerText(),"待确认");
+      assert.equal(await card.evaluate(el=>el.scrollWidth<=el.clientWidth+1),true);
+      assert.equal(await page.evaluate(()=>Boolean(window.reminderXss)),false);
+      const normalized=await page.evaluate(()=>{
+        const raw=messageHistory.raw.find(m=>m.details?.notificationOutboxId);
+        const duplicate={...raw,entryId:"duplicate-notification",details:{...raw.details,notificationOutboxId:"another-channel"}};
+        const messages=normalizeHistoryMessages([raw,duplicate]);
+        const legacy=normalizeStoredMessage({...raw,details:{notificationOutboxId:raw.details.notificationOutboxId,occurrenceId:raw.details.occurrenceId}});
+        const legacyHtml=renderStandardMessage(legacy,0);
+        return {count:messages.length,role:messages[0].role,replyTo:messages[0].replyToEntryId || "",legacy:legacyHtml.includes("reminder-timeline-card")};
+      });
+      assert.deepEqual(normalized,{count:1,role:"reminder",replyTo:"",legacy:true});
+      await page.locator("#dismissReminderToastBtn").click();
+      await page.screenshot({path:resolve(outputDir,`reminder-timeline-${width}.png`),fullPage:true});
+      await page.evaluate(()=>window.yourcharLocale.apply("en"));
+      assert.equal(await card.locator(".reminder-timeline-status").innerText(),"Awaiting acknowledgement");
+      assert.equal(await card.locator('[data-reminder-action="acknowledge"]').innerText(),"Got it");
+      assert.equal(await card.evaluate(el=>el.scrollWidth<=el.clientWidth+1),true);
+      await page.evaluate(()=>window.yourcharLocale.apply("zh-CN"));
       await page.locator("#reminderInboxBtn").click();await page.locator("#reminderInboxDialog").waitFor({state:"visible"});
-      assert.equal(await page.locator(".reminder-card").count(),1);assert.equal(await page.evaluate(()=>Boolean(window.reminderXss)),false);
+      assert.equal(await page.locator("#reminderInboxList .reminder-card").count(),1);assert.equal(await page.evaluate(()=>Boolean(window.reminderXss)),false);
       await page.screenshot({path:resolve(outputDir,`reminder-inbox-${width}.png`),fullPage:true});
       assert.equal(await page.locator("#reminderInboxDialog").evaluate(el=>el.scrollWidth<=el.clientWidth+1),true);
-      await page.locator('[data-reminder-action="acknowledge"]').click();await page.waitForFunction(()=>document.querySelector("#reminderInboxList")?.textContent.includes("已确认"));
+      await page.locator('#reminderInboxList [data-reminder-action="acknowledge"]').click();await page.waitForFunction(()=>document.querySelector("#reminderInboxList")?.textContent.includes("已确认"));
       assert.ok(runtime.kernel.listReminderOccurrences(created.item.id)[0].acknowledgedAt);
       await page.locator("#closeReminderInboxBtn").click();
+      assert.equal(await card.locator(".reminder-timeline-status").innerText(),"已确认");
+      assert.equal(await card.locator('[data-reminder-action]').count(),0);
+      await page.reload({waitUntil:"domcontentloaded"});
+      await page.waitForFunction(()=>state.characters.length===1);
+      await page.evaluate(id=>openPersistentDirectConversation(id,"normal"),character.id);
+      await page.evaluate(()=>refreshReminderNotifications());
+      await card.waitFor();
+      assert.equal(await page.locator("#messages .reminder-timeline-card").count(),1);
+      assert.equal(await card.locator(".reminder-timeline-status").innerText(),"已确认");
+      const snooze=runtime.kernel.createScheduleItem({kind:"reminder",title:"稍后再提醒",startAt:"2026-09-08T01:02:00Z",timezone:"Asia/Shanghai",sourceSessionId:session.id});
+      runtime.clock.advance(60000);await runtime.schedulerTick();
+      await page.evaluate(()=>refreshReminderNotifications());
+      const snoozeCard=page.locator('#messages .reminder-timeline-card[data-reminder-id="'+snooze.occurrence.id+'"]');
+      await snoozeCard.waitFor();
+      await page.route("**/api/v1/reminder-occurrences/*/snooze",route=>route.fulfill({status:500,contentType:"application/json",body:JSON.stringify({error:"请稍后重试"})}));
+      await snoozeCard.locator('[data-reminder-action="snooze"]').click();
+      await snoozeCard.locator('[role="alert"]').waitFor();
+      assert.equal(await snoozeCard.locator('[data-reminder-action="snooze"]').isEnabled(),true);
+      await page.unroute("**/api/v1/reminder-occurrences/*/snooze");
+      await snoozeCard.locator('[data-reminder-action="snooze"]').click();
+      await page.waitForFunction(id=>document.querySelector('#messages [data-reminder-id="'+id+'"] .reminder-timeline-status')?.textContent==="已延后",snooze.occurrence.id);
+      assert.equal(runtime.kernel.listReminderOccurrences(snooze.item.id).length,2);
+      await page.evaluate(()=>refreshReminderNotifications());
+      assert.equal(await page.locator("#messages .reminder-timeline-card").count(),2);
+      await page.screenshot({path:resolve(outputDir,`reminder-timeline-settled-${width}.png`),fullPage:true});
       await page.evaluate(()=>{setUiMode("settings");setSettingsTab("im");});
       await page.waitForFunction(()=>state.imRuntimeSettings && !document.querySelector('[data-im-setting="wechat-reminders"]').disabled);
       assert.equal(await page.locator('[data-im-setting="wechat-reminders"]').isChecked(),true);
@@ -91,6 +142,7 @@ export async function runReminderDeliveryChecks(browser,outputDir) {
       await page.evaluate(()=>setUiMode("normal"));
       await page.evaluate(()=>{state.conversationSpace="secret";state.conversationSpaceEpoch++;updatePrivateModeChrome();});
       await page.evaluate(()=>refreshReminderNotifications());assert.equal(await page.locator("#reminderInboxBadge").isVisible(),false);assert.equal(await page.locator("#reminderInboxList").innerText(),"");
+      assert.equal(await page.locator("#messages .reminder-timeline-card").count(),0);
       assert.deepEqual(errors,[]);console.log(`Reminder delivery UI checks passed (${width}px, ${colorScheme})`);
     }finally{await page.close();await new Promise(resolve=>server.close(resolve));runtime.dispose();}
   }

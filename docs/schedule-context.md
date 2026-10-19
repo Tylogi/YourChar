@@ -5,6 +5,12 @@ stored schedule item into the model context. Schedule tools return bounded
 results so that a semester timetable can be managed without repeatedly echoing
 all its records.
 
+Ordinary replies prioritize the current conversation. Calendar facts and routines
+provide background when relevant; they do not authorize ongoing reminders or
+completion checks. Formal reminders appear as separate notification cards, and
+their delivery events stay out of model history. Calendar queries, explicit
+reminder requests, and user-led discussion of an arrangement remain available.
+
 ## Query pages and details
 
 `list_schedule_items` accepts the existing `calendar`, `from`, `to`, `status`,

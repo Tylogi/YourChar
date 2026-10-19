@@ -7,6 +7,7 @@ import {
   readFileSync,
 } from "node:fs";
 import { join } from "node:path";
+import type { CredentialStore, OAuthCredential } from "@earendil-works/pi-ai";
 import type { Clock } from "../app/clock.js";
 import { durableAtomicWrite } from "../memory-vault/durability.js";
 
@@ -21,10 +22,19 @@ export type ModelCredentialMetadata = {
   createdAt?: string;
   updatedAt?: string;
   revokedAt?: string;
+  authType?: "oauth";
+};
+
+/** A host-owned capability; no tokens are copied into model configurations. */
+export type ModelOAuthBinding = {
+  providerId: "openai-codex";
+  credentials: CredentialStore;
+  secrets(): readonly string[];
 };
 
 export type ModelCredentialResolution = ModelCredentialMetadata & {
   apiKey?: string;
+  oauth?: ModelOAuthBinding;
 };
 
 export type ModelCredentialResolver = (
@@ -46,6 +56,8 @@ type StoredModelCredential = {
   revision: number;
   masked: string;
   secret?: string;
+  authType?: "oauth";
+  oauth?: OAuthCredential;
   previous?: StoredSecretVersion;
   createdAt: string;
   updatedAt: string;
@@ -110,6 +122,8 @@ export class ModelCredentialStore {
   readonly path?: string;
   private document: StoredModelCredentialDocument;
   private readonly externalResolver?: ModelCredentialResolver;
+  private readonly oauthBindings = new Map<string, ModelOAuthBinding>();
+  private readonly oauthWrites = new Map<string, Promise<unknown>>();
 
   constructor(private readonly options: ModelCredentialStoreOptions) {
     this.path = options.stateDir
@@ -128,7 +142,7 @@ export class ModelCredentialStore {
     );
     if (entry) {
       if (entry.ownerProfileId !== ownerProfileId) return missingCredential(credentialRef);
-      return resolutionForEntry(entry);
+      return this.resolveEntry(entry);
     }
     return normalizeExternalResolution(
       credentialRef,
@@ -228,12 +242,15 @@ export class ModelCredentialStore {
     entry.status = "active";
     entry.revision += 1;
     entry.secret = secret;
+    delete entry.oauth;
+    delete entry.authType;
     entry.masked = maskModelCredential(secret);
     entry.updatedAt = now;
     delete entry.revokedAt;
     if (previous) entry.previous = previous;
     else delete entry.previous;
     this.commit(next);
+    this.oauthBindings.delete(credentialRef);
     return safeCredentialMetadata(resolutionForEntry(entry));
   }
 
@@ -255,10 +272,12 @@ export class ModelCredentialStore {
     entry.status = "revoked";
     entry.revision += 1;
     delete entry.secret;
+    delete entry.oauth;
     if (previous) entry.previous = previous;
     entry.updatedAt = now;
     entry.revokedAt = now;
     this.commit(next);
+    this.oauthBindings.delete(credentialRef);
     return safeCredentialMetadata(resolutionForEntry(entry));
   }
 
@@ -272,7 +291,7 @@ export class ModelCredentialStore {
       ownerProfileId,
       expectedRevision,
     );
-    if (!entry.previous) {
+    if (entry.authType === "oauth" || !entry.previous) {
       throw new ModelCredentialConflictError(
         "model credential has no last-known-good version",
         expectedRevision,
@@ -301,6 +320,7 @@ export class ModelCredentialStore {
       version: 1,
       credentials: this.document.credentials.filter((candidate) => candidate !== entry),
     });
+    this.oauthBindings.delete(credentialRef);
     return true;
   }
 
@@ -318,12 +338,122 @@ export class ModelCredentialStore {
         candidate.credentialRef === credentialRef &&
         candidate.ownerProfileId === ownerProfileId
       );
-      if (entry) return resolutionForEntry(entry);
+      if (entry) return this.resolveEntry(entry);
       return normalizeExternalResolution(
         credentialRef,
         this.externalResolver?.(credentialRef, ownerProfileId),
       );
     };
+  }
+
+  setOAuth(
+    ownerProfileId: string,
+    credential: OAuthCredential,
+    expectedRevision: number,
+    credentialRef?: string,
+  ): ModelCredentialMetadata {
+    const owner = requiredOwnerProfileId(ownerProfileId);
+    const oauth = normalizeModelOAuthCredential(credential);
+    const current = credentialRef
+      ? this.document.credentials.find((entry) => entry.credentialRef === credentialRef)
+      : undefined;
+    if (current && current.ownerProfileId !== owner) {
+      throw new ModelCredentialUnavailableError("model credential owner mismatch");
+    }
+    if (current) assertExpectedRevision(current, expectedRevision);
+    else if (expectedRevision !== 0) throw new ModelCredentialConflictError("model credential revision changed");
+    const now = this.options.clock.now().toISOString();
+    const entry: StoredModelCredential = {
+      credentialRef: current?.credentialRef ?? newCredentialReference(),
+      ownerProfileId: owner,
+      status: "active",
+      revision: (current?.revision ?? 0) + 1,
+      authType: "oauth",
+      masked: "ChatGPT",
+      oauth,
+      createdAt: current?.createdAt ?? now,
+      updatedAt: now,
+    };
+    this.commit({
+      version: 1,
+      credentials: [...this.document.credentials.filter((item) => item.ownerProfileId !== owner), entry],
+    });
+    return safeCredentialMetadata(this.resolveEntry(entry));
+  }
+
+  private resolveEntry(entry: StoredModelCredential): ModelCredentialResolution {
+    const metadata = resolutionForEntry(entry);
+    if (entry.authType !== "oauth" || entry.status !== "active" || !entry.oauth) return metadata;
+    let binding = this.oauthBindings.get(entry.credentialRef);
+    if (!binding) {
+      const ref = entry.credentialRef;
+      const owner = entry.ownerProfileId;
+      const secrets = new Set<string>();
+      const read = () => {
+        const current = this.document.credentials.find((item) => item.credentialRef === ref && item.ownerProfileId === owner);
+        const oauth = current?.status === "active" && current.authType === "oauth" ? current.oauth : undefined;
+        if (oauth) {
+          secrets.add(oauth.access);
+          secrets.add(oauth.refresh);
+        }
+        return oauth ? { ...oauth } : undefined;
+      };
+      const credentials: CredentialStore = {
+        read: async (providerId, options) => {
+          options?.signal?.throwIfAborted();
+          return providerId === "openai-codex" ? read() : undefined;
+        },
+        list: async (options) => {
+          options?.signal?.throwIfAborted();
+          return read() ? [{ providerId: "openai-codex", type: "oauth" }] : [];
+        },
+        modify: async (providerId, fn, options) => {
+          if (providerId !== "openai-codex") throw new ModelCredentialUnavailableError("OAuth provider mismatch");
+          return this.serializeOAuthWrite(ref, async () => {
+            options?.signal?.throwIfAborted();
+            const current = read();
+            const revision = this.resolve(ref, owner).revision;
+            if (!current) throw new ModelCredentialUnavailableError("Codex is signed out");
+            const updated = await fn(current);
+            // Once the issuer rotates a refresh token, persist the successful
+            // response even if this request was cancelled in the meantime.
+            // Explicit logout/re-login still wins through the revision guard.
+            if (!updated) return read();
+            const oauth = normalizeModelOAuthCredential(updated);
+            const latest = this.resolve(ref, owner);
+            if (latest.status !== "active" || latest.authType !== "oauth" || latest.revision !== revision) {
+              throw new ModelCredentialConflictError("Codex login changed during refresh");
+            }
+            const next = cloneCredentialDocument(this.document);
+            const target = next.credentials.find((item) => item.credentialRef === ref)!;
+            target.oauth = oauth;
+            // Rotation of access tokens is not a user credential revision.
+            target.updatedAt = this.options.clock.now().toISOString();
+            this.commit(next);
+            return read();
+          });
+        },
+        delete: async (providerId, options) => {
+          if (providerId !== "openai-codex") return;
+          await this.serializeOAuthWrite(ref, async () => {
+            options?.signal?.throwIfAborted();
+            if (read()) this.revoke(ref, owner);
+          });
+        },
+      };
+      binding = { providerId: "openai-codex", credentials, secrets: () => { read(); return [...secrets]; } };
+      this.oauthBindings.set(ref, binding);
+    }
+    binding.secrets();
+    return { ...metadata, oauth: binding };
+  }
+
+  private async serializeOAuthWrite<T>(ref: string, operation: () => Promise<T>): Promise<T> {
+    const previous = this.oauthWrites.get(ref) ?? Promise.resolve();
+    const write = previous.catch(() => undefined).then(operation);
+    this.oauthWrites.set(ref, write);
+    try { return await write; }
+    finally { if (this.oauthWrites.get(ref) === write) this.oauthWrites.delete(ref); }
   }
 
   private mutableEntry(
@@ -417,7 +547,12 @@ function normalizeCredentialDocument(value: unknown): StoredModelCredentialDocum
     const secret = typeof candidate.secret === "string"
       ? requiredApiKey(candidate.secret)
       : undefined;
-    if ((status === "active") !== Boolean(secret)) invalidCredentialStore();
+    const authType = candidate.authType === "oauth" ? "oauth" as const : undefined;
+    if (candidate.authType !== undefined && !authType) invalidCredentialStore();
+    const oauth = candidate.oauth === undefined ? undefined : normalizeModelOAuthCredential(candidate.oauth);
+    if (authType === "oauth") {
+      if (secret || candidate.previous || (status === "active") !== Boolean(oauth) || masked !== "ChatGPT") invalidCredentialStore();
+    } else if (oauth || (status === "active") !== Boolean(secret)) invalidCredentialStore();
     const previous = candidate.previous === undefined
       ? undefined
       : normalizeSecretVersion(candidate.previous);
@@ -426,8 +561,8 @@ function normalizeCredentialDocument(value: unknown): StoredModelCredentialDocum
       : isoTimestampField(candidate, "revokedAt");
     if ((status === "revoked") !== Boolean(revokedAt)) invalidCredentialStore();
     if (
-      (status === "active" && masked !== maskModelCredential(secret!)) ||
-      (status === "revoked" && (!previous || masked !== previous.masked))
+      !authType && ((status === "active" && masked !== maskModelCredential(secret!)) ||
+      (status === "revoked" && (!previous || masked !== previous.masked)))
     ) invalidCredentialStore();
     return {
       credentialRef,
@@ -436,6 +571,8 @@ function normalizeCredentialDocument(value: unknown): StoredModelCredentialDocum
       revision: Number(revision),
       masked,
       ...(secret ? { secret } : {}),
+      ...(authType ? { authType } : {}),
+      ...(oauth ? { oauth } : {}),
       ...(previous ? { previous } : {}),
       createdAt,
       updatedAt,
@@ -469,6 +606,7 @@ function resolutionForEntry(entry: StoredModelCredential): ModelCredentialResolu
     updatedAt: entry.updatedAt,
     ...(entry.revokedAt ? { revokedAt: entry.revokedAt } : {}),
     ...(entry.status === "active" && entry.secret ? { apiKey: entry.secret } : {}),
+    ...(entry.authType ? { authType: entry.authType } : {}),
   };
 }
 
@@ -484,7 +622,7 @@ function normalizeExternalResolution(
     resolution.status !== "missing" &&
     resolution.status !== "revoked"
   ) return missingCredential(credentialRef);
-  if (resolution.status === "active" && !resolution.apiKey) {
+  if (resolution.status === "active" && !resolution.apiKey && !resolution.oauth) {
     return missingCredential(credentialRef);
   }
   const apiKey = resolution.status === "active" && resolution.apiKey
@@ -510,6 +648,8 @@ function normalizeExternalResolution(
     ...(apiKey
       ? { apiKey }
       : {}),
+    ...(resolution.authType === "oauth" ? { authType: "oauth" as const } : {}),
+    ...(resolution.status === "active" && resolution.oauth ? { oauth: resolution.oauth } : {}),
   };
 }
 
@@ -529,7 +669,7 @@ function missingCredential(credentialRef: string): ModelCredentialResolution {
 function safeCredentialMetadata(
   resolution: ModelCredentialResolution,
 ): ModelCredentialMetadata {
-  const { apiKey: _apiKey, ...metadata } = resolution;
+  const { apiKey: _apiKey, oauth: _oauth, ...metadata } = resolution;
   return metadata;
 }
 
@@ -605,22 +745,42 @@ export function maskModelCredential(secret: string): string {
 
 export function redactModelCredentialText(
   value: string,
-  secret: string | undefined,
+  secret: ModelCredentialSecrets,
 ): string {
-  return secret ? value.split(secret).join("[redacted-model-credential]") : value;
+  if (Array.isArray(secret)) return secret.reduce((text, item) => redactModelCredentialText(text, item), value);
+  return secret ? value.split(secret as string).join("[redacted-model-credential]") : value;
 }
 
-export function redactModelCredentialValue<T>(value: T, secret: string | undefined): T {
+export type ModelCredentialSecrets = string | readonly string[] | undefined;
+
+export function modelCredentialSecrets(config: { apiKey?: string; oauth?: ModelOAuthBinding }): readonly string[] {
+  return [...(config.apiKey ? [config.apiKey] : []), ...(config.oauth?.secrets() ?? [])];
+}
+
+export function redactModelCredentialValue<T>(value: T, secret: ModelCredentialSecrets): T {
+  if (Array.isArray(secret)) return secret.reduce((result, item) => redactModelCredentialValue(result, item), value);
   if (!secret) return value;
-  return redactCredentialValue(value, secret, new WeakMap<object, unknown>()) as T;
+  return redactCredentialValue(value, secret as string, new WeakMap<object, unknown>()) as T;
 }
 
 export function containsModelCredentialValue(
   value: unknown,
-  secret: string | undefined,
+  secret: ModelCredentialSecrets,
 ): boolean {
+  if (Array.isArray(secret)) return secret.some((item) => containsModelCredentialValue(value, item));
   if (!secret) return false;
-  return credentialValueContains(value, secret, new WeakSet<object>());
+  return credentialValueContains(value, secret as string, new WeakSet<object>());
+}
+
+export function normalizeModelOAuthCredential(value: unknown): OAuthCredential {
+  if (!isRecord(value) || value.type !== "oauth" ||
+      typeof value.access !== "string" || !value.access.trim() || value.access.length > maximumSecretCharacters ||
+      typeof value.refresh !== "string" || !value.refresh.trim() || value.refresh.length > maximumSecretCharacters ||
+      typeof value.expires !== "number" || !Number.isFinite(value.expires) || value.expires <= 0 ||
+      typeof value.accountId !== "string" || !value.accountId.trim() || value.accountId.length > 256) {
+    throw new ModelCredentialValidationError("invalid Codex OAuth credential");
+  }
+  return { type: "oauth", access: value.access, refresh: value.refresh, expires: value.expires, accountId: value.accountId };
 }
 
 function credentialValueContains(

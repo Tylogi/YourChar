@@ -13,10 +13,12 @@ Usage:
 Environment:
   MACOS_OUTPUT_DIR       Artifact directory (default: ./release)
   MACOS_NODE_CACHE_DIR   Cache for the verified Node archive
+  MACOS_SIGN_IDENTITY    Developer ID Application identity or certificate SHA-1
+  MACOS_NOTARY_PROFILE   Existing notarytool Keychain profile
   MACOS_RUN_FULL_TESTS=1 Run the full suite in addition to the native macOS gate
   MACOS_SKIP_TESTS=1     Build without tests (local iteration only, not for release)
 
-The output is ad-hoc signed and not notarized. Run this command on arm64 macOS.
+The output is Developer ID signed, notarized, and stapled. Run on arm64 macOS.
 EOF
 }
 
@@ -33,6 +35,9 @@ if [[ "$(uname -s)" != "Darwin" || "$(uname -m)" != "arm64" ]]; then
   echo "macOS packaging requires an Apple Silicon Mac." >&2
   exit 1
 fi
+sign_identity="${MACOS_SIGN_IDENTITY:?Set MACOS_SIGN_IDENTITY to your Developer ID Application identity}"
+notary_profile="${MACOS_NOTARY_PROFILE:?Set MACOS_NOTARY_PROFILE to an existing notarytool Keychain profile}"
+/usr/bin/xcrun notarytool history --keychain-profile "$notary_profile" >/dev/null
 
 repo_root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd -P)"
 if [[ -n "$(git -C "$repo_root" status --porcelain=v1)" ]]; then
@@ -124,7 +129,7 @@ export npm_config_fund=false
   "$node_distribution/bin/node" scripts/scan-sensitive.mjs
 )
 
-for path in dist assets skills services/markitdown; do
+for path in dist/src assets skills services/markitdown; do
   /usr/bin/ditto "$source_root/$path" "$application_root/$path"
 done
 for path in package.json package-lock.json LICENSE THIRD_PARTY_NOTICES.md README.md README.zh-CN.md; do
@@ -165,21 +170,29 @@ chmod 755 "$contents/MacOS/YourChar"
   printf 'Source commit: %s\n' "$commit"
   printf 'Architecture: arm64\n'
   printf 'Embedded Node.js: %s\n' "$node_version"
-  printf 'Signing: ad-hoc (not notarized)\n'
+  printf 'Signing: Developer ID with hardened runtime\n'
+  printf 'Notarization: required; verify stapled tickets with stapler validate\n'
 } > "$resources/BUILD-INFO.txt"
 
-/usr/bin/codesign --force --deep --sign - "$app_bundle"
+"$node_distribution/bin/node" "$source_root/scripts/sign-macos-release.mjs" \
+  "$app_bundle" "$sign_identity" "$source_root/packaging/macos/runtime-entitlements.plist"
 /usr/bin/codesign --verify --deep --strict --verbose=2 "$app_bundle"
 [[ "$(/usr/bin/lipo -archs "$contents/MacOS/YourChar")" == "arm64" ]]
 [[ "$(/usr/bin/lipo -archs "$runtime_node")" == "arm64" ]]
 
-# Re-test the relocated, pruned and signed payload, not just the build tree.
+# Re-test the signed payload using test code outside the app resource envelope.
+validation_root="$build_root/validation"
+mkdir -p "$validation_root/dist"
+/usr/bin/ditto "$source_root/dist/test" "$validation_root/dist/test"
+/usr/bin/ditto "$application_root/package.json" "$validation_root/package.json"
+ln -s "$application_root/dist/src" "$validation_root/dist/src"
+ln -s "$application_root/node_modules" "$validation_root/node_modules"
 (
   cd "$application_root"
   YOURCHAR_REQUIRE_WORKERS=1 "$runtime_node" --disable-warning=ExperimentalWarning \
     --test --test-concurrency=1 \
     --test-name-pattern='real MarkItDown worker|bundled TypeScript LSP resolves' \
-    dist/test/document-reader.test.js dist/test/lsp-navigation.test.js
+    "$validation_root/dist/test/document-reader.test.js" "$validation_root/dist/test/lsp-navigation.test.js"
 )
 
 smoke_port="$($runtime_node -e 'const net=require("node:net");const server=net.createServer();server.listen(0,"127.0.0.1",()=>{console.log(server.address().port);server.close();});')"
@@ -258,12 +271,32 @@ zip_path="$output_dir/${artifact_stem}.zip"
 dmg_path="$output_dir/${artifact_stem}.dmg"
 checksum_path="$output_dir/SHA256SUMS.txt"
 rm -f -- "$zip_path" "$dmg_path" "$checksum_path"
+notarize() {
+  local artifact="$1" report="$2"
+  if ! /usr/bin/xcrun notarytool submit "$artifact" --keychain-profile "$notary_profile" \
+    --wait --timeout 30m --output-format json > "$report"; then
+    cat "$report" >&2
+    return 1
+  fi
+  "$runtime_node" -e 'const fs=require("node:fs");const report=JSON.parse(fs.readFileSync(process.argv[1],"utf8"));if(report.status!=="Accepted"){console.error(JSON.stringify(report));process.exit(1);}console.log("Notarization accepted: "+report.id);' "$report"
+}
+notary_archive="$build_root/YourChar-notarization.zip"
+/usr/bin/ditto -c -k --sequesterRsrc --keepParent "$app_bundle" "$notary_archive"
+notarize "$notary_archive" "$output_dir/notarization-app.json"
+/usr/bin/xcrun stapler staple "$app_bundle"
+/usr/bin/xcrun stapler validate "$app_bundle"
+/usr/sbin/spctl --assess --type execute --verbose=2 "$app_bundle"
 /usr/bin/ditto -c -k --sequesterRsrc --keepParent "$app_bundle" "$zip_path"
 dmg_source="$build_root/dmg"
 mkdir -p "$dmg_source"
 /usr/bin/ditto "$app_bundle" "$dmg_source/YourChar.app"
 ln -s /Applications "$dmg_source/Applications"
 /usr/bin/hdiutil create -quiet -volname "YourChar ${version}" -srcfolder "$dmg_source" -ov -format UDZO "$dmg_path"
+/usr/bin/codesign --force --sign "$sign_identity" --timestamp "$dmg_path"
+notarize "$dmg_path" "$output_dir/notarization-dmg.json"
+/usr/bin/xcrun stapler staple "$dmg_path"
+/usr/bin/xcrun stapler validate "$dmg_path"
+/usr/sbin/spctl --assess --type open --context context:primary-signature --verbose=2 "$dmg_path"
 (
   cd "$output_dir"
   /usr/bin/shasum -a 256 "$(basename "$zip_path")" "$(basename "$dmg_path")" > "$(basename "$checksum_path")"
@@ -271,4 +304,4 @@ ln -s /Applications "$dmg_source/Applications"
 
 printf '\nYourChar macOS release created:\n'
 printf '  %s\n' "$zip_path" "$dmg_path" "$checksum_path"
-printf '  Version %s, commit %s, Node %s, arm64, ad-hoc signed\n' "$version" "$commit" "$node_version"
+printf '  Version %s, commit %s, Node %s, arm64, Developer ID signed and notarized\n' "$version" "$commit" "$node_version"

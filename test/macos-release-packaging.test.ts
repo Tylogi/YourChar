@@ -20,6 +20,16 @@ test("macOS release pipeline is portable, self-contained, and safety-scoped", ()
   };
 
   assert.match(help, /Apple Silicon macOS/u);
+  assert.match(help, /MACOS_SIGN_IDENTITY/u);
+  assert.match(help, /MACOS_NOTARY_PROFILE/u);
+  assert.match(script, /sign-macos-release\.mjs/u);
+  assert.doesNotMatch(script, /--sign - /u);
+  assert.match(script, /notarytool submit/u);
+  assert.match(script, /report\.status!=="Accepted"/u);
+  assert.match(script, /stapler validate "\$app_bundle"/u);
+  assert.match(script, /stapler validate "\$dmg_path"/u);
+  assert.match(script, /spctl --assess --type execute/u);
+  assert.match(script, /for path in dist\/src assets skills/u);
   assert.equal(packageJson.scripts["package:macos"], "bash scripts/build-macos-release.sh");
   assert.match(packageJson.scripts["test:macos"], /macos-release-packaging\.test\.js/u);
   assert.match(packageJson.scripts["test:macos"], /YOURCHAR_REQUIRE_NATIVE_SANDBOX=1/u);

@@ -27,6 +27,7 @@ The built-in providers are:
 | `anthropic` | Anthropic Messages | Anthropic models from Pi's bundled native catalog |
 | `google` | Google Generative AI | Gemini models from Pi's bundled native catalog |
 | `openai` | OpenAI Responses | OpenAI models from Pi's bundled native catalog |
+| `openai-codex` | Codex Responses (Pi adapter) | ChatGPT account login using the account's Codex access and allowance |
 
 Native adapters intentionally use their official Pi transports and pinned
 catalog metadata. `openai_compatible` remains the configurable escape hatch for
@@ -104,7 +105,7 @@ message input as appropriate.
 
 P4c separates model settings from model secrets. `model-api.json` now stores
 only an opaque `credentialRef`; the mode-`0600` host-owned
-`model-credentials.json` stores the current and one rollback version. Startup
+`model-credentials.json` stores credentials. API keys retain one rollback version. Startup
 migrates legacy inline keys by durably writing the credential first and then
 atomically rewriting the profile document. A missing, revoked, malformed, or
 wrong-profile reference fails closed and never falls through to a native
@@ -113,10 +114,48 @@ provider's environment credential.
 Credential creation and rotation use a revision compare-and-swap guard. The
 dedicated write endpoint verifies a candidate against the selected provider
 before committing, so a failed check leaves the last-known-good key active.
-Rotation retains one rollback version; revoke removes the active secret from
+API-key rotation retains one rollback version; revoke removes the active secret from
 resolution while retaining a rollback version. Public settings expose only the
 opaque reference, status, masked active value, revision, and rollback
 availability.
+
+### Codex account login
+
+In Settings → Models, select **Codex (ChatGPT sign-in)**, then choose browser or
+device-code sign-in. Open the displayed official authorization page and complete
+login. The page updates automatically; select a model, enable the profile, and
+save it before assigning it to a character. Image input uses the same checkbox
+and character/vision policy as other native providers.
+
+Browser login uses Pi's localhost callback on port 1455. If automatic return is
+unavailable, paste the complete callback URL into the login panel; the host
+requires the matching OAuth state. Device-code login works when the browser is
+on another machine and the account permits device authorization. Login attempts
+expire after 15 minutes and can be cancelled. The app never reads the user's
+Codex CLI auth file or asks for a ChatGPT password.
+
+Pi owns authorization, token refresh, catalog metadata, and the Codex Responses
+wire protocol. This is Pi's third-party integration, not the official Codex App
+Server. Catalog entries are not a guarantee of access for a particular account.
+Usage follows the account's Codex limits, and quota errors retain Pi's retry-time
+message. Connection tests consume a small real request.
+
+OAuth access/refresh tokens stay in the host's `model-credentials.json`, bound to
+the owning profile. Runtime configurations carry a scoped credential capability;
+tokens are never embedded in profile responses or copied into disposable states.
+Pi refreshes through a shared serialized store, so concurrent character and
+background requests do not double-refresh rotating tokens. Refresh persistence
+checks the user credential revision to prevent a late refresh from undoing
+logout or overwriting a newer login. Automatic refresh does not increment that
+revision. Logging out removes both tokens, with no rollback copy; existing API
+key rollback behavior is retained. The credential file uses mode `0600` where
+supported and is not encrypted at rest.
+
+Codex uses SSE so the host's HTTP transport and subagent timeout policy apply.
+The subscription endpoint omits ordinary API sampling/output-limit parameters;
+its settings therefore hide API keys, Base URL, Temperature, and Max Tokens.
+Context-window and reasoning controls remain available. This integration does
+not promise a configurable hard output-token limit for Codex requests.
 
 ## Host surface
 
@@ -148,6 +187,20 @@ profile-owner-scoped resolver from the parent; `model-credentials.json` is not
 copied into tmpfs. Task Bench and feature-test kernels install only the selected
 safe profile and receive a resolver restricted to that same profile ID.
 
+The Codex login routes are all authenticated, non-cacheable control-plane POSTs:
+
+```text
+/api/v1/model-profiles/{id}/oauth/start   { method: "browser" | "device_code", expectedRevision }
+/api/v1/model-profiles/{id}/oauth/status  { loginId }
+/api/v1/model-profiles/{id}/oauth/submit  { loginId, callbackUrl }
+/api/v1/model-profiles/{id}/oauth/cancel  { loginId }
+/api/v1/model-profiles/{id}/oauth/logout  { expectedRevision }
+```
+
+Status uses POST because pending responses contain short-lived authorization
+URLs or device codes. These routes never return access or refresh tokens. Profile
+responses expose `credentialType: "oauth"`, credential status and revision.
+
 ## Compatibility evidence
 
 The P4b integration suite sends the same deterministic `gpt-4o` task through
@@ -163,7 +216,14 @@ Run the focused coverage with:
 npm run build
 node --disable-warning=ExperimentalWarning --test \
   dist/test/http-ui.test.js \
+  dist/test/codex-oauth.test.js \
   dist/test/model-credentials.test.js \
   dist/test/model-provider-adapters.test.js \
   dist/test/native-model-providers.test.js
 ```
+
+`test/codex-oauth.test.ts` exercises Pi's real auth/transport implementation with
+mocked upstream responses, including refresh races, image/tool turns, quota
+errors, and protected login routes. `test/codex-login.browser.mjs` checks both
+login flows, cancellation, logout, model selection, and narrow/wide Chinese and
+English layouts. A real account login is still required to verify live access.

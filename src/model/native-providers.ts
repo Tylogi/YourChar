@@ -1,6 +1,7 @@
 import { ModelRuntime } from "@earendil-works/pi-coding-agent";
 import {
   InMemoryCredentialStore,
+  createModels,
   type Api,
   type AssistantMessage,
   type Context,
@@ -13,6 +14,7 @@ import {
 import { anthropicProvider } from "@earendil-works/pi-ai/providers/anthropic";
 import { googleProvider } from "@earendil-works/pi-ai/providers/google";
 import { openaiProvider } from "@earendil-works/pi-ai/providers/openai";
+import { openaiCodexProvider } from "@earendil-works/pi-ai/providers/openai-codex";
 import type {
   ModelProviderAdapter,
   ModelProviderConfiguration,
@@ -20,19 +22,20 @@ import type {
   ModelProviderPayloadControls,
 } from "./provider-adapter.js";
 
-type NativeProtocol = "anthropic-messages" | "google-generative-ai" | "openai-responses";
+type NativeProtocol = "anthropic-messages" | "google-generative-ai" | "openai-responses" | "openai-codex-responses";
 
 const presetProtocol = Symbol("rp-agent-native-preset-protocol");
 const presetSourceItem = Symbol("rp-agent-native-preset-source-item");
 
 type NativeProviderDefinition = {
-  id: "anthropic" | "google" | "openai";
+  id: "anthropic" | "google" | "openai" | "openai-codex";
   label: string;
   description: string;
   api: NativeProtocol;
   apiKeyDescription: string;
   provider: () => Provider<Api>;
   thinkingBudgetField: boolean;
+  authentication?: "oauth";
 };
 
 const commonNativeFields = (
@@ -110,6 +113,16 @@ const nativeDefinitions: readonly NativeProviderDefinition[] = Object.freeze([
     provider: () => openaiProvider() as Provider<Api>,
     thinkingBudgetField: false,
   },
+  {
+    id: "openai-codex",
+    label: "Codex（ChatGPT 登录）",
+    description: "使用 ChatGPT 账号的 Codex 权益与额度；模型目录由 Pi 提供，实际访问权限取决于账号。",
+    api: "openai-codex-responses",
+    apiKeyDescription: "",
+    provider: () => openaiCodexProvider() as Provider<Api>,
+    thinkingBudgetField: false,
+    authentication: "oauth",
+  },
 ]);
 
 export const firstPartyNativeModelProviderAdapters: readonly ModelProviderAdapter[] =
@@ -123,16 +136,51 @@ function createNativeProviderAdapter(
     id: definition.id,
     label: definition.label,
     description: definition.description,
-    configurationFields: commonNativeFields(definition),
+    configurationFields: definition.authentication === "oauth"
+      ? commonNativeFields(definition).filter((field) => !["apiKey", "temperature", "maxTokens"].includes(field.key))
+      : commonNativeFields(definition),
+    ...(definition.authentication ? { authentication: definition.authentication } : {}),
     isConfigured: (config) => Boolean(config.model.trim()) &&
+      (definition.authentication !== "oauth" || config.oauth?.providerId === definition.id) &&
       validateNativeConfiguration(definition, config).length === 0,
     validateConfiguration: (config) => validateNativeConfiguration(definition, config),
     createModel: (config) => configuredNativeModel(definition, config),
     registerModel: async (modelRuntime, config) => {
-      modelRuntime.registerNativeProvider(definition.provider());
-      if (config.apiKey) {
+      const provider = definition.provider();
+      if (definition.authentication === "oauth") {
+        if (!config.oauth || config.oauth.providerId !== provider.id) throw new Error("请先登录 ChatGPT 以使用 Codex。");
+        const models = createModels({ credentials: config.oauth.credentials });
+        models.setProvider(provider);
+        // Keep Pi's transport and locked OAuth refresh while resolving the
+        // host-owned, profile-scoped credential for every request.
+        modelRuntime.registerNativeProvider({
+          ...provider,
+          stream: ((model, context, options) => provider.stream(model, context, {
+            ...options, transport: "sse", temperature: undefined,
+          } as never)) as Provider["stream"],
+          streamSimple: (model, context, options) => provider.streamSimple(model, context, {
+            ...options, transport: "sse", temperature: undefined,
+          }),
+          auth: { apiKey: {
+            name: "ChatGPT OAuth",
+            check: ({ signal }) => models.checkAuth(provider.id, { signal }),
+            resolve: async ({ signal }) => {
+              try {
+                const auth = await models.getAuth(provider.id, { signal });
+                if (!auth) throw new Error("signed out");
+                return auth;
+              } catch {
+                signal.throwIfAborted();
+                throw new Error("Codex 登录已失效或暂时无法续期，请重试或重新登录 ChatGPT。");
+              }
+            },
+          } },
+        });
+      } else if (config.apiKey) {
+        modelRuntime.registerNativeProvider(provider);
         await modelRuntime.setRuntimeApiKey(definition.id, config.apiKey);
       } else {
+        modelRuntime.registerNativeProvider(provider);
         await modelRuntime.removeRuntimeApiKey(definition.id);
       }
       return configuredNativeModel(definition, config);
@@ -147,6 +195,8 @@ function createNativeProviderAdapter(
       ...(options.timeoutMs === undefined ? { timeoutMs: 300_000 } : {}),
       ...(options.maxRetries === undefined ? { maxRetries: 2 } : {}),
       ...(options.maxRetryDelayMs === undefined ? { maxRetryDelayMs: 60_000 } : {}),
+      // All calls, including subagents, use the host's HTTP transport policy.
+      ...(definition.authentication === "oauth" ? { transport: "sse" as const, temperature: undefined } : {}),
     }),
     transformPayload: (config, payload, controls) =>
       transformNativePayload(definition, config, payload, controls),
@@ -162,6 +212,9 @@ function validateNativeConfiguration(
   config: ModelProviderConfiguration,
 ): readonly string[] {
   const issues: string[] = [];
+  if (definition.authentication === "oauth" && config.apiKey) {
+    issues.push("Codex requires ChatGPT login; API keys are not supported by this provider");
+  }
   const modelId = config.model.trim();
   const catalogModel = modelId
     ? definition.provider().getModels().find((model) => model.id === modelId)
@@ -250,6 +303,7 @@ async function testNativeConnection(
   let status = 200;
   const startedAt = performance.now();
   const message = await modelRuntime.completeSimple(model, diagnosticContext(), {
+    ...adapter.prepareRequestOptions?.(config, {}),
     apiKey: config.apiKey,
     maxTokens: 8,
     maxRetries: 0,
@@ -289,7 +343,15 @@ function transformNativePayload(
   if (definition.api === "google-generative-ai") {
     return transformGooglePayload(config, payload, controls);
   }
-  return transformOpenAiResponsesPayload(config, payload, controls);
+  const transformed = transformOpenAiResponsesPayload(config, payload, controls);
+  if (definition.api === "openai-codex-responses") {
+    // The Codex subscription endpoint does not accept API output-token caps
+    // or sampling parameters. Preserve its store:false and instructions.
+    delete transformed.max_output_tokens;
+    delete transformed.temperature;
+    delete transformed.top_p;
+  }
+  return transformed;
 }
 
 function transformAnthropicPayload(
@@ -406,7 +468,8 @@ function transformOpenAiResponsesPayload(
   if (!thinkingEnabled && typeof controls.topP === "number") current.top_p = controls.topP;
   if (typeof controls.maxTokens === "number") current.max_output_tokens = controls.maxTokens;
   if (controls.thinkingMode === "off") {
-    const model = openaiProvider().getModels().find((entry) => entry.id === config.model);
+    const model = (config.provider === "openai-codex" ? openaiCodexProvider() : openaiProvider())
+      .getModels().find((entry) => entry.id === config.model);
     if (model?.reasoning && model.thinkingLevelMap?.off !== null) {
       current.reasoning = { effort: model.thinkingLevelMap?.off ?? "none" };
     } else {

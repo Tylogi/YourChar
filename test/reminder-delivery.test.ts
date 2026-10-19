@@ -20,6 +20,54 @@ const gateway: ImGateway = { configured: true, supportsAttachments: true,
   startBinding: async () => { throw new Error("not needed"); },getBindingSession: async () => { throw new Error("not needed"); },
   cancelBindingSession: async () => { throw new Error("not needed"); },disconnect: async () => {} };
 
+test("reminder cards retain paged metadata without becoming replies or model context", async () => {
+  for (const mode of ["sms", "rp"] as const) {
+    const runtime = createTestRuntime({
+      now: "2026-09-08T01:00:00Z", seed: `reminder-card-${mode}`,
+      reminderMessageComposer: { compose: async () => ({ body: "CARD_ONLY_BODY 已经到 09:05 了。", agentGenerated: true }) },
+    });
+    try {
+      const character = runtime.kernel.createCharacter({ name: "聊天角色" });
+      const sessionId = `reminder-card-${mode}`;
+      runtime.model.enqueue([{ kind: "assistant_text", text: "我们接着聊电影吧。" }]);
+      await runtime.kernel.sendMessage(sessionId, { mode, characterId: character.id, text: "今天想聊电影。" });
+      const created = runtime.kernel.createScheduleItem({
+        kind: "reminder", title: "CARD_ONLY_TITLE", startAt: "2026-09-08T01:05:00Z",
+        timezone: "Asia/Shanghai", sourceSessionId: sessionId,
+      });
+      await flush();
+      runtime.clock.advance(5 * 60_000);
+      await runtime.schedulerTick();
+      await flush();
+      const cardSession = runtime.kernel.sessionRuntime.getCanonicalDirectConversation(character.id, "normal");
+      assert.ok(cardSession);
+      const page = await runtime.kernel.sessionRuntime.getMessageHistory(cardSession.id, {});
+      assert.ok("messages" in page);
+      const cards = page.messages.filter(message => message.role === "custom" &&
+        (message.details as Record<string, unknown>)?.notificationOutboxId);
+      assert.equal(cards.length, 1);
+      const card = cards[0];
+      assert.ok(card.role === "custom");
+      assert.equal(card.customType, "rp-agent/system_event");
+      assert.deepEqual((card.details as Record<string, unknown>).reminder, {
+        title: "CARD_ONLY_TITLE", scheduleItemId: created.item.id,
+        eventAt: "2026-09-08T01:05:00.000Z", dueAt: "2026-09-08T01:05:00.000Z", timezone: "Asia/Shanghai",
+      });
+      assert.equal((card.details as Record<string, unknown>).occurrenceId, created.occurrence!.id);
+      runtime.kernel.acknowledgeReminder(created.occurrence!.id);
+      await runtime.schedulerTick();
+      assert.equal(runtime.notifications.length, 1);
+      runtime.model.enqueue([{ kind: "assistant_text", text: "你想先聊哪部？" }]);
+      await runtime.kernel.sendMessage(sessionId, { mode, characterId: character.id, text: "刚才那部电影，你最喜欢哪一段？" });
+      const nextRequest = runtime.model.requests.at(-1)!;
+      assert.doesNotMatch(JSON.stringify(nextRequest.messages), /CARD_ONLY_BODY|CARD_ONLY_TITLE/);
+      assert.match(nextRequest.systemPrompt, /respond to the user's current topic/);
+      assert.match(nextRequest.systemPrompt, /Do not duplicate them in ordinary replies/);
+      assert.equal(runtime.notifications.length, 1);
+    } finally { runtime.dispose(); }
+  }
+});
+
 function setupWechat(runtime: ReturnType<typeof createTestRuntime>) {
   const repo = runtime.kernel.imIntegrations.repository, now=runtime.clock.now().toISOString();
   const character=runtime.kernel.createCharacter({name:"提醒角色"});

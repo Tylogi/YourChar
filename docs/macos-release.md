@@ -9,9 +9,9 @@ install Node.js, Python, or uv.
 ## Install or upgrade
 
 Download the DMG or ZIP from the
-[v0.2.0 macOS preview release](https://github.com/Tylogi/YourChar/releases/tag/v0.2.0-macos-preview.1).
+[v0.2.1 release](https://github.com/Tylogi/YourChar/releases/tag/v0.2.1).
 It requires **Apple Silicon and macOS 13 or newer**; it is not an Intel or
-Windows installer. See the [release notes](releases/v0.2.0-macos-preview.1.md).
+Windows installer. See the [release notes](releases/v0.2.1.md).
 
 1. Quit any running YourChar app with **YourChar → Quit YourChar** (`⌘Q`). Closing
    its window alone does not stop the backend. Quit any separately started
@@ -24,7 +24,7 @@ Windows installer. See the [release notes](releases/v0.2.0-macos-preview.1.md).
 
 Only the app bundle is replaced. Do **not** delete Application Support to upgrade;
 keeping the old app and the pre-upgrade data backup also makes rollback possible.
-This preview does not include an automatic updater.
+This release does not include an automatic updater.
 
 `SHA256SUMS.txt` contains checksums for both installer formats. After downloading
 both assets and the checksum file into the same directory, run:
@@ -37,12 +37,10 @@ If downloading only one format, compare `shasum -a 256 <downloaded-file>` with
 that file's entry instead. Checksums verify file integrity; they do not replace
 Apple notarization or establish the publisher's identity.
 
-This preview is **ad-hoc signed and not notarized**. macOS may block its first
-launch. Only if you trust the source and have verified the download, follow
-[Apple's app-opening guidance](https://support.apple.com/en-us/102445) to allow
-this particular app in **System Settings → Privacy & Security → Open Anyway**.
-Do not disable Gatekeeper globally. A damaged-app or malware warning should be
-investigated rather than treated as an ordinary unidentified-developer warning.
+The v0.2.1 app and disk image use **Developer ID signing and Apple notarization**.
+Both include stapled tickets. Earlier preview assets remain ad-hoc signed and
+were not notarized. A damaged-app or malware warning should be investigated;
+do not disable Gatekeeper to bypass it.
 
 ## Runtime behavior
 
@@ -78,11 +76,14 @@ Requirements:
 - uv (build-time only; `YOURCHAR_BUILD_UV` may name its executable)
 - Network access to npm, `nodejs.org`, Python package downloads and Astral's Python releases
 - A clean Git working tree
+- A Developer ID Application certificate with its private key in the build user's Keychain
+- A working `notarytool` Keychain profile for the same Apple Developer team
 
 Run from the repository root:
 
 ```bash
-npm run package:macos
+MACOS_SIGN_IDENTITY="Developer ID Application: Your Name (TEAMID)" \
+MACOS_NOTARY_PROFILE="your-notary-profile" npm run package:macos
 ```
 
 The builder exports committed `HEAD` into a clean staging directory, downloads
@@ -90,8 +91,10 @@ the Node version pinned by `.nvmrc`, verifies it against Node's published
 `SHASUMS256.txt`, installs locked dependencies, runs the macOS packaging gate
 and sensitive-information scan, bundles CPython 3.13.5 with hash-locked
 MarkItDown wheels, prunes development-only packages, compiles the
-native launcher and icon, performs a packaged-server readiness smoke test, and
-then produces:
+native launcher and icon, signs nested native code before the outer bundle,
+and performs a packaged-server readiness smoke test. It then notarizes and
+staples the app, builds the ZIP and DMG, and notarizes and staples the DMG before
+computing checksums. It produces:
 
 ```text
 release/YourChar-<version>-macos-arm64.zip
@@ -125,12 +128,16 @@ build bundles separately. Do not remove Application Support data to clean builds
 
 ## Signing and publication
 
-The current builder ad-hoc signs the complete bundle and verifies its nested
-code. GitHub downloads are explicitly labelled **previews**: there is no
-Developer ID signing identity on the build host and the result is not notarized.
-They should not be described as Apple-verified or free of Gatekeeper warnings.
-For a notarized distribution, add a secure CI or release-host workflow using an
-Apple **Developer ID Application** certificate, hardened-runtime-compatible
-entitlements for the embedded Node runtime, `notarytool`, and stapling. Never
-commit the certificate, private key, App Store Connect key, or notarization
-credentials.
+The builder requires `MACOS_SIGN_IDENTITY` and `MACOS_NOTARY_PROFILE`; it never
+silently falls back to ad-hoc signing. It signs each Mach-O file with a secure
+timestamp, enables hardened runtime on executables, and grants JIT permissions
+only to embedded runtime executables. The app resource envelope is signed last.
+Test code stays outside the signed payload. Published ZIPs contain the stapled
+app, and the DMG has its own signature and stapled ticket. Both artifacts must
+pass Gatekeeper assessment. Notarization acceptance reports remain in the
+output directory for the release operator.
+
+Store credentials using `xcrun notarytool store-credentials` on the build host.
+Never commit the certificate, private key, App Store Connect key, or notarization
+credentials. The release workflow needs only a public identity name and the
+Keychain profile's label.

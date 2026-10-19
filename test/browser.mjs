@@ -24,6 +24,7 @@ import { runLocaleChecks } from "./locale.browser.mjs";
 import { runPermissionChecks } from "./permissions.browser.mjs";
 import { runNavigationChecks } from "./navigation.browser.mjs";
 import { runModelSettingsLayoutChecks } from "./model-settings-layout.browser.mjs";
+import { runCodexLoginChecks } from "./codex-login.browser.mjs";
 
 const artifactsDir = resolve("browser-artifacts");
 mkdirSync(artifactsDir, { recursive: true });
@@ -241,6 +242,7 @@ try {
   await runPermissionChecks(browser);
   await runNavigationChecks(browser, artifactsDir);
   await runModelSettingsLayoutChecks(browser, artifactsDir);
+  await runCodexLoginChecks(browser, artifactsDir);
   await runDesktopWorkflow(browser, baseUrl, artifactsDir);
   await runCompactDesktopWorkflow(browser, baseUrl, artifactsDir);
   await runMobileWorkflow(browser, baseUrl, artifactsDir);

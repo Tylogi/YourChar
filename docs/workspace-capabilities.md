@@ -29,6 +29,15 @@ another space's Workspace.
 
 ## 2. Permission model
 
+File uploads default to 100 MiB per file. Settings → Documents → File uploads
+accepts an integer from 1 to 1024 MiB and applies it immediately to chat attachments,
+normal and secret Workspaces, task-bench uploads, and document input validation.
+The setting persists across restarts. `GET /api/settings/uploads` reads the limit;
+`PATCH /api/settings/uploads` accepts `{ "maxFileMiB": 100 }` with the local
+control-plane cookie and same-origin checks. Requests exceeding the limit return
+HTTP 413, including streamed bodies without Content-Length. IM platform limits
+and converted-document output limits remain independent.
+
 | Permission | Default | Effect |
 |---|---|---|
 | Workspace access | Read-write | `off`, `read_only`, or `read_write`; existing explicit choices are preserved |

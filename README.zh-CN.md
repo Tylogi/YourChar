@@ -61,9 +61,9 @@ YourChar 是一款开源、可自行部署的 AI 角色应用。你可以为角�
 从源码运行需要 **Node.js 22.19.0 或更新版本**和 npm。Linux 的沙盒任务使用 Bubblewrap，
 无痕快照使用可验证的 `tmpfs` 内存文件系统。
 
-Apple Silicon 用户（macOS 13+）可直接[下载 macOS 预览版](https://github.com/Tylogi/YourChar/releases/tag/v0.2.0-macos-preview.1)，
+Apple Silicon 用户（macOS 13+）可直接[下载 macOS 版](https://github.com/Tylogi/YourChar/releases/tag/v0.2.1)，
 无需另装 Node/Python；安装和覆盖升级见[使用说明](docs/macos-release.md#install-or-upgrade)。
-当前预览版采用 ad-hoc 签名，尚未经过 Apple 公证。文档转换和 TypeScript LSP
+此版本采用正式 Developer ID 签名并完成 Apple 公证。文档转换和 TypeScript LSP
 使用独立断网的 Seatbelt 沙盒，无痕模式使用私有 RAM 盘。Windows 采用 WSL2 后端，
 实机验收尚待完成；安装方法和测试清单见[跨平台适配说明](docs/cross-platform-workers.md)。
 

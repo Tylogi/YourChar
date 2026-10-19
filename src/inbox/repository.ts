@@ -47,6 +47,28 @@ export class PrivateInboxRepository {
     return row ? mapMessage(row) : undefined;
   }
 
+  isPaused(sessionId: string): boolean {
+    return Boolean((this.database.connection.prepare(
+      "SELECT paused FROM private_inbox_controls WHERE session_id = ?",
+    ).get(sessionId) as { paused: number } | undefined)?.paused);
+  }
+
+  setPaused(sessionId: string, paused: boolean): void {
+    this.database.connection.prepare(`
+      INSERT INTO private_inbox_controls(session_id, paused)
+      SELECT app_session_id, ? FROM role_sessions WHERE app_session_id = ?
+      ON CONFLICT(session_id) DO UPDATE SET paused = excluded.paused
+    `).run(Number(paused), sessionId);
+  }
+
+  requeueEdited(id: string, text: string, attachments: MessageAttachment[], now: string): PrivateInboxMessage {
+    this.database.connection.prepare(`
+      UPDATE private_message_inbox SET text = ?, attachments_json = ?, status = 'queued',
+        burst_id = NULL, last_error = NULL, completed_at = NULL, updated_at = ? WHERE id = ?
+    `).run(text, JSON.stringify(attachments), now, id);
+    return this.get(id)!;
+  }
+
   getByClientMessageId(sessionId: string, clientMessageId: string): PrivateInboxMessage | undefined {
     const row = this.database.connection.prepare(`
       SELECT * FROM private_message_inbox WHERE session_id = ? AND client_message_id = ?
@@ -68,6 +90,13 @@ export class PrivateInboxRepository {
       WHERE session_id = ? AND status IN ('queued', 'processing')
       ORDER BY created_at, id
     `).all(sessionId) as Row[]).map(mapMessage);
+  }
+
+  listFailed(sessionId: string): PrivateInboxMessage[] {
+    return (this.database.connection.prepare(`
+      SELECT * FROM private_message_inbox WHERE session_id = ? AND status = 'failed'
+      ORDER BY created_at DESC, id DESC LIMIT 50
+    `).all(sessionId) as Row[]).map(mapMessage).reverse();
   }
 
   listAll(limit = 1_000): PrivateInboxMessage[] {

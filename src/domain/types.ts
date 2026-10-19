@@ -74,6 +74,7 @@ export type ModelApiConfig = {
   credentialStatus: "not_set" | "active" | "missing" | "revoked";
   credentialRevision?: number;
   credentialCanRollback: boolean;
+  credentialType?: "oauth";
   temperature?: number;
   maxTokens?: number;
   contextWindowTokens?: number;

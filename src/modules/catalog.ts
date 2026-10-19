@@ -208,6 +208,7 @@ const mcpDetails: Record<string, string> = {
 - \`calendar=character\` is the selected character's fictional calendar; it accepts events and tasks but never reminders or system notifications.
 - \`kind=reminder\` always belongs to \`calendar=user\`. Physical co-presence changes the narrative lens, not calendar ownership; “提醒我” remains a user-calendar request while meeting.
 - Calendar ownership is isolated. Character operations cannot read or mutate the user's calendar, and vice versa.
+- Keep calendar use relevant to the current request. Timed notifications have separate cards; ordinary replies should not duplicate them or pursue acknowledged items. Saving events or tasks alone does not enable notifications.
 - For a day/week/course query, narrow from/to/query first. Lists return at most 20 summaries by default (50 maximum); follow nextOffset with unchanged filters only when more results are needed. Long fields are explicitly marked as previews. Never claim to have read the whole calendar when hasMore is true.
 - For semester timetables, create bounded batches and report saved/existing/failed counts and conflicts. Successful entries remain saved on partial failure; do not recreate them. Check failed indexes and correct only those entries. Recurrence currently supports DAILY/WEEKLY with optional INTERVAL, not semester end dates or holiday exceptions; use dated entries for a finite term.
 - Relative and local-language times are passed through \`timeExpression\` and resolved by the trusted server clock.
@@ -250,7 +251,7 @@ const mcpDetails: Record<string, string> = {
 - Disabled by default and unavailable until a MinerU Base URL is configured in Settings.
 - The model can choose only a Workspace-relative file and a Markdown line range. It cannot choose or change the endpoint, credentials, backend, language, OCR mode, or timeout.
 - Calling the tool uploads the entire selected PDF, image, DOCX, PPTX, or XLSX file to the configured endpoint. The endpoint may be local, LAN, or remote; this is an explicit open-world capability.
-- Input is restricted to the current normal or secret Workspace and capped at 20 MiB. Incognito sessions never receive this tool.
+- Input is restricted to the current normal or secret Workspace and capped by the upload setting (100 MiB by default). Incognito sessions never receive this tool.
 - Returned Markdown and validated extracted images are saved as one managed document package under the current scoped Workspace's \`tmp/mineru/\` directory for 24 hours. Cleanup never deletes unrelated files.
 `,
   [gitMcpModuleId]: `# Git MCP
