@@ -1,4 +1,4 @@
-export type DocumentConversionEngine = "markitdown";
+export type DocumentConversionEngine = "anydoc";
 
 export type DocumentConversion = {
   engine: DocumentConversionEngine;

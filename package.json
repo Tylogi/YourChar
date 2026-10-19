@@ -30,8 +30,6 @@
   "description": "Self-hosted AI characters with lasting memory, shared worlds, and tools for everyday life.",
   "scripts": {
     "build": "tsc -p tsconfig.json",
-    "setup:markitdown": "uv sync --project services/markitdown --frozen --python 3.13.5",
-    "bundle:markitdown": "node scripts/bundle-markitdown.mjs",
     "dev": "npm run build && node --disable-warning=ExperimentalWarning dist/src/server.js",
     "start": "node --disable-warning=ExperimentalWarning dist/src/server.js",
     "acp": "node --disable-warning=ExperimentalWarning dist/src/acp/stdio.js",
@@ -70,6 +68,7 @@
     "@earendil-works/pi-agent-core": "0.84.4",
     "@earendil-works/pi-ai": "0.84.4",
     "@earendil-works/pi-coding-agent": "0.84.4",
+    "@firecrawl/anydoc": "0.2.4",
     "@fontsource/noto-emoji": "^5.3.0",
     "@larksuiteoapi/node-sdk": "^1.71.1",
     "@modelcontextprotocol/sdk": "1.29.0",

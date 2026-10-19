@@ -5,7 +5,7 @@ param(
 )
 $ErrorActionPreference = 'Stop'
 # Run all three worker families in the same Linux backend. Never attempt to
-# execute Windows node.exe/python.exe inside a Linux filesystem sandbox.
+# execute Windows node.exe inside a Linux filesystem sandbox.
 if (-not $ProjectPath.StartsWith('/') -or $ProjectPath.Contains("`n") -or $ProjectPath.Contains("`r")) {
   throw 'ProjectPath must be an absolute Linux project path inside WSL2.'
 }

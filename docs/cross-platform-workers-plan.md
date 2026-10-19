@@ -1,5 +1,9 @@
 # Cross-platform worker adaptation
 
+Historical implementation record. The current document reader replaces this
+MarkItDown/Python integration with AnyDoc's JS API; see
+[current setup and boundaries](cross-platform-workers.md).
+
 Branch: `feature/cross-platform-workers`, based on `dev` (`9884642`).
 
 ## Boundaries

@@ -758,7 +758,7 @@ export const englishUiMessages: Readonly<Record<string, string>> = Object.freeze
   "Judge 评分标准": "Judge rubric",
   "Judge 权重": "Judge weight",
   "Judge 时间上限": "Judge timeout",
-  "MarkItDown 仍在 YourChar 本机做轻量转换；MinerU MCP 会把 Agent 选中的整份 Workspace 文档发送到这里配置的 MinerU 服务。返回的 Markdown 与提取图片会组成完整文档包，暂存在当前空间的": "MarkItDown still performs lightweight conversion locally in YourChar. MinerU MCP sends the complete Workspace document selected by the agent to the MinerU service configured here. Returned Markdown and extracted images form a complete document package temporarily stored in this space under",
+  "AnyDoc 仍在 YourChar 本机做轻量转换；MinerU MCP 会把 Agent 选中的整份 Workspace 文档发送到这里配置的 MinerU 服务。返回的 Markdown 与提取图片会组成完整文档包，暂存在当前空间的": "AnyDoc still performs lightweight conversion locally in YourChar. MinerU MCP sends the complete Workspace document selected by the agent to the MinerU service configured here. Returned Markdown and extracted images form a complete document package temporarily stored in this space under",
   "OKF 导出范围": "OKF export scope",
   "Trace 查看方式": "Trace view",
   "tvly-...（留空表示不修改）": "tvly-… (leave blank to keep unchanged)",

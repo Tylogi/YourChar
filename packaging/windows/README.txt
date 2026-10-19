@@ -5,19 +5,15 @@ What this is
 ------------
 This payload is a complete YourChar runtime for Windows: a WSL2 distribution
 that already contains everything the backend needs. Importing it is the whole
-setup. You do not install Node.js, Python, uv, MarkItDown or Bubblewrap, and you
+setup. You do not install Node.js, AnyDoc or Bubblewrap, and you
 do not need an Ubuntu distribution of your own.
 
 Contents
 --------
   /opt/yourchar/node/                     Node.js runtime
-  /opt/yourchar/dist/                     built YourChar backend
+  /opt/yourchar/dist/src/                 built YourChar backend (no tests)
   /opt/yourchar/node_modules/             runtime dependencies (no dev tools)
   /opt/yourchar/assets, /opt/yourchar/skills
-  /opt/yourchar/services/markitdown/      document worker (worker.py)
-  /opt/yourchar/services/markitdown/runtime/
-                                          bundled CPython with MarkItDown,
-                                          Magika and ONNX Runtime
   /opt/yourchar/bin/yourchar-backend      backend entry point
   /opt/yourchar/scripts/start-wsl-backend.sh
                                           preflight and start script

@@ -89,18 +89,18 @@ authorized exactly, and only a real, dedicated package directory grants access
 to referenced resources below it. This prevents one normal Skill from reading
 an adjacent private-only Skill. Skill packages are always read-only.
 
-`read_document` converts Workspace-relative PDF, DOCX, PPTX, XLS/XLSX, HTML,
-CSV, and common text documents to bounded Markdown chunks with Microsoft
-MarkItDown. Development uses a uv-managed Python environment; macOS releases
-include a relocatable Python runtime and the frozen dependencies. The worker
-runs offline under Bubblewrap on Linux/WSL2 or Seatbelt on macOS. It receives only one read-only source file,
-the read-only worker environment, temporary storage, and the minimum system
+`read_document` converts Workspace-relative PDF, DOCX, PPTX, XLS/XLSX, and CSV
+documents to bounded Markdown chunks with AnyDoc's JS API. Use `read` for text
+files, including Markdown, JSON, XML, YAML, and HTML source. Conversion
+executes the same TypeScript implementation inside the existing offline sandbox:
+Bubblewrap on Linux/WSL2 or Seatbelt on macOS. It receives one read-only source file,
+read-only application code and npm dependencies, temporary storage, and the minimum system
 runtime; it does not receive the Workspace directory, state directory, model
 credentials, host environment, or network namespace. Converted content is
 wrapped as untrusted document data and cached only in bounded process memory.
 Normal, per-character secret, and disposable incognito Workspaces use distinct
 cache namespaces. Empty-text PDFs fail explicitly as OCR candidates; the first
-integration does not pass Vision credentials to Python or silently upload a
+integration does not pass Vision credentials to the converter or silently upload a
 scanned document. Input staging and macOS worker scratch use verified RAM storage,
 not ordinary disk temporary files. See [cross-platform workers](cross-platform-workers.md).
 
@@ -285,7 +285,7 @@ native integration suite executes the current platform's provider, checks read-o
 rejects path escape, confirms host paths are absent, and verifies that profile
 and SOUL write tools follow independent switches. Document tests additionally
 verify format signatures, bounded chunks, cache separation, untrusted-data
-wrapping, cancellation, and a real no-network MarkItDown worker conversion.
+wrapping, cancellation, and real no-network AnyDoc conversion.
 
 Normal and per-character secret Workspace files are included in operational
 backups. They are not returned by the JSON export and are not removed by the

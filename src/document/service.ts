@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { fileURLToPath } from "node:url";
 import {
   closeSync,
   constants,
@@ -7,10 +8,9 @@ import {
   openSync,
   readFileSync,
   realpathSync,
-  statSync,
   writeFileSync,
 } from "node:fs";
-import { basename, dirname, extname, join, resolve } from "node:path";
+import { basename, dirname, extname, join } from "node:path";
 import { createMemoryDirectory } from "../execution/memory-directory.js";
 import { offlineWorkerAvailable, spawnOfflineWorker } from "../execution/offline-worker.js";
 import type { WorkspaceFileService } from "../workspace/file-service.js";
@@ -21,8 +21,8 @@ import type {
 } from "./types.js";
 
 const defaultTimeoutMs = 90_000;
-const maximumWorkerOutputBytes = 18 * 1024 * 1024;
-const maximumWorkerErrorBytes = 32 * 1024;
+const maximumConversionOutputBytes = 18 * 1024 * 1024;
+const maximumConversionErrorBytes = 32 * 1024;
 const maximumCacheBytes = 32 * 1024 * 1024;
 const maximumConvertedMarkdownBytes = 8 * 1024 * 1024;
 const defaultLineLimit = 300;
@@ -34,35 +34,26 @@ const maximumConcurrentConversions = 2;
 const supportedExtensions = new Set([
   ".csv",
   ".docx",
-  ".htm",
-  ".html",
-  ".json",
-  ".md",
   ".pdf",
   ".pptx",
-  ".txt",
   ".xls",
   ".xlsx",
-  ".xml",
-  ".yaml",
-  ".yml",
 ]);
 
-type MarkItDownWorkerResponse = {
+type DocumentConversionResponse = {
   version: 1;
-  engine: "markitdown";
+  engine: "anydoc";
   title?: string | null;
   markdown: string;
 };
 
-export type MarkItDownRunner = (
+export type DocumentRunner = (
   input: { absolutePath: string; extension: string; bytes: Buffer },
   signal?: AbortSignal,
-) => Promise<MarkItDownWorkerResponse>;
+) => Promise<DocumentConversionResponse>;
 
 export type DocumentConversionServiceOptions = {
-  workerDir?: string;
-  runner?: MarkItDownRunner;
+  runner?: DocumentRunner;
   timeoutMs?: number;
 };
 
@@ -72,18 +63,15 @@ export type DocumentWorkspaceContext = {
 };
 
 export class DocumentConversionService {
-  private readonly workerDir: string;
-  private readonly runner: MarkItDownRunner;
+  private readonly runner: DocumentRunner;
   private readonly customRunner: boolean;
   private readonly cache = new Map<string, DocumentConversion>();
   private cachedBytes = 0;
   private activeConversions = 0;
 
   constructor(options: DocumentConversionServiceOptions = {}) {
-    this.workerDir = resolve(options.workerDir ?? join(process.cwd(), "services", "markitdown"));
     this.customRunner = options.runner !== undefined;
-    this.runner = options.runner ?? ((input, signal) => runMarkItDownWorker(
-      this.workerDir,
+    this.runner = options.runner ?? ((input, signal) => convertInSandbox(
       input,
       options.timeoutMs ?? defaultTimeoutMs,
       signal,
@@ -92,9 +80,12 @@ export class DocumentConversionService {
 
   isAvailable(): boolean {
     if (this.customRunner) return true;
-    return offlineWorkerAvailable() &&
-      existsSync(join(this.workerDir, "worker.py")) &&
-      existsSync(workerPython(this.workerDir));
+    try {
+      return offlineWorkerAvailable() &&
+        existsSync(fileURLToPath(import.meta.resolve("@firecrawl/anydoc")));
+    } catch {
+      return false;
+    }
   }
 
   async read(
@@ -126,7 +117,7 @@ export class DocumentConversionService {
         );
       }
       this.activeConversions += 1;
-      let response: MarkItDownWorkerResponse;
+      let response: DocumentConversionResponse;
       try {
         response = await this.runner({
           absolutePath: source.absolutePath,
@@ -136,18 +127,18 @@ export class DocumentConversionService {
       } finally {
         this.activeConversions -= 1;
       }
-      assertWorkerResponse(response);
+      assertConversionResponse(response);
       const markdown = normalizeMarkdown(response.markdown);
       if (!markdown.trim()) {
         throw new DocumentConversionError(
           "DOCUMENT_OCR_REQUIRED",
           extension === ".pdf"
-            ? "MarkItDown found no readable text in this PDF; it may be scanned and require OCR"
-            : "MarkItDown returned no readable document text",
+            ? "AnyDoc found no readable text in this PDF; it may be scanned and require OCR"
+            : "The document contains no readable text",
         );
       }
       conversion = {
-        engine: "markitdown",
+        engine: "anydoc",
         ...(response.title
           ? { title: response.title.trim().replace(/\s+/gu, " ").slice(0, 500) }
           : {}),
@@ -294,39 +285,29 @@ function integerInRange(value: number, minimum: number, maximum: number, name: s
   return value;
 }
 
-function assertWorkerResponse(value: MarkItDownWorkerResponse): void {
+function assertConversionResponse(value: DocumentConversionResponse): void {
   if (
     !value || typeof value !== "object" || value.version !== 1 ||
-    value.engine !== "markitdown" || typeof value.markdown !== "string" ||
+    value.engine !== "anydoc" || typeof value.markdown !== "string" ||
     (value.title !== undefined && value.title !== null && typeof value.title !== "string")
   ) {
-    throw new DocumentConversionError("DOCUMENT_OUTPUT_INVALID", "MarkItDown returned an invalid response");
+    throw new DocumentConversionError("DOCUMENT_OUTPUT_INVALID", "Document conversion returned an invalid response");
   }
   if (Buffer.byteLength(value.markdown, "utf8") > maximumConvertedMarkdownBytes) {
     throw new DocumentConversionError("DOCUMENT_OUTPUT_INVALID", "converted Markdown exceeds the 8 MiB limit");
   }
 }
 
-async function runMarkItDownWorker(
-  workerDir: string,
+async function convertInSandbox(
   input: { absolutePath: string; extension: string; bytes: Buffer },
   timeoutMs: number,
   signal?: AbortSignal,
-): Promise<MarkItDownWorkerResponse> {
+): Promise<DocumentConversionResponse> {
   if (signal?.aborted) {
     throw new DocumentConversionError("DOCUMENT_CONVERSION_ABORTED", "document conversion was cancelled");
   }
-  const resolvedWorkerDir = safeRealDirectory(workerDir);
-  const pythonPath = workerPython(resolvedWorkerDir);
-  const workerPath = join(resolvedWorkerDir, "worker.py");
-  if (!existsSync(pythonPath) || !existsSync(workerPath)) {
-    throw new DocumentConversionError(
-      "DOCUMENT_RUNTIME_UNAVAILABLE",
-      "MarkItDown is not installed; run npm run setup:markitdown",
-    );
-  }
   let snapshot: ReturnType<typeof createMemoryDirectory>;
-  let worker: ReturnType<typeof spawnOfflineWorker>;
+  let sandbox: ReturnType<typeof spawnOfflineWorker>;
   try {
     snapshot = createMemoryDirectory("yourchar-document-");
   } catch (error) {
@@ -335,26 +316,28 @@ async function runMarkItDownWorker(
   try {
     const sourcePath = join(snapshot.path, `document${input.extension}`);
     writeFileSync(sourcePath, input.bytes, { flag: "wx", mode: 0o600 });
-    const runtime = pythonPath === join(resolvedWorkerDir, "runtime", "bin", "python3") ? "runtime/bin/python3" : ".venv/bin/python";
-    const virtualPython = `/opt/yourchar-markitdown/${runtime}`;
-    // Development venvs may point at a uv-managed interpreter outside /usr.
-    // Bind just that reviewed interpreter installation, never the user's home.
-    const pythonRoot = dirname(dirname(realpathSync(pythonPath)));
-    worker = spawnOfflineWorker({
-      command: virtualPython,
-      args: ["/opt/yourchar-markitdown/worker.py", `/input/document${input.extension}`],
+    const nodeModules = dirname(dirname(dirname(fileURLToPath(import.meta.resolve("@firecrawl/anydoc")))));
+    const limits = "set -e; ulimit -c 0; ulimit -t 90; ulimit -n 128; " +
+      (process.platform === "linux" ? "ulimit -v 4194304; " : "");
+    sandbox = spawnOfflineWorker({
+      command: "/opt/document/sh",
+      // JITless keeps V8's virtual reservations within the Linux address-space cap.
+      args: ["-c", `${limits}exec "$@"`, "read_document", "/opt/document/node",
+        "--jitless", "--max-old-space-size=256", "/opt/document/src/document/service.js", `/input/document${input.extension}`],
       binds: [
-        { source: resolvedWorkerDir, target: "/opt/yourchar-markitdown" },
+        { source: realpathSync("/bin/sh"), target: "/opt/document/sh" },
+        { source: realpathSync(process.execPath), target: "/opt/document/node" },
+        { source: dirname(dirname(fileURLToPath(import.meta.url))), target: "/opt/document/src" },
+        { source: join(dirname(nodeModules), "package.json"), target: "/opt/document/package.json" },
+        { source: nodeModules, target: "/opt/document/node_modules" },
         { source: sourcePath, target: `/input/document${input.extension}` },
-        ...(pythonRoot === "/usr" || pythonRoot.startsWith(resolvedWorkerDir + "/") ? [] : [{ source: pythonRoot, target: pythonRoot }]),
       ],
-      env: { PYTHONDONTWRITEBYTECODE: "1", PYTHONNOUSERSITE: "1", OPENBLAS_NUM_THREADS: "1", OMP_NUM_THREADS: "1" },
     });
   } catch (error) {
     snapshot.dispose();
     throw new DocumentConversionError("DOCUMENT_RUNTIME_UNAVAILABLE", String(error));
   }
-  const child = worker.child;
+  const child = sandbox.child;
   child.stdin.end();
   const stdout: Buffer[] = [];
   const stderr: Buffer[] = [];
@@ -363,16 +346,9 @@ async function runMarkItDownWorker(
   let overflow = false;
   let timedOut = false;
   let aborted = false;
-  const terminate = () => {
-    if (!child.pid) return;
-    try {
-      process.kill(-child.pid, "SIGKILL");
-    } catch {
-      child.kill("SIGKILL");
-    }
-  };
+  const terminate = sandbox.terminate;
   child.stdout.on("data", (chunk: Buffer) => {
-    if (stdoutBytes + chunk.length > maximumWorkerOutputBytes) {
+    if (stdoutBytes + chunk.length > maximumConversionOutputBytes) {
       overflow = true;
       terminate();
       return;
@@ -381,7 +357,7 @@ async function runMarkItDownWorker(
     stdoutBytes += chunk.length;
   });
   child.stderr.on("data", (chunk: Buffer) => {
-    const remaining = maximumWorkerErrorBytes - stderrBytes;
+    const remaining = maximumConversionErrorBytes - stderrBytes;
     if (remaining <= 0) return;
     const selected = chunk.subarray(0, remaining);
     stderr.push(selected);
@@ -403,29 +379,36 @@ async function runMarkItDownWorker(
       child.once("close", resolveExit);
     });
     if (timedOut) {
-      throw new DocumentConversionError("DOCUMENT_CONVERSION_TIMEOUT", "MarkItDown conversion timed out");
+      throw new DocumentConversionError("DOCUMENT_CONVERSION_TIMEOUT", "Document conversion timed out");
     }
     if (aborted) {
       throw new DocumentConversionError("DOCUMENT_CONVERSION_ABORTED", "document conversion was cancelled");
     }
     if (overflow) {
-      throw new DocumentConversionError("DOCUMENT_OUTPUT_INVALID", "MarkItDown output exceeded the safe limit");
+      throw new DocumentConversionError("DOCUMENT_OUTPUT_INVALID", "Document conversion output exceeded the safe limit");
     }
     if (exitCode !== 0) {
-      const detail = Buffer.concat(stderr).toString("utf8").trim().slice(0, 1000);
+      let detail = Buffer.concat(stderr).toString("utf8").trim();
+      let code: DocumentConversionError["code"] = "DOCUMENT_CONVERSION_FAILED";
+      try {
+        const failure = JSON.parse(detail.split("\n").at(-1) ?? "");
+        if (failure.code === "needsOcr") code = "DOCUMENT_OCR_REQUIRED";
+        if (failure.code === "outputLimit") code = "DOCUMENT_OUTPUT_INVALID";
+        if (typeof failure.message === "string") detail = failure.message;
+      } catch { /* Startup failures may not have a structured conversion error. */ }
       throw new DocumentConversionError(
-        "DOCUMENT_CONVERSION_FAILED",
-        `MarkItDown could not convert ${basename(input.absolutePath)}${detail ? `: ${detail}` : ""}`,
+        code,
+        `Could not convert ${basename(input.absolutePath)}${detail ? `: ${detail.slice(0, 1000)}` : ""}`,
       );
     }
     let value: unknown;
     try {
       value = JSON.parse(Buffer.concat(stdout).toString("utf8"));
     } catch {
-      throw new DocumentConversionError("DOCUMENT_OUTPUT_INVALID", "MarkItDown returned malformed JSON");
+      throw new DocumentConversionError("DOCUMENT_OUTPUT_INVALID", "Document conversion returned malformed JSON");
     }
-    assertWorkerResponse(value as MarkItDownWorkerResponse);
-    return value as MarkItDownWorkerResponse;
+    assertConversionResponse(value as DocumentConversionResponse);
+    return value as DocumentConversionResponse;
   } finally {
     clearTimeout(timeout);
     signal?.removeEventListener("abort", abort);
@@ -452,19 +435,26 @@ function readRegularSource(path: string, maximumInputBytes: number): Buffer {
   }
 }
 
-function workerPython(workerDir: string): string {
-  const bundled = join(workerDir, "runtime", "bin", "python3");
-  return existsSync(bundled) ? bundled : join(workerDir, ".venv", "bin", "python");
+async function convertDocument(path: string): Promise<DocumentConversionResponse> {
+  const extension = extname(path).toLowerCase();
+  const bytes = readFileSync(path);
+  const { formatFromExtension, toMarkdownBytes } = await import("@firecrawl/anydoc");
+  const markdown = await toMarkdownBytes(bytes, formatFromExtension(extension), { ocr: "reject" });
+  if (Buffer.byteLength(markdown, "utf8") > maximumConvertedMarkdownBytes) {
+    throw Object.assign(new Error("converted Markdown exceeds the 8 MiB limit"), { code: "outputLimit" });
+  }
+  return { version: 1, engine: "anydoc", markdown };
 }
 
-function safeRealDirectory(path: string): string {
-  if (!existsSync(path)) {
-    throw new DocumentConversionError("DOCUMENT_RUNTIME_UNAVAILABLE", "MarkItDown worker directory is missing");
+// The same implementation runs inside the existing sandbox; no separate entry program.
+if (process.argv[1] === fileURLToPath(import.meta.url)) {
+  try {
+    if (process.argv.length !== 3) throw new Error("read_document requires a document path");
+    process.stdout.write(JSON.stringify(await convertDocument(process.argv[2])));
+  } catch (error) {
+    const code = error instanceof Error && "code" in error ? error.code : undefined;
+    const message = error instanceof Error ? error.message : String(error);
+    process.stderr.write(JSON.stringify({ code, message: message.slice(0, 1000) }) + "\n");
+    process.exitCode = 1;
   }
-  const real = realpathSync(path);
-  const stats = statSync(real);
-  if (!stats.isDirectory()) {
-    throw new DocumentConversionError("DOCUMENT_RUNTIME_UNAVAILABLE", "MarkItDown worker path is not a directory");
-  }
-  return real;
 }

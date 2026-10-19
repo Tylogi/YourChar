@@ -12,7 +12,7 @@ the whole startup chain and keeps the Linux runtime out of sight:
 6. watches the backend for the rest of the session and restarts it after a crash,
 7. stops the backend gracefully when the user quits.
 
-The user never opens Ubuntu, PowerShell, WSL, npm, Node, Python, uv or Bubblewrap.
+The user never opens Ubuntu, PowerShell, WSL, npm, Node or Bubblewrap.
 The launcher runs with ordinary user rights; only the optional first-time
 `wsl --install` for a machine that has no WSL2 at all asks for elevation.
 

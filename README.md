@@ -71,8 +71,8 @@ workers and verified `tmpfs` for disposable state.
 
 For Apple Silicon (macOS 13+), [download the macOS preview](https://github.com/Tylogi/YourChar/releases/tag/v0.2.0-macos-preview.1)
 and read the [installation and upgrade guide](docs/macos-release.md#install-or-upgrade).
-This preview is ad-hoc signed, not Apple-notarized. The app bundles
-Node and Python; document conversion and TypeScript LSP use offline Seatbelt,
+This preview is ad-hoc signed, not Apple-notarized. The published preview predates
+the AnyDoc migration and bundles Node and Python; document conversion and TypeScript LSP use offline Seatbelt,
 and incognito uses a private RAM volume. Windows uses a WSL2-hosted backend;
 its real-machine acceptance is pending. See [platform setup and checks](docs/cross-platform-workers.md).
 
@@ -118,15 +118,9 @@ and world settings for you to review.
 <details>
 <summary>Optional: document tools and a persistent service</summary>
 
-PDF/Office conversion additionally needs `uv`, Python 3.11+, and
-`/usr/bin/bwrap`. After installing those prerequisites:
-
-```bash
-npm run setup:markitdown
-```
-
-This creates `services/markitdown/.venv`. Basic chat does not require the
-document worker. Characters have read/write Workspace access by default; saved
+PDF/Office conversion uses the AnyDoc JS package installed by `npm ci`;
+Linux also needs `/usr/bin/bwrap` for the existing offline sandbox.
+No Python or uv setup is required. Characters have read/write Workspace access by default; saved
 off/read-only choices are preserved. Shell and other privileged tools remain
 opt-in under Agent management.
 
@@ -251,12 +245,12 @@ assets, and design ideas that support YourChar:
 - [Pi](https://github.com/earendil-works/pi): the agent runtime, session management, and model integration.
 - [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness): design references for separating sandbox policy from platform implementations and for ACP subagent interoperability.
 - [OpenClaw](https://github.com/openclaw/openclaw): inspiration for the responsibilities and structure of character `SOUL.md` files.
-- [Microsoft MarkItDown](https://github.com/microsoft/markitdown): document-to-Markdown conversion in an isolated local worker.
+- [AnyDoc](https://github.com/firecrawl/anydoc): local PDF and Office conversion through its JS API.
 - [MCP TypeScript SDK](https://github.com/modelcontextprotocol/typescript-sdk) and [ACP TypeScript SDK](https://github.com/agentclientprotocol/typescript-sdk): tool integration and agent interoperability.
 - [TypeScript](https://github.com/microsoft/TypeScript) and [TypeScript Language Server](https://github.com/typescript-language-server/typescript-language-server): type checking and cross-file code navigation.
 - [Tencent/openclaw-weixin](https://github.com/Tencent/openclaw-weixin) and the [Feishu / Lark Node SDK](https://github.com/larksuite/node-sdk): the source adapted for the Weixin iLink protocol implementation and the SDK used for Feishu integration.
 - [Lucide](https://github.com/lucide-icons/lucide) and [Twemoji](https://github.com/jdecked/twemoji): interface icons and emoji graphics.
-- [Node.js](https://nodejs.org/), [CPython](https://www.python.org/), and [Astral python-build-standalone](https://github.com/astral-sh/python-build-standalone): application runtimes and the Python distribution used in self-contained packages.
+- [Node.js](https://nodejs.org/): the application runtime included in self-contained packages.
 - [TyloQuant](https://github.com/Tylogi/TyloQuant): the Tylogi AI Lab branding assets used in the READMEs.
 
 Special thanks to the LazyCat team for its official app

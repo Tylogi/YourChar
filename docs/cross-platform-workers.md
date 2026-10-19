@@ -6,14 +6,14 @@ Workspace, or a network exception. There is no unconfined fallback.
 
 | Component | Linux / backend inside WSL2 | macOS |
 | --- | --- | --- |
-| MarkItDown | Bubblewrap, one read-only input snapshot | Offline Seatbelt, one read-only input snapshot |
+| Document conversion (AnyDoc) | Bubblewrap, one read-only input snapshot | Offline Seatbelt, one read-only input snapshot |
 | TypeScript LSP | Bubblewrap, read-only `/workspace` | Offline Seatbelt, read-only owning Workspace; URI translation |
 | Disposable state | Verified `/dev/shm` tmpfs | Verified, owned case-sensitive RAM volume |
-| Python | uv development environment or bundled runtime | uv development environment or bundled release runtime |
+| Runtime | Node.js and npm-locked AnyDoc native module | Node.js and npm-locked AnyDoc native module |
 
 Conversion follows the configurable upload input cap (100 MiB by default), two-conversion concurrency limit,
 90-second deadline, output bounds and CPU/core/file-descriptor limits. Linux also
-enforces its existing address-space limit; macOS does **not** claim an equivalent
+enforces a 4 GiB address-space limit; macOS does **not** claim an equivalent
 hard memory limit. LSP retains bounded JSON-RPC messages, request deadlines,
 explicit runtime mounts and process-group shutdown. Seatbelt is OS containment,
 not a VM or an administrator-proof boundary; deliberately detached descendants
@@ -31,31 +31,24 @@ for model-provider retention, host swap and administrator access caveats.
 
 ```bash
 npm ci
-npm run setup:markitdown
 npm run build
 YOURCHAR_REQUIRE_WORKERS=1 node --disable-warning=ExperimentalWarning --test --test-concurrency=1 \
   dist/test/offline-workers.test.js dist/test/document-reader.test.js \
   dist/test/lsp-navigation.test.js dist/test/incognito-mode.test.js
 ```
 
-`npm run bundle:markitdown` is for a fresh target-platform build checkout. It
-copies a self-contained CPython installation, installs only hash-locked binary
-wheels, rejects external interpreter symlinks, preserves licenses and records
-the dependency-lock digest. It validates imports after moving the runtime, rather
-than shipping a development `.venv` tied to a developer's machine. The macOS
-builder includes this step automatically. Build each OS/architecture on its own
-target platform; a Windows Python executable cannot run in a WSL Linux sandbox.
-
-Offline build hosts may use uv's documented `UV_PYTHON_INSTALL_MIRROR`, including
-a local `file://` mirror of the official release layout. Do not disable TLS/hash
-checks or substitute unreviewed Python archives. [uv mirror documentation](https://docs.astral.sh/uv/reference/environment/#uv_python_install_mirror).
-`YOURCHAR_BUILD_WHEELS` may point at a local wheel directory; this disables index
-access for the bundle install while retaining `--require-hashes` against the lock.
+Document conversion calls AnyDoc's JS API from the existing TypeScript service
+inside the sandbox. There is no separate converter entry program or CLI.
+It handles PDF, DOCX, PPTX, XLS/XLSX, and CSV; text files use the existing `read`
+tool. Python and uv are not required. Build on the target OS/architecture so npm installs the matching
+native AnyDoc module. The macOS builder validates conversion after relocating,
+pruning and signing the payload, using test code outside the app bundle.
+Production payloads include `dist/src`, without test code or fixtures.
 
 ## Windows / WSL2 hand-off
 
 There is currently no native Windows document/LSP/RAM-disk provider. Use the
-**whole backend inside WSL2**, with Linux Node/Python and Linux-local state.
+**whole backend inside WSL2**, with Linux Node.js and Linux-local state.
 This avoids mixed executable formats and SQLite over `\\wsl.localhost` shares.
 Windows can access the local web UI; WSL localhost forwarding is described in
 [Microsoft's networking documentation](https://learn.microsoft.com/en-us/windows/wsl/networking).
@@ -65,10 +58,10 @@ below describe running the backend from a development checkout. For the packaged
 flow see [Windows / WSL2 release payload](windows-wsl-release.md).
 
 1. Install/start a WSL2 distribution; `wsl --list --verbose` must show version 2.
-2. Inside the distribution, install Node.js 22.19+ and uv, plus Bubblewrap
+2. Inside the distribution, install Node.js 22.19+ and Bubblewrap
    (`sudo apt install bubblewrap` on Ubuntu). Keep the checkout and state in its
    Linux filesystem, not under `/mnt/c` or a Windows network share.
-3. Check out the test branch, run `npm ci`, `npm run setup:markitdown`, and
+3. Check out the test branch, run `npm ci` and
    `npm run build` inside WSL2.
 4. From a Windows checkout, run PowerShell:
 
@@ -84,7 +77,7 @@ flow see [Windows / WSL2 release payload](windows-wsl-release.md).
 
 ### Required Windows acceptance (not yet run)
 
-- [ ] Preflight succeeds in WSL2; missing Bubblewrap/Python or WSL1 fails explicitly.
+- [ ] Preflight succeeds in WSL2; missing Bubblewrap/AnyDoc or WSL1 fails explicitly.
 - [ ] PDF, DOCX, XLS/XLSX conversion; source edits invalidate the conversion cache.
 - [ ] TypeScript definition, references, implementation and hover across files.
 - [ ] Worker gate proves denied localhost networking, private-file reads, symlink escapes and Workspace writes.

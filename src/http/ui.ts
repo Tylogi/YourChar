@@ -6079,7 +6079,7 @@ export function renderAppHtml(): string {
             </div></div>
             <div class="settings-actions"><button id="saveUploadSettingsBtn" class="primary" type="button">保存上传设置</button><span id="uploadSettingsState" class="muted" role="status"></span></div>
             <h3>MinerU 深度文档解析</h3>
-            <p class="im-privacy-banner"><strong>显式外发能力。</strong> MarkItDown 仍在 YourChar 本机做轻量转换；MinerU MCP 会把 Agent 选中的整份 Workspace 文档发送到这里配置的 MinerU 服务。返回的 Markdown 与提取图片会组成完整文档包，暂存在当前空间的 <code>tmp/mineru/</code>，保留 24 小时后由 YourChar 清理；不会清理该目录中的其他文件。API 配置本身不会启用工具，还需在“管理 → Agent”中单独打开 MinerU Document MCP。</p>
+            <p class="im-privacy-banner"><strong>显式外发能力。</strong> AnyDoc 仍在 YourChar 本机做轻量转换；MinerU MCP 会把 Agent 选中的整份 Workspace 文档发送到这里配置的 MinerU 服务。返回的 Markdown 与提取图片会组成完整文档包，暂存在当前空间的 <code>tmp/mineru/</code>，保留 24 小时后由 YourChar 清理；不会清理该目录中的其他文件。API 配置本身不会启用工具，还需在“管理 → Agent”中单独打开 MinerU Document MCP。</p>
             <div class="settings-grid">
               <div class="settings-field full">
                 <label for="mineruBaseUrl">MinerU Base URL</label>

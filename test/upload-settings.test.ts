@@ -60,10 +60,10 @@ test("document conversion accepts inputs above 20 MiB and enforces the current u
   let calls = 0;
   const documents = new DocumentConversionService({ runner: async () => {
     calls += 1;
-    return { version: 1, engine: "markitdown", markdown: "Converted large document." };
+    return { version: 1, engine: "anydoc", markdown: "Converted large document." };
   } });
   try {
-    const file = files.upload({ name: "large.html", bytes: Buffer.alloc(21 * MiB, 32) });
+    const file = files.upload({ name: "large.csv", bytes: Buffer.alloc(21 * MiB, 32) });
     const result = await documents.read({ path: file.path }, { workspaceFiles: files, cacheNamespace: "normal" });
     assert.match(result.markdown, /Converted large document/);
     limit = MiB;

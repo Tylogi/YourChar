@@ -2,8 +2,6 @@ node_modules/
 dist/
 coverage/
 .venv/
-services/markitdown/runtime/
-services/markitdown/.bundle-*/
 .tools/
 __pycache__/
 *.py[cod]
