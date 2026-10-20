@@ -86,6 +86,11 @@ MACOS_SIGN_IDENTITY="Developer ID Application: Your Name (TEAMID)" \
 MACOS_NOTARY_PROFILE="your-notary-profile" npm run package:macos
 ```
 
+If the profile is stored in a file-based Keychain, set `MACOS_NOTARY_KEYCHAIN`
+to its absolute path. The builder passes that path to each `notarytool` call.
+For remote builds, run the job in the user's graphical login session when SSH
+cannot access the signing key or notarization profile.
+
 The builder exports committed `HEAD` into a clean staging directory, downloads
 the Node version pinned by `.nvmrc`, verifies it against Node's published
 `SHASUMS256.txt`, installs locked dependencies, runs the macOS packaging gate
@@ -136,6 +141,11 @@ Test code stays outside the signed payload. Published ZIPs contain the stapled
 app, and the DMG has its own signature and stapled ticket. Both artifacts must
 pass Gatekeeper assessment. Notarization acceptance reports remain in the
 output directory for the release operator.
+
+The builder records each artifact's SHA256 before submission. If the build
+fails, it retains the staging directory and prints its path so the signed app
+and any pending notarization request can be recovered. Check an existing
+submission's status before submitting the same artifact again.
 
 Store credentials using `xcrun notarytool store-credentials` on the build host.
 Never commit the certificate, private key, App Store Connect key, or notarization

@@ -15,6 +15,7 @@ Environment:
   MACOS_NODE_CACHE_DIR   Cache for the verified Node archive
   MACOS_SIGN_IDENTITY    Developer ID Application identity or certificate SHA-1
   MACOS_NOTARY_PROFILE   Existing notarytool Keychain profile
+  MACOS_NOTARY_KEYCHAIN  Explicit Keychain containing that profile (optional)
   MACOS_RUN_FULL_TESTS=1 Run the full suite in addition to the native macOS gate
   MACOS_SKIP_TESTS=1     Build without tests (local iteration only, not for release)
 
@@ -37,7 +38,11 @@ if [[ "$(uname -s)" != "Darwin" || "$(uname -m)" != "arm64" ]]; then
 fi
 sign_identity="${MACOS_SIGN_IDENTITY:?Set MACOS_SIGN_IDENTITY to your Developer ID Application identity}"
 notary_profile="${MACOS_NOTARY_PROFILE:?Set MACOS_NOTARY_PROFILE to an existing notarytool Keychain profile}"
-/usr/bin/xcrun notarytool history --keychain-profile "$notary_profile" >/dev/null
+notary_auth=(--keychain-profile "$notary_profile")
+if [[ -n "${MACOS_NOTARY_KEYCHAIN:-}" ]]; then
+  notary_auth+=(--keychain "$MACOS_NOTARY_KEYCHAIN")
+fi
+/usr/bin/xcrun notarytool history "${notary_auth[@]}" >/dev/null
 
 repo_root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd -P)"
 if [[ -n "$(git -C "$repo_root" status --porcelain=v1)" ]]; then
@@ -81,13 +86,20 @@ build_root="$(mktemp -d "${TMPDIR:-/tmp}/yourchar-macos-release.XXXXXX")"
 build_root="$(cd "$build_root" && pwd -P)"
 smoke_pid=""
 cleanup() {
+  local result=$?
   if [[ -n "$smoke_pid" ]] && kill -0 "$smoke_pid" 2>/dev/null; then
     kill -TERM "$smoke_pid" 2>/dev/null || true
     wait "$smoke_pid" 2>/dev/null || true
   fi
-  rm -rf -- "$build_root"
+  if [[ "$result" == "0" ]]; then
+    rm -rf -- "$build_root"
+  else
+    printf 'Build failed; staging directory retained: %s\n' "$build_root" >&2
+  fi
 }
-trap cleanup EXIT INT TERM
+trap cleanup EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
 
 node_unpack="$build_root/node"
 source_root="$build_root/source"
@@ -273,8 +285,9 @@ checksum_path="$output_dir/SHA256SUMS.txt"
 rm -f -- "$zip_path" "$dmg_path" "$checksum_path"
 notarize() {
   local artifact="$1" report="$2"
-  if ! /usr/bin/xcrun notarytool submit "$artifact" --keychain-profile "$notary_profile" \
-    --wait --timeout 30m --output-format json > "$report"; then
+  /usr/bin/shasum -a 256 "$artifact" > "${report%.json}.input.sha256"
+  if ! /usr/bin/xcrun notarytool submit "$artifact" "${notary_auth[@]}" \
+    --wait --timeout 30m --no-progress --output-format json > "$report"; then
     cat "$report" >&2
     return 1
   fi
