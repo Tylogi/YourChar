@@ -16,6 +16,8 @@ Environment:
   MACOS_SIGN_IDENTITY    Developer ID Application identity or certificate SHA-1
   MACOS_NOTARY_PROFILE   Existing notarytool Keychain profile
   MACOS_NOTARY_KEYCHAIN  Explicit Keychain containing that profile (optional)
+  MACOS_NOTARY_S3_ACCELERATION=0 Disable S3 acceleration for notary uploads
+  MACOS_RELEASE_FORMAT  both (default) or zip
   MACOS_RUN_FULL_TESTS=1 Run the full suite in addition to the native macOS gate
   MACOS_SKIP_TESTS=1     Build without tests (local iteration only, not for release)
 
@@ -39,6 +41,15 @@ fi
 sign_identity="${MACOS_SIGN_IDENTITY:?Set MACOS_SIGN_IDENTITY to your Developer ID Application identity}"
 notary_profile="${MACOS_NOTARY_PROFILE:?Set MACOS_NOTARY_PROFILE to an existing notarytool Keychain profile}"
 notary_auth=(--keychain-profile "$notary_profile")
+notary_upload_options=()
+if [[ "${MACOS_NOTARY_S3_ACCELERATION:-1}" == "0" ]]; then
+  notary_upload_options+=(--no-s3-acceleration)
+fi
+release_format="${MACOS_RELEASE_FORMAT:-both}"
+if [[ "$release_format" != both && "$release_format" != zip ]]; then
+  echo 'MACOS_RELEASE_FORMAT must be both or zip.' >&2
+  exit 2
+fi
 if [[ -n "${MACOS_NOTARY_KEYCHAIN:-}" ]]; then
   notary_auth+=(--keychain "$MACOS_NOTARY_KEYCHAIN")
 fi
@@ -288,6 +299,7 @@ notarize() {
   local artifact="$1" report="$2"
   /usr/bin/shasum -a 256 "$artifact" > "${report%.json}.input.sha256"
   if ! /usr/bin/xcrun notarytool submit "$artifact" "${notary_auth[@]}" \
+    ${notary_upload_options[@]+"${notary_upload_options[@]}"} \
     --wait --timeout 30m --no-progress --output-format json > "$report"; then
     cat "$report" >&2
     return 1
@@ -301,6 +313,8 @@ notarize "$notary_archive" "$output_dir/notarization-app.json"
 /usr/bin/xcrun stapler validate "$app_bundle"
 /usr/sbin/spctl --assess --type execute --verbose=2 "$app_bundle"
 /usr/bin/ditto -c -k --sequesterRsrc --keepParent "$app_bundle" "$zip_path"
+artifacts=("$(basename "$zip_path")")
+if [[ "$release_format" == both ]]; then
 dmg_source="$build_root/dmg"
 mkdir -p "$dmg_source"
 /usr/bin/ditto "$app_bundle" "$dmg_source/YourChar.app"
@@ -311,11 +325,14 @@ notarize "$dmg_path" "$output_dir/notarization-dmg.json"
 /usr/bin/xcrun stapler staple "$dmg_path"
 /usr/bin/xcrun stapler validate "$dmg_path"
 /usr/sbin/spctl --assess --type open --context context:primary-signature --verbose=2 "$dmg_path"
+artifacts+=("$(basename "$dmg_path")")
+fi
 (
   cd "$output_dir"
-  /usr/bin/shasum -a 256 "$(basename "$zip_path")" "$(basename "$dmg_path")" > "$(basename "$checksum_path")"
+  /usr/bin/shasum -a 256 "${artifacts[@]}" > "$(basename "$checksum_path")"
 )
 
 printf '\nYourChar macOS release created:\n'
-printf '  %s\n' "$zip_path" "$dmg_path" "$checksum_path"
+for artifact in "${artifacts[@]}"; do printf '  %s\n' "$output_dir/$artifact"; done
+printf '  %s\n' "$checksum_path"
 printf '  Version %s, commit %s, Node %s, arm64, Developer ID signed and notarized\n' "$version" "$commit" "$node_version"

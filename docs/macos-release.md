@@ -108,6 +108,9 @@ release/SHA256SUMS.txt
 ```
 
 Use `MACOS_OUTPUT_DIR` to choose another artifact directory. Set
+`MACOS_RELEASE_FORMAT=zip` to produce only the ZIP containing the stapled app.
+If the accelerated S3 endpoint fails, set `MACOS_NOTARY_S3_ACCELERATION=0` for
+the next submission after confirming that the previous upload failed. Set
 `MACOS_RUN_FULL_TESTS=1` to additionally run the complete Linux-oriented test
 suite on a suitably provisioned host. The normal macOS build uses its portable
 packaging tests plus required native sandbox and permission tests because
