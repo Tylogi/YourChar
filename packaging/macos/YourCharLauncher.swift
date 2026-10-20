@@ -287,6 +287,10 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelega
     applicationMenu.addItem(withTitle: "Hide YourChar", action: #selector(NSApplication.hide(_:)), keyEquivalent: "h")
     applicationMenu.addItem(withTitle: "Quit YourChar", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
 
+    let editItem = NSMenuItem(title: "Edit", action: nil, keyEquivalent: "")
+    editItem.submenu = EditingMenu.make()
+    menu.addItem(editItem)
+
     let viewItem = NSMenuItem()
     menu.addItem(viewItem)
     let viewMenu = NSMenu(title: "View")

@@ -173,6 +173,7 @@ done
   -target arm64-apple-macos13.0 \
   -framework AppKit \
   -framework WebKit \
+  "$source_root/packaging/macos/EditingMenu.swift" \
   "$source_root/packaging/macos/YourCharLauncher.swift" \
   -o "$contents/MacOS/YourChar"
 chmod 755 "$contents/MacOS/YourChar"

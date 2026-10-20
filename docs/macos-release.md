@@ -120,7 +120,12 @@ suite in Linux CI before publication.
 
 The native test gate runs serially, including foreground/background lifecycle
 tests, actual PDF conversion, TypeScript cross-file navigation, worker isolation,
-and portable incognito lifecycle tests. Linux `/proc`/tmpfs-specific assertions
+and portable incognito lifecycle tests. It also opens a temporary app to test
+editing shortcuts and WebKit context-menu copy/paste with Unicode text. Keep
+the build Mac's desktop unlocked during this check. The test preserves the
+clipboard in memory and restores it if no other app has changed it. When
+`MACOS_SIGN_IDENTITY` is set, the test app uses that identity and hardened runtime.
+Linux `/proc`/tmpfs-specific assertions
 remain Linux-only and are not counted as macOS verification. For a bounded-heap validation on a shared Mac, run:
 
 ```bash
