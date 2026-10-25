@@ -4024,6 +4024,28 @@ const migrations: Migration[] = [
       );
     `,
   },
+  {
+    version: 73,
+    sql: `
+      CREATE TABLE creator_sessions (
+        id TEXT PRIMARY KEY, title TEXT NOT NULL,
+        mode TEXT NOT NULL CHECK(mode IN ('chat','world_builder')),
+        created_at TEXT NOT NULL, updated_at TEXT NOT NULL
+      );
+      ALTER TABLE creator_turns ADD COLUMN session_id TEXT REFERENCES creator_sessions(id);
+      ALTER TABLE creator_messages ADD COLUMN session_id TEXT REFERENCES creator_sessions(id);
+      ALTER TABLE creator_proposals ADD COLUMN session_id TEXT REFERENCES creator_sessions(id);
+      -- The single pre-session transcript becomes one ordinary session.
+      INSERT INTO creator_sessions(id, title, mode, created_at, updated_at)
+        SELECT 'creator-session-legacy', '早期记录', 'chat', MIN(created_at), MAX(created_at) FROM creator_turns HAVING COUNT(*) > 0;
+      UPDATE creator_turns SET session_id = 'creator-session-legacy' WHERE EXISTS (SELECT 1 FROM creator_sessions);
+      UPDATE creator_messages SET session_id = 'creator-session-legacy' WHERE EXISTS (SELECT 1 FROM creator_sessions);
+      UPDATE creator_proposals SET session_id = 'creator-session-legacy' WHERE EXISTS (SELECT 1 FROM creator_sessions);
+      CREATE INDEX creator_messages_session_idx ON creator_messages(session_id, seq);
+      CREATE INDEX creator_proposals_session_idx ON creator_proposals(session_id, status);
+      CREATE INDEX creator_sessions_updated_idx ON creator_sessions(updated_at DESC);
+    `,
+  },
 ];
 
 export class AppDatabase {

@@ -61,6 +61,129 @@ export async function runCreatorChecks(browser, outputDir) {
       console.log(`Creator browser checks passed (${theme})`);
     } finally { await page.close(); await new Promise(resolvePromise => server.close(resolvePromise)); runtime.dispose(); }
   }
+  await runCreatorSessionChecks(browser, outputDir);
+}
+
+async function runCreatorSessionChecks(browser, outputDir) {
+  const runtime = createTestRuntime({ seed: "creator-browser-sessions" });
+  const kernel = runtime.kernel;
+  const server = createHttpServer({ kernel });
+  await new Promise(resolvePromise => server.listen(0, "127.0.0.1", resolvePromise));
+  const page = await browser.newPage({ viewport: { width: 1440, height: 1000 }, locale: "zh-CN", reducedMotion: "reduce" });
+  const errors = [];
+  page.on("pageerror", error => errors.push(error.message));
+  const reply = (text, titles, delayMs) => runtime.model.enqueue([
+    ...(titles ? [{ kind: "tool_calls", calls: [titles].flat().map(title => ({ name: "creator_propose", arguments: { title, reason: "测试", operation: { kind: "create_world", input: { name: title } } } })) }] : []),
+    { kind: "assistant_text", text, ...(delayMs ? { delayMs } : {}) },
+  ]);
+  const idle = () => page.waitForFunction(() => !creatorSending && !creatorLoading && !creatorReloadPending);
+  const viewIs = id => page.waitForFunction(value => creatorView.sessionId === value && creatorSnapshot?.sessionId === value && !creatorLoading, id);
+  try {
+    const url = `http://127.0.0.1:${server.address().port}`;
+    const open = async () => {
+      await page.goto(url, { waitUntil: "domcontentloaded" });
+      await page.locator("#managementBtn").click();
+      await page.locator("#creatorTabBtn").click();
+    };
+    await open();
+    await page.locator(".creator-start-options").waitFor();
+
+    // 一键建构 opens its own session; a later chat session is isolated from it.
+    await page.locator('[data-creator-start="world_builder"]').click();
+    assert.equal(await page.locator("#creatorBuilderToggle").getAttribute("aria-pressed"), "true");
+    reply("世界草案已准备好。", ["猎人世界", "流星街世界"]);
+    await page.locator("#creatorInput").fill("我穿越到了全职猎人的世界");
+    await page.locator("#creatorSend").click();
+    await page.locator(".creator-proposal").first().waitFor(); await idle();
+    const builderId = await page.evaluate(() => creatorView.sessionId);
+    await page.locator("[data-creator-new]").click();
+    reply("书店很好。", "海边小镇");
+    await page.locator("#creatorInput").fill("设计一位海边书店主人");
+    await page.locator("#creatorSend").click();
+    await page.waitForFunction(() => !creatorSending && creatorView.sessionId); await idle();
+    const chatId = await page.evaluate(() => creatorView.sessionId);
+    assert.notEqual(chatId, builderId);
+    assert.doesNotMatch(await page.locator("#creatorMessages").textContent(), /全职猎人/);
+    assert.deepEqual(await page.locator(".creator-proposal h5").allTextContents(), ["海边小镇"], "each session shows only its own drafts");
+    await page.locator(`[data-creator-session="${builderId}"]`).click(); await viewIs(builderId);
+    assert.match(await page.locator("#creatorMessages").textContent(), /全职猎人/);
+    await page.locator("[data-creator-home]").click(); await viewIs(null);
+    assert.equal(await page.locator("#creatorReviewBar").isHidden(), true, "no cross-session apply-all on the start page");
+    assert.equal(await page.locator(".creator-proposal-group").count(), 2, "pending drafts are grouped by session");
+    const builderGroup = page.locator(`.creator-proposal-group[data-creator-group="${builderId}"]`);
+    assert.equal(await builderGroup.locator(".creator-proposal").count(), 2);
+    assert.equal(await page.locator(`.creator-proposal-group[data-creator-group="${chatId}"] [data-creator-apply-session]`).count(), 0, "a single draft is confirmed on its own");
+    await page.screenshot({ path: resolve(outputDir, "creator-sessions-start.png"), fullPage: true });
+    await builderGroup.locator("[data-creator-apply-session]").click();
+    await page.locator("#confirmSessionActionBtn").click();
+    await page.locator("#sessionActionDialog").waitFor({ state: "hidden" });
+    await idle();
+    assert.deepEqual(kernel.listWorlds().map(world => world.name).sort(), ["流星街世界", "猎人世界"], "only that session's drafts are applied, in order");
+    assert.deepEqual(kernel.creator.snapshot(undefined, chatId).proposals.map(proposal => proposal.status), ["pending"], "other sessions are untouched");
+    assert.equal(await page.locator(".creator-proposal-group").count(), 1);
+
+    // Switching while a load is still in flight lands on the requested view.
+    let delayed = true;
+    await page.route("**/api/v1/creator/snapshot", async route => {
+      if (delayed) { delayed = false; await new Promise(resolvePromise => setTimeout(resolvePromise, 600)); }
+      await route.continue();
+    });
+    await page.locator("#creatorRefresh").click();
+    await page.locator(`[data-creator-session="${chatId}"]`).click();
+    await viewIs(chatId);
+    assert.match(await page.locator("#creatorMessages").textContent(), /海边书店/);
+    await page.unroute("**/api/v1/creator/snapshot");
+
+    // A send keeps running after switching away; the other session neither shows its pending bubble nor goes silent.
+    await page.locator(`[data-creator-session="${builderId}"]`).click(); await viewIs(builderId);
+    reply("补充完毕。", undefined, 1500);
+    await page.locator("#creatorInput").fill("继续");
+    await page.locator("#creatorSend").click();
+    await page.locator(".creator-message.assistant.pending").waitFor();
+    await page.locator(`[data-creator-session="${chatId}"]`).click();
+    await page.waitForFunction(value => creatorView.sessionId === value, chatId);
+    assert.equal(await page.locator(".creator-message.assistant.pending").count(), 0);
+    await page.waitForFunction(() => !creatorLoading && !creatorReloadPending);
+    assert.equal(await page.locator(".creator-message.assistant.pending").count(), 0);
+    assert.match(await page.locator("#creatorMessages").textContent(), /海边书店/);
+    assert.match(await page.locator("#creatorStatus").textContent(), /另一个会话正在回复/);
+    await idle();
+
+    // A remembered session that no longer exists falls back to the start page.
+    await page.evaluate(() => localStorage.setItem("yourchar.creator.view", "creator-session-missing"));
+    await open();
+    await page.locator(".creator-start-options").waitFor();
+    await idle();
+    assert.equal(await page.evaluate(() => creatorView.sessionId), null);
+    assert.equal(await page.locator("#creatorSend").isDisabled(), false);
+
+    // A lost response for a recorded first message: resending reuses it instead of starting a duplicate session.
+    await page.locator('[data-creator-start="chat"]').click();
+    const sessionsBefore = kernel.creator.sessions().length;
+    const modelCallsBefore = runtime.model.requests.length;
+    reply("收到。");
+    let dropOnce = true;
+    await page.route("**/api/v1/creator/messages", async route => {
+      if (!dropOnce) return route.continue();
+      dropOnce = false;
+      await route.fetch();
+      await route.fulfill({ status: 502, contentType: "application/json", body: JSON.stringify({ error: "网关超时" }) });
+    });
+    await page.locator("#creatorInput").fill("帮我想一个城市");
+    await page.locator("#creatorSend").click();
+    await page.waitForFunction(() => creatorEl("creatorInput").value === "帮我想一个城市"); await idle();
+    await page.locator("#creatorSend").click();
+    await page.waitForFunction(() => !creatorSending && creatorView.sessionId); await idle();
+    assert.equal(kernel.creator.sessions().length, sessionsBefore + 1, "no duplicate session");
+    assert.equal(runtime.model.requests.length, modelCallsBefore + 1, "the model is not called twice");
+    await page.unroute("**/api/v1/creator/messages");
+
+    await page.setViewportSize({ width: 390, height: 900 });
+    const bounds = await page.locator("#creatorPanel").evaluate(element => ({ width: element.clientWidth, scroll: element.scrollWidth }));
+    assert.ok(bounds.scroll <= bounds.width + 1, "sessions fit narrow screens");
+    assert.deepEqual(errors, []);
+    console.log("Creator session browser checks passed");
+  } finally { await page.close(); await new Promise(resolvePromise => server.close(resolvePromise)); runtime.dispose(); }
 }
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   const outputDir = resolve("browser-artifacts"); mkdirSync(outputDir, { recursive: true });

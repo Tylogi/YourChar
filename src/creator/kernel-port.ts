@@ -24,8 +24,10 @@ export function createCreatorPort(kernel: CompanionKernel, assertAvailable: () =
     const value = kernel.worldService.getPlace(id);
     return { id: value.id, worldId: value.worldId, name: value.name, description: value.description, capabilityIds: value.capabilityIds };
   };
+  // Baselines omit the revision counter: adding a sibling place bumps it, which
+  // would otherwise invalidate every other pending draft in the same world.
   const activeWorld = (id: string) => {
-    const value = world(id);
+    const { revision: _revision, ...value } = world(id);
     if (value.status !== "active") throw new CreatorError("不能编辑已归档世界，请先在世界管理中恢复它");
     return value;
   };
