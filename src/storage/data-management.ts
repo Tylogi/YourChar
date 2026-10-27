@@ -127,6 +127,7 @@ export class DataManagementRepository {
         DELETE FROM creator_proposals;
         DELETE FROM creator_messages;
         DELETE FROM creator_turns;
+        DELETE FROM creator_sessions;
         DELETE FROM character_diary_jobs;
         DELETE FROM character_diary_entries;
         DELETE FROM character_diary_settings;
