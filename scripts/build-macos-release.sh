@@ -226,11 +226,15 @@ smoke_response="$build_root/smoke-readiness.json"
 smoke_characters="$build_root/smoke-characters.json"
 smoke_avatar="$build_root/smoke-avatar.png"
 mkdir -p "$smoke_state"
-YOURCHAR_STATE_DIR="$smoke_state" \
-YOURCHAR_IM_RUNTIME_MODE=off \
-HOST=127.0.0.1 \
-PORT="$smoke_port" \
-"$runtime_node" --disable-warning=ExperimentalWarning "$application_root/dist/src/server.js" >"$smoke_log" 2>&1 &
+(
+  # Match the launcher's working directory so readiness checks the bundled tools.
+  cd "$application_root"
+  YOURCHAR_STATE_DIR="$smoke_state" \
+  YOURCHAR_IM_RUNTIME_MODE=off \
+  HOST=127.0.0.1 \
+  PORT="$smoke_port" \
+  exec "$runtime_node" --disable-warning=ExperimentalWarning "$application_root/dist/src/server.js"
+) >"$smoke_log" 2>&1 &
 smoke_pid="$!"
 smoke_ready=0
 for _ in {1..120}; do
