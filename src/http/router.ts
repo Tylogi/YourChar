@@ -622,14 +622,20 @@ async function route(input: {
     const body = asRecord(await readJson(input.request));
     input.response.setHeader("cache-control", "no-store");
     if (pathname === "/api/v1/creator/snapshot") {
-      sendJson(input.response, 200, kernel.creator.snapshot(body.before === undefined ? undefined : Number(body.before)));
+      if (body.sessionId !== undefined && body.sessionId !== null && typeof body.sessionId !== "string") throw new CreatorError("无效的会话");
+      sendJson(input.response, 200, kernel.creator.snapshot(body.before === undefined ? undefined : Number(body.before), body.sessionId as string | null | undefined));
     } else if (pathname === "/api/v1/creator/messages") {
-      sendJson(input.response, 200, await kernel.creator.send(body.text as string, body.requestId as string));
+      sendJson(input.response, 200, await kernel.creator.send(body.text as string, body.requestId as string, {
+        ...(body.sessionId === undefined ? {} : { sessionId: body.sessionId as string }),
+        ...(body.newSession === true ? { newSession: true } : {}),
+        ...(body.mode === undefined ? {} : { mode: body.mode as "chat" | "world_builder" }),
+      }));
     } else if (pathname === "/api/v1/creator/cancel") {
       sendJson(input.response, 200, kernel.creator.cancel());
     } else if (pathname === "/api/v1/creator/review") {
       if (typeof body.id !== "string" || typeof body.digest !== "string" || !["apply", "reject"].includes(String(body.action))) throw new CreatorError("无效的草案确认请求");
-      sendJson(input.response, 200, { proposal: kernel.creator.review(body.id, body.digest, body.action as "apply" | "reject") });
+      const edits = body.edits === undefined ? undefined : asRecord(body.edits);
+      sendJson(input.response, 200, { proposal: kernel.creator.review(body.id, body.digest, body.action as "apply" | "reject", edits) });
     } else {
       throw new CreatorError("找不到创作助手接口", 404);
     }

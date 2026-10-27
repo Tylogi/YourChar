@@ -38,10 +38,17 @@ export type CreatorTarget = z.infer<typeof creatorInspectSchema>;
 export type CreatorProposal = {
   id: string; title: string; reason: string; operation: CreatorOperation; before: unknown; after: unknown;
   digest: string; status: "pending" | "applied" | "rejected" | "stale" | "applying" | "interrupted" | "failed";
-  result?: unknown; error?: string; createdAt: string; updatedAt: string;
+  result?: unknown; error?: string; createdAt: string; updatedAt: string; sessionId?: string;
 };
-export type CreatorMessage = { seq: number; role: "user" | "assistant" | "system"; text: string; createdAt: string };
+export type CreatorMessage = { seq: number; role: "user" | "assistant" | "system"; text: string; createdAt: string; requestId?: string };
+export type CreatorSessionMode = "chat" | "world_builder";
+export type CreatorSession = { id: string; title: string; mode: CreatorSessionMode; createdAt: string; updatedAt: string; pendingCount: number };
 export class CreatorError extends Error {
-  readonly code = "CREATOR_ERROR";
+  readonly code: string = "CREATOR_ERROR";
   constructor(message: string, readonly status = 400) { super(message); this.name = "CreatorError"; }
+}
+/** The turn hit its model-call or context budget; drafts already proposed stay reviewable. */
+export class CreatorBudgetError extends CreatorError {
+  override readonly code = "CREATOR_BUDGET_EXHAUSTED";
+  constructor(message: string) { super(message, 409); this.name = "CreatorBudgetError"; }
 }
