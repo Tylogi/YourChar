@@ -53,11 +53,12 @@ export class CreatorService {
     this.available();
     if (before !== undefined) integer(before);
     const session = sessionId === null ? undefined : sessionId === undefined ? this.latestSession() : this.requireSession(sessionId);
-    const rows = session ? this.database.connection.prepare(`SELECT seq,role,text,created_at FROM creator_messages
+    const rows = session ? this.database.connection.prepare(`SELECT seq,role,text,created_at,turn_id FROM creator_messages
       WHERE session_id=? AND seq < ? ORDER BY seq DESC LIMIT 31`).all(session.id, before ?? Number.MAX_SAFE_INTEGER) as unknown as Array<{
-        seq: number; role: CreatorMessage["role"]; text: string; created_at: string;
+        seq: number; role: CreatorMessage["role"]; text: string; created_at: string; turn_id: string | null;
       }> : [];
-    const messages = rows.slice(0, 30).reverse().map(row => ({ seq: row.seq, role: row.role, text: row.text, createdAt: row.created_at }));
+    const messages = rows.slice(0, 30).reverse().map(row => ({ seq: row.seq, role: row.role, text: row.text, createdAt: row.created_at,
+      ...(row.turn_id ? { requestId: row.turn_id } : {}) }));
     const proposals = (session
       ? this.database.connection.prepare(`SELECT * FROM creator_proposals WHERE session_id=?
           ORDER BY CASE WHEN status='pending' THEN 0 ELSE 1 END, rowid DESC LIMIT 40`).all(session.id)

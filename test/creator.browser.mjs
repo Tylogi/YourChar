@@ -62,6 +62,7 @@ export async function runCreatorChecks(browser, outputDir) {
     } finally { await page.close(); await new Promise(resolvePromise => server.close(resolvePromise)); runtime.dispose(); }
   }
   await runCreatorSessionChecks(browser, outputDir);
+  await runCreatorRecoveryChecks(browser);
 }
 
 async function runCreatorSessionChecks(browser, outputDir) {
@@ -185,6 +186,78 @@ async function runCreatorSessionChecks(browser, outputDir) {
     console.log("Creator session browser checks passed");
   } finally { await page.close(); await new Promise(resolvePromise => server.close(resolvePromise)); runtime.dispose(); }
 }
+async function runCreatorRecoveryChecks(browser) {
+  const runtime = createTestRuntime({ seed: "creator-browser-recovery" });
+  const kernel = runtime.kernel;
+  const server = createHttpServer({ kernel });
+  await new Promise(resolvePromise => server.listen(0, "127.0.0.1", resolvePromise));
+  const page = await browser.newPage({ viewport: { width: 1440, height: 1000 }, locale: "zh-CN", reducedMotion: "reduce" });
+  const errors = [];
+  page.on("pageerror", error => errors.push(error.message));
+  let releaseSnapshot = () => {};
+  try {
+    runtime.model.enqueue([
+      { kind: "tool_calls", calls: [{ name: "creator_propose", arguments: {
+        title: "编辑中的世界", reason: "测试会话切换", operation: { kind: "create_world", input: { name: "原始名字" } },
+      } }] },
+      { kind: "assistant_text", text: "请确认草案。" },
+    ]);
+    const first = await kernel.creator.send("继续", "creator-recovery-first", { newSession: true });
+    runtime.model.enqueue([{ kind: "assistant_text", text: "另一个会话。" }]);
+    const second = await kernel.creator.send("另一个会话", "creator-recovery-second", { newSession: true });
+    await page.goto(`http://127.0.0.1:${server.address().port}`, { waitUntil: "domcontentloaded" });
+    await page.locator("#managementBtn").click();
+    await page.locator("#creatorTabBtn").click();
+    const idle = () => page.waitForFunction(() => !creatorSending && !creatorLoading && !creatorReloadPending);
+    const open = async id => {
+      await page.locator(`[data-creator-session="${id}"]`).click();
+      await page.waitForFunction(value => creatorSnapshot?.sessionId === value && !creatorLoading, id);
+    };
+    await idle(); await open(first.sessionId);
+    await page.locator(".creator-proposal > details > summary").click();
+    await page.locator('[data-creator-field="name"]').fill("保留用户编辑的名字");
+    await open(second.sessionId); await open(first.sessionId);
+    assert.equal(await page.locator('[data-creator-field="name"]').inputValue(), "保留用户编辑的名字", "switching sessions preserves unapplied edits");
+    await page.locator('[data-creator-review="apply"]').click();
+    await page.locator("#confirmSessionActionBtn").click();
+    await page.locator("#sessionActionDialog").waitFor({ state: "hidden" });
+    await idle();
+    assert.equal(kernel.listWorlds()[0].name, "保留用户编辑的名字", "confirmation applies the restored edit");
+
+    // An earlier identical message cannot prove that a failed request was recorded.
+    const messagesBefore = kernel.creator.snapshot(undefined, first.sessionId).messages.length;
+    await page.route("**/api/v1/creator/messages", route => route.abort("failed"));
+    await page.locator("#creatorInput").fill("继续");
+    await page.locator("#creatorSend").click();
+    await page.waitForFunction(() => !creatorSending && creatorEl("creatorStatus").textContent.includes("内容已放回"));
+    await idle();
+    assert.equal(kernel.creator.snapshot(undefined, first.sessionId).messages.length, messagesBefore, "the dropped request never reached the server");
+    assert.equal(await page.locator("#creatorInput").inputValue(), "继续");
+    await page.unroute("**/api/v1/creator/messages");
+    runtime.model.enqueue([{ kind: "assistant_text", text: "继续这次请求。" }]);
+    await page.locator("#creatorSend").click(); await idle();
+    const users = kernel.creator.snapshot(undefined, first.sessionId).messages.filter(message => message.role === "user");
+    assert.deepEqual(users.map(message => message.text), ["继续", "继续"]);
+    assert.ok(users[1].requestId && users[1].requestId !== users[0].requestId, "repeated text has independent request identities");
+
+    let snapshotStarted;
+    const started = new Promise(resolvePromise => { snapshotStarted = resolvePromise; });
+    const held = new Promise(resolvePromise => { releaseSnapshot = resolvePromise; });
+    await page.route("**/api/v1/creator/snapshot", async route => {
+      if (route.request().postDataJSON().sessionId !== "deleted-session") return route.continue();
+      snapshotStarted(); await held;
+      await route.fulfill({ status: 404, contentType: "application/json", body: JSON.stringify({ error: "找不到这个会话" }) });
+    });
+    await page.evaluate(() => openCreatorSession("deleted-session")); await started;
+    await page.locator(`[data-creator-session="${second.sessionId}"]`).click();
+    releaseSnapshot(); await idle();
+    assert.equal(await page.evaluate(() => creatorView.sessionId), second.sessionId, "a stale 404 cannot redirect a newer selection");
+    assert.equal(await page.evaluate(() => creatorSnapshot.sessionId), second.sessionId);
+    assert.deepEqual(errors, []);
+    console.log("Creator editing and request recovery checks passed");
+  } finally { releaseSnapshot(); await page.close(); await new Promise(resolvePromise => server.close(resolvePromise)); runtime.dispose(); }
+}
+
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   const outputDir = resolve("browser-artifacts"); mkdirSync(outputDir, { recursive: true });
   const browser = await launch({ headless: true });

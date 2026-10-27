@@ -277,8 +277,9 @@ export const creatorScript = String.raw`
         let result;
         try { result = await creatorApi("snapshot", body); }
         catch(error) {
+          if (sequence !== creatorRefreshSequence || !creatorVisible()) return;
           // A remembered session can disappear (data reset); fall back to the start page.
-          if (error.status !== 404 || !creatorView.sessionId) throw error;
+          if (error.status !== 404 || !body.sessionId) throw error;
           setCreatorView({}); sequence = creatorRefreshSequence;
           result = await creatorApi("snapshot", { sessionId: null });
         }
@@ -288,7 +289,7 @@ export const creatorScript = String.raw`
         creatorSnapshot = result; renderCreator();
         if (older) list.scrollTop = list.scrollHeight - height;
         if (!creatorSending || creatorSendingGeneration !== creatorViewGeneration) creatorEl("creatorStatus").textContent = creatorIdleStatus();
-      } catch(error) { if (creatorVisible()) creatorEl("creatorStatus").textContent = error.message; }
+      } catch(error) { if (sequence === creatorRefreshSequence && creatorVisible()) creatorEl("creatorStatus").textContent = error.message; }
       finally {
         creatorLoading = false; creatorButtons(); clearTimeout(creatorPollTimer);
         if (creatorReloadPending) { creatorReloadPending = false; void loadCreator(); }
@@ -344,7 +345,8 @@ export const creatorScript = String.raw`
       // The start page gathers drafts from every session, so it only offers per-draft confirmation.
       creatorEl("creatorReviewBar").hidden = pendingCount < 2 || creatorOnStartPage();
       creatorEl("creatorPendingCount").textContent = pendingCount + " 份待确认";
-      for (const id of creatorEdits.keys()) if (!creatorSnapshot.proposals.some(proposal => proposal.id === id && proposal.status === "pending")) creatorEdits.delete(id);
+      // A session snapshot cannot tell us whether another session's draft was processed.
+      for (const proposal of creatorSnapshot.proposals) if (proposal.status !== "pending") creatorEdits.delete(proposal.id);
       const focused = document.activeElement?.closest?.("[data-creator-field]");
       const focus = focused ? { id: focused.closest("[data-proposal-id]").dataset.proposalId, field: focused.dataset.creatorField,
         start: focused.selectionStart, end: focused.selectionEnd, scroll: focused.scrollTop } : null;
@@ -442,9 +444,9 @@ export const creatorScript = String.raw`
           creatorSending = false;
           if (creatorSnapshot) creatorSnapshot = { ...creatorSnapshot, messages: (creatorSnapshot.messages || []).filter(message => !message.optimistic) };
           await loadCreator();
+          if (generation !== creatorViewGeneration || !creatorVisible()) return;
           // If the server never recorded the message, give the user's words back instead of losing them.
-          const lastUser = (creatorSnapshot?.messages || []).filter(message => message.role === "user").at(-1);
-          const recorded = Boolean(creatorView.sessionId) && lastUser && creatorDisplayText(lastUser) === raw;
+          const recorded = (creatorSnapshot?.messages || []).some(message => message.role === "user" && message.requestId === requestId);
           if (!recorded && !creatorEl("creatorInput").value) {
             if (draftMode && !creatorView.sessionId && creatorView.draft !== draftMode) startCreatorDraft(draftMode);
             creatorEl("creatorInput").value = raw;

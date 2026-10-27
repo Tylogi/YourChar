@@ -40,7 +40,7 @@ export type CreatorProposal = {
   digest: string; status: "pending" | "applied" | "rejected" | "stale" | "applying" | "interrupted" | "failed";
   result?: unknown; error?: string; createdAt: string; updatedAt: string; sessionId?: string;
 };
-export type CreatorMessage = { seq: number; role: "user" | "assistant" | "system"; text: string; createdAt: string };
+export type CreatorMessage = { seq: number; role: "user" | "assistant" | "system"; text: string; createdAt: string; requestId?: string };
 export type CreatorSessionMode = "chat" | "world_builder";
 export type CreatorSession = { id: string; title: string; mode: CreatorSessionMode; createdAt: string; updatedAt: string; pendingCount: number };
 export class CreatorError extends Error {
