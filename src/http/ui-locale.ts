@@ -497,6 +497,38 @@ export const englishUiMessages: Readonly<Record<string, string>> = Object.freeze
   "创作预设 · 见面与日记共用": "Writing presets · shared by meetings and diaries",
   "创作助手": "Writing assistant",
   "创作助手管理记录": "Writing assistant activity",
+  "创作助手会话": "Writing assistant conversations",
+  "一键建构": "Quick build",
+  "开启一个新的一键建构会话": "Start a new quick build conversation",
+  "先查看，再确认。可以直接修改草案内容；讨论本身不会改变世界。": "Review and edit each draft before confirming. Discussion alone never changes the world.",
+  "全部应用": "Apply all",
+  "开始": "Start",
+  "新的一键建构": "New quick build",
+  "正在回复": "Replying",
+  "还没有会话。从“开始”选一种方式吧。": "No conversations yet. Choose an option on the start page.",
+  "角色的性格、街角的书店，或一段更自然的日常。选一种方式开始，每次都会开启一个独立会话。": "Shape a character, a corner bookstore, or a more natural daily routine. Each option starts a separate conversation.",
+  "一键建构世界与角色": "Quick build a world and characters",
+  "只说一句灵感，直接生成世界与角色草案，确认后生效。": "Share an idea to generate drafts for a world and its characters. They take effect after you confirm.",
+  "自由对话": "Open conversation",
+  "和创作助手商量设定，慢慢打磨角色、世界与地点。": "Talk through your ideas with the writing assistant and refine characters, worlds, and places.",
+  "试试这些": "Try these ideas",
+  "我穿越到了《命运石之门》的世界，和主角们一起冒险": "I enter the world of Steins;Gate and join the main characters on an adventure.",
+  "一句灵感就够了。": "One idea is enough.",
+  "在下方写下你的灵感。创作助手会搭好世界和主要角色的草案，你在右侧确认后才会生效。确认世界后发送“继续”，再补上地点和角色的落脚处。": "Write your idea below. The writing assistant will draft a world and its main characters for you to review on the right. After confirming the world, send “continue” to add places and homes for the characters.",
+  "想创造或调整什么？": "What would you like to create or change?",
+  "这是一个独立会话，不会带上其他会话的记录。": "This is a separate conversation. It does not include messages from other conversations.",
+  "描述你的世界灵感，一句话就够——例如：废土星球上最后一座图书馆的守护者": "Describe your world in one sentence, such as a guardian of the last library on a ruined planet.",
+  "✦ 新的一键建构会话：一句灵感，生成世界与角色草案": "✦ New quick build: turn one idea into drafts for a world and its characters",
+  "新会话 · 独立记录，不进入角色记忆": "New conversation · separate history, excluded from character memory",
+  "另一个会话正在回复，完成后可以继续。": "Another conversation is generating a reply. You can continue when it finishes.",
+  "正在构思设定与草案…": "Working on ideas and drafts…",
+  "全部待确认草案": "All drafts awaiting confirmation",
+  "查看与修改内容": "Review and edit",
+  "打开这个会话": "Open this conversation",
+  "所有会话都没有待确认的草案。": "No drafts are awaiting confirmation in any conversation.",
+  "这个会话还没有变更草案。": "This conversation has no change drafts yet.",
+  "需要修改时，我会把具体内容放在这里，等你确认。": "Proposed changes will appear here for your confirmation.",
+  "按提出顺序逐份应用，包括你在草案里做的修改。某一份失败时会停下，已应用的不会回滚。": "Apply drafts in the order they were proposed, including your edits. If one fails, the process stops; earlier changes remain applied.",
   "单轮上限": "Per-turn limit",
   "导出 OKF": "Export OKF",
   "导入目标": "Import target",
@@ -935,6 +967,9 @@ export const englishUiMessages: Readonly<Record<string, string>> = Object.freeze
 });
 
 export const englishUiPatterns: ReadonlyArray<readonly [string, string]> = Object.freeze([
+  ["^(\\d+) 份待确认$", "$1 awaiting confirmation"],
+  ["^应用全部 (\\d+) 份草案？$", "Apply all $1 drafts?"],
+  ["^只应用会话「(.+)」里的草案。按提出顺序逐份应用，包括你在草案里做的修改。某一份失败时会停下，已应用的不会回滚。$", "Apply only drafts from “$1”, in the order they were proposed, including your edits. If one fails, the process stops; earlier changes remain applied."],
   ["^(\\d+) 个私聊$", "$1 DMs"],
   ["^(\\d+) 待办$", "$1 to do"],
   ["^(\\d+) 项$", "$1 items"],
@@ -1039,10 +1074,12 @@ export const localeScript = String.raw`
         "script", "style", "pre", "code", "textarea", "[contenteditable=true]",
         "#messages", "#historySearchResults", "#workspaceFilePreview", ".workspace-file-preview",
         "#conversationCharacter", "#conversationScene", "[data-i18n-user-content]",
-        ".trace-block pre", ".message-content", ".bubble", ".creator-message > p",
+        ".trace-block pre", ".message-content", ".bubble", ".creator-message:not(.pending) > p",
         ".feature-test-reply .markdown-body", ".world-scene-text", ".diary-prose",
         "#characterProfileSoul", "#characterOwnedSkillMarkdown"
       ].join(",");
+      // Textarea values are user content, but their labels and placeholders are UI copy.
+      const ignoredAttributeSelector = ignoredContentSelector.split(",").filter(selector => selector !== "textarea").join(",");
       let preference = valid(bootstrap.preference);
       let locale = preference === "system" ? systemLocale() : preference;
       let observer;
@@ -1064,9 +1101,9 @@ export const localeScript = String.raw`
         const match = /^(\s*)([\s\S]*?)(\s*)$/u.exec(value);
         return { before: match?.[1] || "", core: match?.[2] || "", after: match?.[3] || "" };
       }
-      function ignored(node) {
+      function ignored(node, attributes = false) {
         const parent = node.nodeType === Node.ELEMENT_NODE ? node : node.parentElement;
-        return Boolean(parent?.closest(ignoredContentSelector));
+        return Boolean(parent?.closest(attributes ? ignoredAttributeSelector : ignoredContentSelector));
       }
       function userAuthored(source) {
         if (typeof state !== "object" || !state || !source) return false;
@@ -1110,7 +1147,7 @@ export const localeScript = String.raw`
         if (node.nodeValue !== rendered) node.nodeValue = rendered;
       }
       function translateAttribute(element, name, register = false) {
-        if (ignored(element) || !element.hasAttribute(name)) return;
+        if (ignored(element, true) || !element.hasAttribute(name)) return;
         let records = attributeRecords.get(element);
         if (!records) { records = new Map(); attributeRecords.set(element, records); }
         const current = element.getAttribute(name) || "";
@@ -1127,7 +1164,7 @@ export const localeScript = String.raw`
         if (current !== rendered) element.setAttribute(name, rendered);
       }
       function translateTree(root, register = false) {
-        if (!root || ignored(root)) return;
+        if (!root || ignored(root, true)) return;
         if (root.nodeType === Node.TEXT_NODE) { translateTextNode(root, register); return; }
         if (root.nodeType !== Node.ELEMENT_NODE && root.nodeType !== Node.DOCUMENT_NODE) return;
         const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);

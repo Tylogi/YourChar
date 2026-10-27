@@ -63,6 +63,56 @@ export async function runCreatorChecks(browser, outputDir) {
   }
   await runCreatorSessionChecks(browser, outputDir);
   await runCreatorRecoveryChecks(browser);
+  await runCreatorLocaleChecks(browser);
+}
+
+async function runCreatorLocaleChecks(browser) {
+  const runtime = createTestRuntime({ seed: "creator-browser-locale" });
+  const kernel = runtime.kernel;
+  const server = createHttpServer({ kernel });
+  await new Promise(resolvePromise => server.listen(0, "127.0.0.1", resolvePromise));
+  const page = await browser.newPage({ viewport: { width: 1440, height: 1000 }, locale: "en-US", reducedMotion: "reduce" });
+  const errors = [];
+  page.on("pageerror", error => errors.push(error.message));
+  try {
+    await page.addInitScript(() => localStorage.setItem("yourchar.locale", "en"));
+    await page.goto(`http://127.0.0.1:${server.address().port}`, { waitUntil: "domcontentloaded" });
+    await page.locator("#managementBtn").click(); await page.locator("#creatorTabBtn").click();
+    await page.waitForFunction(() => document.querySelector("#creatorReviewTitle").textContent === "All drafts awaiting confirmation");
+    assert.equal((await page.locator('[data-creator-start="world_builder"] strong').textContent()).trim(), "Quick build a world and characters");
+    assert.equal(await page.locator("#creatorSessions").getAttribute("aria-label"), "Writing assistant conversations");
+    await page.locator('[data-creator-start="world_builder"]').click();
+    await page.waitForFunction(() => document.querySelector("#creatorMessages h4")?.textContent === "One idea is enough.");
+    assert.match(await page.locator("#creatorInput").getAttribute("placeholder"), /^Describe your world/);
+    assert.match(await page.locator("#creatorModeHint").textContent(), /New quick build/);
+
+    runtime.model.enqueue([
+      { kind: "tool_calls", calls: ["设置", "其他"].map(title => ({ name: "creator_propose", arguments: {
+        title, reason: "日程", operation: { kind: "create_world", input: { name: title, rulesMarkdown: "设置" } },
+      } })) },
+      { kind: "assistant_text", text: "## 聊天\n\n设置" },
+    ]);
+    await page.locator("#creatorInput").fill("聊天"); await page.locator("#creatorSend").click();
+    await page.waitForFunction(() => !creatorSending && !creatorLoading && creatorSnapshot?.proposals.length === 2);
+    assert.equal(await page.locator('[data-creator-session] > span').textContent(), "聊天", "session titles are user content");
+    assert.equal(await page.locator('[data-creator-session] > span').getAttribute("title"), "聊天");
+    assert.equal(await page.locator(".creator-message.assistant h2").textContent(), "聊天", "assistant Markdown is not translated");
+    assert.equal(await page.locator(".creator-message.assistant .markdown-body p").textContent(), "设置");
+    assert.deepEqual(await page.locator(".creator-proposal > h5").allTextContents(), ["其他", "设置"]);
+    assert.deepEqual(await page.locator(".creator-proposal > p").allTextContents(), ["日程", "日程"]);
+    assert.equal(await page.locator("#creatorPendingCount").textContent(), "2 awaiting confirmation");
+    await page.locator(".creator-proposal > details > summary").first().click();
+    assert.equal(await page.locator('[data-creator-field="rulesMarkdown"]').first().inputValue(), "设置", "draft textarea content is not translated");
+    await page.locator('[data-creator-field="name"]').first().fill("修改后的名字");
+    assert.equal(await page.locator(".creator-field.edited > span").evaluate(element => getComputedStyle(element, "::after").content), '" · Edited"');
+    await page.locator("#creatorApplyAll").click();
+    assert.equal(await page.locator("#sessionActionTitle").textContent(), "Apply all 2 drafts?");
+    assert.equal(kernel.listWorlds().length, 0, "opening the translated confirmation does not apply drafts");
+    await page.evaluate(() => window.yourcharLocale.apply("zh-CN"));
+    assert.equal(await page.locator(".creator-field.edited > span").evaluate(element => getComputedStyle(element, "::after").content), '" · 已修改"');
+    assert.deepEqual(errors, []);
+    console.log("Creator English controls and content preservation checks passed");
+  } finally { await page.close(); await new Promise(resolvePromise => server.close(resolvePromise)); runtime.dispose(); }
 }
 
 async function runCreatorSessionChecks(browser, outputDir) {
