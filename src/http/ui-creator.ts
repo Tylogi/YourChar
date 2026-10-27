@@ -66,6 +66,7 @@ export const creatorCss = `
 .creator-field textarea, .creator-field input { width:100%; box-sizing:border-box; font:12px/1.7 var(--font-ui, sans-serif); color:var(--text); background:var(--selected,rgba(127,127,127,.08)); border:1px solid transparent; border-radius:8px; padding:8px 10px; resize:vertical; }
 .creator-field textarea:focus, .creator-field input:focus { border-color:var(--line); outline:none; }
 .creator-field.edited > span::after { content:" · 已修改"; color:var(--text); }
+html[lang="en"] .creator-field.edited > span::after { content:" · Edited"; }
 .creator-message { margin-bottom:24px; overflow-wrap:anywhere; }
 #creatorOlder { display:block; margin:0 auto 24px; }
 .creator-message > small { color:var(--muted); font-size:11px; }
@@ -298,15 +299,15 @@ export const creatorScript = String.raw`
     }
     function renderCreatorSessions() {
       const sessions = creatorSnapshot?.sessions || [];
-      const item = (attrs, icon, title, current, extra = "") => '<button type="button" class="creator-session" ' + attrs + ' aria-current="' + current + '">' +
-        '<i data-lucide="' + icon + '" aria-hidden="true"></i><span>' + escapeHtml(title) + '</span>' + extra + '</button>';
+      const item = (attrs, icon, title, current, extra = "", userContent = false) => '<button type="button" class="creator-session" ' + attrs + ' aria-current="' + current + '">' +
+        '<i data-lucide="' + icon + '" aria-hidden="true"></i><span' + (userContent ? ' data-i18n-user-content title="' + escapeHtml(title) + '"' : '') + '>' + escapeHtml(title) + '</span>' + extra + '</button>';
       creatorEl("creatorSessions").innerHTML = item("data-creator-home", "house", "开始", creatorOnStartPage()) +
         '<div class="creator-sessions-head"><span>会话</span><button type="button" class="secondary" data-creator-new>新会话</button></div>' +
         (creatorView.draft ? item("data-creator-draft", creatorView.draft === "world_builder" ? "sparkles" : "message-circle", creatorView.draft === "world_builder" ? "新的一键建构" : "新会话", true) : '') +
-        (sessions.length ? sessions.map(session => item('data-creator-session="' + escapeHtml(session.id) + '" title="' + escapeHtml(session.title) + '"',
+        (sessions.length ? sessions.map(session => item('data-creator-session="' + escapeHtml(session.id) + '"',
           session.mode === "world_builder" ? "sparkles" : "message-circle", session.title, session.id === creatorView.sessionId,
           creatorSnapshot.busy && creatorSnapshot.activeSessionId === session.id ? '<b class="creator-busy-dot" aria-label="正在回复"></b>'
-            : session.pendingCount ? '<em aria-label="' + session.pendingCount + ' 份待确认">' + session.pendingCount + '</em>' : '')).join('')
+            : session.pendingCount ? '<em aria-label="' + session.pendingCount + ' 份待确认">' + session.pendingCount + '</em>' : '', true)).join('')
           : (creatorView.draft ? '' : '<div class="creator-sessions-empty">还没有会话。从“开始”选一种方式吧。</div>'));
     }
     function creatorStartPage() {
@@ -334,7 +335,7 @@ export const creatorScript = String.raw`
       const replyingHere = creatorSending && creatorSendingGeneration === creatorViewGeneration || creatorSnapshot.busy && creatorSnapshot.activeSessionId && creatorSnapshot.activeSessionId === creatorView.sessionId;
       creatorEl("creatorMessages").innerHTML = (creatorSnapshot.before ? '<button id="creatorOlder" class="secondary" type="button">查看更早记录</button>' : '') +
         (messages.length ? messages.map(message => '<article class="creator-message ' + escapeHtml(message.role) + '">' +
-          (message.role === "assistant" ? '<small>创作助手</small><div class="markdown-body">' + renderMarkdown(message.text) + '</div>' : '<p>' + escapeHtml(creatorDisplayText(message)) + '</p>') + '</article>').join('') +
+          (message.role === "assistant" ? '<small>创作助手</small><div class="markdown-body" data-i18n-user-content>' + renderMarkdown(message.text) + '</div>' : '<p>' + escapeHtml(creatorDisplayText(message)) + '</p>') + '</article>').join('') +
           (replyingHere ? '<article class="creator-message assistant pending"><small>创作助手</small><p>正在构思设定与草案…</p></article>' : '') :
         creatorOnStartPage() ? creatorStartPage() : creatorView.draft ? creatorDraftIntro() : '');
       // A draft session has no drafts yet; the start page gathers pending drafts from every session.
@@ -372,7 +373,7 @@ export const creatorScript = String.raw`
           return '<div class="creator-diff"><strong>' + escapeHtml(creatorFields[key] || key) + '</strong>' +
             (op.patch ? '<small>原值</small><pre>' + escapeHtml(creatorValue(old[key])) + '</pre><small>修改为</small>' : '') + '<pre>' + escapeHtml(creatorValue(value)) + '</pre></div>';
         };
-        return '<article class="creator-proposal" data-proposal-id="' + escapeHtml(proposal.id) + '"><small>' + escapeHtml(creatorLabels[op.kind]) + ' · ' + escapeHtml(creatorStatuses[proposal.status]) + '</small><h5>' + escapeHtml(proposal.title) + '</h5><p>' + escapeHtml(proposal.reason) + '</p>' +
+        return '<article class="creator-proposal" data-proposal-id="' + escapeHtml(proposal.id) + '"><small>' + escapeHtml(creatorLabels[op.kind]) + ' · ' + escapeHtml(creatorStatuses[proposal.status]) + '</small><h5 data-i18n-user-content>' + escapeHtml(proposal.title) + '</h5><p data-i18n-user-content>' + escapeHtml(proposal.reason) + '</p>' +
           (pending ? '<div class="creator-proposal-actions"><button class="primary" type="button" data-creator-review="apply"' + (blocked?' disabled':'') + '>确认应用</button><button class="secondary" type="button" data-creator-review="reject"' + (blocked?' disabled':'') + '>撤销草案</button></div>' : '') +
           '<details' + (Object.keys(edits).length ? ' open' : '') + '><summary>' + (editable ? '查看与修改内容' : '查看变更') + '</summary>' + Object.entries(fields).map(fieldHtml).join('') +
           '<details><summary>目标与原始快照</summary><pre>' + escapeHtml(JSON.stringify(proposal.before, null, 2)) + '</pre></details></details>' +
@@ -391,7 +392,7 @@ export const creatorScript = String.raw`
         const rank = key => { const index = order.indexOf(key); return index < 0 ? order.length : index; };
         return [...groups.entries()].sort(([left], [right]) => rank(left) - rank(right)).map(([sessionId, items]) =>
           '<section class="creator-proposal-group" data-creator-group="' + escapeHtml(sessionId) + '"><header>' +
-            (sessionId ? '<a href="#" data-creator-open-session="' + escapeHtml(sessionId) + '" title="打开这个会话">' + escapeHtml(sessionTitles[sessionId] || "会话") + '</a>' : '<a>其他</a>') +
+            (sessionId ? '<a href="#" data-creator-open-session="' + escapeHtml(sessionId) + '" title="打开这个会话"><span data-i18n-user-content>' + escapeHtml(sessionTitles[sessionId] || "会话") + '</span></a>' : '<a>其他</a>') +
             '<span>' + items.length + ' 份待确认</span>' +
             (sessionId && items.length > 1 ? '<button class="primary" type="button" data-creator-apply-session="' + escapeHtml(sessionId) + '"' + (creatorSending || creatorSnapshot.busy ? ' disabled' : '') + '>全部应用</button>' : '') +
           '</header>' + items.map(proposalCard).join('') + '</section>').join('');
