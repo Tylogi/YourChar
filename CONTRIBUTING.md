@@ -67,6 +67,10 @@ browser workflows, sensitive-information scanning, and whitespace checks.
 [Release gate](docs/release-gate.md) documents when real-model evaluation is
 also needed; it uses separately configured model access.
 
+For GitHub publication, follow the [release policy](docs/release-policy.md) and
+[notes template](docs/releases/TEMPLATE.md). Prepare the complete notes and
+exact asset list for the repository owner's approval before publishing.
+
 ## Make issues and pull requests easy to review
 
 For a bug report, include the commit/version, operating system, Node version,

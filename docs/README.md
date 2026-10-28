@@ -60,6 +60,7 @@ For contributors: [sharing copy and publication notes](blog/memory-tutorial-shar
 - [Runtime events](runtime-events.md): projection capture, versioning, replay, checkpoints, and integrity.
 - [Development specification](development-spec.md) and [Completed modernization plan](agent-runtime-modernization-plan.md): architecture and milestone evidence.
 - [Release gate](release-gate.md): deterministic checks and optional real-model evaluation.
+- [Release policy](release-policy.md) and [notes template](releases/TEMPLATE.md): publication format, public assets, and owner review.
 - [Task Bench](task-bench.md) and [Model adaptation evaluation](model-adaptation-evaluation.md): isolated trials and report interpretation.
 - [Background thinking](background-thinking-policy.md) and [Post-turn Coordinator](post-turn-coordinator.md): background model behavior and consumers.
 

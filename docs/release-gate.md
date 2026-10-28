@@ -1,5 +1,9 @@
 # Release Gate
 
+For publication, also follow the [release policy](release-policy.md) and
+[notes template](releases/TEMPLATE.md). Passing the checks below prepares a
+release for owner review; it does not authorize publication.
+
 ## Required local gate
 
 Run:
